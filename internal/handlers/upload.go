@@ -252,7 +252,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 
 		slog.Info("file uploaded",
-			"claim_code", claimCode,
+			"claim_code", redactClaimCode(claimCode),
 			"filename", header.Filename,
 			"file_extension", utils.GetFileExtension(header.Filename),
 			"size", written,

@@ -28,6 +28,7 @@ docker run -d -p 8080:8080 --name safeshare safeshare:latest
 docker run -d -p 8080:8080 \
   -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
   -e BLOCKED_EXTENSIONS=".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar" \
+  -e TZ=Europe/Berlin \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --name safeshare \
@@ -187,6 +188,8 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `MAX_EXPIRATION_HOURS`: Maximum allowed expiration time (default: 168 / 7 days)
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
 - `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
+
+**Note on Timestamps**: Logs use UTC timestamps (RFC3339 with `Z` suffix) regardless of TZ setting. This is industry standard for server applications and makes log correlation across timezones easier.
 
 **Validation**:
 The config validates encryption key format (64 hex chars), normalizes blocked extensions (adds `.` prefix, lowercases), and ensures rate limits and expiration values are positive.

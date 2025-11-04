@@ -72,6 +72,7 @@ docker run -d \
   -p 8080:8080 \
   -e MAX_FILE_SIZE=209715200 \
   -e DEFAULT_EXPIRATION_HOURS=48 \
+  -e TZ=Europe/Berlin \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --name safeshare \
@@ -194,6 +195,7 @@ Environment variables:
 | `MAX_EXPIRATION_HOURS` | `168` | Maximum allowed expiration time in hours (default: 7 days) |
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
 | `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
+| `TZ` | `UTC` | Timezone for container (logs always use UTC per industry standard) |
 
 ### Reverse Proxy Support
 

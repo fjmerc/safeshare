@@ -349,6 +349,7 @@ docker run -d \
   -e MAX_EXPIRATION_HOURS=168 \
   -e RATE_LIMIT_UPLOAD=10 \
   -e RATE_LIMIT_DOWNLOAD=100 \
+  -e TZ=Europe/Berlin \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --restart unless-stopped \

@@ -42,7 +42,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get file record from database
 		file, err := database.GetFileByClaimCode(db, claimCode)
 		if err != nil {
-			slog.Error("failed to get file by claim code", "claim_code", claimCode, "error", err)
+			slog.Error("failed to get file by claim code", "claim_code", redactClaimCode(claimCode), "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
@@ -51,7 +51,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// File not found or expired
 			slog.Warn("file access denied",
 				"reason", "not_found_or_expired",
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"client_ip", getClientIP(r),
 			)
 			sendError(w, "File not found or expired", "NOT_FOUND", http.StatusNotFound)
@@ -62,7 +62,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads {
 			slog.Warn("file access denied",
 				"reason", "download_limit_reached",
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"filename", file.OriginalFilename,
 				"download_count", file.DownloadCount,
 				"max_downloads", *file.MaxDownloads,
@@ -77,7 +77,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		fileData, err := os.ReadFile(filePath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				slog.Error("file not found on disk", "path", filePath, "claim_code", claimCode)
+				slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(claimCode))
 				sendError(w, "File not found", "NOT_FOUND", http.StatusNotFound)
 				return
 			}
@@ -91,7 +91,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if utils.IsEncryptionEnabled(cfg.EncryptionKey) && utils.IsEncrypted(fileData) {
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
-				slog.Error("failed to decrypt file", "claim_code", claimCode, "error", err)
+				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(claimCode), "error", err)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
@@ -118,7 +118,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Write file to response
 		written, err := w.Write(dataToServe)
 		if err != nil {
-			slog.Error("failed to write file to response", "claim_code", claimCode, "error", err)
+			slog.Error("failed to write file to response", "claim_code", redactClaimCode(claimCode), "error", err)
 			return
 		}
 
@@ -132,7 +132,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		slog.Info("file downloaded",
-			"claim_code", claimCode,
+			"claim_code", redactClaimCode(claimCode),
 			"filename", file.OriginalFilename,
 			"size", written,
 			"download_count", file.DownloadCount+1,
@@ -175,7 +175,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get file record from database
 		file, err := database.GetFileByClaimCode(db, claimCode)
 		if err != nil {
-			slog.Error("failed to get file by claim code", "claim_code", claimCode, "error", err)
+			slog.Error("failed to get file by claim code", "claim_code", redactClaimCode(claimCode), "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
@@ -214,7 +214,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 
 		slog.Info("file info retrieved",
-			"claim_code", claimCode,
+			"claim_code", redactClaimCode(claimCode),
 			"filename", file.OriginalFilename,
 		)
 	}

@@ -82,3 +82,13 @@ func getUserAgent(r *http.Request) string {
 	}
 	return ua
 }
+
+// redactClaimCode redacts claim codes for secure logging
+// Shows first 3 and last 2 characters only (e.g., "Xy9...wE")
+// Claim codes are like passwords and should not be logged in full
+func redactClaimCode(code string) string {
+	if len(code) <= 5 {
+		return "***"
+	}
+	return code[:3] + "..." + code[len(code)-2:]
+}
