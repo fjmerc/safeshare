@@ -72,26 +72,30 @@ header h1 {
 }
 
 .theme-toggle {
-    position: absolute;
-    top: 0;
-    right: 0;
-    background: var(--bg-tertiary);
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 50%;
-    width: 2rem;
-    height: 2rem;
+    width: 2.5rem;
+    height: 2.5rem;
     cursor: pointer;
     transition: var(--transition);
-    font-size: 1rem;
+    font-size: 1.1rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0.7;
+    opacity: 0.8;
+    box-shadow: var(--shadow-md);
+    z-index: 100;
 }
 
 .theme-toggle:hover {
     opacity: 1;
     border-color: var(--primary-color);
+    transform: scale(1.1);
+    box-shadow: var(--shadow-lg);
 }
 
 /* Tabs */
@@ -221,10 +225,22 @@ header h1 {
     transition: var(--transition);
 }
 
+/* Hide number input spinners */
+.form-group input[type="number"]::-webkit-inner-spin-button,
+.form-group input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.form-group input[type="number"] {
+    -moz-appearance: textfield;
+}
+
 .form-group input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+    transform: translateY(-1px);
 }
 
 .quick-select {
@@ -249,6 +265,12 @@ header h1 {
     background: var(--primary-color);
     color: white;
     border-color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.btn-small:active {
+    transform: translateY(0);
 }
 
 /* Tooltip */
@@ -322,7 +344,12 @@ header h1 {
 .btn-primary:hover:not(:disabled) {
     background: var(--primary-hover);
     transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+    box-shadow: 0 8px 16px -4px rgba(59, 130, 246, 0.4);
+}
+
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
 }
 
 .btn-primary:disabled {
@@ -339,6 +366,11 @@ header h1 {
 .btn-secondary:hover {
     background: var(--bg-secondary);
     border-color: var(--primary-color);
+    transform: translateY(-1px);
+}
+
+.btn-secondary:active {
+    transform: translateY(0);
 }
 
 /* Results Section */
@@ -366,7 +398,7 @@ header h1 {
     width: 4rem;
     height: 4rem;
     margin: 0 auto 1rem;
-    background: var(--success-color);
+    background: linear-gradient(135deg, var(--success-color), #059669);
     color: white;
     border-radius: 50%;
     display: flex;
@@ -374,6 +406,22 @@ header h1 {
     justify-content: center;
     font-size: 2rem;
     font-weight: bold;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    animation: successPulse 0.6s ease;
+}
+
+@keyframes successPulse {
+    0% {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.1);
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
 }
 
 .result-item {
@@ -399,8 +447,8 @@ header h1 {
 
 .claim-code {
     flex: 1;
-    padding: 1rem;
-    background: var(--bg-tertiary);
+    padding: 1rem 1.5rem;
+    background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
     border: 2px solid var(--border-color);
     border-radius: var(--radius);
     font-family: 'Courier New', monospace;
@@ -409,6 +457,7 @@ header h1 {
     text-align: center;
     color: var(--primary-color);
     letter-spacing: 0.1em;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .url-input {
@@ -429,12 +478,17 @@ header h1 {
     cursor: pointer;
     font-size: 1.25rem;
     transition: var(--transition);
+    position: relative;
 }
 
 .btn-copy:hover {
     background: var(--primary-color);
     border-color: var(--primary-color);
-    transform: scale(1.1);
+    transform: scale(1.05);
+}
+
+.btn-copy:active {
+    transform: scale(0.95);
 }
 
 .btn-copy.copied {
@@ -478,17 +532,26 @@ header h1 {
     background: var(--bg-secondary);
     border-radius: var(--radius);
     margin-top: 2rem;
+    border: 1px solid var(--border-color);
 }
 
 .qr-section h3 {
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
 }
 
 .qr-code {
     display: inline-block;
-    padding: 1rem;
+    padding: 1.5rem;
     background: white;
     border-radius: var(--radius);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: var(--transition);
+}
+
+.qr-code:hover {
+    transform: scale(1.02);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
 .qr-hint {
@@ -519,22 +582,31 @@ footer a:hover {
 /* Pickup Section */
 .claim-code-input {
     width: 100%;
-    padding: 1rem;
+    padding: 1rem 1.5rem;
     font-size: 1.25rem;
     font-family: 'Courier New', monospace;
     text-align: center;
     letter-spacing: 0.1em;
+    font-weight: 600;
     background: var(--bg-secondary);
     border: 2px solid var(--border-color);
     border-radius: var(--radius);
     color: var(--text-primary);
     transition: var(--transition);
+    text-transform: uppercase;
+}
+
+.claim-code-input::placeholder {
+    text-transform: none;
+    font-weight: normal;
+    opacity: 0.5;
 }
 
 .claim-code-input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+    transform: translateY(-1px);
 }
 
 .file-info-section {
@@ -551,13 +623,15 @@ footer a:hover {
     width: 4rem;
     height: 4rem;
     margin: 0 auto 1rem;
-    background: var(--primary-color);
+    background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
     color: white;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 2rem;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    animation: fadeIn 0.5s ease;
 }
 
 .file-details {
@@ -565,6 +639,7 @@ footer a:hover {
     border-radius: var(--radius);
     padding: 1.5rem;
     margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
 }
 
 .file-details .detail {
@@ -586,19 +661,33 @@ footer a:hover {
 }
 
 .warning-box {
-    padding: 1rem;
+    padding: 1rem 1.5rem;
     background: rgba(239, 68, 68, 0.1);
     border: 2px solid var(--danger-color);
     border-radius: var(--radius);
     color: var(--danger-color);
     text-align: center;
-    margin-bottom: 1rem;
     font-weight: 600;
+    animation: shake 0.5s ease;
+    margin-bottom: 1rem;
+}
+
+@keyframes shake {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    25% {
+        transform: translateX(-10px);
+    }
+    75% {
+        transform: translateX(10px);
+    }
 }
 
 .btn-large {
     font-size: 1.25rem;
     padding: 1.25rem;
+    font-weight: 600;
 }
 
 /* Utility Classes */
