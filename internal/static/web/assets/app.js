@@ -6,7 +6,7 @@
     let selectedFile = null;
     let maxFileSizeBytes = 104857600; // 100MB default
 
-    // DOM Elements
+    // DOM Elements - Dropoff Tab
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadButton = document.getElementById('uploadButton');
@@ -19,6 +19,17 @@
     const progressText = document.getElementById('progressText');
     const newUploadButton = document.getElementById('newUploadButton');
     const themeToggle = document.getElementById('themeToggle');
+
+    // DOM Elements - Pickup Tab
+    const claimCodeInput = document.getElementById('claimCodeInput');
+    const retrieveButton = document.getElementById('retrieveButton');
+    const fileInfoSection = document.getElementById('fileInfoSection');
+    const downloadButton = document.getElementById('downloadButton');
+    const newPickupButton = document.getElementById('newPickupButton');
+    const limitWarning = document.getElementById('limitWarning');
+
+    // State - Pickup
+    let currentFileInfo = null;
 
     // Initialize
     function init() {
@@ -56,19 +67,24 @@
 
     // Setup event listeners
     function setupEventListeners() {
-        // Drop zone events
+        // Tab switching
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.addEventListener('click', handleTabSwitch);
+        });
+
+        // Dropoff Tab - Drop zone events
         dropZone.addEventListener('click', () => fileInput.click());
         dropZone.addEventListener('dragover', handleDragOver);
         dropZone.addEventListener('dragleave', handleDragLeave);
         dropZone.addEventListener('drop', handleDrop);
 
-        // File input
+        // Dropoff Tab - File input
         fileInput.addEventListener('change', handleFileSelect);
 
-        // Upload button
+        // Dropoff Tab - Upload button
         uploadButton.addEventListener('click', handleUpload);
 
-        // Quick select buttons
+        // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 expirationHours.value = e.target.dataset.hours;
@@ -81,8 +97,24 @@
             });
         });
 
-        // New upload button
+        // Dropoff Tab - New upload button
         newUploadButton.addEventListener('click', resetForm);
+
+        // Pickup Tab - Retrieve button
+        retrieveButton.addEventListener('click', handleRetrieve);
+
+        // Pickup Tab - Enter key on claim code input
+        claimCodeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleRetrieve();
+            }
+        });
+
+        // Pickup Tab - Download button
+        downloadButton.addEventListener('click', handleDownload);
+
+        // Pickup Tab - New pickup button
+        newPickupButton.addEventListener('click', resetPickupForm);
 
         // Theme toggle
         themeToggle.addEventListener('click', toggleTheme);
@@ -182,7 +214,12 @@
                     showResults(response);
                 } else {
                     const error = JSON.parse(xhr.responseText);
-                    alert(`Upload failed: ${error.error}`);
+                    // Show user-friendly error message
+                    let errorMsg = error.error || 'Upload failed';
+                    if (error.code === 'BLOCKED_EXTENSION') {
+                        errorMsg = `⚠️ Security Alert\n\n${error.error}\n\nBlocked file types include executables and scripts for security reasons.`;
+                    }
+                    alert(errorMsg);
                     resetProgress();
                 }
             });
@@ -347,6 +384,125 @@
 
         // Otherwise show full date
         return date.toLocaleString();
+    }
+
+    // ===== TAB SWITCHING =====
+
+    // Handle tab switching
+    function handleTabSwitch(e) {
+        const targetTab = e.target.dataset.tab;
+
+        // Update tab buttons
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        e.target.classList.add('active');
+
+        // Update tab content
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
+        });
+        document.getElementById(targetTab + 'Tab').classList.add('active');
+    }
+
+    // ===== PICKUP TAB HANDLERS =====
+
+    // Handle retrieve file info
+    async function handleRetrieve() {
+        const claimCode = claimCodeInput.value.trim();
+
+        if (!claimCode) {
+            alert('Please enter a claim code');
+            return;
+        }
+
+        // Disable button during request
+        retrieveButton.disabled = true;
+        retrieveButton.textContent = 'Retrieving...';
+
+        try {
+            const response = await fetch(`/api/claim/${claimCode}/info`);
+
+            if (!response.ok) {
+                const error = await response.json();
+                alert(`Error: ${error.error || 'File not found or expired'}`);
+                retrieveButton.disabled = false;
+                retrieveButton.textContent = 'Retrieve File';
+                return;
+            }
+
+            const data = await response.json();
+            currentFileInfo = data;
+            displayFileInfo(data);
+
+        } catch (error) {
+            alert('Failed to retrieve file info: ' + error.message);
+            retrieveButton.disabled = false;
+            retrieveButton.textContent = 'Retrieve File';
+        }
+    }
+
+    // Display file info
+    function displayFileInfo(data) {
+        // Populate file details
+        document.getElementById('pickupFileName').textContent = data.original_filename;
+        document.getElementById('pickupFileSize').textContent = formatFileSize(data.file_size);
+        document.getElementById('pickupMimeType').textContent = data.mime_type;
+        document.getElementById('pickupExpiresAt').textContent = formatDate(data.expires_at);
+
+        // Downloads info
+        const downloadsText = data.max_downloads
+            ? `${data.download_count} / ${data.max_downloads}`
+            : `${data.download_count} / Unlimited`;
+        document.getElementById('pickupDownloads').textContent = downloadsText;
+
+        // Show/hide warning if download limit reached
+        if (data.download_limit_reached) {
+            limitWarning.classList.remove('hidden');
+            downloadButton.disabled = true;
+        } else {
+            limitWarning.classList.add('hidden');
+            downloadButton.disabled = false;
+        }
+
+        // Show file info section
+        fileInfoSection.classList.remove('hidden');
+        retrieveButton.disabled = false;
+        retrieveButton.textContent = 'Retrieve File';
+    }
+
+    // Handle download
+    function handleDownload() {
+        if (!currentFileInfo) return;
+
+        // Create a download link and trigger it
+        // This gives the user control over save location
+        const downloadUrl = currentFileInfo.download_url;
+
+        // Open in new tab - browser will prompt for download location
+        window.open(downloadUrl, '_blank');
+
+        // Alternative: Force download with invisible link
+        // const link = document.createElement('a');
+        // link.href = downloadUrl;
+        // link.download = currentFileInfo.original_filename;
+        // document.body.appendChild(link);
+        // link.click();
+        // document.body.removeChild(link);
+
+        // Show success message
+        setTimeout(() => {
+            alert('Download started! Check your browser\'s download location.');
+        }, 500);
+    }
+
+    // Reset pickup form
+    function resetPickupForm() {
+        claimCodeInput.value = '';
+        fileInfoSection.classList.add('hidden');
+        currentFileInfo = null;
+        retrieveButton.disabled = false;
+        retrieveButton.textContent = 'Retrieve File';
     }
 
     // Initialize when DOM is ready

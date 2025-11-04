@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds all application configuration
@@ -13,20 +14,33 @@ type Config struct {
 	UploadDir              string
 	MaxFileSize            int64
 	DefaultExpirationHours int
+	MaxExpirationHours     int      // Maximum allowed expiration time
 	CleanupIntervalMinutes int
-	PublicURL              string // Optional: Override auto-detected URL for reverse proxy setups
+	PublicURL              string   // Optional: Override auto-detected URL for reverse proxy setups
+	BlockedExtensions      []string // File extensions to block (e.g., .exe, .bat)
+	EncryptionKey          string   // Optional: AES-256 encryption key (64 hex chars)
+	RateLimitUpload        int      // Upload requests per hour per IP
+	RateLimitDownload      int      // Download requests per hour per IP
 }
 
 // Load reads configuration from environment variables with sensible defaults
 func Load() (*Config, error) {
+	// Default blocked extensions for security
+	defaultBlocked := ".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm"
+
 	cfg := &Config{
 		Port:                   getEnv("PORT", "8080"),
 		DBPath:                 getEnv("DB_PATH", "./safeshare.db"),
 		UploadDir:              getEnv("UPLOAD_DIR", "./uploads"),
 		MaxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
 		DefaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
+		MaxExpirationHours:     getEnvInt("MAX_EXPIRATION_HOURS", 168), // 7 days default
 		CleanupIntervalMinutes: getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
-		PublicURL:              getEnv("PUBLIC_URL", ""), // Optional
+		PublicURL:              getEnv("PUBLIC_URL", ""),              // Optional
+		BlockedExtensions:      getEnvList("BLOCKED_EXTENSIONS", defaultBlocked),
+		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""), // Optional
+		RateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),   // 10 uploads per hour per IP
+		RateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100), // 100 downloads per hour per IP
 	}
 
 	// Validate configuration
@@ -59,8 +73,37 @@ func (c *Config) validate() error {
 		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS must be positive, got %d", c.DefaultExpirationHours)
 	}
 
+	if c.MaxExpirationHours <= 0 {
+		return fmt.Errorf("MAX_EXPIRATION_HOURS must be positive, got %d", c.MaxExpirationHours)
+	}
+
+	if c.DefaultExpirationHours > c.MaxExpirationHours {
+		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS (%d) cannot exceed MAX_EXPIRATION_HOURS (%d)", c.DefaultExpirationHours, c.MaxExpirationHours)
+	}
+
 	if c.CleanupIntervalMinutes <= 0 {
 		return fmt.Errorf("CLEANUP_INTERVAL_MINUTES must be positive, got %d", c.CleanupIntervalMinutes)
+	}
+
+	if c.RateLimitUpload <= 0 {
+		return fmt.Errorf("RATE_LIMIT_UPLOAD must be positive, got %d", c.RateLimitUpload)
+	}
+
+	if c.RateLimitDownload <= 0 {
+		return fmt.Errorf("RATE_LIMIT_DOWNLOAD must be positive, got %d", c.RateLimitDownload)
+	}
+
+	// Validate encryption key if provided (must be 64 hex characters = 32 bytes for AES-256)
+	if c.EncryptionKey != "" {
+		if len(c.EncryptionKey) != 64 {
+			return fmt.Errorf("ENCRYPTION_KEY must be exactly 64 hexadecimal characters (32 bytes), got %d", len(c.EncryptionKey))
+		}
+		// Verify it's valid hex
+		for _, ch := range c.EncryptionKey {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				return fmt.Errorf("ENCRYPTION_KEY must contain only hexadecimal characters (0-9, a-f, A-F)")
+			}
+		}
 	}
 
 	return nil
@@ -92,4 +135,28 @@ func getEnvInt64(key string, defaultValue int64) int64 {
 		}
 	}
 	return defaultValue
+}
+
+// getEnvList retrieves a comma-separated list from environment variable
+func getEnvList(key, defaultValue string) []string {
+	value := getEnv(key, defaultValue)
+	if value == "" {
+		return []string{}
+	}
+
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			// Ensure extensions start with a dot
+			if !strings.HasPrefix(trimmed, ".") {
+				trimmed = "." + trimmed
+			}
+			result = append(result, strings.ToLower(trimmed))
+		}
+	}
+
+	return result
 }

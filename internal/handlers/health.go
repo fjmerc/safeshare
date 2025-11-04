@@ -10,6 +10,7 @@ import (
 	"github.com/yourusername/safeshare/internal/config"
 	"github.com/yourusername/safeshare/internal/database"
 	"github.com/yourusername/safeshare/internal/models"
+	"github.com/yourusername/safeshare/internal/utils"
 )
 
 // HealthHandler handles health check requests
@@ -33,12 +34,27 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 			storageUsed = 0
 		}
 
+		// Get disk space information
+		diskInfo, err := utils.GetDiskSpace(cfg.UploadDir)
+		if err != nil {
+			slog.Error("failed to get disk space", "error", err)
+			// Don't fail the health check, just omit disk info
+		}
+
 		// Build response
 		response := models.HealthResponse{
 			Status:           "healthy",
 			UptimeSeconds:    int64(uptime.Seconds()),
 			TotalFiles:       totalFiles,
 			StorageUsedBytes: storageUsed,
+		}
+
+		// Add disk space info if available
+		if diskInfo != nil {
+			response.DiskTotalBytes = diskInfo.TotalBytes
+			response.DiskFreeBytes = diskInfo.FreeBytes
+			response.DiskAvailableBytes = diskInfo.AvailableBytes
+			response.DiskUsedPercent = diskInfo.UsedPercent
 		}
 
 		w.Header().Set("Content-Type", "application/json")

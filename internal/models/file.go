@@ -35,8 +35,12 @@ type ErrorResponse struct {
 
 // HealthResponse is the JSON response for the health check endpoint
 type HealthResponse struct {
-	Status           string `json:"status"`
-	UptimeSeconds    int64  `json:"uptime_seconds"`
-	TotalFiles       int    `json:"total_files"`
-	StorageUsedBytes int64  `json:"storage_used_bytes"`
+	Status            string  `json:"status"`
+	UptimeSeconds     int64   `json:"uptime_seconds"`
+	TotalFiles        int     `json:"total_files"`
+	StorageUsedBytes  int64   `json:"storage_used_bytes"`
+	DiskTotalBytes    uint64  `json:"disk_total_bytes,omitempty"`
+	DiskFreeBytes     uint64  `json:"disk_free_bytes,omitempty"`
+	DiskUsedPercent   float64 `json:"disk_used_percent,omitempty"`
+	DiskAvailableBytes uint64 `json:"disk_available_bytes,omitempty"`
 }

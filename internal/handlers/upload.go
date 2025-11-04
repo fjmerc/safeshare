@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
 	"github.com/yourusername/safeshare/internal/config"
 	"github.com/yourusername/safeshare/internal/database"
@@ -43,9 +44,48 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 		defer file.Close()
 
+		// Validate file extension
+		allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.BlockedExtensions)
+		if err != nil {
+			slog.Error("failed to validate file extension", "error", err)
+			sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
+			return
+		}
+		if !allowed {
+			clientIP := getClientIP(r)
+			slog.Warn("blocked file extension",
+				"filename", header.Filename,
+				"extension", blockedExt,
+				"client_ip", clientIP,
+			)
+			sendError(w,
+				fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
+				"BLOCKED_EXTENSION",
+				http.StatusBadRequest,
+			)
+			return
+		}
+
 		// Validate file size
 		if header.Size > cfg.MaxFileSize {
 			sendError(w, fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.MaxFileSize), "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Check disk space before accepting upload
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, header.Size)
+		if err != nil {
+			slog.Error("failed to check disk space", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+		if !hasSpace {
+			slog.Warn("insufficient disk space",
+				"file_size", header.Size,
+				"client_ip", getClientIP(r),
+				"reason", errMsg,
+			)
+			sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 			return
 		}
 
@@ -57,6 +97,17 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				sendError(w, "Invalid expires_in_hours parameter", "INVALID_PARAMETER", http.StatusBadRequest)
 				return
 			}
+
+			// Validate against maximum expiration time (security: prevent disk space abuse)
+			if int(hours) > cfg.MaxExpirationHours {
+				sendError(w,
+					fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Files that never expire waste disk space.", cfg.MaxExpirationHours),
+					"EXPIRATION_TOO_LONG",
+					http.StatusBadRequest,
+				)
+				return
+			}
+
 			expiresInHours = int(hours * 60) // Convert to minutes for precision
 			if expiresInHours < 1 {
 				expiresInHours = 1 // Minimum 1 minute
@@ -114,19 +165,45 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Save file to disk
-		filePath := filepath.Join(cfg.UploadDir, storedFilename)
-		destFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		// Read file content into memory (safe for configured max file size)
+		fileContent, err := io.ReadAll(file)
 		if err != nil {
-			slog.Error("failed to create file", "path", filePath, "error", err)
+			slog.Error("failed to read uploaded file", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
-		defer destFile.Close()
 
-		written, err := io.Copy(destFile, file)
-		if err != nil {
-			os.Remove(filePath) // Clean up on error
+		// Detect MIME type from file content (don't trust user-provided Content-Type)
+		// This prevents attackers from uploading malicious files with fake MIME types
+		mtype := mimetype.Detect(fileContent)
+		detectedMimeType := mtype.String()
+		slog.Debug("MIME type detected",
+			"filename", header.Filename,
+			"detected", detectedMimeType,
+			"user_provided", header.Header.Get("Content-Type"),
+		)
+
+		// Encrypt if encryption is enabled
+		var dataToWrite []byte
+		var written int64
+		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+			encrypted, err := utils.EncryptFile(fileContent, cfg.EncryptionKey)
+			if err != nil {
+				slog.Error("failed to encrypt file", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			dataToWrite = encrypted
+			written = int64(len(fileContent)) // Use original size for storage accounting
+			slog.Debug("file encrypted", "original_size", len(fileContent), "encrypted_size", len(encrypted))
+		} else {
+			dataToWrite = fileContent
+			written = int64(len(fileContent))
+		}
+
+		// Save file to disk
+		filePath := filepath.Join(cfg.UploadDir, storedFilename)
+		if err := os.WriteFile(filePath, dataToWrite, 0644); err != nil {
 			slog.Error("failed to write file", "path", filePath, "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
@@ -136,13 +213,15 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		clientIP := getClientIP(r)
 
 		// Create database record
+		// Sanitize original filename to prevent log injection and display issues
+		sanitizedFilename := utils.SanitizeFilename(header.Filename)
 		expiresAt := time.Now().Add(time.Duration(expiresInHours) * time.Minute)
 		fileRecord := &models.File{
 			ClaimCode:        claimCode,
-			OriginalFilename: header.Filename,
+			OriginalFilename: sanitizedFilename,
 			StoredFilename:   storedFilename,
 			FileSize:         written,
-			MimeType:         header.Header.Get("Content-Type"),
+			MimeType:         detectedMimeType, // Use detected MIME type, not user-provided
 			ExpiresAt:        expiresAt,
 			MaxDownloads:     maxDownloads,
 			UploaderIP:       clientIP,
@@ -165,7 +244,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			DownloadURL:      downloadURL,
 			MaxDownloads:     maxDownloads,
 			FileSize:         written,
-			OriginalFilename: header.Filename,
+			OriginalFilename: sanitizedFilename,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -175,8 +254,12 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		slog.Info("file uploaded",
 			"claim_code", claimCode,
 			"filename", header.Filename,
+			"file_extension", utils.GetFileExtension(header.Filename),
 			"size", written,
 			"expires_at", expiresAt,
+			"max_downloads", maxDownloads,
+			"client_ip", clientIP,
+			"user_agent", getUserAgent(r),
 		)
 	}
 }
@@ -195,12 +278,3 @@ func sendError(w http.ResponseWriter, message, code string, status int) {
 }
 
 // getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	return r.RemoteAddr
-}

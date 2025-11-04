@@ -18,6 +18,17 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ Health check endpoint
 - ✅ Structured JSON logging
 
+### Enterprise Security 🔒
+- ✅ **Encryption at rest** (AES-256-GCM)
+- ✅ **File extension blacklist** (blocks executables)
+- ✅ **Enhanced audit logging** (compliance-ready)
+- ✅ **Rate limiting** (IP-based DoS protection)
+- ✅ **Filename sanitization** (prevents header injection)
+- ✅ **Security headers** (CSP, X-Frame-Options, etc.)
+- ✅ **MIME type detection** (server-side validation)
+- ✅ **Disk space monitoring** (prevents exhaustion)
+- ✅ **Maximum expiration limits** (prevents abuse)
+
 ### Frontend (Web UI)
 - ✅ Modern, responsive web interface
 - ✅ Drag & drop file upload
@@ -157,7 +168,11 @@ curl http://localhost:8080/health
   "status": "healthy",
   "uptime_seconds": 3600,
   "total_files": 42,
-  "storage_used_bytes": 104857600
+  "storage_used_bytes": 104857600,
+  "disk_total_bytes": 1000000000000,
+  "disk_free_bytes": 500000000000,
+  "disk_available_bytes": 500000000000,
+  "disk_used_percent": 50.0
 }
 ```
 
@@ -174,6 +189,11 @@ Environment variables:
 | `DEFAULT_EXPIRATION_HOURS` | `24` | Default expiration time in hours |
 | `CLEANUP_INTERVAL_MINUTES` | `60` | Cleanup job frequency in minutes |
 | `PUBLIC_URL` | (empty) | Public URL for download links (e.g., `https://share.domain.com`) - **Required for reverse proxies** |
+| `ENCRYPTION_KEY` | (empty) | AES-256 encryption key (64 hex chars) - **Optional, enables encryption at rest** |
+| `BLOCKED_EXTENSIONS` | `.exe,.bat,...` | Comma-separated list of blocked file extensions |
+| `MAX_EXPIRATION_HOURS` | `168` | Maximum allowed expiration time in hours (default: 7 days) |
+| `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
+| `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
 
 ### Reverse Proxy Support
 
@@ -243,13 +263,29 @@ SafeShare Application
 
 ### Security Features
 
-- **Cryptographically secure claim codes**: Uses `crypto/rand` for code generation
-- **Parameterized SQL queries**: Prevents SQL injection attacks
-- **File size limits**: Enforced at application and HTTP levels
+#### Data Protection
+- **Encryption at rest**: AES-256-GCM encryption for stored files (optional)
+- **MIME type detection**: Server-side validation prevents malware masquerading
+- **File extension blacklist**: Blocks dangerous file types (executables, scripts)
 - **Automatic expiration**: Files automatically deleted after expiration
-- **Non-root container user**: Container runs as user ID 1000
-- **Input validation**: All user inputs validated
+- **Maximum expiration limits**: Prevents disk abuse (default: 7 days max)
+
+#### Attack Prevention
+- **Rate limiting**: IP-based protection against DoS attacks (10 uploads/hour, 100 downloads/hour)
+- **Filename sanitization**: Prevents HTTP header injection and path traversal
+- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options prevent XSS/clickjacking
+- **Disk space monitoring**: Pre-upload checks prevent disk exhaustion
+- **Input validation**: All user inputs validated and sanitized
+- **Parameterized SQL queries**: Prevents SQL injection attacks
 - **Timeout enforcement**: HTTP timeouts prevent slowloris attacks
+
+#### Operational Security
+- **Enhanced audit logging**: Comprehensive security event logging for compliance
+- **Cryptographically secure claim codes**: Uses `crypto/rand` for code generation
+- **Non-root container user**: Container runs as user ID 1000
+- **File size limits**: Enforced at application and HTTP levels
+
+**📖 For detailed security configuration, see [SECURITY.md](SECURITY.md)**
 
 ## Example Workflows
 
@@ -382,11 +418,19 @@ Contributions welcome! Please:
 4. Add tests if applicable
 5. Submit a pull request
 
+## Developer Documentation
+
+For developers working on SafeShare:
+- **[CLAUDE.md](CLAUDE.md)**: Architecture overview, build commands, and development guidelines
+- **[FRONTEND.md](FRONTEND.md)**: Frontend customization guide
+- **[REVERSE_PROXY.md](REVERSE_PROXY.md)**: Reverse proxy configuration examples
+- **[SECURITY.md](SECURITY.md)**: Enterprise security features and best practices
+
 ## Support
 
 For issues and questions:
 - GitHub Issues: https://github.com/yourusername/safeshare/issues
-- Documentation: See this README
+- Documentation: See this README and developer docs above
 
 ## Changelog
 

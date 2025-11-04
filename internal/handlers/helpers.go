@@ -47,3 +47,38 @@ func getHost(r *http.Request) string {
 	// Fall back to Host header
 	return r.Host
 }
+
+// getClientIP returns the client IP address respecting reverse proxy headers
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (standard for reverse proxies)
+	// Format: "client, proxy1, proxy2"
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Get the first IP (the original client)
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+
+	// Check X-Real-IP header (used by nginx)
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr (direct connection)
+	// RemoteAddr format is "IP:port", we just want the IP
+	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx != -1 {
+		return r.RemoteAddr[:idx]
+	}
+
+	return r.RemoteAddr
+}
+
+// getUserAgent returns the client User-Agent header
+func getUserAgent(r *http.Request) string {
+	ua := r.Header.Get("User-Agent")
+	if ua == "" {
+		return "unknown"
+	}
+	return ua
+}

@@ -17,113 +17,182 @@
             </button>
         </header>
 
-        <!-- Upload Section -->
-        <section id="uploadSection" class="upload-section">
-            <div class="card">
-                <div id="dropZone" class="drop-zone">
-                    <div class="drop-zone-icon">📁</div>
-                    <h2>Drop file here or click to browse</h2>
-                    <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
-                    <input type="file" id="fileInput" hidden>
-                </div>
+        <!-- Tab Navigation -->
+        <div class="tabs">
+            <button class="tab-button active" data-tab="dropoff">
+                Dropoff
+            </button>
+            <button class="tab-button" data-tab="pickup">
+                Pickup
+            </button>
+        </div>
 
-                <div class="settings">
-                    <h3>Upload Settings</h3>
+        <!-- Dropoff Tab Content -->
+        <section id="dropoffTab" class="tab-content active">
+            <!-- Upload Section -->
+            <div id="uploadSection" class="upload-section">
+                <div class="card">
+                    <div id="dropZone" class="drop-zone">
+                        <div class="drop-zone-icon">📁</div>
+                        <h2>Drop file here or click to browse</h2>
+                        <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
+                        <input type="file" id="fileInput" hidden>
+                    </div>
 
-                    <div class="form-group">
-                        <label for="expirationHours">
-                            Expires in (hours):
-                            <span class="tooltip" data-tooltip="File will be automatically deleted after this time">ℹ️</span>
-                        </label>
-                        <input type="number" id="expirationHours" min="0.1" max="168" step="0.1" value="24">
-                        <div class="quick-select">
-                            <button type="button" class="btn-small" data-hours="1">1h</button>
-                            <button type="button" class="btn-small" data-hours="24">24h</button>
-                            <button type="button" class="btn-small" data-hours="48">48h</button>
-                            <button type="button" class="btn-small" data-hours="168">7d</button>
+                    <div class="settings">
+                        <h3>Upload Settings</h3>
+
+                        <div class="form-group">
+                            <label for="expirationHours">
+                                Expires in (hours):
+                                <span class="tooltip" data-tooltip="File will be automatically deleted after this time">ℹ️</span>
+                            </label>
+                            <input type="number" id="expirationHours" min="0.1" max="168" step="0.1" value="24">
+                            <div class="quick-select">
+                                <button type="button" class="btn-small" data-hours="1">1h</button>
+                                <button type="button" class="btn-small" data-hours="24">24h</button>
+                                <button type="button" class="btn-small" data-hours="48">48h</button>
+                                <button type="button" class="btn-small" data-hours="168">7d</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="maxDownloads">
+                                Max downloads (optional):
+                                <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">ℹ️</span>
+                            </label>
+                            <input type="number" id="maxDownloads" min="1" max="1000" placeholder="Unlimited">
+                            <div class="quick-select">
+                                <button type="button" class="btn-small" data-downloads="1">Once</button>
+                                <button type="button" class="btn-small" data-downloads="5">5x</button>
+                                <button type="button" class="btn-small" data-downloads="10">10x</button>
+                                <button type="button" class="btn-small" data-downloads="">∞</button>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="maxDownloads">
-                            Max downloads (optional):
-                            <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">ℹ️</span>
-                        </label>
-                        <input type="number" id="maxDownloads" min="1" max="1000" placeholder="Unlimited">
-                        <div class="quick-select">
-                            <button type="button" class="btn-small" data-downloads="1">Once</button>
-                            <button type="button" class="btn-small" data-downloads="5">5x</button>
-                            <button type="button" class="btn-small" data-downloads="10">10x</button>
-                            <button type="button" class="btn-small" data-downloads="">∞</button>
+                    <div id="uploadProgress" class="upload-progress hidden">
+                        <div class="progress-bar">
+                            <div id="progressFill" class="progress-fill"></div>
+                        </div>
+                        <p id="progressText">Uploading...</p>
+                    </div>
+
+                    <button id="uploadButton" class="btn-primary" disabled>Upload File</button>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" class="results-section hidden">
+                <div class="card">
+                    <div class="success-header">
+                        <div class="success-icon">✓</div>
+                        <h2>File Uploaded Successfully!</h2>
+                    </div>
+
+                    <div class="result-item">
+                        <label>Claim Code:</label>
+                        <div class="code-display">
+                            <code id="claimCode" class="claim-code"></code>
+                            <button class="btn-copy" data-copy="claimCode" aria-label="Copy claim code">
+                                📋
+                            </button>
                         </div>
                     </div>
-                </div>
 
-                <div id="uploadProgress" class="upload-progress hidden">
-                    <div class="progress-bar">
-                        <div id="progressFill" class="progress-fill"></div>
+                    <div class="result-item">
+                        <label>Download URL:</label>
+                        <div class="url-display">
+                            <input type="text" id="downloadUrl" class="url-input" readonly>
+                            <button class="btn-copy" data-copy="downloadUrl" aria-label="Copy download URL">
+                                📋
+                            </button>
+                        </div>
                     </div>
-                    <p id="progressText">Uploading...</p>
-                </div>
 
-                <button id="uploadButton" class="btn-primary" disabled>Upload File</button>
+                    <div class="result-details">
+                        <div class="detail">
+                            <span class="detail-label">File:</span>
+                            <span id="fileName"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Size:</span>
+                            <span id="fileSize"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Expires:</span>
+                            <span id="expiresAt"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Downloads:</span>
+                            <span id="maxDownloadsInfo"></span>
+                        </div>
+                    </div>
+
+                    <div class="qr-section">
+                        <h3>Share via QR Code</h3>
+                        <div id="qrcode" class="qr-code"></div>
+                        <p class="qr-hint">Scan with mobile device to download</p>
+                    </div>
+
+                    <button id="newUploadButton" class="btn-secondary">Upload Another File</button>
+                </div>
             </div>
         </section>
 
-        <!-- Results Section -->
-        <section id="resultsSection" class="results-section hidden">
+        <!-- Pickup Tab Content -->
+        <section id="pickupTab" class="tab-content">
             <div class="card">
-                <div class="success-header">
-                    <div class="success-icon">✓</div>
-                    <h2>File Uploaded Successfully!</h2>
+                <h2>Enter Claim Code</h2>
+                <p class="subtitle">Enter the claim code you received to download the file</p>
+
+                <div class="form-group">
+                    <label for="claimCodeInput">Claim Code:</label>
+                    <input type="text" id="claimCodeInput" class="claim-code-input" placeholder="Enter claim code" autocomplete="off">
                 </div>
 
-                <div class="result-item">
-                    <label>Claim Code:</label>
-                    <div class="code-display">
-                        <code id="claimCode" class="claim-code"></code>
-                        <button class="btn-copy" data-copy="claimCode" aria-label="Copy claim code">
-                            📋
-                        </button>
-                    </div>
-                </div>
+                <button id="retrieveButton" class="btn-primary">Retrieve File</button>
 
-                <div class="result-item">
-                    <label>Download URL:</label>
-                    <div class="url-display">
-                        <input type="text" id="downloadUrl" class="url-input" readonly>
-                        <button class="btn-copy" data-copy="downloadUrl" aria-label="Copy download URL">
-                            📋
-                        </button>
+                <!-- File Info Display -->
+                <div id="fileInfoSection" class="file-info-section hidden">
+                    <div class="info-header">
+                        <div class="info-icon">📄</div>
+                        <h3>File Ready for Download</h3>
                     </div>
-                </div>
 
-                <div class="result-details">
-                    <div class="detail">
-                        <span class="detail-label">File:</span>
-                        <span id="fileName"></span>
+                    <div class="file-details">
+                        <div class="detail">
+                            <span class="detail-label">Filename:</span>
+                            <span id="pickupFileName" class="detail-value"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Size:</span>
+                            <span id="pickupFileSize" class="detail-value"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Type:</span>
+                            <span id="pickupMimeType" class="detail-value"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Expires:</span>
+                            <span id="pickupExpiresAt" class="detail-value"></span>
+                        </div>
+                        <div class="detail">
+                            <span class="detail-label">Downloads:</span>
+                            <span id="pickupDownloads" class="detail-value"></span>
+                        </div>
                     </div>
-                    <div class="detail">
-                        <span class="detail-label">Size:</span>
-                        <span id="fileSize"></span>
-                    </div>
-                    <div class="detail">
-                        <span class="detail-label">Expires:</span>
-                        <span id="expiresAt"></span>
-                    </div>
-                    <div class="detail">
-                        <span class="detail-label">Downloads:</span>
-                        <span id="maxDownloadsInfo"></span>
-                    </div>
-                </div>
 
-                <div class="qr-section">
-                    <h3>Share via QR Code</h3>
-                    <div id="qrcode" class="qr-code"></div>
-                    <p class="qr-hint">Scan with mobile device to download</p>
-                </div>
+                    <div class="warning-box hidden" id="limitWarning">
+                        ⚠️ This file has reached its download limit and can no longer be downloaded.
+                    </div>
 
-                <button id="newUploadButton" class="btn-secondary">Upload Another File</button>
+                    <button id="downloadButton" class="btn-primary btn-large">
+                        ⬇️ Download File
+                    </button>
+
+                    <button id="newPickupButton" class="btn-secondary">Check Another File</button>
+                </div>
             </div>
         </section>
 
