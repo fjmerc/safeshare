@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  safeshare:
+    image: safeshare:latest
+    container_name: safeshare
+    restart: unless-stopped
+
+    environment:
+      # Optional: Set public URL for download links
+      # If not set, will auto-detect from X-Forwarded-Proto and X-Forwarded-Host headers
+      - PUBLIC_URL=https://share.yourdomain.com
+
+      # Application configuration
+      - PORT=8080
+      - MAX_FILE_SIZE=104857600  # 100MB
+      - DEFAULT_EXPIRATION_HOURS=24
+      - CLEANUP_INTERVAL_MINUTES=60
+
+    volumes:
+      - safeshare-data:/app/data
+      - safeshare-uploads:/app/uploads
+
+    networks:
+      - traefik-network
+
+    labels:
+      # Enable Traefik
+      - "traefik.enable=true"
+
+      # HTTP Router
+      - "traefik.http.routers.safeshare.rule=Host(`share.yourdomain.com`)"
+      - "traefik.http.routers.safeshare.entrypoints=websecure"
+      - "traefik.http.routers.safeshare.tls=true"
+      - "traefik.http.routers.safeshare.tls.certresolver=letsencrypt"
+
+      # Service
+      - "traefik.http.services.safeshare.loadbalancer.server.port=8080"
+
+      # Middleware - Pass forwarded headers
+      - "traefik.http.middlewares.safeshare-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.routers.safeshare.middlewares=safeshare-headers"
+
+volumes:
+  safeshare-data:
+  safeshare-uploads:
+
+networks:
+  traefik-network:
+    external: true

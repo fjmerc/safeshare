@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeShare - Secure Temporary File Sharing</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🔒 SafeShare</h1>
+            <p class="subtitle">Secure temporary file sharing with automatic expiration</p>
+            <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode">
+                <span class="theme-icon">🌙</span>
+            </button>
+        </header>
+
+        <!-- Upload Section -->
+        <section id="uploadSection" class="upload-section">
+            <div class="card">
+                <div id="dropZone" class="drop-zone">
+                    <div class="drop-zone-icon">📁</div>
+                    <h2>Drop file here or click to browse</h2>
+                    <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
+                    <input type="file" id="fileInput" hidden>
+                </div>
+
+                <div class="settings">
+                    <h3>Upload Settings</h3>
+
+                    <div class="form-group">
+                        <label for="expirationHours">
+                            Expires in (hours):
+                            <span class="tooltip" data-tooltip="File will be automatically deleted after this time">ℹ️</span>
+                        </label>
+                        <input type="number" id="expirationHours" min="0.1" max="168" step="0.1" value="24">
+                        <div class="quick-select">
+                            <button type="button" class="btn-small" data-hours="1">1h</button>
+                            <button type="button" class="btn-small" data-hours="24">24h</button>
+                            <button type="button" class="btn-small" data-hours="48">48h</button>
+                            <button type="button" class="btn-small" data-hours="168">7d</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="maxDownloads">
+                            Max downloads (optional):
+                            <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">ℹ️</span>
+                        </label>
+                        <input type="number" id="maxDownloads" min="1" max="1000" placeholder="Unlimited">
+                        <div class="quick-select">
+                            <button type="button" class="btn-small" data-downloads="1">Once</button>
+                            <button type="button" class="btn-small" data-downloads="5">5x</button>
+                            <button type="button" class="btn-small" data-downloads="10">10x</button>
+                            <button type="button" class="btn-small" data-downloads="">∞</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="uploadProgress" class="upload-progress hidden">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                    <p id="progressText">Uploading...</p>
+                </div>
+
+                <button id="uploadButton" class="btn-primary" disabled>Upload File</button>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section id="resultsSection" class="results-section hidden">
+            <div class="card">
+                <div class="success-header">
+                    <div class="success-icon">✓</div>
+                    <h2>File Uploaded Successfully!</h2>
+                </div>
+
+                <div class="result-item">
+                    <label>Claim Code:</label>
+                    <div class="code-display">
+                        <code id="claimCode" class="claim-code"></code>
+                        <button class="btn-copy" data-copy="claimCode" aria-label="Copy claim code">
+                            📋
+                        </button>
+                    </div>
+                </div>
+
+                <div class="result-item">
+                    <label>Download URL:</label>
+                    <div class="url-display">
+                        <input type="text" id="downloadUrl" class="url-input" readonly>
+                        <button class="btn-copy" data-copy="downloadUrl" aria-label="Copy download URL">
+                            📋
+                        </button>
+                    </div>
+                </div>
+
+                <div class="result-details">
+                    <div class="detail">
+                        <span class="detail-label">File:</span>
+                        <span id="fileName"></span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">Size:</span>
+                        <span id="fileSize"></span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">Expires:</span>
+                        <span id="expiresAt"></span>
+                    </div>
+                    <div class="detail">
+                        <span class="detail-label">Downloads:</span>
+                        <span id="maxDownloadsInfo"></span>
+                    </div>
+                </div>
+
+                <div class="qr-section">
+                    <h3>Share via QR Code</h3>
+                    <div id="qrcode" class="qr-code"></div>
+                    <p class="qr-hint">Scan with mobile device to download</p>
+                </div>
+
+                <button id="newUploadButton" class="btn-secondary">Upload Another File</button>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>
+                Files are automatically deleted after expiration. No accounts required.
+                <a href="https://github.com/yourusername/safeshare" target="_blank" rel="noopener">GitHub</a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- QR Code Library -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="/assets/app.js"></script>
+</body>
+</html>

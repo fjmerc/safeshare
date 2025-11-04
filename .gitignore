@@ -1,0 +1,4 @@
+uploads/
+*.db
+*.db-journal
+safeshare

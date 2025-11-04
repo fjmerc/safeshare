@@ -1,0 +1,10 @@
+.git
+.gitignore
+*.md
+uploads/
+*.db
+*.db-journal
+safeshare
+Dockerfile
+.dockerignore
+.claude

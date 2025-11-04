@@ -1,0 +1,358 @@
+// SafeShare Frontend Application
+(function() {
+    'use strict';
+
+    // State
+    let selectedFile = null;
+    let maxFileSizeBytes = 104857600; // 100MB default
+
+    // DOM Elements
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const uploadButton = document.getElementById('uploadButton');
+    const expirationHours = document.getElementById('expirationHours');
+    const maxDownloads = document.getElementById('maxDownloads');
+    const uploadSection = document.getElementById('uploadSection');
+    const resultsSection = document.getElementById('resultsSection');
+    const uploadProgress = document.getElementById('uploadProgress');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    const newUploadButton = document.getElementById('newUploadButton');
+    const themeToggle = document.getElementById('themeToggle');
+
+    // Initialize
+    function init() {
+        loadTheme();
+        fetchMaxFileSize();
+        setupEventListeners();
+    }
+
+    // Load theme preference
+    function loadTheme() {
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        updateThemeIcon(savedTheme);
+    }
+
+    // Update theme icon
+    function updateThemeIcon(theme) {
+        const icon = themeToggle.querySelector('.theme-icon');
+        icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+    }
+
+    // Fetch max file size from health endpoint
+    async function fetchMaxFileSize() {
+        try {
+            // Try to get config from server
+            const response = await fetch('/health');
+            if (response.ok) {
+                // Max file size is configured server-side, use default for display
+                document.getElementById('maxFileSize').textContent = formatFileSize(maxFileSizeBytes);
+            }
+        } catch (error) {
+            console.log('Using default max file size');
+        }
+    }
+
+    // Setup event listeners
+    function setupEventListeners() {
+        // Drop zone events
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', handleDragOver);
+        dropZone.addEventListener('dragleave', handleDragLeave);
+        dropZone.addEventListener('drop', handleDrop);
+
+        // File input
+        fileInput.addEventListener('change', handleFileSelect);
+
+        // Upload button
+        uploadButton.addEventListener('click', handleUpload);
+
+        // Quick select buttons
+        document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                expirationHours.value = e.target.dataset.hours;
+            });
+        });
+
+        document.querySelectorAll('.btn-small[data-downloads]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                maxDownloads.value = e.target.dataset.downloads;
+            });
+        });
+
+        // New upload button
+        newUploadButton.addEventListener('click', resetForm);
+
+        // Theme toggle
+        themeToggle.addEventListener('click', toggleTheme);
+
+        // Copy buttons
+        document.querySelectorAll('.btn-copy').forEach(btn => {
+            btn.addEventListener('click', handleCopy);
+        });
+    }
+
+    // Handle drag over
+    function handleDragOver(e) {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    }
+
+    // Handle drag leave
+    function handleDragLeave(e) {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+    }
+
+    // Handle drop
+    function handleDrop(e) {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            selectedFile = files[0];
+            updateDropZone();
+        }
+    }
+
+    // Handle file select
+    function handleFileSelect(e) {
+        if (e.target.files.length > 0) {
+            selectedFile = e.target.files[0];
+            updateDropZone();
+        }
+    }
+
+    // Update drop zone display
+    function updateDropZone() {
+        if (selectedFile) {
+            // Validate file size
+            if (selectedFile.size > maxFileSizeBytes) {
+                alert(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`);
+                selectedFile = null;
+                uploadButton.disabled = true;
+                return;
+            }
+
+            dropZone.querySelector('h2').textContent = selectedFile.name;
+            dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
+            uploadButton.disabled = false;
+        }
+    }
+
+    // Handle upload
+    async function handleUpload() {
+        if (!selectedFile) return;
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        const expiresIn = parseFloat(expirationHours.value);
+        if (expiresIn && expiresIn > 0) {
+            formData.append('expires_in_hours', expiresIn);
+        }
+
+        const maxDl = parseInt(maxDownloads.value);
+        if (maxDl && maxDl > 0) {
+            formData.append('max_downloads', maxDl);
+        }
+
+        // Show progress
+        uploadProgress.classList.remove('hidden');
+        uploadButton.disabled = true;
+
+        try {
+            const xhr = new XMLHttpRequest();
+
+            // Progress event
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percent = (e.loaded / e.total) * 100;
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = `Uploading... ${Math.round(percent)}%`;
+                }
+            });
+
+            // Load event
+            xhr.addEventListener('load', () => {
+                if (xhr.status === 201) {
+                    const response = JSON.parse(xhr.responseText);
+                    showResults(response);
+                } else {
+                    const error = JSON.parse(xhr.responseText);
+                    alert(`Upload failed: ${error.error}`);
+                    resetProgress();
+                }
+            });
+
+            // Error event
+            xhr.addEventListener('error', () => {
+                alert('Upload failed. Please try again.');
+                resetProgress();
+            });
+
+            xhr.open('POST', '/api/upload');
+            xhr.send(formData);
+
+        } catch (error) {
+            alert('Upload failed: ' + error.message);
+            resetProgress();
+        }
+    }
+
+    // Show results
+    function showResults(data) {
+        try {
+            // Populate results
+            document.getElementById('claimCode').textContent = data.claim_code;
+            document.getElementById('downloadUrl').value = data.download_url;
+            document.getElementById('fileName').textContent = data.original_filename;
+            document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
+            document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
+            document.getElementById('maxDownloadsInfo').textContent = data.max_downloads || 'Unlimited';
+
+            // Generate QR code (optional - if library loaded)
+            const qrcodeDiv = document.getElementById('qrcode');
+            qrcodeDiv.innerHTML = ''; // Clear previous
+
+            if (typeof QRCode !== 'undefined') {
+                try {
+                    new QRCode(qrcodeDiv, {
+                        text: data.download_url,
+                        width: 200,
+                        height: 200,
+                        colorDark: '#000000',
+                        colorLight: '#ffffff',
+                        correctLevel: QRCode.CorrectLevel.H
+                    });
+                } catch (qrError) {
+                    console.error('QR Code generation failed:', qrError);
+                    qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable</p>';
+                }
+            } else {
+                console.warn('QRCode library not loaded');
+                qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable (library not loaded)</p>';
+            }
+
+            // Hide upload section, show results
+            uploadSection.classList.add('hidden');
+            resultsSection.classList.remove('hidden');
+        } catch (error) {
+            console.error('Error showing results:', error);
+            alert('Upload successful but error displaying results. Claim code: ' + data.claim_code);
+        }
+    }
+
+    // Reset form
+    function resetForm() {
+        selectedFile = null;
+        fileInput.value = '';
+        uploadButton.disabled = true;
+        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
+        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        expirationHours.value = 24;
+        maxDownloads.value = '';
+
+        resetProgress();
+
+        resultsSection.classList.add('hidden');
+        uploadSection.classList.remove('hidden');
+    }
+
+    // Reset progress
+    function resetProgress() {
+        uploadProgress.classList.add('hidden');
+        progressFill.style.width = '0%';
+        progressText.textContent = 'Uploading...';
+        uploadButton.disabled = false;
+    }
+
+    // Toggle theme
+    function toggleTheme() {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        updateThemeIcon(newTheme);
+    }
+
+    // Handle copy to clipboard
+    async function handleCopy(e) {
+        const copyId = e.currentTarget.dataset.copy;
+        const element = document.getElementById(copyId);
+        const text = element.tagName === 'INPUT' ? element.value : element.textContent;
+
+        try {
+            await navigator.clipboard.writeText(text);
+
+            // Visual feedback
+            const btn = e.currentTarget;
+            const originalText = btn.textContent;
+            btn.textContent = '✓';
+            btn.classList.add('copied');
+
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove('copied');
+            }, 2000);
+        } catch (error) {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            alert('Copied to clipboard!');
+        }
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+        return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Format date
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diff = date - now;
+
+        // Show relative time if within 7 days
+        if (diff > 0 && diff < 7 * 24 * 60 * 60 * 1000) {
+            const hours = Math.floor(diff / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+            if (hours > 24) {
+                const days = Math.floor(hours / 24);
+                return `in ${days} day${days > 1 ? 's' : ''}`;
+            } else if (hours > 0) {
+                return `in ${hours} hour${hours > 1 ? 's' : ''} ${minutes} min`;
+            } else {
+                return `in ${minutes} minute${minutes > 1 ? 's' : ''}`;
+            }
+        }
+
+        // Otherwise show full date
+        return date.toLocaleString();
+    }
+
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
