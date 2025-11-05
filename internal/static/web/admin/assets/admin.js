@@ -253,29 +253,109 @@ async function unblockIP(ipAddress) {
     }
 }
 
-// Update quota
-async function updateQuota(quotaGB) {
+// Update storage settings
+async function updateStorageSettings(formData) {
     try {
-        const response = await fetch('/admin/api/quota/update', {
+        const response = await fetch('/admin/api/settings/storage', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'X-CSRF-Token': getCSRFToken()
             },
-            body: new URLSearchParams({ quota_gb: quotaGB })
+            body: new URLSearchParams(formData)
         });
 
         const data = await response.json();
 
         if (response.ok && data.success) {
-            showSuccess(`Quota updated from ${data.old_quota_gb}GB to ${data.new_quota_gb}GB`);
+            showSuccess(data.message);
             loadDashboardData(currentPage, searchTerm);
         } else {
-            showError(data.message || 'Failed to update quota');
+            showError(data.message || 'Failed to update storage settings');
         }
     } catch (error) {
-        console.error('Error updating quota:', error);
-        showError('Failed to update quota');
+        console.error('Error updating storage settings:', error);
+        showError('Failed to update storage settings');
+    }
+}
+
+// Update security settings
+async function updateSecuritySettings(formData) {
+    try {
+        const response = await fetch('/admin/api/settings/security', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: new URLSearchParams(formData)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showSuccess(data.message);
+            loadDashboardData(currentPage, searchTerm);
+        } else {
+            showError(data.message || 'Failed to update security settings');
+        }
+    } catch (error) {
+        console.error('Error updating security settings:', error);
+        showError('Failed to update security settings');
+    }
+}
+
+// Change admin password
+async function changePassword(formData) {
+    try {
+        const response = await fetch('/admin/api/settings/password', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: new URLSearchParams(formData)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showSuccess(data.message);
+            // Clear password form
+            document.getElementById('passwordForm').reset();
+        } else {
+            showError(data.message || 'Failed to change password');
+        }
+    } catch (error) {
+        console.error('Error changing password:', error);
+        showError('Failed to change password');
+    }
+}
+
+// Load current config values into settings forms
+async function loadConfigValues() {
+    try {
+        const response = await fetch('/admin/api/config');
+
+        if (!response.ok) {
+            console.error('Failed to load config values');
+            return;
+        }
+
+        const data = await response.json();
+
+        // Populate storage settings
+        document.getElementById('quotaGB').value = data.quota_limit_gb || 0;
+        document.getElementById('maxFileSizeMB').value = Math.round(data.max_file_size_bytes / (1024 * 1024)) || 100;
+        document.getElementById('defaultExpirationHours').value = data.default_expiration_hours || 24;
+        document.getElementById('maxExpirationHours').value = data.max_expiration_hours || 168;
+
+        // Populate security settings
+        document.getElementById('rateLimitUpload').value = data.rate_limit_upload || 10;
+        document.getElementById('rateLimitDownload').value = data.rate_limit_download || 100;
+        document.getElementById('blockedExtensions').value = (data.blocked_extensions || []).join(',');
+    } catch (error) {
+        console.error('Error loading config values:', error);
     }
 }
 
@@ -396,13 +476,37 @@ document.addEventListener('DOMContentLoaded', () => {
         e.target.reset();
     });
 
-    // Quota form
-    document.getElementById('quotaForm')?.addEventListener('submit', (e) => {
+    // Storage settings form
+    document.getElementById('storageForm')?.addEventListener('submit', (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        updateQuota(formData.get('quota_gb'));
+        updateStorageSettings(formData);
+    });
+
+    // Security settings form
+    document.getElementById('securityForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        updateSecuritySettings(formData);
+    });
+
+    // Password change form
+    document.getElementById('passwordForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        changePassword(formData);
+    });
+
+    // Load config values when Settings tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'settings') {
+                loadConfigValues();
+            }
+        });
     });
 
     // Load initial data
     loadDashboardData();
+    loadConfigValues(); // Load config values for settings tab
 });

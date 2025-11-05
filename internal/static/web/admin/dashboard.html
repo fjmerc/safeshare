@@ -110,14 +110,71 @@
         <!-- Settings Tab -->
         <div id="settingsTab" class="tab-content">
             <div class="settings-section">
-                <h2>Storage Quota Management</h2>
-                <form id="quotaForm" class="settings-form">
+                <h2>Storage Management</h2>
+                <form id="storageForm" class="settings-form">
                     <div class="form-group">
                         <label for="quotaGB">Storage Quota (GB)</label>
                         <input type="number" id="quotaGB" name="quota_gb" min="0" required>
                         <small>Set to 0 for unlimited storage</small>
                     </div>
-                    <button type="submit" class="btn-primary">Update Quota</button>
+                    <div class="form-group">
+                        <label for="maxFileSizeMB">Max File Size (MB)</label>
+                        <input type="number" id="maxFileSizeMB" name="max_file_size_mb" min="1" required>
+                        <small>Maximum allowed file size for uploads</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="defaultExpirationHours">Default Expiration (hours)</label>
+                        <input type="number" id="defaultExpirationHours" name="default_expiration_hours" min="1" required>
+                        <small>Default time before files expire</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="maxExpirationHours">Max Expiration (hours)</label>
+                        <input type="number" id="maxExpirationHours" name="max_expiration_hours" min="1" required>
+                        <small>Maximum allowed expiration time</small>
+                    </div>
+                    <button type="submit" class="btn-primary">Update Storage Settings</button>
+                </form>
+            </div>
+
+            <div class="settings-section">
+                <h2>Security Controls</h2>
+                <form id="securityForm" class="settings-form">
+                    <div class="form-group">
+                        <label for="rateLimitUpload">Upload Rate Limit (per hour)</label>
+                        <input type="number" id="rateLimitUpload" name="rate_limit_upload" min="1" required>
+                        <small>Maximum upload requests per hour per IP</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="rateLimitDownload">Download Rate Limit (per hour)</label>
+                        <input type="number" id="rateLimitDownload" name="rate_limit_download" min="1" required>
+                        <small>Maximum download requests per hour per IP</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="blockedExtensions">Blocked File Extensions</label>
+                        <input type="text" id="blockedExtensions" name="blocked_extensions" required>
+                        <small>Comma-separated list (e.g., .exe,.bat,.sh)</small>
+                    </div>
+                    <button type="submit" class="btn-primary">Update Security Settings</button>
+                </form>
+            </div>
+
+            <div class="settings-section">
+                <h2>Admin Account</h2>
+                <form id="passwordForm" class="settings-form">
+                    <div class="form-group">
+                        <label for="currentPassword">Current Password</label>
+                        <input type="password" id="currentPassword" name="current_password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">New Password</label>
+                        <input type="password" id="newPassword" name="new_password" minlength="8" required>
+                        <small>Minimum 8 characters</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm New Password</label>
+                        <input type="password" id="confirmPassword" name="confirm_password" minlength="8" required>
+                    </div>
+                    <button type="submit" class="btn-primary">Change Password</button>
                 </form>
             </div>
 

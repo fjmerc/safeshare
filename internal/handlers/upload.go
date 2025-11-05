@@ -30,8 +30,8 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Parse multipart form with size limit
-		r.Body = http.MaxBytesReader(w, r.Body, cfg.MaxFileSize)
-		if err := r.ParseMultipartForm(cfg.MaxFileSize); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
+		if err := r.ParseMultipartForm(cfg.GetMaxFileSize()); err != nil {
 			sendError(w, "File too large or invalid form data", "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
 			return
 		}
@@ -45,7 +45,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		defer file.Close()
 
 		// Validate file extension
-		allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.BlockedExtensions)
+		allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
 		if err != nil {
 			slog.Error("failed to validate file extension", "error", err)
 			sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
@@ -67,8 +67,8 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Validate file size
-		if header.Size > cfg.MaxFileSize {
-			sendError(w, fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.MaxFileSize), "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
+		if header.Size > cfg.GetMaxFileSize() {
+			sendError(w, fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.GetMaxFileSize()), "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
 			return
 		}
 
@@ -90,7 +90,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check quota if configured (0 = unlimited)
-		if cfg.QuotaLimitGB > 0 {
+		if cfg.GetQuotaLimitGB() > 0 {
 			currentUsage, err := database.GetTotalUsage(db)
 			if err != nil {
 				slog.Error("failed to get current storage usage", "error", err)
@@ -98,17 +98,17 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				return
 			}
 
-			quotaBytes := cfg.QuotaLimitGB * 1024 * 1024 * 1024 // Convert GB to bytes
+			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024 // Convert GB to bytes
 			if currentUsage+header.Size > quotaBytes {
 				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
 				slog.Warn("quota exceeded",
 					"file_size", header.Size,
 					"current_usage_gb", quotaUsedGB,
-					"quota_limit_gb", cfg.QuotaLimitGB,
+					"quota_limit_gb", cfg.GetQuotaLimitGB(),
 					"client_ip", getClientIP(r),
 				)
 				sendError(w,
-					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.QuotaLimitGB),
+					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
 					"QUOTA_EXCEEDED",
 					http.StatusInsufficientStorage,
 				)
@@ -117,7 +117,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Parse optional parameters
-		expiresInHours := cfg.DefaultExpirationHours
+		expiresInHours := cfg.GetDefaultExpirationHours()
 		if hoursStr := r.FormValue("expires_in_hours"); hoursStr != "" {
 			hours, err := strconv.ParseFloat(hoursStr, 64)
 			if err != nil || hours <= 0 {
@@ -126,9 +126,9 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 
 			// Validate against maximum expiration time (security: prevent disk space abuse)
-			if int(hours) > cfg.MaxExpirationHours {
+			if int(hours) > cfg.GetMaxExpirationHours() {
 				sendError(w,
-					fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Files that never expire waste disk space.", cfg.MaxExpirationHours),
+					fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Files that never expire waste disk space.", cfg.GetMaxExpirationHours()),
 					"EXPIRATION_TOO_LONG",
 					http.StatusBadRequest,
 				)
@@ -140,7 +140,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				expiresInHours = 1 // Minimum 1 minute
 			}
 		} else {
-			expiresInHours = cfg.DefaultExpirationHours * 60 // Convert to minutes
+			expiresInHours = cfg.GetDefaultExpirationHours() * 60 // Convert to minutes
 		}
 
 		var maxDownloads *int

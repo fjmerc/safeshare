@@ -58,8 +58,8 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 		}
 
 		// Add quota info if configured
-		if cfg.QuotaLimitGB > 0 {
-			response.QuotaLimitBytes = cfg.QuotaLimitGB * 1024 * 1024 * 1024
+		if cfg.GetQuotaLimitGB() > 0 {
+			response.QuotaLimitBytes = cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 			if response.QuotaLimitBytes > 0 {
 				response.QuotaUsedPercent = (float64(storageUsed) / float64(response.QuotaLimitBytes)) * 100
 			}

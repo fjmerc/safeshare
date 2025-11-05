@@ -5,26 +5,32 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-// Config holds all application configuration
+// Config holds all application configuration with thread-safe access
 type Config struct {
+	mu sync.RWMutex // Protects mutable fields
+
+	// Immutable fields (set at startup only)
 	Port                   string
 	DBPath                 string
 	UploadDir              string
-	MaxFileSize            int64
-	DefaultExpirationHours int
-	MaxExpirationHours     int      // Maximum allowed expiration time
 	CleanupIntervalMinutes int
-	PublicURL              string   // Optional: Override auto-detected URL for reverse proxy setups
-	BlockedExtensions      []string // File extensions to block (e.g., .exe, .bat)
-	EncryptionKey          string   // Optional: AES-256 encryption key (64 hex chars)
-	RateLimitUpload        int      // Upload requests per hour per IP
-	RateLimitDownload      int      // Download requests per hour per IP
-	QuotaLimitGB           int64    // Maximum total storage in GB (0 = unlimited)
-	AdminUsername          string   // Admin username for dashboard access
-	AdminPassword          string   // Admin password (stored as bcrypt hash internally)
-	SessionExpiryHours     int      // Admin session expiry time in hours (default: 24)
+	PublicURL              string
+	EncryptionKey          string
+	AdminUsername          string
+	SessionExpiryHours     int
+
+	// Mutable fields (can be updated at runtime via admin dashboard)
+	maxFileSize            int64
+	defaultExpirationHours int
+	maxExpirationHours     int
+	blockedExtensions      []string
+	rateLimitUpload        int
+	rateLimitDownload      int
+	quotaLimitGB           int64
+	adminPassword          string // bcrypt hash
 }
 
 // Load reads configuration from environment variables with sensible defaults
@@ -33,22 +39,25 @@ func Load() (*Config, error) {
 	defaultBlocked := ".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm"
 
 	cfg := &Config{
+		// Immutable fields
 		Port:                   getEnv("PORT", "8080"),
 		DBPath:                 getEnv("DB_PATH", "./safeshare.db"),
 		UploadDir:              getEnv("UPLOAD_DIR", "./uploads"),
-		MaxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
-		DefaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
-		MaxExpirationHours:     getEnvInt("MAX_EXPIRATION_HOURS", 168), // 7 days default
 		CleanupIntervalMinutes: getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
-		PublicURL:              getEnv("PUBLIC_URL", ""),              // Optional
-		BlockedExtensions:      getEnvList("BLOCKED_EXTENSIONS", defaultBlocked),
-		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""), // Optional
-		RateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),   // 10 uploads per hour per IP
-		RateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100), // 100 downloads per hour per IP
-		QuotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0), // 0 = unlimited (default)
-		AdminUsername:          getEnv("ADMIN_USERNAME", ""),     // Required for admin access
-		AdminPassword:          getEnv("ADMIN_PASSWORD", ""),     // Required for admin access
-		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24), // 24 hours default
+		PublicURL:              getEnv("PUBLIC_URL", ""),
+		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""),
+		AdminUsername:          getEnv("ADMIN_USERNAME", ""),
+		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24),
+
+		// Mutable fields (lowercase, accessed via getters/setters)
+		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
+		defaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
+		maxExpirationHours:     getEnvInt("MAX_EXPIRATION_HOURS", 168), // 7 days default
+		blockedExtensions:      getEnvList("BLOCKED_EXTENSIONS", defaultBlocked),
+		rateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),        // 10 uploads per hour per IP
+		rateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100),     // 100 downloads per hour per IP
+		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),          // 0 = unlimited (default)
+		adminPassword:          getEnv("ADMIN_PASSWORD", ""),              // Required for admin access
 	}
 
 	// Validate configuration
@@ -57,6 +66,158 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Getter methods for mutable fields (thread-safe reads)
+
+func (c *Config) GetMaxFileSize() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maxFileSize
+}
+
+func (c *Config) GetDefaultExpirationHours() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.defaultExpirationHours
+}
+
+func (c *Config) GetMaxExpirationHours() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maxExpirationHours
+}
+
+func (c *Config) GetBlockedExtensions() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	// Return a copy to prevent external modification
+	result := make([]string, len(c.blockedExtensions))
+	copy(result, c.blockedExtensions)
+	return result
+}
+
+func (c *Config) GetRateLimitUpload() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rateLimitUpload
+}
+
+func (c *Config) GetRateLimitDownload() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rateLimitDownload
+}
+
+func (c *Config) GetQuotaLimitGB() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.quotaLimitGB
+}
+
+func (c *Config) GetAdminPassword() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.adminPassword
+}
+
+// Setter methods for mutable fields (thread-safe writes with validation)
+
+func (c *Config) SetMaxFileSize(size int64) error {
+	if size <= 0 {
+		return fmt.Errorf("max file size must be positive, got %d", size)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxFileSize = size
+	return nil
+}
+
+func (c *Config) SetDefaultExpirationHours(hours int) error {
+	if hours <= 0 {
+		return fmt.Errorf("default expiration hours must be positive, got %d", hours)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if hours > c.maxExpirationHours {
+		return fmt.Errorf("default expiration (%d) cannot exceed max expiration (%d)", hours, c.maxExpirationHours)
+	}
+	c.defaultExpirationHours = hours
+	return nil
+}
+
+func (c *Config) SetMaxExpirationHours(hours int) error {
+	if hours <= 0 {
+		return fmt.Errorf("max expiration hours must be positive, got %d", hours)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.defaultExpirationHours > hours {
+		return fmt.Errorf("max expiration (%d) cannot be less than default expiration (%d)", hours, c.defaultExpirationHours)
+	}
+	c.maxExpirationHours = hours
+	return nil
+}
+
+func (c *Config) SetBlockedExtensions(extensions []string) error {
+	if extensions == nil {
+		return fmt.Errorf("blocked extensions cannot be nil")
+	}
+	// Normalize extensions (add dot prefix, lowercase)
+	normalized := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		trimmed := strings.TrimSpace(ext)
+		if trimmed != "" {
+			if !strings.HasPrefix(trimmed, ".") {
+				trimmed = "." + trimmed
+			}
+			normalized = append(normalized, strings.ToLower(trimmed))
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.blockedExtensions = normalized
+	return nil
+}
+
+func (c *Config) SetRateLimitUpload(limit int) error {
+	if limit <= 0 {
+		return fmt.Errorf("upload rate limit must be positive, got %d", limit)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rateLimitUpload = limit
+	return nil
+}
+
+func (c *Config) SetRateLimitDownload(limit int) error {
+	if limit <= 0 {
+		return fmt.Errorf("download rate limit must be positive, got %d", limit)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.rateLimitDownload = limit
+	return nil
+}
+
+func (c *Config) SetQuotaLimitGB(quota int64) error {
+	if quota < 0 {
+		return fmt.Errorf("quota limit must be 0 (unlimited) or positive, got %d", quota)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.quotaLimitGB = quota
+	return nil
+}
+
+func (c *Config) SetAdminPassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("admin password must be at least 8 characters")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.adminPassword = password
+	return nil
 }
 
 // validate ensures configuration values are sensible
@@ -73,36 +234,36 @@ func (c *Config) validate() error {
 		return fmt.Errorf("UPLOAD_DIR cannot be empty")
 	}
 
-	if c.MaxFileSize <= 0 {
-		return fmt.Errorf("MAX_FILE_SIZE must be positive, got %d", c.MaxFileSize)
+	if c.maxFileSize <= 0 {
+		return fmt.Errorf("MAX_FILE_SIZE must be positive, got %d", c.maxFileSize)
 	}
 
-	if c.DefaultExpirationHours <= 0 {
-		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS must be positive, got %d", c.DefaultExpirationHours)
+	if c.defaultExpirationHours <= 0 {
+		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS must be positive, got %d", c.defaultExpirationHours)
 	}
 
-	if c.MaxExpirationHours <= 0 {
-		return fmt.Errorf("MAX_EXPIRATION_HOURS must be positive, got %d", c.MaxExpirationHours)
+	if c.maxExpirationHours <= 0 {
+		return fmt.Errorf("MAX_EXPIRATION_HOURS must be positive, got %d", c.maxExpirationHours)
 	}
 
-	if c.DefaultExpirationHours > c.MaxExpirationHours {
-		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS (%d) cannot exceed MAX_EXPIRATION_HOURS (%d)", c.DefaultExpirationHours, c.MaxExpirationHours)
+	if c.defaultExpirationHours > c.maxExpirationHours {
+		return fmt.Errorf("DEFAULT_EXPIRATION_HOURS (%d) cannot exceed MAX_EXPIRATION_HOURS (%d)", c.defaultExpirationHours, c.maxExpirationHours)
 	}
 
 	if c.CleanupIntervalMinutes <= 0 {
 		return fmt.Errorf("CLEANUP_INTERVAL_MINUTES must be positive, got %d", c.CleanupIntervalMinutes)
 	}
 
-	if c.RateLimitUpload <= 0 {
-		return fmt.Errorf("RATE_LIMIT_UPLOAD must be positive, got %d", c.RateLimitUpload)
+	if c.rateLimitUpload <= 0 {
+		return fmt.Errorf("RATE_LIMIT_UPLOAD must be positive, got %d", c.rateLimitUpload)
 	}
 
-	if c.RateLimitDownload <= 0 {
-		return fmt.Errorf("RATE_LIMIT_DOWNLOAD must be positive, got %d", c.RateLimitDownload)
+	if c.rateLimitDownload <= 0 {
+		return fmt.Errorf("RATE_LIMIT_DOWNLOAD must be positive, got %d", c.rateLimitDownload)
 	}
 
-	if c.QuotaLimitGB < 0 {
-		return fmt.Errorf("QUOTA_LIMIT_GB must be 0 (unlimited) or positive, got %d", c.QuotaLimitGB)
+	if c.quotaLimitGB < 0 {
+		return fmt.Errorf("QUOTA_LIMIT_GB must be 0 (unlimited) or positive, got %d", c.quotaLimitGB)
 	}
 
 	if c.SessionExpiryHours <= 0 {
@@ -110,7 +271,7 @@ func (c *Config) validate() error {
 	}
 
 	// Admin credentials validation - both or neither must be provided
-	if (c.AdminUsername == "" && c.AdminPassword != "") || (c.AdminUsername != "" && c.AdminPassword == "") {
+	if (c.AdminUsername == "" && c.adminPassword != "") || (c.AdminUsername != "" && c.adminPassword == "") {
 		return fmt.Errorf("both ADMIN_USERNAME and ADMIN_PASSWORD must be set to enable admin dashboard")
 	}
 
@@ -118,7 +279,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("ADMIN_USERNAME must be at least 3 characters")
 	}
 
-	if c.AdminPassword != "" && len(c.AdminPassword) < 8 {
+	if c.adminPassword != "" && len(c.adminPassword) < 8 {
 		return fmt.Errorf("ADMIN_PASSWORD must be at least 8 characters")
 	}
 

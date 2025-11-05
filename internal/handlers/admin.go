@@ -39,7 +39,7 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		userAgent := getUserAgent(r)
 
 		// Validate credentials
-		if username != cfg.AdminUsername || password != cfg.AdminPassword {
+		if username != cfg.AdminUsername || password != cfg.GetAdminPassword() {
 			slog.Warn("admin login failed - invalid credentials",
 				"username", username,
 				"ip", clientIP,
@@ -206,8 +206,8 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		// Calculate quota usage
 		var quotaLimitBytes int64
 		var quotaUsedPercent float64
-		if cfg.QuotaLimitGB > 0 {
-			quotaLimitBytes = cfg.QuotaLimitGB * 1024 * 1024 * 1024
+		if cfg.GetQuotaLimitGB() > 0 {
+			quotaLimitBytes = cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 			if quotaLimitBytes > 0 {
 				quotaUsedPercent = (float64(storageUsed) / float64(quotaLimitBytes)) * 100
 			}
@@ -441,8 +441,12 @@ func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		oldQuota := cfg.QuotaLimitGB
-		cfg.QuotaLimitGB = newQuota
+		oldQuota := cfg.GetQuotaLimitGB()
+
+		if err := cfg.SetQuotaLimitGB(newQuota); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		slog.Info("admin updated storage quota",
 			"old_quota_gb", oldQuota,
@@ -452,10 +456,312 @@ func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Quota updated successfully",
+			"success":      true,
+			"message":      "Quota updated successfully",
 			"old_quota_gb": oldQuota,
 			"new_quota_gb": newQuota,
+		})
+	}
+}
+
+// AdminUpdateStorageSettingsHandler updates storage-related settings dynamically
+func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Get old values for audit log
+		oldMaxFileSize := cfg.GetMaxFileSize()
+		oldDefaultExpiration := cfg.GetDefaultExpirationHours()
+		oldMaxExpiration := cfg.GetMaxExpirationHours()
+
+		updates := make(map[string]interface{})
+
+		// Update max file size (in MB, convert to bytes)
+		if maxFileSizeMB := r.FormValue("max_file_size_mb"); maxFileSizeMB != "" {
+			sizeMB, err := strconv.ParseInt(maxFileSizeMB, 10, 64)
+			if err != nil || sizeMB <= 0 {
+				http.Error(w, "Invalid max_file_size_mb - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			sizeBytes := sizeMB * 1024 * 1024
+			if err := cfg.SetMaxFileSize(sizeBytes); err != nil {
+				http.Error(w, "Max file size: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["max_file_size_mb"] = map[string]int64{
+				"old": oldMaxFileSize / 1024 / 1024,
+				"new": sizeMB,
+			}
+		}
+
+		// Update default expiration
+		if defaultExpStr := r.FormValue("default_expiration_hours"); defaultExpStr != "" {
+			hours, err := strconv.Atoi(defaultExpStr)
+			if err != nil || hours <= 0 {
+				http.Error(w, "Invalid default_expiration_hours - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			if err := cfg.SetDefaultExpirationHours(hours); err != nil {
+				http.Error(w, "Default expiration: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["default_expiration_hours"] = map[string]int{
+				"old": oldDefaultExpiration,
+				"new": hours,
+			}
+		}
+
+		// Update max expiration
+		if maxExpStr := r.FormValue("max_expiration_hours"); maxExpStr != "" {
+			hours, err := strconv.Atoi(maxExpStr)
+			if err != nil || hours <= 0 {
+				http.Error(w, "Invalid max_expiration_hours - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			if err := cfg.SetMaxExpirationHours(hours); err != nil {
+				http.Error(w, "Max expiration: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["max_expiration_hours"] = map[string]int{
+				"old": oldMaxExpiration,
+				"new": hours,
+			}
+		}
+
+		if len(updates) == 0 {
+			http.Error(w, "No settings provided to update", http.StatusBadRequest)
+			return
+		}
+
+		slog.Info("admin updated storage settings",
+			"updates", updates,
+			"admin_ip", getClientIP(r),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Storage settings updated successfully",
+			"updates": updates,
+		})
+	}
+}
+
+// AdminUpdateSecuritySettingsHandler updates security-related settings dynamically
+func AdminUpdateSecuritySettingsHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Get old values for audit log
+		oldUploadLimit := cfg.GetRateLimitUpload()
+		oldDownloadLimit := cfg.GetRateLimitDownload()
+		oldBlockedExts := cfg.GetBlockedExtensions()
+
+		updates := make(map[string]interface{})
+
+		// Update upload rate limit
+		if uploadLimitStr := r.FormValue("rate_limit_upload"); uploadLimitStr != "" {
+			limit, err := strconv.Atoi(uploadLimitStr)
+			if err != nil || limit <= 0 {
+				http.Error(w, "Invalid rate_limit_upload - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			if err := cfg.SetRateLimitUpload(limit); err != nil {
+				http.Error(w, "Upload rate limit: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["rate_limit_upload"] = map[string]int{
+				"old": oldUploadLimit,
+				"new": limit,
+			}
+		}
+
+		// Update download rate limit
+		if downloadLimitStr := r.FormValue("rate_limit_download"); downloadLimitStr != "" {
+			limit, err := strconv.Atoi(downloadLimitStr)
+			if err != nil || limit <= 0 {
+				http.Error(w, "Invalid rate_limit_download - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			if err := cfg.SetRateLimitDownload(limit); err != nil {
+				http.Error(w, "Download rate limit: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["rate_limit_download"] = map[string]int{
+				"old": oldDownloadLimit,
+				"new": limit,
+			}
+		}
+
+		// Update blocked extensions
+		if blockedExtsStr := r.FormValue("blocked_extensions"); blockedExtsStr != "" {
+			// Split comma-separated list
+			parts := make([]string, 0)
+			for _, ext := range splitAndTrim(blockedExtsStr, ",") {
+				if ext != "" {
+					parts = append(parts, ext)
+				}
+			}
+			if err := cfg.SetBlockedExtensions(parts); err != nil {
+				http.Error(w, "Blocked extensions: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["blocked_extensions"] = map[string]interface{}{
+				"old": oldBlockedExts,
+				"new": cfg.GetBlockedExtensions(),
+			}
+		}
+
+		if len(updates) == 0 {
+			http.Error(w, "No settings provided to update", http.StatusBadRequest)
+			return
+		}
+
+		slog.Info("admin updated security settings",
+			"updates", updates,
+			"admin_ip", getClientIP(r),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Security settings updated successfully",
+			"updates": updates,
+		})
+	}
+}
+
+// AdminChangePasswordHandler allows the admin to change their password
+func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		currentPassword := r.FormValue("current_password")
+		newPassword := r.FormValue("new_password")
+		confirmPassword := r.FormValue("confirm_password")
+
+		// Validate inputs
+		if currentPassword == "" || newPassword == "" || confirmPassword == "" {
+			http.Error(w, "All password fields are required", http.StatusBadRequest)
+			return
+		}
+
+		// Verify current password
+		if currentPassword != cfg.GetAdminPassword() {
+			slog.Warn("admin password change failed - incorrect current password",
+				"admin_ip", getClientIP(r),
+			)
+			time.Sleep(500 * time.Millisecond) // Prevent timing attacks
+			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
+			return
+		}
+
+		// Verify new password matches confirmation
+		if newPassword != confirmPassword {
+			http.Error(w, "New password and confirmation do not match", http.StatusBadRequest)
+			return
+		}
+
+		// Validate new password length
+		if err := cfg.SetAdminPassword(newPassword); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		slog.Info("admin password changed successfully",
+			"admin_ip", getClientIP(r),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Password changed successfully. Please log in again with your new password.",
+		})
+	}
+}
+
+// Helper function to split and trim strings
+func splitAndTrim(s, sep string) []string {
+	parts := make([]string, 0)
+	for _, part := range splitByComma(s) {
+		trimmed := trimSpace(part)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return parts
+}
+
+func splitByComma(s string) []string {
+	result := make([]string, 0)
+	current := ""
+	for _, ch := range s {
+		if ch == ',' {
+			result = append(result, current)
+			current = ""
+		} else {
+			current += string(ch)
+		}
+	}
+	if current != "" {
+		result = append(result, current)
+	}
+	return result
+}
+
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
+}
+
+// AdminGetConfigHandler returns current configuration values for the settings forms
+func AdminGetConfigHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"max_file_size_bytes":       cfg.GetMaxFileSize(),
+			"default_expiration_hours":  cfg.GetDefaultExpirationHours(),
+			"max_expiration_hours":      cfg.GetMaxExpirationHours(),
+			"rate_limit_upload":         cfg.GetRateLimitUpload(),
+			"rate_limit_download":       cfg.GetRateLimitDownload(),
+			"blocked_extensions":        cfg.GetBlockedExtensions(),
+			"quota_limit_gb":            cfg.GetQuotaLimitGB(),
 		})
 	}
 }
