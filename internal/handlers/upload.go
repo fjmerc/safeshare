@@ -126,6 +126,18 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			maxDownloads = &maxDl
 		}
 
+	// Parse optional password for password protection
+	var passwordHash string
+	if password := r.FormValue("password"); password != "" {
+		hash, err := utils.HashPassword(password)
+		if err != nil {
+			slog.Error("failed to hash password", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+		passwordHash = hash
+	}
+
 		// Generate unique claim code (with retry on collision)
 		var claimCode string
 		maxRetries := 5
@@ -225,6 +237,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ExpiresAt:        expiresAt,
 			MaxDownloads:     maxDownloads,
 			UploaderIP:       clientIP,
+		PasswordHash:     passwordHash,
 		}
 
 		if err := database.CreateFile(db, fileRecord); err != nil {
@@ -258,6 +271,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"size", written,
 			"expires_at", expiresAt,
 			"max_downloads", maxDownloads,
+		"password_protected", passwordHash != "",
 			"client_ip", clientIP,
 			"user_agent", getUserAgent(r),
 		)

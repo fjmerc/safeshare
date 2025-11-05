@@ -3,6 +3,7 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"regexp"
 	"time"
 )
 
@@ -28,6 +29,33 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// claimCodeRegex matches claim codes in URLs (e.g., /api/claim/ABC123xyz or /api/claim/ABC-123-xyz/info)
+var claimCodeRegex = regexp.MustCompile(`(/api/claim/)([^/\s]+)`)
+
+// redactPathClaimCodes redacts claim codes from URL paths for secure logging
+// Example: /api/claim/Xy9kLm8pQz4vDwE/info -> /api/claim/Xy9...wE/info
+func redactPathClaimCodes(path string) string {
+	return claimCodeRegex.ReplaceAllStringFunc(path, func(match string) string {
+		// Extract the claim code part
+		submatches := claimCodeRegex.FindStringSubmatch(match)
+		if len(submatches) < 3 {
+			return match
+		}
+		prefix := submatches[1]  // "/api/claim/"
+		claimCode := submatches[2] // The actual claim code
+
+		// Redact the claim code (show first 3 and last 2 chars)
+		redacted := claimCode
+		if len(claimCode) > 5 {
+			redacted = claimCode[:3] + "..." + claimCode[len(claimCode)-2:]
+		} else {
+			redacted = "***"
+		}
+
+		return prefix + redacted
+	})
+}
+
 // LoggingMiddleware logs HTTP requests with method, path, status, duration, and IP
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +77,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		slog.Info("http request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", redactPathClaimCodes(r.URL.Path),
 			"status", wrapped.statusCode,
 			"duration", duration,
 			"ip", ip,

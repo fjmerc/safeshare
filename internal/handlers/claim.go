@@ -58,6 +58,22 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Check password if file is password-protected
+		if utils.IsPasswordProtected(file.PasswordHash) {
+			providedPassword := r.URL.Query().Get("password")
+			if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
+				slog.Warn("file access denied",
+					"reason", "incorrect_password",
+					"claim_code", redactClaimCode(claimCode),
+					"filename", file.OriginalFilename,
+					"client_ip", getClientIP(r),
+					"user_agent", getUserAgent(r),
+				)
+				sendError(w, "Incorrect password", "INCORRECT_PASSWORD", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		// Check download limit
 		if file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads {
 			slog.Warn("file access denied",
@@ -206,6 +222,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"max_downloads":          file.MaxDownloads,
 			"download_count":         file.DownloadCount,
 			"download_limit_reached": downloadLimitReached,
+			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
 		}
 

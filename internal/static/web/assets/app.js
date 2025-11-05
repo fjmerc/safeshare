@@ -27,6 +27,7 @@
     const downloadButton = document.getElementById('downloadButton');
     const newPickupButton = document.getElementById('newPickupButton');
     const limitWarning = document.getElementById('limitWarning');
+    const passwordPrompt = document.getElementById('passwordPrompt');
 
     // State - Pickup
     let currentFileInfo = null;
@@ -88,12 +89,53 @@
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 expirationHours.value = e.target.dataset.hours;
+                // Remove active class from all hour buttons
+                document.querySelectorAll('.btn-small[data-hours]').forEach(b => b.classList.remove('active'));
+                // Add active class to clicked button
+                e.target.classList.add('active');
             });
         });
 
         document.querySelectorAll('.btn-small[data-downloads]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 maxDownloads.value = e.target.dataset.downloads;
+                // Remove active class from all download buttons
+                document.querySelectorAll('.btn-small[data-downloads]').forEach(b => b.classList.remove('active'));
+                // Add active class to clicked button
+                e.target.classList.add('active');
+            });
+        });
+
+        // Set default active states on first buttons
+        const firstHourBtn = document.querySelector('.btn-small[data-hours]');
+        const firstDownloadBtn = document.querySelector('.btn-small[data-downloads]');
+        if (firstHourBtn) firstHourBtn.classList.add('active');
+        if (firstDownloadBtn) firstDownloadBtn.classList.add('active');
+
+        // Clear active state when user manually types in input
+        expirationHours.addEventListener('input', () => {
+            const currentValue = expirationHours.value;
+            let matchFound = false;
+            document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
+                if (btn.dataset.hours === currentValue) {
+                    btn.classList.add('active');
+                    matchFound = true;
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        });
+
+        maxDownloads.addEventListener('input', () => {
+            const currentValue = maxDownloads.value;
+            let matchFound = false;
+            document.querySelectorAll('.btn-small[data-downloads]').forEach(btn => {
+                if (btn.dataset.downloads === currentValue) {
+                    btn.classList.add('active');
+                    matchFound = true;
+                } else {
+                    btn.classList.remove('active');
+                }
             });
         });
 
@@ -118,6 +160,23 @@
 
         // Theme toggle
         themeToggle.addEventListener('click', toggleTheme);
+
+        // Password toggle
+        const uploadPasswordToggle = document.getElementById('uploadPasswordToggle');
+        if (uploadPasswordToggle) {
+            uploadPasswordToggle.addEventListener('click', () => {
+                const passwordInput = document.getElementById('uploadPassword');
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    uploadPasswordToggle.textContent = 'Hide';
+                    uploadPasswordToggle.setAttribute('aria-label', 'Hide password');
+                } else {
+                    passwordInput.type = 'password';
+                    uploadPasswordToggle.textContent = 'Show';
+                    uploadPasswordToggle.setAttribute('aria-label', 'Show password');
+                }
+            });
+        }
 
         // Copy buttons
         document.querySelectorAll('.btn-copy').forEach(btn => {
@@ -189,6 +248,11 @@
         const maxDl = parseInt(maxDownloads.value);
         if (maxDl && maxDl > 0) {
             formData.append('max_downloads', maxDl);
+        }
+
+        const password = document.getElementById('uploadPassword').value.trim();
+        if (password) {
+            formData.append('password', password);
         }
 
         // Show progress
@@ -291,6 +355,7 @@
         dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
         expirationHours.value = 24;
         maxDownloads.value = '';
+        document.getElementById('uploadPassword').value = '';
 
         resetProgress();
 
@@ -465,6 +530,13 @@
             downloadButton.disabled = false;
         }
 
+        // Show/hide password prompt if password is required
+        if (data.password_required) {
+            passwordPrompt.classList.remove('hidden');
+        } else {
+            passwordPrompt.classList.add('hidden');
+        }
+
         // Show file info section
         fileInfoSection.classList.remove('hidden');
         retrieveButton.disabled = false;
@@ -475,9 +547,17 @@
     function handleDownload() {
         if (!currentFileInfo) return;
 
-        // Create a download link and trigger it
-        // This gives the user control over save location
-        const downloadUrl = currentFileInfo.download_url;
+        // Build download URL with password if required
+        let downloadUrl = currentFileInfo.download_url;
+
+        if (currentFileInfo.password_required) {
+            const password = document.getElementById('downloadPassword').value.trim();
+            if (!password) {
+                alert('Please enter the password to download this file');
+                return;
+            }
+            downloadUrl += `?password=${encodeURIComponent(password)}`;
+        }
 
         // Open in new tab - browser will prompt for download location
         window.open(downloadUrl, '_blank');
@@ -499,6 +579,7 @@
     // Reset pickup form
     function resetPickupForm() {
         claimCodeInput.value = '';
+        document.getElementById('downloadPassword').value = '';
         fileInfoSection.classList.add('hidden');
         currentFileInfo = null;
         retrieveButton.disabled = false;

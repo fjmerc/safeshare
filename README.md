@@ -19,6 +19,7 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ Structured JSON logging
 
 ### Enterprise Security 🔒
+- ✅ **Password protection** (optional bcrypt-hashed passwords)
 - ✅ **Encryption at rest** (AES-256-GCM)
 - ✅ **File extension blacklist** (blocks executables)
 - ✅ **Enhanced audit logging** (compliance-ready)
@@ -105,6 +106,7 @@ curl -X POST \
   -F "file=@document.pdf" \
   -F "expires_in_hours=48" \
   -F "max_downloads=5" \
+  -F "password=secret123" \
   http://localhost:8080/api/upload
 ```
 
@@ -112,6 +114,7 @@ curl -X POST \
 - `file` (required): The file to upload
 - `expires_in_hours` (optional): Hours until expiration (default: 24)
 - `max_downloads` (optional): Maximum number of downloads (default: unlimited)
+- `password` (optional): Password required to download the file (bcrypt-hashed)
 
 **Response (201 Created):**
 ```json
@@ -138,8 +141,15 @@ Download a file using its claim code.
 
 **Request:**
 ```bash
+# Without password
 curl -O http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
+
+# With password (if required)
+curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
 ```
+
+**Query Parameters:**
+- `password` (optional): Password if file is password-protected
 
 **Response (200 OK):**
 - File binary data with appropriate headers
@@ -148,6 +158,7 @@ curl -O http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
 - `Content-Length`: File size
 
 **Error Responses:**
+- `401 Unauthorized`: Incorrect password
 - `404 Not Found`: Claim code doesn't exist or file expired
 - `410 Gone`: Download limit reached
 - `500 Internal Server Error`: Server error

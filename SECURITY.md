@@ -98,6 +98,97 @@ export BLOCKED_EXTENSIONS=".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,
 
 ---
 
+## 🔑 Password Protection
+
+### Overview
+Optional password protection for file downloads using bcrypt-hashed passwords. Files can be protected with a password during upload, requiring both the claim code and password for download.
+
+### Features
+- **Optional**: Files without passwords work normally
+- **Bcrypt hashing**: Passwords hashed with cost factor 10
+- **Secure verification**: Constant-time comparison via bcrypt
+- **Audit logging**: Failed password attempts logged with client IP
+
+### Usage
+
+**Upload with password (Web UI):**
+1. Select file and configure expiration/download limits
+2. Enter password in "Password (optional)" field
+3. Upload file - password will be hashed and stored securely
+
+**Upload with password (API):**
+```bash
+curl -X POST \
+  -F "file=@confidential.pdf" \
+  -F "password=MySecretPass123" \
+  -F "expires_in_hours=24" \
+  http://localhost:8080/api/upload
+```
+
+**Download with password (Web UI):**
+1. Enter claim code in Pickup tab
+2. If password-protected, password field will appear
+3. Enter password and click Download
+
+**Download with password (API):**
+```bash
+curl -O "http://localhost:8080/api/claim/ABC123?password=MySecretPass123"
+```
+
+### API Response Fields
+
+**Claim Info includes password_required:**
+```json
+{
+  "claim_code": "ABC123",
+  "original_filename": "confidential.pdf",
+  "password_required": true,
+  ...
+}
+```
+
+### Security Properties
+✅ **bcrypt hashing** - Passwords hashed with industry-standard algorithm
+✅ **No plaintext storage** - Only hashes stored in database
+✅ **Constant-time comparison** - Prevents timing attacks
+✅ **Failed attempt logging** - All failed password attempts logged with IP
+✅ **Optional feature** - No impact on non-password-protected files
+
+### Security Logging
+
+**Incorrect password attempt:**
+```json
+{
+  "level": "warn",
+  "msg": "file access denied",
+  "reason": "incorrect_password",
+  "claim_code": "ABC...23",
+  "filename": "confidential.pdf",
+  "client_ip": "192.168.1.100",
+  "user_agent": "Mozilla/5.0..."
+}
+```
+
+**Upload with password:**
+```json
+{
+  "level": "info",
+  "msg": "file uploaded",
+  "claim_code": "ABC...23",
+  "filename": "confidential.pdf",
+  "password_protected": true,
+  ...
+}
+```
+
+### Best Practices
+✅ Use strong passwords (12+ characters, mixed case, numbers, symbols)
+✅ Don't share passwords via the same channel as claim codes
+✅ Combine with download limits and short expiration times
+✅ Monitor logs for brute force attempts on password-protected files
+
+---
+
 ## 📊 Enhanced Audit Logging
 
 ### Overview

@@ -15,6 +15,7 @@ type File struct {
 	MaxDownloads     *int // nullable - nil means unlimited
 	DownloadCount    int
 	UploaderIP       string
+	PasswordHash     string // bcrypt hash - empty string means no password
 }
 
 // UploadResponse is the JSON response returned after a successful upload

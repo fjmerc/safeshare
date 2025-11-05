@@ -110,59 +110,69 @@ Goroutine launched in `main.go` using context for cancellation:
 
 **Enterprise Security Features**
 
-1. **Encryption at Rest** (`internal/utils/encryption.go`):
+1. **Password Protection** (`internal/utils/password.go`):
+   - Optional bcrypt-hashed passwords for file downloads
+   - Bcrypt cost factor: 10 (industry standard)
+   - Password required at download time (claim code + password)
+   - Failed attempts logged with client IP and user agent
+   - Frontend automatically shows password prompt when needed
+   - API: password passed as query parameter (`?password=...`)
+   - Database: `password_hash TEXT` column in files table
+
+2. **Encryption at Rest** (`internal/utils/encryption.go`):
    - AES-256-GCM authenticated encryption
    - Requires 64-character hex `ENCRYPTION_KEY` (32 bytes)
    - Nonce stored with ciphertext: `[nonce(12)][ciphertext][tag(16)]`
    - Backward compatible: encrypted and plain files coexist
    - Detection via `IsEncrypted()` checks file header
 
-2. **File Extension Blacklist** (`internal/utils/validation.go`):
+3. **File Extension Blacklist** (`internal/utils/validation.go`):
    - Blocks dangerous file types (executables, scripts)
    - Configured via `BLOCKED_EXTENSIONS` env var (comma-separated)
    - Checks both simple extensions and double extensions (e.g., `.tar.exe`)
    - Default blocks: `.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm`
 
-3. **Enhanced Audit Logging**:
+4. **Enhanced Audit Logging**:
    - JSON-structured logs via `log/slog`
    - All events include: timestamp, level, message, claim_code, filename, client_ip, user_agent
-   - Security events: upload, download, blocked_extension, access_denied (with reason)
+   - Security events: upload, download, blocked_extension, access_denied (with reason), incorrect_password
+   - Password-protected uploads logged with `password_protected: true`
    - Client IP extracted from `X-Forwarded-For`, `X-Real-IP`, or `RemoteAddr`
    - Designed for log aggregation tools (Splunk, ELK, Datadog)
 
 **Production Security Features** (P0 - Required for Production):
 
-4. **Rate Limiting** (`internal/middleware/ratelimit.go`):
+5. **Rate Limiting** (`internal/middleware/ratelimit.go`):
    - IP-based rate limiting with sliding window algorithm
    - Separate limits for uploads (default: 10/hour) and downloads (default: 100/hour)
    - Automatic cleanup of old tracking records
    - Returns HTTP 429 when limit exceeded
    - Configured via `RATE_LIMIT_UPLOAD` and `RATE_LIMIT_DOWNLOAD` env vars
 
-5. **Filename Sanitization** (`internal/utils/sanitize.go`):
+6. **Filename Sanitization** (`internal/utils/sanitize.go`):
    - Prevents HTTP header injection attacks
    - Removes control characters, newlines, path separators
    - Applied to both upload handler and Content-Disposition headers
    - Limits filename length to 255 characters
 
-6. **Security Headers** (`internal/middleware/security.go`):
+7. **Security Headers** (`internal/middleware/security.go`):
    - Adds CSP, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection
    - Prevents clickjacking, XSS, MIME sniffing attacks
    - Configured for compatibility with jsDelivr CDN (QR code library)
 
-7. **MIME Type Detection** (`internal/handlers/upload.go`):
+8. **MIME Type Detection** (`internal/handlers/upload.go`):
    - Server-side content detection using magic bytes
    - Uses `github.com/gabriel-vasile/mimetype` library
    - Ignores user-provided Content-Type header
    - Prevents malware from masquerading as safe file types
 
-8. **Disk Space Monitoring** (`internal/utils/disk.go`):
+9. **Disk Space Monitoring** (`internal/utils/disk.go`):
    - Pre-upload disk space validation
    - Rejects uploads if < 1GB free or > 80% capacity
    - Health endpoint includes disk space metrics
    - Uses syscall.Statfs for Unix/Linux systems
 
-9. **Maximum Expiration Validation** (`internal/handlers/upload.go`):
+10. **Maximum Expiration Validation** (`internal/handlers/upload.go`):
    - Enforces maximum expiration time (default: 168 hours / 7 days)
    - Prevents disk space abuse from files that never expire
    - Configured via `MAX_EXPIRATION_HOURS` env var

@@ -20,11 +20,17 @@ CREATE TABLE IF NOT EXISTS files (
     max_downloads INTEGER,
     download_count INTEGER DEFAULT 0,
     uploader_ip TEXT,
+    password_hash TEXT,
     UNIQUE(claim_code)
 );
 
 CREATE INDEX IF NOT EXISTS idx_claim_code ON files(claim_code);
 CREATE INDEX IF NOT EXISTS idx_expires_at ON files(expires_at);
+`
+
+// Migration to add password_hash column to existing databases
+const migration = `
+ALTER TABLE files ADD COLUMN password_hash TEXT;
 `
 
 // Initialize opens the SQLite database and creates the schema
@@ -62,6 +68,10 @@ func Initialize(dbPath string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
+
+	// Run migration (safe to run multiple times - ALTER TABLE IF NOT EXISTS not supported in SQLite)
+	// This will fail silently if column already exists
+	db.Exec(migration)
 
 	return db, nil
 }

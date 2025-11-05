@@ -47,7 +47,7 @@
                         <div class="form-group">
                             <label for="expirationHours">
                                 Expires in (hours):
-                                <span class="tooltip" data-tooltip="File will be automatically deleted after this time">ℹ️</span>
+                                <span class="tooltip" data-tooltip="File will be automatically deleted after this time">i</span>
                             </label>
                             <input type="number" id="expirationHours" min="0.1" max="168" step="0.1" value="24">
                             <div class="quick-select">
@@ -61,7 +61,7 @@
                         <div class="form-group">
                             <label for="maxDownloads">
                                 Max downloads (optional):
-                                <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">ℹ️</span>
+                                <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">i</span>
                             </label>
                             <input type="number" id="maxDownloads" min="1" max="1000" placeholder="Unlimited">
                             <div class="quick-select">
@@ -69,6 +69,19 @@
                                 <button type="button" class="btn-small" data-downloads="5">5x</button>
                                 <button type="button" class="btn-small" data-downloads="10">10x</button>
                                 <button type="button" class="btn-small" data-downloads="">∞</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="uploadPassword">
+                                Password (optional):
+                                <span class="tooltip" data-tooltip="Require a password to download this file">i</span>
+                            </label>
+                            <div class="password-wrapper">
+                                <input type="password" id="uploadPassword" placeholder="Leave blank for no password" maxlength="128">
+                                <button type="button" class="password-toggle" id="uploadPasswordToggle" aria-label="Show password">
+                                    Show
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -187,6 +200,14 @@
 
                     <div class="warning-box hidden" id="limitWarning">
                         ⚠️ This file has reached its download limit and can no longer be downloaded.
+                    </div>
+
+                    <div class="form-group hidden" id="passwordPrompt">
+                        <label for="downloadPassword">
+                            🔒 Password Required:
+                            <span class="tooltip" data-tooltip="This file is password protected">i</span>
+                        </label>
+                        <input type="password" id="downloadPassword" placeholder="Enter password" maxlength="128">
                     </div>
 
                     <button id="downloadButton" class="btn-primary btn-large">
