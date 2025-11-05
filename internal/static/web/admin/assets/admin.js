@@ -31,13 +31,17 @@ function formatBytes(bytes) {
 // Format date
 function formatDate(dateString) {
     const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    const now = new Date();
+    const month = date.toLocaleString('en-US', { month: 'short' });
+    const day = date.getDate();
+    const time = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+    // Only show year if different from current year
+    if (date.getFullYear() !== now.getFullYear()) {
+        return `${month} ${day}, ${date.getFullYear()} @ ${time}`;
+    }
+
+    return `${month} ${day} @ ${time}`;
 }
 
 // Fetch dashboard data
@@ -98,7 +102,7 @@ function updateFilesTable(files) {
                 <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}">
             </td>
             <td><code>${escapeHtml(file.claim_code)}</code></td>
-            <td title="${escapeHtml(file.original_filename)}">${truncate(escapeHtml(file.original_filename), 30)}</td>
+            <td title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</td>
             <td>${formatBytes(file.file_size)}</td>
             <td>${file.username ? escapeHtml(file.username) : '<em style="color: #94a3b8;">Anonymous</em>'}</td>
             <td>${escapeHtml(file.uploader_ip || 'Unknown')}</td>
