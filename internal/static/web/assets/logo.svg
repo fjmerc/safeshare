@@ -1,0 +1,45 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Shield base -->
+  <defs>
+    <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Main shield shape -->
+  <path d="M60 10 L95 25 L95 55 Q95 80 60 105 Q25 80 25 55 L25 25 Z"
+        fill="url(#shieldGradient)"
+        stroke="none"/>
+
+  <!-- Lock body -->
+  <rect x="48" y="55" width="24" height="20" rx="2"
+        fill="white"
+        opacity="0.95"/>
+
+  <!-- Lock shackle -->
+  <path d="M52 55 L52 48 Q52 42 60 42 Q68 42 68 48 L68 55"
+        stroke="white"
+        stroke-width="3"
+        fill="none"
+        stroke-linecap="round"
+        opacity="0.95"/>
+
+  <!-- Keyhole -->
+  <circle cx="60" cy="62" r="2.5" fill="url(#shieldGradient)"/>
+  <rect x="58.5" y="62" width="3" height="6" fill="url(#shieldGradient)"/>
+
+  <!-- Share arrow (subtle, integrated) -->
+  <path d="M60 75 L60 82 M57 79 L60 82 L63 79"
+        stroke="white"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        opacity="0.7"/>
+
+  <!-- Share dots (representing file transfer) -->
+  <circle cx="45" cy="85" r="2" fill="white" opacity="0.5"/>
+  <circle cx="52" cy="88" r="2" fill="white" opacity="0.6"/>
+  <circle cx="68" cy="88" r="2" fill="white" opacity="0.6"/>
+  <circle cx="75" cy="85" r="2" fill="white" opacity="0.5"/>
+</svg>
