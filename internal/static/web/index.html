@@ -17,10 +17,46 @@
     <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-    <!-- Theme Toggle (top-right corner) -->
-    <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode">
-        <span class="theme-icon">🌙</span>
-    </button>
+    <!-- Top Right Controls -->
+    <div class="top-controls">
+        <!-- Theme Toggle -->
+        <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode">
+            <span class="theme-icon">🌙</span>
+        </button>
+
+        <!-- User Menu -->
+        <div id="userMenu" class="user-menu hidden">
+            <button class="user-menu-trigger" id="userMenuTrigger" aria-label="User menu">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+            </button>
+            <div class="user-menu-dropdown" id="userMenuDropdown">
+                <div class="user-menu-header">
+                    <span class="user-menu-name" id="userName"></span>
+                </div>
+                <div class="user-menu-divider"></div>
+                <a href="/dashboard" class="user-menu-item">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    Dashboard
+                </a>
+                <button id="logoutBtn" class="user-menu-item user-menu-logout">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    Logout
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div class="container">
         <!-- Header -->
@@ -32,36 +68,18 @@
             <p class="subtitle">Secure temporary file sharing with automatic expiration</p>
         </header>
 
-        <!-- User Status Bar -->
-        <div id="userStatusBar" class="user-status-bar">
-            <!-- Not logged in state -->
-            <div id="userNotLoggedIn" class="user-status-content hidden">
-                <span class="status-text">Want to track your uploads?</span>
-                <a href="/login" class="btn-login-small">Login</a>
-            </div>
-
-            <!-- Logged in state -->
-            <div id="userLoggedIn" class="user-status-content hidden">
-                <span class="status-welcome">Welcome, <strong id="userName"></strong>!</span>
-                <div class="user-actions">
-                    <a href="/dashboard" class="btn-dashboard-small">Dashboard</a>
-                    <button id="logoutBtn" class="btn-logout-small">Logout</button>
-                </div>
-            </div>
-        </div>
-
         <!-- Tab Navigation -->
         <div class="tabs">
-            <button class="tab-button active" data-tab="dropoff">
+            <button class="tab-button" data-tab="dropoff">
                 Dropoff
             </button>
-            <button class="tab-button" data-tab="pickup">
+            <button class="tab-button active" data-tab="pickup">
                 Pickup
             </button>
         </div>
 
         <!-- Dropoff Tab Content -->
-        <section id="dropoffTab" class="tab-content active">
+        <section id="dropoffTab" class="tab-content">
             <!-- Upload Section -->
             <div id="uploadSection" class="upload-section">
                 <div class="card">
@@ -110,8 +128,15 @@
                             </label>
                             <div class="password-wrapper">
                                 <input type="password" id="uploadPassword" placeholder="Leave blank for no password" maxlength="128">
-                                <button type="button" class="password-toggle" id="uploadPasswordToggle" aria-label="Show password">
-                                    Show
+                                <button type="button" class="password-toggle" data-password-toggle="uploadPassword" aria-label="Toggle password visibility">
+                                    <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                    <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    </svg>
                                 </button>
                             </div>
                         </div>
@@ -187,7 +212,7 @@
         </section>
 
         <!-- Pickup Tab Content -->
-        <section id="pickupTab" class="tab-content">
+        <section id="pickupTab" class="tab-content active">
             <div class="card">
                 <h2>Enter Claim Code</h2>
                 <p class="subtitle">Enter the claim code you received to download the file</p>
@@ -238,7 +263,19 @@
                             🔒 Password Required:
                             <span class="tooltip" data-tooltip="This file is password protected">i</span>
                         </label>
-                        <input type="password" id="downloadPassword" placeholder="Enter password" maxlength="128">
+                        <div class="password-wrapper">
+                            <input type="password" id="downloadPassword" placeholder="Enter password" maxlength="128">
+                            <button type="button" class="password-toggle" data-password-toggle="downloadPassword" aria-label="Toggle password visibility">
+                                <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                                <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     <button id="downloadButton" class="btn-primary btn-large">
@@ -253,7 +290,7 @@
         <!-- Footer -->
         <footer>
             <p>
-                Files are automatically deleted after expiration. No accounts required.
+                Files are automatically deleted after expiration.
                 <a href="https://github.com/yourusername/safeshare" target="_blank" rel="noopener">GitHub</a>
             </p>
         </footer>

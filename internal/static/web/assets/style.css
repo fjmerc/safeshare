@@ -26,6 +26,32 @@
     --border-color: #4b5563;
 }
 
+[data-theme="dark"] .user-menu-trigger {
+    background: #2563eb;
+}
+
+[data-theme="dark"] .user-menu-trigger:hover {
+    background: #1d4ed8;
+}
+
+[data-theme="dark"] .user-menu-dropdown {
+    background: #1f2937;
+    border-color: #374151;
+}
+
+[data-theme="dark"] .user-menu-header {
+    background: #111827;
+    border-bottom-color: #374151;
+}
+
+[data-theme="dark"] .user-menu-item:hover {
+    background: #374151;
+}
+
+[data-theme="dark"] .user-menu-logout:hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
 /* Reset & Base Styles */
 * {
     margin: 0;
@@ -89,10 +115,17 @@ header h1 {
     font-size: 1.1rem;
 }
 
-.theme-toggle {
+/* Top Controls Container */
+.top-controls {
     position: fixed;
     top: 1.5rem;
     right: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    z-index: 1000;
+}
+
+.theme-toggle {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 50%;
@@ -106,7 +139,6 @@ header h1 {
     justify-content: center;
     opacity: 0.8;
     box-shadow: var(--shadow-md);
-    z-index: 100;
 }
 
 .theme-toggle:hover {
@@ -114,6 +146,105 @@ header h1 {
     border-color: var(--primary-color);
     transform: scale(1.1);
     box-shadow: var(--shadow-lg);
+}
+
+/* User Menu */
+.user-menu {
+    position: relative;
+}
+
+.user-menu-trigger {
+    background: var(--primary-color);
+    border: none;
+    border-radius: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-md);
+    color: white;
+}
+
+.user-menu-trigger:hover {
+    transform: scale(1.1);
+    box-shadow: var(--shadow-lg);
+    background: var(--primary-hover);
+}
+
+.user-menu-dropdown {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-lg);
+    min-width: 200px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.2s ease;
+    overflow: hidden;
+}
+
+.user-menu-dropdown.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.user-menu-header {
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.user-menu-name {
+    font-weight: 600;
+    color: var(--primary-color);
+    font-size: 0.875rem;
+}
+
+.user-menu-divider {
+    height: 1px;
+    background: var(--border-color);
+}
+
+.user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: var(--transition);
+    text-decoration: none;
+    text-align: left;
+}
+
+.user-menu-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.user-menu-item svg {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+
+.user-menu-logout:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger-color);
+}
+
+.user-menu-logout:hover svg {
+    color: var(--danger-color);
 }
 
 /* Tabs */
@@ -286,24 +417,33 @@ header h1 {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.25rem 0.5rem;
-    color: var(--primary-color);
+    padding: 0.25rem;
+    color: var(--text-secondary);
     opacity: 0.7;
     transition: var(--transition);
-    line-height: 1;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .password-toggle:hover {
     opacity: 1;
-    text-decoration: underline;
+    color: var(--primary-color);
 }
 
 .password-toggle:active {
     transform: scale(0.95);
+}
+
+.password-toggle svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2;
+}
+
+.eye-icon,
+.eye-off-icon {
+    transition: var(--transition);
 }
 
 /* Hide number input spinners */
@@ -797,88 +937,7 @@ footer a:hover {
 }
 
 /* User Status Bar */
-.user-status-bar {
-    margin: 1.5rem 0;
-    padding: 0.75rem 1.5rem;
-    background: var(--card-background);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-
-.user-status-content {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    max-width: 600px;
-    gap: 1rem;
-}
-
-.status-text {
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-}
-
-.status-welcome {
-    color: var(--text-primary);
-    font-size: 0.95rem;
-}
-
-.status-welcome strong {
-    color: var(--primary-color);
-}
-
-.user-actions {
-    display: flex;
-    gap: 0.75rem;
-}
-
-.btn-login-small,
-.btn-dashboard-small,
-.btn-logout-small {
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-decoration: none;
-    display: inline-block;
-    border: none;
-}
-
-.btn-login-small {
-    background: var(--primary-color);
-    color: white;
-}
-
-.btn-login-small:hover {
-    background: var(--primary-hover);
-}
-
-.btn-dashboard-small {
-    background: var(--primary-color);
-    color: white;
-}
-
-.btn-dashboard-small:hover {
-    background: var(--primary-hover);
-}
-
-.btn-logout-small {
-    background: transparent;
-    color: var(--text-secondary);
-    border: 1px solid var(--border-color);
-}
-
-.btn-logout-small:hover {
-    background: rgba(239, 68, 68, 0.1);
-    color: var(--danger-color);
-    border-color: var(--danger-color);
-}
+/* Old user status bar styles removed - replaced with user menu */
 
 /* Utility Classes */
 .hidden {
@@ -911,24 +970,21 @@ footer a:hover {
         grid-template-columns: 1fr;
     }
 
-    .theme-toggle {
-        width: 2.5rem;
-        height: 2.5rem;
-        font-size: 1.1rem;
+    .top-controls {
+        top: 1rem;
+        right: 1rem;
+        gap: 0.5rem;
     }
 
-    .user-status-bar {
-        padding: 0.5rem 1rem;
+    .theme-toggle,
+    .user-menu-trigger {
+        width: 2.25rem;
+        height: 2.25rem;
+        font-size: 1rem;
     }
 
-    .user-status-content {
-        flex-direction: column;
-        text-align: center;
-        gap: 0.75rem;
-    }
-
-    .user-actions {
-        width: 100%;
-        justify-content: center;
+    .user-menu-dropdown {
+        min-width: 180px;
+        right: 0;
     }
 }

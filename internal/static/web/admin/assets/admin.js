@@ -571,9 +571,68 @@ async function deleteSelectedFiles() {
     }
 }
 
+// Theme Management
+function loadTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    updateThemeIcon(savedTheme);
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    updateThemeIcon(newTheme);
+}
+
+function updateThemeIcon(theme) {
+    const sunIcon = document.querySelector('.theme-icon-sun');
+    const moonIcon = document.querySelector('.theme-icon-moon');
+
+    if (sunIcon && moonIcon) {
+        if (theme === 'dark') {
+            sunIcon.style.display = 'block';
+            moonIcon.style.display = 'none';
+        } else {
+            sunIcon.style.display = 'none';
+            moonIcon.style.display = 'block';
+        }
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
-    // Only initialize if we're on the dashboard page
+    // Load theme preference first (works for both login and dashboard pages)
+    loadTheme();
+
+    // Universal password toggle handler for all password fields
+    document.querySelectorAll('[data-password-toggle]').forEach(button => {
+        button.addEventListener('click', () => {
+            const targetId = button.getAttribute('data-password-toggle');
+            const passwordInput = document.getElementById(targetId);
+            const eyeIcon = button.querySelector('.eye-icon');
+            const eyeOffIcon = button.querySelector('.eye-off-icon');
+
+            if (passwordInput && eyeIcon && eyeOffIcon) {
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    eyeIcon.style.display = 'none';
+                    eyeOffIcon.style.display = 'block';
+                } else {
+                    passwordInput.type = 'password';
+                    eyeIcon.style.display = 'block';
+                    eyeOffIcon.style.display = 'none';
+                }
+            }
+        });
+    });
+
+    // Theme toggle button (available on both pages)
+    document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
+
+    // Only initialize dashboard-specific features if we're on the dashboard page
     if (!document.querySelector('.dashboard-page')) {
         return;
     }

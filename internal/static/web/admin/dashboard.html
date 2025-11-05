@@ -22,6 +22,22 @@
                 <h1>SafeShare Admin Dashboard</h1>
             </div>
             <div class="header-actions">
+                <button id="themeToggle" class="btn-icon btn-secondary" title="Toggle theme">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-moon" style="display: none;">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
                 <a href="/" class="btn-secondary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
@@ -274,16 +290,52 @@
                 <form id="passwordForm" class="settings-form">
                     <div class="form-group">
                         <label for="currentPassword">Current Password</label>
-                        <input type="password" id="currentPassword" name="current_password" required>
+                        <div class="password-wrapper">
+                            <input type="password" id="currentPassword" name="current_password" required>
+                            <button type="button" class="password-toggle" data-password-toggle="currentPassword" aria-label="Toggle password visibility">
+                                <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                                <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="newPassword">New Password</label>
-                        <input type="password" id="newPassword" name="new_password" minlength="8" required>
+                        <div class="password-wrapper">
+                            <input type="password" id="newPassword" name="new_password" minlength="8" required>
+                            <button type="button" class="password-toggle" data-password-toggle="newPassword" aria-label="Toggle password visibility">
+                                <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                                <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                                </svg>
+                            </button>
+                        </div>
                         <small>Minimum 8 characters</small>
                     </div>
                     <div class="form-group">
                         <label for="confirmPassword">Confirm New Password</label>
-                        <input type="password" id="confirmPassword" name="confirm_password" minlength="8" required>
+                        <div class="password-wrapper">
+                            <input type="password" id="confirmPassword" name="confirm_password" minlength="8" required>
+                            <button type="button" class="password-toggle" data-password-toggle="confirmPassword" aria-label="Toggle password visibility">
+                                <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                                <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <button type="submit" class="btn-primary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -340,21 +392,58 @@
 
     <!-- User Created Success Modal -->
     <div id="userCreatedModal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content modal-success">
+            <div class="modal-header-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+            </div>
             <h3>User Created Successfully</h3>
-            <div style="margin: 20px 0;">
-                <p><strong>Username:</strong> <span id="createdUsername"></span></p>
-                <p><strong>Email:</strong> <span id="createdEmail"></span></p>
-                <p><strong>Temporary Password:</strong>
-                    <code id="createdPassword" style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;"></code>
-                    <button class="btn-secondary" onclick="copyPassword()" style="margin-left: 8px;">Copy</button>
-                </p>
-                <div style="background: #dbeafe; padding: 12px; border-radius: 4px; margin-top: 16px;">
-                    <small style="color: #1e40af;">Share these credentials securely with the user. They will be required to change their password on first login.</small>
+            <p class="modal-subtitle">Please share these credentials securely with the new user.</p>
+
+            <div class="credentials-container">
+                <div class="credential-item">
+                    <label class="credential-label">Username</label>
+                    <div class="credential-value" id="createdUsername"></div>
+                </div>
+
+                <div class="credential-item">
+                    <label class="credential-label">Email</label>
+                    <div class="credential-value" id="createdEmail"></div>
+                </div>
+
+                <div class="credential-item credential-highlight">
+                    <label class="credential-label">Temporary Password</label>
+                    <div class="password-display-container">
+                        <code id="createdPassword" class="password-code"></code>
+                        <button class="btn-copy" onclick="copyPassword()" title="Copy password">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            <div class="alert-info">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <span>The user will be required to change their password upon first login.</span>
+            </div>
+
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideUserCreatedModal()">Close</button>
+                <button class="btn-primary" onclick="hideUserCreatedModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Done
+                </button>
             </div>
         </div>
     </div>

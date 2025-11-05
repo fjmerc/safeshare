@@ -29,9 +29,10 @@
     const limitWarning = document.getElementById('limitWarning');
     const passwordPrompt = document.getElementById('passwordPrompt');
 
-    // DOM Elements - User Status
-    const userNotLoggedIn = document.getElementById('userNotLoggedIn');
-    const userLoggedIn = document.getElementById('userLoggedIn');
+    // DOM Elements - User Menu
+    const userMenu = document.getElementById('userMenu');
+    const userMenuTrigger = document.getElementById('userMenuTrigger');
+    const userMenuDropdown = document.getElementById('userMenuDropdown');
     const userName = document.getElementById('userName');
     const logoutBtn = document.getElementById('logoutBtn');
 
@@ -85,7 +86,7 @@
 
             if (response.ok) {
                 const data = await response.json();
-                currentUser = data.user;
+                currentUser = data; // API returns user object directly, not nested
                 showUserStatus(true);
             } else {
                 currentUser = null;
@@ -98,15 +99,26 @@
         }
     }
 
-    // Show/hide user status based on authentication
+    // Show/hide user menu based on authentication
     function showUserStatus(isLoggedIn) {
         if (isLoggedIn && currentUser) {
-            userNotLoggedIn.classList.add('hidden');
-            userLoggedIn.classList.remove('hidden');
+            userMenu.classList.remove('hidden');
             userName.textContent = currentUser.username;
         } else {
-            userLoggedIn.classList.add('hidden');
-            userNotLoggedIn.classList.remove('hidden');
+            userMenu.classList.add('hidden');
+        }
+    }
+
+    // Toggle user menu dropdown
+    function toggleUserMenu(e) {
+        e.stopPropagation();
+        userMenuDropdown.classList.toggle('show');
+    }
+
+    // Close user menu when clicking outside
+    function closeUserMenuOnClickOutside(e) {
+        if (!userMenu.contains(e.target)) {
+            userMenuDropdown.classList.remove('show');
         }
     }
 
@@ -226,27 +238,42 @@
         // Theme toggle
         themeToggle.addEventListener('click', toggleTheme);
 
+        // User menu
+        if (userMenuTrigger) {
+            userMenuTrigger.addEventListener('click', toggleUserMenu);
+        }
+
+        // Close user menu when clicking outside
+        document.addEventListener('click', closeUserMenuOnClickOutside);
+
         // Logout button
         if (logoutBtn) {
             logoutBtn.addEventListener('click', handleLogout);
         }
 
-        // Password toggle
-        const uploadPasswordToggle = document.getElementById('uploadPasswordToggle');
-        if (uploadPasswordToggle) {
-            uploadPasswordToggle.addEventListener('click', () => {
-                const passwordInput = document.getElementById('uploadPassword');
+        // Universal password toggle handler for all password fields
+        document.querySelectorAll('[data-password-toggle]').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.getAttribute('data-password-toggle');
+                const passwordInput = document.getElementById(targetId);
+                const eyeIcon = button.querySelector('.eye-icon');
+                const eyeOffIcon = button.querySelector('.eye-off-icon');
+
                 if (passwordInput.type === 'password') {
                     passwordInput.type = 'text';
-                    uploadPasswordToggle.textContent = 'Hide';
-                    uploadPasswordToggle.setAttribute('aria-label', 'Hide password');
+                    if (eyeIcon && eyeOffIcon) {
+                        eyeIcon.style.display = 'none';
+                        eyeOffIcon.style.display = 'block';
+                    }
                 } else {
                     passwordInput.type = 'password';
-                    uploadPasswordToggle.textContent = 'Show';
-                    uploadPasswordToggle.setAttribute('aria-label', 'Show password');
+                    if (eyeIcon && eyeOffIcon) {
+                        eyeIcon.style.display = 'block';
+                        eyeOffIcon.style.display = 'none';
+                    }
                 }
             });
-        }
+        });
 
         // Copy buttons
         document.querySelectorAll('.btn-copy').forEach(btn => {
@@ -526,6 +553,13 @@
     // Handle tab switching
     function handleTabSwitch(e) {
         const targetTab = e.target.dataset.tab;
+
+        // Check if user is trying to access Dropoff tab without authentication
+        if (targetTab === 'dropoff' && !currentUser) {
+            // Redirect to login page
+            window.location.href = '/login';
+            return;
+        }
 
         // Update tab buttons
         document.querySelectorAll('.tab-button').forEach(btn => {

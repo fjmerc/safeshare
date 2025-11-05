@@ -20,10 +20,16 @@
             margin-bottom: 30px;
         }
 
-        .login-header h1 {
-            margin: 0 0 10px 0;
-            color: #2563eb;
-            font-size: 28px;
+        .login-header .logo-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .login-header .logo {
+            width: 80px;
+            height: 80px;
         }
 
         .login-header p {
@@ -120,12 +126,55 @@
         .back-link a:hover {
             text-decoration: underline;
         }
+
+        /* Dark mode overrides */
+        [data-theme="dark"] .login-container {
+            background: #1f2937;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+        }
+
+        [data-theme="dark"] .login-header p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .form-group label {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .form-group input {
+            background: #374151;
+            border-color: #4b5563;
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .form-group input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        [data-theme="dark"] .form-group input::placeholder {
+            color: #6b7280;
+        }
+
+        [data-theme="dark"] .error-message {
+            background: #7f1d1d;
+            border-color: #991b1b;
+            color: #fecaca;
+        }
+
+        [data-theme="dark"] .info-message {
+            background: #1e3a5f;
+            border-color: #2563eb;
+            color: #93c5fd;
+        }
     </style>
 </head>
 <body>
     <div class="login-container">
         <div class="login-header">
-            <h1>SafeShare Login</h1>
+            <div class="logo-container">
+                <img src="/assets/logo.svg" alt="SafeShare Logo" class="logo">
+            </div>
             <p>Sign in to access your dashboard</p>
         </div>
 
@@ -139,7 +188,19 @@
 
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password">
+                <div class="password-wrapper">
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                    <button type="button" class="password-toggle" data-password-toggle="password" aria-label="Toggle password visibility">
+                        <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                        </svg>
+                    </button>
+                </div>
             </div>
 
             <button type="submit" class="btn-login" id="loginBtn">Sign In</button>
@@ -151,6 +212,36 @@
     </div>
 
     <script>
+        // Load theme preference from localStorage
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        })();
+
+        // Universal password toggle handler
+        document.querySelectorAll('[data-password-toggle]').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.getAttribute('data-password-toggle');
+                const passwordInput = document.getElementById(targetId);
+                const eyeIcon = button.querySelector('.eye-icon');
+                const eyeOffIcon = button.querySelector('.eye-off-icon');
+
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    if (eyeIcon && eyeOffIcon) {
+                        eyeIcon.style.display = 'none';
+                        eyeOffIcon.style.display = 'block';
+                    }
+                } else {
+                    passwordInput.type = 'password';
+                    if (eyeIcon && eyeOffIcon) {
+                        eyeIcon.style.display = 'block';
+                        eyeOffIcon.style.display = 'none';
+                    }
+                }
+            });
+        });
+
         const loginForm = document.getElementById('loginForm');
         const loginBtn = document.getElementById('loginBtn');
         const errorMessage = document.getElementById('errorMessage');
