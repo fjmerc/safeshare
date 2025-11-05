@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -320,6 +321,75 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": "File deleted successfully",
+		})
+	}
+}
+
+// AdminBulkDeleteFilesHandler deletes multiple files
+func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Get comma-separated claim codes
+		claimCodesStr := r.FormValue("claim_codes")
+		if claimCodesStr == "" {
+			http.Error(w, "Missing claim_codes parameter", http.StatusBadRequest)
+			return
+		}
+
+		// Split claim codes
+		claimCodes := splitAndTrim(claimCodesStr, ",")
+		if len(claimCodes) == 0 {
+			http.Error(w, "No claim codes provided", http.StatusBadRequest)
+			return
+		}
+
+		// Delete files from database and get file info
+		files, err := database.DeleteFilesByClaimCodes(db, claimCodes)
+		if err != nil {
+			slog.Error("admin bulk file deletion failed",
+				"count", len(claimCodes),
+				"error", err,
+				"admin_ip", getClientIP(r),
+			)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Delete physical files
+		deletedCount := 0
+		for _, file := range files {
+			filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
+			if err := os.Remove(filePath); err != nil {
+				if !os.IsNotExist(err) {
+					slog.Error("failed to delete physical file",
+						"path", filePath,
+						"error", err,
+					)
+				}
+			}
+			deletedCount++
+		}
+
+		slog.Info("admin bulk deleted files",
+			"deleted_count", deletedCount,
+			"requested_count", len(claimCodes),
+			"admin_ip", getClientIP(r),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":       true,
+			"deleted_count": deletedCount,
+			"message":       fmt.Sprintf("Successfully deleted %d file(s)", deletedCount),
 		})
 	}
 }

@@ -402,3 +402,105 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 
 	return file, nil
 }
+
+// DeleteFilesByClaimCodes deletes multiple files by claim codes (bulk admin operation)
+func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, error) {
+	if len(claimCodes) == 0 {
+		return nil, fmt.Errorf("no claim codes provided")
+	}
+
+	// Get all files info first
+	files := make([]*models.File, 0, len(claimCodes))
+
+	for _, claimCode := range claimCodes {
+		// Get file info
+		query := `
+			SELECT
+				id, claim_code, original_filename, stored_filename, file_size,
+				mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+			FROM files
+			WHERE claim_code = ?
+		`
+
+		file := &models.File{}
+		var createdAt, expiresAt string
+		var passwordHash sql.NullString
+		var maxDownloads sql.NullInt64
+
+		err := db.QueryRow(query, claimCode).Scan(
+			&file.ID,
+			&file.ClaimCode,
+			&file.OriginalFilename,
+			&file.StoredFilename,
+			&file.FileSize,
+			&file.MimeType,
+			&createdAt,
+			&expiresAt,
+			&maxDownloads,
+			&file.DownloadCount,
+			&file.UploaderIP,
+			&passwordHash,
+		)
+
+		if err == sql.ErrNoRows {
+			// Skip files that don't exist
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to query file %s: %w", claimCode, err)
+		}
+
+		// Parse timestamps
+		file.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse created_at: %w", err)
+		}
+
+		file.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse expires_at: %w", err)
+		}
+
+		// Handle nullable fields
+		if maxDownloads.Valid {
+			val := int(maxDownloads.Int64)
+			file.MaxDownloads = &val
+		}
+		if passwordHash.Valid {
+			file.PasswordHash = passwordHash.String
+		}
+
+		files = append(files, file)
+	}
+
+	// Delete all files from database
+	if len(files) > 0 {
+		// Build placeholders for IN clause
+		placeholders := make([]string, len(files))
+		args := make([]interface{}, len(files))
+		for i, file := range files {
+			placeholders[i] = "?"
+			args[i] = file.ClaimCode
+		}
+
+		deleteQuery := fmt.Sprintf("DELETE FROM files WHERE claim_code IN (%s)", joinStrings(placeholders, ","))
+		_, err := db.Exec(deleteQuery, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete files from database: %w", err)
+		}
+	}
+
+	return files, nil
+}
+
+// Helper function to join strings
+func joinStrings(strs []string, sep string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	result := strs[0]
+	for i := 1; i < len(strs); i++ {
+		result += sep + strs[i]
+	}
+	return result
+}

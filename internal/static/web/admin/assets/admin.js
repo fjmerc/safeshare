@@ -88,12 +88,15 @@ function updateFilesTable(files) {
     const tbody = document.getElementById('filesTableBody');
 
     if (files.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="loading">No files found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="loading">No files found</td></tr>';
         return;
     }
 
     tbody.innerHTML = files.map(file => `
         <tr>
+            <td>
+                <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}">
+            </td>
             <td><code>${escapeHtml(file.claim_code)}</code></td>
             <td title="${escapeHtml(file.original_filename)}">${truncate(escapeHtml(file.original_filename), 30)}</td>
             <td>${formatBytes(file.file_size)}</td>
@@ -103,10 +106,25 @@ function updateFilesTable(files) {
             <td>${file.download_count} / ${file.max_downloads || '∞'}</td>
             <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td>
-                <button class="btn-small btn-delete" onclick="deleteFile('${escapeHtml(file.claim_code)}')">Delete</button>
+                <button class="btn-small btn-delete" onclick="deleteFile('${escapeHtml(file.claim_code)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    Delete
+                </button>
             </td>
         </tr>
     `).join('');
+
+    // Reset select all checkbox
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = false;
+    }
+
+    // Update delete selected button visibility
+    updateDeleteSelectedButton();
 }
 
 // Update blocked IPs table
@@ -125,7 +143,12 @@ function updateBlockedIPsTable(blockedIPs) {
             <td>${formatDate(ip.BlockedAt)}</td>
             <td>${escapeHtml(ip.BlockedBy)}</td>
             <td>
-                <button class="btn-small btn-action" onclick="unblockIP('${escapeHtml(ip.IPAddress)}')">Unblock</button>
+                <button class="btn-small btn-action" onclick="unblockIP('${escapeHtml(ip.IPAddress)}')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Unblock
+                </button>
             </td>
         </tr>
     `).join('');
@@ -392,12 +415,43 @@ function truncate(str, length) {
     return str.length > length ? str.substring(0, length) + '...' : str;
 }
 
+// Toast notification system
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+
+    const title = type === 'success' ? 'Success' : type === 'error' ? 'Error' : 'Warning';
+
+    toast.innerHTML = `
+        <div class="toast-content">
+            <div class="toast-title">${title}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    `;
+
+    container.appendChild(toast);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        toast.style.animation = 'slideInRight 0.3s ease reverse';
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+}
+
 function showError(message) {
-    alert('Error: ' + message);
+    showToast(message, 'error');
 }
 
 function showSuccess(message) {
-    alert(message);
+    showToast(message, 'success');
+}
+
+function showWarning(message) {
+    showToast(message, 'warning');
 }
 
 function confirm(message) {
@@ -420,6 +474,93 @@ function confirm(message) {
         yesBtn.onclick = () => cleanup(true);
         noBtn.onclick = () => cleanup(false);
     });
+}
+
+// Get selected claim codes
+function getSelectedClaimCodes() {
+    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+    return Array.from(checkboxes).map(cb => cb.dataset.claimCode);
+}
+
+// Update delete selected button visibility
+function updateDeleteSelectedButton() {
+    const selectedCount = document.querySelectorAll('.file-checkbox:checked').length;
+    const deleteBtn = document.getElementById('deleteSelectedBtn');
+
+    if (deleteBtn) {
+        if (selectedCount > 0) {
+            deleteBtn.style.display = 'inline-flex';
+            deleteBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Delete Selected (${selectedCount})
+            `;
+        } else {
+            deleteBtn.style.display = 'none';
+        }
+    }
+}
+
+// Handle select all checkbox
+function handleSelectAll(checked) {
+    const checkboxes = document.querySelectorAll('.file-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checked;
+    });
+    updateDeleteSelectedButton();
+}
+
+// Handle individual checkbox change
+function handleCheckboxChange() {
+    updateDeleteSelectedButton();
+
+    // Update select all checkbox state
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    const allCheckboxes = document.querySelectorAll('.file-checkbox');
+    const checkedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
+
+    if (selectAllCheckbox && allCheckboxes.length > 0) {
+        selectAllCheckbox.checked = allCheckboxes.length === checkedCheckboxes.length;
+    }
+}
+
+// Bulk delete files
+async function deleteSelectedFiles() {
+    const claimCodes = getSelectedClaimCodes();
+
+    if (claimCodes.length === 0) {
+        showError('No files selected');
+        return;
+    }
+
+    if (!await confirm(`Delete ${claimCodes.length} selected file(s)?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/files/delete/bulk', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: new URLSearchParams({ claim_codes: claimCodes.join(',') })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showSuccess(`Successfully deleted ${data.deleted_count} file(s)`);
+            loadDashboardData(currentPage, searchTerm);
+        } else {
+            showError(data.message || 'Failed to delete files');
+        }
+    } catch (error) {
+        console.error('Error deleting files:', error);
+        showError('Failed to delete files');
+    }
 }
 
 // Initialize on page load
@@ -504,6 +645,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadConfigValues();
             }
         });
+    });
+
+    // Select all checkbox
+    document.getElementById('selectAllCheckbox')?.addEventListener('change', (e) => {
+        handleSelectAll(e.target.checked);
+    });
+
+    // Delete selected button
+    document.getElementById('deleteSelectedBtn')?.addEventListener('click', () => {
+        deleteSelectedFiles();
+    });
+
+    // Individual checkbox changes (use event delegation)
+    document.getElementById('filesTableBody')?.addEventListener('change', (e) => {
+        if (e.target.classList.contains('file-checkbox')) {
+            handleCheckboxChange();
+        }
     });
 
     // Load initial data
