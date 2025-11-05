@@ -21,6 +21,7 @@ type Config struct {
 	EncryptionKey          string
 	AdminUsername          string
 	SessionExpiryHours     int
+	HTTPSEnabled           bool
 
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
@@ -48,6 +49,7 @@ func Load() (*Config, error) {
 		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""),
 		AdminUsername:          getEnv("ADMIN_USERNAME", ""),
 		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24),
+		HTTPSEnabled:           getEnvBool("HTTPS_ENABLED", false),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -349,4 +351,19 @@ func getEnvList(key, defaultValue string) []string {
 	}
 
 	return result
+}
+
+// getEnvBool retrieves a boolean environment variable or returns a default value
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		// Parse common boolean representations
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "true" || value == "1" || value == "yes" || value == "on" {
+			return true
+		}
+		if value == "false" || value == "0" || value == "no" || value == "off" {
+			return false
+		}
+	}
+	return defaultValue
 }

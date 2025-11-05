@@ -122,13 +122,13 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			Value:    sessionToken,
 			Path:     "/admin",
 			HttpOnly: true,
-			Secure:   false, // Set to true in production with HTTPS
+			Secure:   cfg.HTTPSEnabled,
 			SameSite: http.SameSiteStrictMode,
 			Expires:  expiresAt,
 		})
 
 		// Generate and set CSRF token
-		csrfToken, err := middleware.SetCSRFCookie(w)
+		csrfToken, err := middleware.SetCSRFCookie(w, cfg)
 		if err != nil {
 			slog.Error("failed to set CSRF cookie", "error", err)
 		}
@@ -152,7 +152,7 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminLogoutHandler handles admin logout
-func AdminLogoutHandler(db *sql.DB) http.HandlerFunc {
+func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -176,6 +176,8 @@ func AdminLogoutHandler(db *sql.DB) http.HandlerFunc {
 			Value:    "",
 			Path:     "/admin",
 			HttpOnly: true,
+			Secure:   cfg.HTTPSEnabled,
+			SameSite: http.SameSiteStrictMode,
 			MaxAge:   -1, // Delete cookie
 		})
 

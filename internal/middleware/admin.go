@@ -171,7 +171,7 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 // SetCSRFCookie sets a CSRF token cookie for admin pages
-func SetCSRFCookie(w http.ResponseWriter) (string, error) {
+func SetCSRFCookie(w http.ResponseWriter, cfg interface{ HTTPSEnabled bool }) (string, error) {
 	token, err := utils.GenerateCSRFToken()
 	if err != nil {
 		return "", err
@@ -182,7 +182,7 @@ func SetCSRFCookie(w http.ResponseWriter) (string, error) {
 		Value:    token,
 		Path:     "/admin",
 		HttpOnly: false, // JavaScript needs to read this
-		Secure:   false, // Set to true in production with HTTPS
+		Secure:   cfg.HTTPSEnabled,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400, // 24 hours
 	}
@@ -219,6 +219,60 @@ func RateLimitAdminLogin() func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("admin login rate limit exceeded",
+							"ip", clientIP,
+							"attempts", attempt.count,
+						)
+						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
+						return
+					}
+					// Reset if window has passed
+					attempt.count = 0
+				}
+			}
+
+			// Increment attempt counter after the request completes
+			// We'll do this in a deferred function
+			defer func() {
+				if attempts[clientIP] == nil {
+					attempts[clientIP] = &loginAttempt{}
+				}
+				attempts[clientIP].count++
+				attempts[clientIP].lastAttempt = now
+			}()
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimitUserLogin rate limits user login attempts
+func RateLimitUserLogin() func(http.Handler) http.Handler {
+	type loginAttempt struct {
+		count      int
+		lastAttempt time.Time
+	}
+
+	attempts := make(map[string]*loginAttempt)
+	maxAttempts := 5
+	windowMinutes := 15
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientIP := getClientIP(r)
+
+			// Clean up old entries
+			now := time.Now()
+			for ip, attempt := range attempts {
+				if now.Sub(attempt.lastAttempt) > time.Duration(windowMinutes)*time.Minute {
+					delete(attempts, ip)
+				}
+			}
+
+			// Check rate limit
+			if attempt, exists := attempts[clientIP]; exists {
+				if attempt.count >= maxAttempts {
+					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
+						slog.Warn("user login rate limit exceeded",
 							"ip", clientIP,
 							"attempts", attempt.count,
 						)

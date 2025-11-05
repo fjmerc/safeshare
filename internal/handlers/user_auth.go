@@ -121,7 +121,7 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			Value:    sessionToken,
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   false, // Set to true in production with HTTPS
+			Secure:   cfg.HTTPSEnabled,
 			SameSite: http.SameSiteStrictMode,
 			Expires:  expiresAt,
 		})
@@ -147,7 +147,7 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserLogoutHandler handles user logout
-func UserLogoutHandler(db *sql.DB) http.HandlerFunc {
+func UserLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -177,7 +177,7 @@ func UserLogoutHandler(db *sql.DB) http.HandlerFunc {
 			Value:    "",
 			Path:     "/",
 			HttpOnly: true,
-			Secure:   false,
+			Secure:   cfg.HTTPSEnabled,
 			SameSite: http.SameSiteStrictMode,
 			MaxAge:   -1,
 		})
