@@ -517,6 +517,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
 		var userID sql.NullInt64
+		// Note: username not needed for bulk delete operation
 
 		err := db.QueryRow(query, claimCode).Scan(
 			&file.ID,
@@ -564,9 +565,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		if userID.Valid {
 			file.UserID = &userID.Int64
 		}
-		if username.Valid {
-			file.Username = &username.String
-		}
+		// username not queried in bulk delete - not needed
 
 		files = append(files, file)
 	}
