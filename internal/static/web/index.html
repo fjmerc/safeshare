@@ -32,6 +32,24 @@
             <p class="subtitle">Secure temporary file sharing with automatic expiration</p>
         </header>
 
+        <!-- User Status Bar -->
+        <div id="userStatusBar" class="user-status-bar">
+            <!-- Not logged in state -->
+            <div id="userNotLoggedIn" class="user-status-content hidden">
+                <span class="status-text">Want to track your uploads?</span>
+                <a href="/login" class="btn-login-small">Login</a>
+            </div>
+
+            <!-- Logged in state -->
+            <div id="userLoggedIn" class="user-status-content hidden">
+                <span class="status-welcome">Welcome, <strong id="userName"></strong>!</span>
+                <div class="user-actions">
+                    <a href="/dashboard" class="btn-dashboard-small">Dashboard</a>
+                    <button id="logoutBtn" class="btn-logout-small">Logout</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Tab Navigation -->
         <div class="tabs">
             <button class="tab-button active" data-tab="dropoff">

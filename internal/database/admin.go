@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yourusername/safeshare/internal/models"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // BlockedIP represents a blocked IP address
@@ -26,6 +27,64 @@ type AdminSession struct {
 	LastActivity time.Time
 	IPAddress    string
 	UserAgent    string
+}
+
+// ValidateAdminCredentials checks if the provided username and password are valid
+func ValidateAdminCredentials(db *sql.DB, username, password string) (bool, error) {
+	query := `SELECT password_hash FROM admin_credentials WHERE username = ?`
+
+	var hashedPassword string
+	err := db.QueryRow(query, username).Scan(&hashedPassword)
+
+	if err == sql.ErrNoRows {
+		return false, nil // User not found
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to query admin credentials: %w", err)
+	}
+
+	// Compare password with hash
+	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	if err != nil {
+		return false, nil // Invalid password
+	}
+
+	return true, nil
+}
+
+// InitializeAdminCredentials creates or updates admin credentials in the database
+func InitializeAdminCredentials(db *sql.DB, username, password string) error {
+	// Hash the password
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash admin password: %w", err)
+	}
+	hashedPassword := string(hashedBytes)
+
+	// Check if admin credentials already exist
+	var existingUsername string
+	err = db.QueryRow("SELECT username FROM admin_credentials LIMIT 1").Scan(&existingUsername)
+
+	if err == sql.ErrNoRows {
+		// No admin exists, insert new credentials
+		query := `INSERT INTO admin_credentials (username, password_hash) VALUES (?, ?)`
+		_, err = db.Exec(query, username, hashedPassword)
+		if err != nil {
+			return fmt.Errorf("failed to insert admin credentials: %w", err)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to check existing admin: %w", err)
+	}
+
+	// Admin exists, update if username or password changed
+	query := `UPDATE admin_credentials SET username = ?, password_hash = ? WHERE id = 1`
+	_, err = db.Exec(query, username, hashedPassword)
+	if err != nil {
+		return fmt.Errorf("failed to update admin credentials: %w", err)
+	}
+
+	return nil
 }
 
 // CreateSession creates a new admin session
@@ -190,7 +249,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 
 	// Get paginated files
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 		FROM files ORDER BY created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, limit, offset)
@@ -205,6 +264,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		var createdAt, expiresAt string
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
+		var userID sql.NullInt64
 
 		err := rows.Scan(
 			&file.ID,
@@ -219,6 +279,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 			&file.DownloadCount,
 			&file.UploaderIP,
 			&passwordHash,
+			&userID,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -242,6 +303,9 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		}
 		if passwordHash.Valid {
 			file.PasswordHash = passwordHash.String
+		}
+		if userID.Valid {
+			file.UserID = &userID.Int64
 		}
 
 		files = append(files, file)
@@ -269,7 +333,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 
 	// Get paginated results
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 		FROM files
 		WHERE claim_code LIKE ? OR original_filename LIKE ? OR uploader_ip LIKE ?
 		ORDER BY created_at DESC LIMIT ? OFFSET ?`
@@ -286,6 +350,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		var createdAt, expiresAt string
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
+		var userID sql.NullInt64
 
 		err := rows.Scan(
 			&file.ID,
@@ -300,6 +365,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 			&file.DownloadCount,
 			&file.UploaderIP,
 			&passwordHash,
+			&userID,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -324,6 +390,9 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		if passwordHash.Valid {
 			file.PasswordHash = passwordHash.String
 		}
+		if userID.Valid {
+			file.UserID = &userID.Int64
+		}
 
 		files = append(files, file)
 	}
@@ -341,7 +410,7 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -350,6 +419,7 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	var createdAt, expiresAt string
 	var passwordHash sql.NullString
 	var maxDownloads sql.NullInt64
+	var userID sql.NullInt64
 
 	err := db.QueryRow(query, claimCode).Scan(
 		&file.ID,
@@ -364,6 +434,7 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&file.DownloadCount,
 		&file.UploaderIP,
 		&passwordHash,
+		&userID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -392,6 +463,9 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	if passwordHash.Valid {
 		file.PasswordHash = passwordHash.String
 	}
+	if userID.Valid {
+		file.UserID = &userID.Int64
+	}
 
 	// Delete from database
 	deleteQuery := `DELETE FROM files WHERE claim_code = ?`
@@ -417,7 +491,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		query := `
 			SELECT
 				id, claim_code, original_filename, stored_filename, file_size,
-				mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+				mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 			FROM files
 			WHERE claim_code = ?
 		`
@@ -426,6 +500,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		var createdAt, expiresAt string
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
+		var userID sql.NullInt64
 
 		err := db.QueryRow(query, claimCode).Scan(
 			&file.ID,
@@ -440,6 +515,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 			&file.DownloadCount,
 			&file.UploaderIP,
 			&passwordHash,
+			&userID,
 		)
 
 		if err == sql.ErrNoRows {
@@ -468,6 +544,9 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		}
 		if passwordHash.Valid {
 			file.PasswordHash = passwordHash.String
+		}
+		if userID.Valid {
+			file.UserID = &userID.Int64
 		}
 
 		files = append(files, file)

@@ -65,6 +65,7 @@
         <!-- Tabs -->
         <div class="tabs">
             <button class="tab-btn active" data-tab="files">Files</button>
+            <button class="tab-btn" data-tab="users">Users</button>
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
         </div>
@@ -118,6 +119,51 @@
 
             <div class="pagination" id="pagination">
                 <!-- Pagination will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Users Tab -->
+        <div id="usersTab" class="tab-content">
+            <div class="table-controls">
+                <button id="createUserBtn" class="btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="8.5" cy="7" r="4"></circle>
+                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                        <line x1="23" y1="11" x2="17" y2="11"></line>
+                    </svg>
+                    Create User
+                </button>
+                <button id="refreshUsersBtn" class="btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Files</th>
+                            <th>Created</th>
+                            <th>Last Login</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr>
+                            <td colspan="8" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -260,6 +306,101 @@
                         <span>./uploads</span>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Create New User</h3>
+            <form id="createUserForm">
+                <div class="form-group">
+                    <label for="newUsername">Username</label>
+                    <input type="text" id="newUsername" name="username" required pattern="[a-zA-Z0-9_-]+">
+                    <small>Letters, numbers, underscore, and dash only</small>
+                </div>
+                <div class="form-group">
+                    <label for="newEmail">Email</label>
+                    <input type="email" id="newEmail" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="newUserPassword">Password (optional)</label>
+                    <input type="text" id="newUserPassword" name="password" placeholder="Auto-generate if empty">
+                    <small>Leave empty to auto-generate a temporary password</small>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-primary">Create User</button>
+                    <button type="button" class="btn-secondary" onclick="hideCreateUserModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- User Created Success Modal -->
+    <div id="userCreatedModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>User Created Successfully</h3>
+            <div style="margin: 20px 0;">
+                <p><strong>Username:</strong> <span id="createdUsername"></span></p>
+                <p><strong>Email:</strong> <span id="createdEmail"></span></p>
+                <p><strong>Temporary Password:</strong>
+                    <code id="createdPassword" style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;"></code>
+                    <button class="btn-secondary" onclick="copyPassword()" style="margin-left: 8px;">Copy</button>
+                </p>
+                <div style="background: #dbeafe; padding: 12px; border-radius: 4px; margin-top: 16px;">
+                    <small style="color: #1e40af;">Share these credentials securely with the user. They will be required to change their password on first login.</small>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="hideUserCreatedModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Edit User</h3>
+            <form id="editUserForm">
+                <input type="hidden" id="editUserId">
+                <div class="form-group">
+                    <label for="editUsername">Username</label>
+                    <input type="text" id="editUsername" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="editEmail">Email</label>
+                    <input type="email" id="editEmail" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="editRole">Role</label>
+                    <select id="editRole" name="role" required>
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-primary">Save Changes</button>
+                    <button type="button" class="btn-secondary" onclick="hideEditUserModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div id="resetPasswordModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Password Reset</h3>
+            <div style="margin: 20px 0;">
+                <p><strong>New Temporary Password:</strong></p>
+                <code id="resetPassword" style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; display: block; margin: 10px 0;"></code>
+                <button class="btn-secondary" onclick="copyResetPassword()">Copy Password</button>
+                <div style="background: #dbeafe; padding: 12px; border-radius: 4px; margin-top: 16px;">
+                    <small style="color: #1e40af;">Share this temporary password securely with the user.</small>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="hideResetPasswordModal()">Close</button>
             </div>
         </div>
     </div>

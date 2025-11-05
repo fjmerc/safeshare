@@ -29,12 +29,22 @@
     const limitWarning = document.getElementById('limitWarning');
     const passwordPrompt = document.getElementById('passwordPrompt');
 
+    // DOM Elements - User Status
+    const userNotLoggedIn = document.getElementById('userNotLoggedIn');
+    const userLoggedIn = document.getElementById('userLoggedIn');
+    const userName = document.getElementById('userName');
+    const logoutBtn = document.getElementById('logoutBtn');
+
     // State - Pickup
     let currentFileInfo = null;
+
+    // State - User
+    let currentUser = null;
 
     // Initialize
     function init() {
         loadTheme();
+        checkAuth();
         fetchMaxFileSize();
         setupEventListeners();
     }
@@ -63,6 +73,61 @@
             }
         } catch (error) {
             console.log('Using default max file size');
+        }
+    }
+
+    // Check authentication status
+    async function checkAuth() {
+        try {
+            const response = await fetch('/api/auth/user', {
+                credentials: 'include'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                currentUser = data.user;
+                showUserStatus(true);
+            } else {
+                currentUser = null;
+                showUserStatus(false);
+            }
+        } catch (error) {
+            console.log('Not authenticated');
+            currentUser = null;
+            showUserStatus(false);
+        }
+    }
+
+    // Show/hide user status based on authentication
+    function showUserStatus(isLoggedIn) {
+        if (isLoggedIn && currentUser) {
+            userNotLoggedIn.classList.add('hidden');
+            userLoggedIn.classList.remove('hidden');
+            userName.textContent = currentUser.username;
+        } else {
+            userLoggedIn.classList.add('hidden');
+            userNotLoggedIn.classList.remove('hidden');
+        }
+    }
+
+    // Handle logout
+    async function handleLogout() {
+        try {
+            const response = await fetch('/api/auth/logout', {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            if (response.ok) {
+                currentUser = null;
+                showUserStatus(false);
+                // Optional: show a success message
+                console.log('Logged out successfully');
+            } else {
+                console.error('Logout failed');
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
         }
     }
 
@@ -160,6 +225,11 @@
 
         // Theme toggle
         themeToggle.addEventListener('click', toggleTheme);
+
+        // Logout button
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', handleLogout);
+        }
 
         // Password toggle
         const uploadPasswordToggle = document.getElementById('uploadPasswordToggle');

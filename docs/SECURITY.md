@@ -4,6 +4,153 @@
 
 SafeShare includes enterprise-grade security features designed for production deployments.
 
+## 👤 User Authentication & Authorization
+
+### Overview
+SafeShare implements a comprehensive user authentication system with invite-only registration, role-based access control, and secure session management.
+
+### Features
+- **Invite-only registration**: Admin-managed user accounts prevent unauthorized access
+- **Role-based access**: User and admin roles with different permission levels
+- **Session-based authentication**: Secure httpOnly cookies with configurable expiry
+- **Password security**: Bcrypt hashing (cost factor 10) for all passwords
+- **Temporary passwords**: Force password change on first login for new accounts
+- **File ownership tracking**: Authenticated uploads linked to user accounts
+- **Anonymous uploads supported**: Public use cases still work without authentication
+- **Public downloads**: No authentication required for claim code downloads
+
+### User Management
+
+**Admin-Only User Creation:**
+Admins can create user accounts via the admin dashboard:
+
+1. Navigate to the **Users** tab in `/admin/dashboard`
+2. Click "Create User"
+3. Provide username, email, role (user/admin), and optional password
+4. If no password provided, a temporary password is auto-generated
+5. New user receives temporary password and must change it on first login
+
+**User Roles:**
+- **User**: Can upload files, view their own upload history, delete own files
+- **Admin**: Full access to admin dashboard, user management, all files
+
+**Account Management:**
+- **Enable/Disable**: Temporarily disable user accounts without deleting data
+- **Reset Password**: Generate new temporary password requiring change on next login
+- **Delete User**: Permanently remove user account (uploaded files can optionally be deleted or kept)
+
+### API Endpoints
+
+**User Authentication:**
+```bash
+# Login (sets session cookie)
+POST /api/auth/login
+Content-Type: application/json
+{"username": "user", "password": "password"}
+
+# Logout (clears session)
+POST /api/auth/logout
+
+# Get current user info
+GET /api/auth/user
+
+# Change password
+POST /api/auth/change-password
+Content-Type: application/json
+{"current_password": "old", "new_password": "new", "confirm_password": "new"}
+```
+
+**User Dashboard:**
+```bash
+# Get user's uploaded files
+GET /api/user/files?limit=50&offset=0
+
+# Delete user's own file
+DELETE /api/user/files/delete
+Content-Type: application/json
+{"file_id": 123}
+```
+
+**Admin User Management:**
+```bash
+# Create user (admin only)
+POST /admin/api/users/create
+X-CSRF-Token: <token>
+Content-Type: application/json
+{
+  "username": "newuser",
+  "email": "user@example.com",
+  "role": "user",
+  "password": "optional_custom_password"
+}
+
+# List all users (admin only)
+GET /admin/api/users?limit=50&offset=0
+
+# Update user (admin only)
+PUT /admin/api/users/:id
+X-CSRF-Token: <token>
+Content-Type: application/json
+{"username": "updated", "email": "new@example.com", "role": "admin"}
+
+# Enable/disable user (admin only)
+POST /admin/api/users/:id/enable
+POST /admin/api/users/:id/disable
+X-CSRF-Token: <token>
+
+# Reset user password (admin only)
+POST /admin/api/users/:id/reset-password
+X-CSRF-Token: <token>
+
+# Delete user (admin only)
+DELETE /admin/api/users/:id
+X-CSRF-Token: <token>
+```
+
+### Security Properties
+
+✅ **Bcrypt password hashing** - Passwords hashed with cost factor 10
+✅ **Secure session tokens** - Generated using crypto/rand (32 bytes)
+✅ **HttpOnly cookies** - Prevents XSS attacks on session tokens
+✅ **SameSite cookies** - Prevents CSRF attacks on authentication
+✅ **Separate session stores** - User and admin sessions isolated
+✅ **Session expiry** - Configurable via SESSION_EXPIRY_HOURS (default: 24 hours)
+✅ **Activity tracking** - Last activity timestamp updated on each request
+✅ **Automatic cleanup** - Background worker removes expired sessions
+✅ **Audit logging** - All authentication events logged with IP and timestamp
+
+### Web Interface
+
+**User Pages:**
+- Login: `http://localhost:8080/login`
+- Dashboard: `http://localhost:8080/dashboard`
+- Homepage: Shows user status and login/logout buttons
+
+**Admin Pages:**
+- Admin Login: `http://localhost:8080/admin/login`
+- Admin Dashboard: `http://localhost:8080/admin/dashboard`
+- Users tab: Full user management interface
+
+### Best Practices
+
+⚠️ **Production Deployment:**
+1. Use strong admin passwords (minimum 16 characters, mixed case, numbers, symbols)
+2. Use HTTPS in production (set cookie Secure flag)
+3. Set SESSION_EXPIRY_HOURS appropriately for your use case
+4. Monitor audit logs for suspicious authentication activity
+5. Regularly review user accounts and disable inactive users
+6. Use temporary passwords for all new user accounts
+7. Enforce password complexity in client-side validation
+
+⚠️ **Security Considerations:**
+- **Invite-only**: Prevents unauthorized account creation
+- **No password reset via email**: Admin must reset passwords manually
+- **Session fixation prevention**: New session token generated on login
+- **Brute force protection**: Rate limiting on login endpoints (5 attempts per 15 minutes)
+- **SQL injection prevention**: All queries use parameterized statements
+
+---
+
 ## 🔐 Encryption at Rest
 
 ### Overview

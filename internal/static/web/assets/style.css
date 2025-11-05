@@ -796,6 +796,90 @@ footer a:hover {
     font-weight: 600;
 }
 
+/* User Status Bar */
+.user-status-bar {
+    margin: 1.5rem 0;
+    padding: 0.75rem 1.5rem;
+    background: var(--card-background);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.user-status-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 600px;
+    gap: 1rem;
+}
+
+.status-text {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.status-welcome {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.status-welcome strong {
+    color: var(--primary-color);
+}
+
+.user-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.btn-login-small,
+.btn-dashboard-small,
+.btn-logout-small {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-block;
+    border: none;
+}
+
+.btn-login-small {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-login-small:hover {
+    background: var(--primary-hover);
+}
+
+.btn-dashboard-small {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-dashboard-small:hover {
+    background: var(--primary-hover);
+}
+
+.btn-logout-small {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-logout-small:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger-color);
+    border-color: var(--danger-color);
+}
+
 /* Utility Classes */
 .hidden {
     display: none !important;
@@ -831,5 +915,20 @@ footer a:hover {
         width: 2.5rem;
         height: 2.5rem;
         font-size: 1.1rem;
+    }
+
+    .user-status-bar {
+        padding: 0.5rem 1rem;
+    }
+
+    .user-status-content {
+        flex-direction: column;
+        text-align: center;
+        gap: 0.75rem;
+    }
+
+    .user-actions {
+        width: 100%;
+        justify-content: center;
     }
 }

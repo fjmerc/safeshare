@@ -664,7 +664,332 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Users tab event listeners
+    document.getElementById('createUserBtn')?.addEventListener('click', () => {
+        showCreateUserModal();
+    });
+
+    document.getElementById('refreshUsersBtn')?.addEventListener('click', () => {
+        loadUsers();
+    });
+
+    document.getElementById('createUserForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        createUser();
+    });
+
+    document.getElementById('editUserForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        updateUser();
+    });
+
+    // Load users when Users tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'users') {
+                loadUsers();
+            } else if (btn.dataset.tab === 'settings') {
+                loadConfigValues();
+            }
+        });
+    });
+
     // Load initial data
     loadDashboardData();
     loadConfigValues(); // Load config values for settings tab
 });
+
+// ============ User Management Functions ============
+
+let usersData = [];
+
+async function loadUsers() {
+    try {
+        const response = await fetch('/admin/api/users', {
+            credentials: 'include'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load users');
+        }
+
+        const data = await response.json();
+        usersData = data.users || [];
+        displayUsers(usersData);
+    } catch (error) {
+        console.error('Load users error:', error);
+        showToast('Failed to load users', 'error');
+    }
+}
+
+function displayUsers(users) {
+    const tbody = document.getElementById('usersTableBody');
+
+    if (!users || users.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No users found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = users.map(user => `
+        <tr>
+            <td><strong>${escapeHtml(user.username)}</strong></td>
+            <td>${escapeHtml(user.email)}</td>
+            <td>
+                <span class="badge ${user.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">
+                    ${user.role}
+                </span>
+            </td>
+            <td>
+                <span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">
+                    ${user.is_active ? 'Active' : 'Disabled'}
+                </span>
+            </td>
+            <td>${user.file_count || 0}</td>
+            <td>${new Date(user.created_at).toLocaleDateString()}</td>
+            <td>${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
+            <td class="actions">
+                <button class="btn-icon btn-primary" onclick="editUser(${user.id})" title="Edit">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+                <button class="btn-icon ${user.is_active ? 'btn-warning' : 'btn-success'}"
+                        onclick="toggleUserStatus(${user.id}, ${user.is_active})"
+                        title="${user.is_active ? 'Disable' : 'Enable'}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        ${user.is_active ?
+                            '<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>' :
+                            '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>'
+                        }
+                    </svg>
+                </button>
+                <button class="btn-icon btn-secondary" onclick="resetUserPassword(${user.id})" title="Reset Password">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                </button>
+                <button class="btn-icon btn-danger" onclick="deleteUser(${user.id})" title="Delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function showCreateUserModal() {
+    document.getElementById('createUserModal').style.display = 'flex';
+    document.getElementById('createUserForm').reset();
+}
+
+function hideCreateUserModal() {
+    document.getElementById('createUserModal').style.display = 'none';
+}
+
+async function createUser() {
+    const form = document.getElementById('createUserForm');
+    const formData = new FormData(form);
+
+    const userData = {
+        username: formData.get('username'),
+        email: formData.get('email'),
+        password: formData.get('password') || ''
+    };
+
+    try {
+        const csrfToken = getCookie('csrf_token');
+        const response = await fetch('/admin/api/users/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include',
+            body: JSON.stringify(userData)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to create user');
+        }
+
+        hideCreateUserModal();
+        showUserCreatedModal(data);
+        loadUsers();
+        showToast('User created successfully', 'success');
+    } catch (error) {
+        console.error('Create user error:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+function showUserCreatedModal(data) {
+    document.getElementById('createdUsername').textContent = data.username;
+    document.getElementById('createdEmail').textContent = data.email;
+    document.getElementById('createdPassword').textContent = data.temporary_password;
+    document.getElementById('userCreatedModal').style.display = 'flex';
+}
+
+function hideUserCreatedModal() {
+    document.getElementById('userCreatedModal').style.display = 'none';
+}
+
+function copyPassword() {
+    const password = document.getElementById('createdPassword').textContent;
+    navigator.clipboard.writeText(password).then(() => {
+        showToast('Password copied to clipboard', 'success');
+    }).catch(() => {
+        showToast('Failed to copy password', 'error');
+    });
+}
+
+function editUser(userId) {
+    const user = usersData.find(u => u.id === userId);
+    if (!user) return;
+
+    document.getElementById('editUserId').value = user.id;
+    document.getElementById('editUsername').value = user.username;
+    document.getElementById('editEmail').value = user.email;
+    document.getElementById('editRole').value = user.role;
+    document.getElementById('editUserModal').style.display = 'flex';
+}
+
+function hideEditUserModal() {
+    document.getElementById('editUserModal').style.display = 'none';
+}
+
+async function updateUser() {
+    const userId = document.getElementById('editUserId').value;
+    const username = document.getElementById('editUsername').value;
+    const email = document.getElementById('editEmail').value;
+    const role = document.getElementById('editRole').value;
+
+    try {
+        const csrfToken = getCookie('csrf_token');
+        const response = await fetch(`/admin/api/users/${userId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include',
+            body: JSON.stringify({ username, email, role })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to update user');
+        }
+
+        hideEditUserModal();
+        loadUsers();
+        showToast('User updated successfully', 'success');
+    } catch (error) {
+        console.error('Update user error:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+async function toggleUserStatus(userId, currentStatus) {
+    const action = currentStatus ? 'disable' : 'enable';
+    const message = `Are you sure you want to ${action} this user?`;
+
+    if (!confirm(message)) return;
+
+    try {
+        const csrfToken = getCookie('csrf_token');
+        const response = await fetch(`/admin/api/users/${userId}/${action}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include'
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || `Failed to ${action} user`);
+        }
+
+        loadUsers();
+        showToast(`User ${action}d successfully`, 'success');
+    } catch (error) {
+        console.error('Toggle user status error:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+async function resetUserPassword(userId) {
+    if (!confirm('Generate a new temporary password for this user?')) return;
+
+    try {
+        const csrfToken = getCookie('csrf_token');
+        const response = await fetch(`/admin/api/users/${userId}/reset-password`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include'
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to reset password');
+        }
+
+        document.getElementById('resetPassword').textContent = data.temporary_password;
+        document.getElementById('resetPasswordModal').style.display = 'flex';
+        showToast('Password reset successfully', 'success');
+    } catch (error) {
+        console.error('Reset password error:', error);
+        showToast(error.message, 'error');
+    }
+}
+
+function hideResetPasswordModal() {
+    document.getElementById('resetPasswordModal').style.display = 'none';
+}
+
+function copyResetPassword() {
+    const password = document.getElementById('resetPassword').textContent;
+    navigator.clipboard.writeText(password).then(() => {
+        showToast('Password copied to clipboard', 'success');
+    }).catch(() => {
+        showToast('Failed to copy password', 'error');
+    });
+}
+
+async function deleteUser(userId) {
+    if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
+
+    try {
+        const csrfToken = getCookie('csrf_token');
+        const response = await fetch(`/admin/api/users/${userId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': csrfToken
+            },
+            credentials: 'include'
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to delete user');
+        }
+
+        loadUsers();
+        showToast('User deleted successfully', 'success');
+    } catch (error) {
+        console.error('Delete user error:', error);
+        showToast(error.message, 'error');
+    }
+}

@@ -16,8 +16,8 @@ func CreateFile(db *sql.DB, file *models.File) error {
 	query := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := db.Exec(
@@ -31,6 +31,7 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		file.MaxDownloads,
 		file.UploaderIP,
 		file.PasswordHash,
+		file.UserID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -51,7 +52,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -59,6 +60,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	file := &models.File{}
 	var createdAt, expiresAt string
 	var passwordHash sql.NullString
+	var userID sql.NullInt64
 
 	err := db.QueryRow(query, claimCode).Scan(
 		&file.ID,
@@ -73,6 +75,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&file.DownloadCount,
 		&file.UploaderIP,
 		&passwordHash,
+		&userID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -93,9 +96,12 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		return nil, fmt.Errorf("failed to parse expires_at: %w", err)
 	}
 
-	// Handle nullable password_hash
+	// Handle nullable fields
 	if passwordHash.Valid {
 		file.PasswordHash = passwordHash.String
+	}
+	if userID.Valid {
+		file.UserID = &userID.Int64
 	}
 
 	// Check if expired

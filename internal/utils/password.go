@@ -1,6 +1,10 @@
 package utils
 
 import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -40,4 +44,44 @@ func VerifyPassword(hashedPassword, password string) bool {
 // IsPasswordProtected returns true if a password hash is set
 func IsPasswordProtected(passwordHash string) bool {
 	return passwordHash != ""
+}
+
+// GenerateTemporaryPassword generates a secure random temporary password
+// Format: 4 words separated by dashes (e.g., "correct-horse-battery-staple")
+// This is memorable for users to type once before changing
+func GenerateTemporaryPassword() (string, error) {
+	// Simple word list for memorable passwords
+	words := []string{
+		"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+		"india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa",
+		"quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiskey", "xray",
+		"yankee", "zulu", "apple", "banana", "cherry", "dragon", "eagle", "falcon",
+		"giraffe", "hawk", "iguana", "jaguar", "koala", "lion", "monkey", "newt",
+		"octopus", "panda", "quail", "rabbit", "snake", "tiger", "unicorn", "vulture",
+		"walrus", "yak", "zebra", "forest", "mountain", "ocean", "river", "storm",
+		"thunder", "wind", "fire", "earth", "water", "cloud", "star", "moon",
+	}
+
+	// Select 3 random words
+	var result string
+	for i := 0; i < 3; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(words))))
+		if err != nil {
+			return "", err
+		}
+		if i > 0 {
+			result += "-"
+		}
+		result += words[n.Int64()]
+	}
+
+	// Add a random number (100-999)
+	n, err := rand.Int(rand.Reader, big.NewInt(900))
+	if err != nil {
+		return "", err
+	}
+
+	result += fmt.Sprintf("-%d", n.Int64()+100)
+
+	return result, nil
 }

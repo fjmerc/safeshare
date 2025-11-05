@@ -31,9 +31,20 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ **Maximum expiration limits** (prevents abuse)
 - ✅ **Storage quota limits** (configurable per-app limits)
 
+### User Authentication 👤
+- ✅ **Invite-only user registration** (admin-managed accounts)
+- ✅ **Session-based authentication** (secure httpOnly cookies)
+- ✅ **User dashboard** (view upload history, delete own files)
+- ✅ **Temporary passwords** (forced password change on first login)
+- ✅ **Authenticated uploads** (track files by user)
+- ✅ **Anonymous uploads** (still supported for public use)
+- ✅ **Public downloads** (no authentication required for claim codes)
+- ✅ **User roles** (user/admin role management)
+
 ### Admin Dashboard 🎛️
 - ✅ **Web-based administration** (secure login with session management)
 - ✅ **File management** (view all files, search, paginate, delete)
+- ✅ **User management** (create, edit, enable/disable, reset passwords)
 - ✅ **IP blocking** (block/unblock IPs from uploads/downloads)
 - ✅ **Quota management** (adjust storage limits without restart)
 - ✅ **Real-time statistics** (storage usage, file counts, blocked IPs)
@@ -104,6 +115,101 @@ export DEFAULT_EXPIRATION_HOURS=24
 ```
 
 ## API Documentation
+
+### User Authentication Endpoints
+
+#### User Login
+**Endpoint:** `POST /api/auth/login`
+
+**Request:**
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"username":"user","password":"password"}' \
+  -c cookies.txt \
+  http://localhost:8080/api/auth/login
+```
+
+**Response (200 OK):**
+```json
+{
+  "id": 1,
+  "username": "user",
+  "email": "user@example.com",
+  "role": "user",
+  "require_password_change": false
+}
+```
+
+#### User Logout
+**Endpoint:** `POST /api/auth/logout`
+
+**Request:**
+```bash
+curl -X POST -b cookies.txt http://localhost:8080/api/auth/logout
+```
+
+#### Get Current User
+**Endpoint:** `GET /api/auth/user`
+
+**Request:**
+```bash
+curl -b cookies.txt http://localhost:8080/api/auth/user
+```
+
+#### Change Password
+**Endpoint:** `POST /api/auth/change-password`
+
+**Request:**
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"current_password":"old","new_password":"new","confirm_password":"new"}' \
+  -b cookies.txt \
+  http://localhost:8080/api/auth/change-password
+```
+
+#### User Dashboard - Get Files
+**Endpoint:** `GET /api/user/files`
+
+**Request:**
+```bash
+curl -b cookies.txt http://localhost:8080/api/user/files?limit=50&offset=0
+```
+
+**Response (200 OK):**
+```json
+{
+  "files": [
+    {
+      "claim_code": "Xy9kLm8pQz4vDwE",
+      "original_filename": "document.pdf",
+      "file_size": 1048576,
+      "created_at": "2025-11-05T10:00:00Z",
+      "expires_at": "2025-11-06T10:00:00Z",
+      "download_count": 2,
+      "max_downloads": 5
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+#### User Dashboard - Delete File
+**Endpoint:** `DELETE /api/user/files/delete`
+
+**Request:**
+```bash
+curl -X DELETE \
+  -H "Content-Type: application/json" \
+  -d '{"file_id":1}' \
+  -b cookies.txt \
+  http://localhost:8080/api/user/files/delete
+```
+
+### File Sharing Endpoints
 
 ### Upload File
 
@@ -241,11 +347,19 @@ docker run -d \
 
 **Features:**
 - **Files tab**: View all uploaded files, search by claim code/filename/IP, delete files before expiration
+- **Users tab**: Create user accounts, edit profiles, enable/disable users, reset passwords, delete users
 - **Blocked IPs tab**: Block/unblock IP addresses from uploading or downloading files
-- **Settings tab**: Adjust storage quota without restarting the application
-- **Real-time stats**: Monitor total files, storage usage, quota usage, and blocked IPs
+- **Settings tab**: Adjust storage quota, change admin password without restarting the application
+- **Real-time stats**: Monitor total files, storage usage, quota usage, blocked IPs, and user accounts
 - **Security**: Session-based authentication, CSRF protection, rate-limited login (5 attempts per 15 minutes)
 - **Audit logging**: All admin actions are logged with IP and timestamp
+
+**User Management:**
+- **Create users**: Admin-only user creation with temporary passwords
+- **Invite-only model**: No public registration - all accounts created by admins
+- **Role assignment**: Assign user or admin roles during account creation
+- **Password management**: Force password change on first login, reset passwords when needed
+- **Account control**: Enable/disable users without deleting their data
 
 ### Reverse Proxy Support
 
@@ -302,15 +416,40 @@ docker run -d -p 8080:8080 --name safeshare safeshare:latest
 ```
 SafeShare Application
 ├── HTTP Server (net/http)
-│   ├── Upload Handler
-│   ├── Claim Handler
-│   └── Health Handler
+│   ├── Public Handlers
+│   │   ├── Upload Handler (authenticated or anonymous)
+│   │   ├── Claim Handler (download files)
+│   │   └── Health Handler
+│   ├── User Authentication
+│   │   ├── Login/Logout Handlers
+│   │   ├── Password Change Handler
+│   │   ├── User Dashboard Handlers
+│   │   └── Session Middleware
+│   └── Admin Dashboard
+│       ├── Admin Login Handler
+│       ├── User Management Handlers
+│       ├── File Management Handlers
+│       ├── IP Blocking Handlers
+│       └── Settings Handlers
 ├── SQLite Database (modernc.org/sqlite)
-│   └── Pure Go implementation (no CGO)
+│   ├── files table (with user_id foreign key)
+│   ├── users table (authentication)
+│   ├── user_sessions table
+│   ├── admin_credentials table
+│   ├── admin_sessions table
+│   └── blocked_ips table
 ├── File Storage
-│   └── UUID-based filenames
-└── Background Cleanup Worker
-    └── Periodic expired file deletion
+│   └── UUID-based filenames (encrypted if ENCRYPTION_KEY set)
+├── Middleware
+│   ├── User Authentication (optional or required)
+│   ├── Admin Authentication
+│   ├── Rate Limiting
+│   ├── IP Blocking
+│   ├── CSRF Protection
+│   └── Security Headers
+└── Background Workers
+    ├── Expired File Cleanup
+    └── Expired Session Cleanup
 ```
 
 ### Security Features
@@ -332,15 +471,58 @@ SafeShare Application
 - **Parameterized SQL queries**: Prevents SQL injection attacks
 - **Timeout enforcement**: HTTP timeouts prevent slowloris attacks
 
+#### Authentication & Authorization
+- **User authentication**: Session-based authentication with secure httpOnly cookies
+- **Password security**: Bcrypt hashing with cost factor 10 for all passwords
+- **Session management**: Separate user and admin sessions with configurable expiry
+- **Temporary passwords**: Force password change on first login for new users
+- **Role-based access**: User and admin roles with different permissions
+- **Invite-only registration**: Admin-managed user accounts prevent unauthorized access
+
 #### Operational Security
 - **Enhanced audit logging**: Comprehensive security event logging for compliance
 - **Cryptographically secure claim codes**: Uses `crypto/rand` for code generation
+- **Cryptographically secure sessions**: Uses `crypto/rand` for session tokens
 - **Non-root container user**: Container runs as user ID 1000
 - **File size limits**: Enforced at application and HTTP levels
 
 **📖 For detailed security configuration, see [SECURITY.md](docs/SECURITY.md)**
 
 ## Example Workflows
+
+### User Login and Dashboard
+
+```bash
+# User login (returns user info and sets session cookie)
+curl -c user_cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"username":"user","password":"password"}' \
+  http://localhost:8080/api/auth/login
+
+# View uploaded files in user dashboard
+curl -b user_cookies.txt http://localhost:8080/api/user/files
+
+# Upload file as authenticated user (tracks ownership)
+curl -b user_cookies.txt \
+  -X POST \
+  -F "file=@document.pdf" \
+  http://localhost:8080/api/upload
+
+# Delete own file from dashboard
+curl -b user_cookies.txt \
+  -X DELETE \
+  -H "Content-Type: application/json" \
+  -d '{"file_id":1}' \
+  http://localhost:8080/api/user/files/delete
+
+# Logout
+curl -b user_cookies.txt -X POST http://localhost:8080/api/auth/logout
+```
+
+**Web UI access:**
+- User login: `http://localhost:8080/login`
+- User dashboard: `http://localhost:8080/dashboard`
+- Homepage shows login status and displays user greeting when logged in
 
 ### Basic File Sharing
 

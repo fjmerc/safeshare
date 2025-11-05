@@ -24,8 +24,10 @@ docker build -t safeshare:latest .
 # Run container (basic)
 docker run -d -p 8080:8080 --name safeshare safeshare:latest
 
-# Run with enterprise security features
+# Run with enterprise security features and admin/user authentication
 docker run -d -p 8080:8080 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=SafeShare2025! \
   -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
   -e BLOCKED_EXTENSIONS=".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar" \
   -e TZ=Europe/Berlin \
@@ -46,8 +48,10 @@ docker logs safeshare 2>&1 | jq .
 ```
 
 ### Testing Endpoints
+
+**File Upload/Download:**
 ```bash
-# Test upload
+# Test upload (anonymous)
 curl -X POST -F "file=@test.txt" -F "expires_in_hours=24" -F "max_downloads=5" \
   http://localhost:8080/api/upload
 
@@ -61,17 +65,201 @@ curl -O http://localhost:8080/api/claim/<CLAIM_CODE>
 curl http://localhost:8080/health
 ```
 
+**Admin Authentication & User Management:**
+```bash
+# Admin login (returns CSRF token)
+curl -c admin_cookies.txt \
+  -d "username=admin&password=SafeShare2025!" \
+  http://localhost:8080/admin/api/login
+
+# Create user account (admin only)
+curl -b admin_cookies.txt \
+  -H "X-CSRF-Token: <TOKEN_FROM_LOGIN>" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"testuser","email":"test@example.com","role":"user"}' \
+  http://localhost:8080/admin/api/users/create
+
+# List all users (admin only)
+curl -b admin_cookies.txt http://localhost:8080/admin/api/users
+```
+
+**User Authentication & Dashboard:**
+```bash
+# User login
+curl -c user_cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"username":"testuser","password":"temp_password"}' \
+  http://localhost:8080/api/auth/login
+
+# Get current user info
+curl -b user_cookies.txt http://localhost:8080/api/auth/user
+
+# Upload file as authenticated user (tracks ownership)
+curl -b user_cookies.txt \
+  -F "file=@document.pdf" \
+  http://localhost:8080/api/upload
+
+# View user's uploaded files
+curl -b user_cookies.txt http://localhost:8080/api/user/files
+
+# Delete user's own file
+curl -b user_cookies.txt \
+  -X DELETE \
+  -H "Content-Type: application/json" \
+  -d '{"file_id":1}' \
+  http://localhost:8080/api/user/files/delete
+
+# Change password
+curl -b user_cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{"current_password":"temp_password","new_password":"NewSecure123","confirm_password":"NewSecure123"}' \
+  http://localhost:8080/api/auth/change-password
+
+# User logout
+curl -b user_cookies.txt -X POST http://localhost:8080/api/auth/logout
+```
+
+## User Authentication Architecture
+
+### Overview
+SafeShare implements a comprehensive user authentication system with invite-only registration, role-based access control, and secure session management. Users can track their uploads, manage their files, and admins can manage user accounts.
+
+### Components
+
+**Database Schema** (`internal/database/db.go`, `internal/database/users.go`):
+- `users` table: Stores user accounts with username, email, password_hash, role, is_active, require_password_change
+- `user_sessions` table: Stores active user sessions with expiration tracking
+- `files.user_id`: Foreign key linking files to users (nullable for anonymous uploads)
+- Session cleanup worker: Automatically removes expired user sessions
+
+**Authentication & Security** (`internal/middleware/user_auth.go`):
+- `UserAuth` middleware: Validates user session cookies, requires authentication
+- `OptionalUserAuth` middleware: Adds user to context if authenticated, allows anonymous access
+- Session management: Secure tokens generated with crypto/rand (32 bytes, base64-encoded)
+- Password security: Bcrypt hashing with cost factor 10
+- Temporary passwords: New users forced to change password on first login
+
+**Handlers** (`internal/handlers/user_auth.go`, `internal/handlers/user_dashboard.go`, `internal/handlers/admin_users.go`):
+
+*User Authentication:*
+- `UserLoginHandler`: Validates credentials, creates session, sets cookies, returns user info
+- `UserLogoutHandler`: Deletes session from database and clears cookies
+- `UserGetCurrentHandler`: Returns current authenticated user info
+- `UserChangePasswordHandler`: Allows users to change their password (validates old password)
+
+*User Dashboard:*
+- `UserDashboardDataHandler`: Returns paginated list of user's uploaded files
+- `UserDeleteFileHandler`: Allows users to delete their own files (ownership validation)
+
+*Admin User Management:*
+- `AdminCreateUserHandler`: Creates new user with optional or auto-generated temporary password
+- `AdminListUsersHandler`: Returns paginated list of all users with file counts
+- `AdminUpdateUserHandler`: Updates user profile (username, email, role)
+- `AdminToggleUserActiveHandler`: Enable/disable user accounts
+- `AdminResetUserPasswordHandler`: Generates new temporary password for user
+- `AdminDeleteUserHandler`: Permanently deletes user account
+
+**Frontend** (`internal/static/web/`):
+- `login.html`: User login page with username/password form, auto-redirect if logged in
+- `dashboard.html`: User dashboard with file listing, delete functionality, password change modal
+- `index.html`: Homepage with user status bar showing login/logout state
+- `admin/dashboard.html`: Added Users tab for admin user management
+
+### User Routes
+
+**Public routes** (no auth):
+- `GET /login` - User login page
+- `POST /api/auth/login` - User login endpoint (JSON: {username, password})
+
+**Protected routes** (require user session):
+- `GET /dashboard` - User dashboard page (requires UserAuth middleware)
+- `GET /api/auth/user` - Get current user info (requires UserAuth)
+- `POST /api/auth/logout` - User logout (requires UserAuth)
+- `POST /api/auth/change-password` - Change password (requires UserAuth)
+- `GET /api/user/files` - Get user's uploaded files (requires UserAuth)
+- `DELETE /api/user/files/delete` - Delete user's own file (requires UserAuth)
+
+**Upload route** (optional auth):
+- `POST /api/upload` - Upload file (uses OptionalUserAuth - tracks user_id if authenticated)
+
+**Admin user management routes** (require admin session + CSRF):
+- `POST /admin/api/users/create` - Create new user
+- `GET /admin/api/users` - List all users with pagination
+- `PUT /admin/api/users/:id` - Update user profile
+- `POST /admin/api/users/:id/enable` - Enable user account
+- `POST /admin/api/users/:id/disable` - Disable user account
+- `POST /admin/api/users/:id/reset-password` - Reset user password
+- `DELETE /admin/api/users/:id` - Delete user account
+
+### User Authentication Features
+
+1. **Invite-Only Registration**:
+   - No public registration endpoint
+   - Only admins can create user accounts via dashboard
+   - Prevents unauthorized account creation
+
+2. **Temporary Password Flow**:
+   - Admin creates user with optional custom password or auto-generated password
+   - Auto-generated format: "word1-word2-word3-###" (e.g., "alpha-dragon-ocean-234")
+   - New users have `require_password_change: true` flag
+   - Frontend prompts for password change on first login
+   - Password must be changed before full access granted
+
+3. **Session Management**:
+   - Separate session tables for users (`user_sessions`) and admins (`admin_sessions`)
+   - HttpOnly cookies prevent XSS attacks
+   - SameSite=Strict prevents CSRF on cookies
+   - Configurable expiration via SESSION_EXPIRY_HOURS
+   - Activity tracking updates last_activity on each request
+   - Background cleanup removes expired sessions every 30 minutes
+
+4. **File Ownership**:
+   - Authenticated uploads set `user_id` in files table
+   - Anonymous uploads leave `user_id` as NULL (backward compatible)
+   - Users can only view/delete their own files
+   - Admins can view/delete all files
+
+5. **Role-Based Access**:
+   - **User role**: Can upload files, view own files, delete own files, change password
+   - **Admin role**: Full admin dashboard access + all user permissions
+   - Roles assigned during account creation, can be updated by admins
+
+6. **Audit Logging**:
+   - All user authentication events logged (login, logout, password change)
+   - All admin user management actions logged (create, update, delete, enable/disable, reset)
+   - Logs include: timestamp, username, user_id, client_ip, user_agent
+
+### User Dashboard Features
+
+**File Management**:
+- Table view: claim code, filename, size, created date, expires date, download count, max downloads
+- Copy download link: One-click copy to clipboard
+- Delete file: Soft delete with confirmation modal (removes from DB and disk)
+- Empty state: Helpful message when no files uploaded yet
+
+**Password Change**:
+- Modal dialog for changing password
+- Requires current password for verification
+- New password confirmation field
+- Updates password and clears require_password_change flag
+
+**Navigation**:
+- Welcome message with username
+- Logout button
+- Back to home link
+
 ## Admin Dashboard Architecture
 
 ### Overview
-The admin dashboard provides web-based administration for SafeShare. It's a fully-featured management interface with secure authentication, CSRF protection, and comprehensive file and IP management capabilities.
+The admin dashboard provides web-based administration for SafeShare. It's a fully-featured management interface with secure authentication, CSRF protection, comprehensive file and IP management capabilities, and now includes full user account management.
 
 ### Components
 
 **Database Schema** (`internal/database/db.go`, `internal/database/admin.go`):
+- `admin_credentials` table: Stores admin username and bcrypt-hashed password (single row with id=1)
 - `admin_sessions` table: Stores active admin sessions with expiration tracking
 - `blocked_ips` table: IP blocklist with reason and timestamp tracking
-- Session cleanup worker: Automatically removes expired sessions every 30 minutes
+- Session cleanup worker: Automatically removes expired admin sessions every 30 minutes
 
 **Authentication & Security** (`internal/middleware/admin.go`):
 - `AdminAuth` middleware: Validates session cookies, auto-refreshes activity timestamps
@@ -86,20 +274,39 @@ The admin dashboard provides web-based administration for SafeShare. It's a full
 - Returns HTTP 403 (Forbidden) for blocked IPs
 - Logs all blocked access attempts with IP, path, method, and user agent
 
-**Handlers** (`internal/handlers/admin.go`):
-- `AdminLoginHandler`: Validates credentials, creates session, sets cookies (session + CSRF)
+**Handlers** (`internal/handlers/admin.go`, `internal/handlers/admin_users.go`):
+
+*Admin Authentication:*
+- `AdminLoginHandler`: Validates credentials against database, creates session, sets cookies (session + CSRF)
 - `AdminLogoutHandler`: Deletes session from database and clears cookies
-- `AdminDashboardDataHandler`: Returns paginated files, stats, and blocked IPs
+
+*Admin Dashboard:*
+- `AdminDashboardDataHandler`: Returns paginated files, stats, blocked IPs, and user counts
+
+*Admin File Management:*
 - `AdminDeleteFileHandler`: Deletes file from database and filesystem (requires CSRF)
+
+*Admin IP Management:*
 - `AdminBlockIPHandler`: Adds IP to blocklist (requires CSRF)
 - `AdminUnblockIPHandler`: Removes IP from blocklist (requires CSRF)
+
+*Admin Settings:*
 - `AdminUpdateQuotaHandler`: Dynamically updates storage quota without restart (requires CSRF)
+- `AdminChangePasswordHandler`: Changes admin password without restart (requires CSRF)
+
+*Admin User Management:*
+- `AdminCreateUserHandler`: Creates new user with optional or auto-generated temporary password (requires CSRF)
+- `AdminListUsersHandler`: Returns paginated list of all users with file counts
+- `AdminUpdateUserHandler`: Updates user profile - username, email, role (requires CSRF)
+- `AdminToggleUserActiveHandler`: Enable/disable user accounts (requires CSRF)
+- `AdminResetUserPasswordHandler`: Generates new temporary password for user (requires CSRF)
+- `AdminDeleteUserHandler`: Permanently deletes user account (requires CSRF)
 
 **Frontend** (`internal/static/web/admin/`):
 - `login.html`: Login page with username/password form
-- `dashboard.html`: Three-tab interface (Files, Blocked IPs, Settings)
+- `dashboard.html`: Four-tab interface (Files, Users, Blocked IPs, Settings)
 - `admin.css`: Responsive design with light theme, tables, forms, modals
-- `admin.js`: Handles API calls, pagination, search, confirmations, CSRF token management
+- `admin.js`: Handles API calls, pagination, search, confirmations, CSRF token management, user management modals
 
 ### Admin Routes
 All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be configured. Routes are conditionally registered in `main.go`:
@@ -119,6 +326,13 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - `POST /admin/api/ip/block` - Block IP (requires AdminAuth + CSRFProtection)
 - `POST /admin/api/ip/unblock` - Unblock IP (requires AdminAuth + CSRFProtection)
 - `POST /admin/api/quota/update` - Update quota (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/settings/password` - Change admin password (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/users/create` - Create user (requires AdminAuth + CSRFProtection)
+- `PUT /admin/api/users/:id` - Update user (requires AdminAuth + CSRFProtection)
+- `DELETE /admin/api/users/:id` - Delete user (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/users/:id/enable` - Enable user (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/users/:id/disable` - Disable user (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/users/:id/reset-password` - Reset user password (requires AdminAuth + CSRFProtection)
 
 **Static assets**:
 - `GET /admin/assets/*` - Admin CSS/JS files (served from embedded filesystem)
@@ -159,6 +373,16 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - Pagination: 20 items per page with page navigation
 - Delete: Remove files before expiration (requires confirmation modal)
 
+**Users Tab**:
+- Table view: username, email, role, status (active/inactive), files count, created date, last login, actions
+- Create User: Modal dialog with username, email, role, optional password fields
+- User Created Success: Displays temporary password with copy-to-clipboard button
+- Edit User: Modal dialog to update username, email, role
+- Enable/Disable: Toggle user account active state (soft delete)
+- Reset Password: Generates new temporary password, displayed in modal with copy button
+- Delete User: Permanently removes user account (requires confirmation)
+- Pagination: 20 users per page with page navigation
+
 **Blocked IPs Tab**:
 - Table view: IP address, reason, blocked date, blocked by
 - Add: Block new IP with optional reason
@@ -166,6 +390,7 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 
 **Settings Tab**:
 - Quota management: Update QUOTA_LIMIT_GB dynamically without restart
+- Password management: Change admin password without restart
 - System info: Display database path, upload directory
 
 **Real-time Stats** (top cards):
@@ -173,6 +398,7 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - Storage Used: Total bytes used (formatted as B/KB/MB/GB/TB)
 - Quota Usage: Percentage used (or "Unlimited" if quota = 0)
 - Blocked IPs: Count of blocked IPs
+- Total Users: Active user account count
 
 ## Architecture Overview
 
@@ -211,14 +437,28 @@ The web UI is embedded in the binary using `//go:embed` in `internal/static/stat
 
 **Database Schema**
 SQLite with WAL mode for concurrency:
-- `files` table tracks metadata (claim_code, filenames, size, expiration, download limits)
-- Indexes on `claim_code` (lookups) and `expires_at` (cleanup worker)
+- `files` table tracks metadata (claim_code, filenames, size, expiration, download limits, user_id)
+- `users` table stores user accounts (username, email, password_hash, role, is_active, require_password_change)
+- `user_sessions` table stores active user sessions with expiration tracking
+- `admin_credentials` table stores admin credentials (single row with id=1)
+- `admin_sessions` table stores active admin sessions with expiration tracking
+- `blocked_ips` table stores IP blocklist with reason and timestamp
+- Indexes on `claim_code` (lookups), `expires_at` (cleanup worker), `username` (login), `email` (uniqueness)
+- Foreign keys: `files.user_id` → `users.id` (ON DELETE SET NULL for file ownership)
 - Physical files stored separately in `UPLOAD_DIR` with UUID-based names
 
-**Background Cleanup Worker**
-Goroutine launched in `main.go` using context for cancellation:
+**Background Cleanup Workers**
+Goroutines launched in `main.go` using context for cancellation:
+
+*File Cleanup Worker:*
 - Runs every `CLEANUP_INTERVAL_MINUTES` (default: 60)
 - Deletes expired files from both database and disk
+- Gracefully cancelled on shutdown
+
+*Session Cleanup Worker:*
+- Runs every 30 minutes
+- Removes expired admin sessions from `admin_sessions` table
+- Removes expired user sessions from `user_sessions` table
 - Gracefully cancelled on shutdown
 
 **Enterprise Security Features**

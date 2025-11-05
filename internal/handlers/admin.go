@@ -26,21 +26,43 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Parse form data
-		if err := r.ParseForm(); err != nil {
-			slog.Error("failed to parse login form", "error", err)
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
+		// Parse request (supports both JSON and form-encoded)
+		var username, password string
 
-		username := r.FormValue("username")
-		password := r.FormValue("password")
+		contentType := r.Header.Get("Content-Type")
+		if contentType == "application/json" {
+			var loginReq struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
+				slog.Error("failed to parse JSON login request", "error", err)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid request format",
+				})
+				return
+			}
+			username = loginReq.Username
+			password = loginReq.Password
+		} else {
+			// Parse as form data
+			if err := r.ParseForm(); err != nil {
+				slog.Error("failed to parse form login request", "error", err)
+				http.Error(w, "Bad request", http.StatusBadRequest)
+				return
+			}
+			username = r.FormValue("username")
+			password = r.FormValue("password")
+		}
 
 		clientIP := getClientIP(r)
 		userAgent := getUserAgent(r)
 
-		// Validate credentials
-		if username != cfg.AdminUsername || password != cfg.GetAdminPassword() {
+		// Validate credentials against database
+		valid, err := database.ValidateAdminCredentials(db, username, password)
+		if err != nil || !valid {
 			slog.Warn("admin login failed - invalid credentials",
 				"username", username,
 				"ip", clientIP,

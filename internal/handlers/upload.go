@@ -251,6 +251,12 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get client IP
 		clientIP := getClientIP(r)
 
+		// Get user ID if authenticated (optional)
+		var userID *int64
+		if user, ok := r.Context().Value("user").(*models.User); ok && user != nil {
+			userID = &user.ID
+		}
+
 		// Create database record
 		// Sanitize original filename to prevent log injection and display issues
 		sanitizedFilename := utils.SanitizeFilename(header.Filename)
@@ -265,6 +271,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			MaxDownloads:     maxDownloads,
 			UploaderIP:       clientIP,
 		PasswordHash:     passwordHash,
+			UserID:           userID,
 		}
 
 		if err := database.CreateFile(db, fileRecord); err != nil {
