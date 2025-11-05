@@ -412,6 +412,13 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
 function truncate(str, length) {
     return str.length > length ? str.substring(0, length) + '...' : str;
 }
