@@ -849,11 +849,35 @@ function hideUserCreatedModal() {
 
 function copyPassword() {
     const password = document.getElementById('createdPassword').textContent;
-    navigator.clipboard.writeText(password).then(() => {
+
+    // Try modern clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(password).then(() => {
+            showToast('Password copied to clipboard', 'success');
+        }).catch(() => {
+            // Fallback to textarea method
+            copyToClipboardFallback(password);
+        });
+    } else {
+        // Use fallback method
+        copyToClipboardFallback(password);
+    }
+}
+
+function copyToClipboardFallback(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
         showToast('Password copied to clipboard', 'success');
-    }).catch(() => {
+    } catch (err) {
         showToast('Failed to copy password', 'error');
-    });
+    }
+    document.body.removeChild(textarea);
 }
 
 function editUser(userId) {
@@ -968,11 +992,19 @@ function hideResetPasswordModal() {
 
 function copyResetPassword() {
     const password = document.getElementById('resetPassword').textContent;
-    navigator.clipboard.writeText(password).then(() => {
-        showToast('Password copied to clipboard', 'success');
-    }).catch(() => {
-        showToast('Failed to copy password', 'error');
-    });
+
+    // Try modern clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(password).then(() => {
+            showToast('Password copied to clipboard', 'success');
+        }).catch(() => {
+            // Fallback to textarea method
+            copyToClipboardFallback(password);
+        });
+    } else {
+        // Use fallback method
+        copyToClipboardFallback(password);
+    }
 }
 
 async function deleteUser(userId) {
