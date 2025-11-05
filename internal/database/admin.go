@@ -247,10 +247,13 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		return nil, 0, fmt.Errorf("failed to count files: %w", err)
 	}
 
-	// Get paginated files
-	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
-		FROM files ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	// Get paginated files with username via LEFT JOIN
+	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
+		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.uploader_ip, f.password_hash, f.user_id,
+		u.username
+		FROM files f
+		LEFT JOIN users u ON f.user_id = u.id
+		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, limit, offset)
 	if err != nil {
@@ -265,6 +268,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
 		var userID sql.NullInt64
+		var username sql.NullString
 
 		err := rows.Scan(
 			&file.ID,
@@ -280,6 +284,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
+			&username,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -306,6 +311,9 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		}
 		if userID.Valid {
 			file.UserID = &userID.Int64
+		}
+		if username.Valid {
+			file.Username = &username.String
 		}
 
 		files = append(files, file)
@@ -324,21 +332,24 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 
 	// Get total count
 	var total int
-	countQuery := `SELECT COUNT(*) FROM files
-		WHERE claim_code LIKE ? OR original_filename LIKE ? OR uploader_ip LIKE ?`
-	err := db.QueryRow(countQuery, searchPattern, searchPattern, searchPattern).Scan(&total)
+	countQuery := `SELECT COUNT(*) FROM files f
+		LEFT JOIN users u ON f.user_id = u.id
+		WHERE f.claim_code LIKE ? OR f.original_filename LIKE ? OR f.uploader_ip LIKE ? OR u.username LIKE ?`
+	err := db.QueryRow(countQuery, searchPattern, searchPattern, searchPattern, searchPattern).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
 	}
 
-	// Get paginated results
-	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
-		FROM files
-		WHERE claim_code LIKE ? OR original_filename LIKE ? OR uploader_ip LIKE ?
-		ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	// Get paginated results with username via LEFT JOIN
+	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
+		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.uploader_ip, f.password_hash, f.user_id,
+		u.username
+		FROM files f
+		LEFT JOIN users u ON f.user_id = u.id
+		WHERE f.claim_code LIKE ? OR f.original_filename LIKE ? OR f.uploader_ip LIKE ? OR u.username LIKE ?
+		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
 
-	rows, err := db.Query(query, searchPattern, searchPattern, searchPattern, limit, offset)
+	rows, err := db.Query(query, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search files: %w", err)
 	}
@@ -351,6 +362,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		var passwordHash sql.NullString
 		var maxDownloads sql.NullInt64
 		var userID sql.NullInt64
+		var username sql.NullString
 
 		err := rows.Scan(
 			&file.ID,
@@ -366,6 +378,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
+			&username,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -392,6 +405,9 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		}
 		if userID.Valid {
 			file.UserID = &userID.Int64
+		}
+		if username.Valid {
+			file.Username = &username.String
 		}
 
 		files = append(files, file)
@@ -547,6 +563,9 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		}
 		if userID.Valid {
 			file.UserID = &userID.Int64
+		}
+		if username.Valid {
+			file.Username = &username.String
 		}
 
 		files = append(files, file)

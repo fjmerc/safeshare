@@ -12,11 +12,12 @@ type File struct {
 	MimeType         string
 	CreatedAt        time.Time
 	ExpiresAt        time.Time
-	MaxDownloads     *int   // nullable - nil means unlimited
+	MaxDownloads     *int    // nullable - nil means unlimited
 	DownloadCount    int
 	UploaderIP       string
-	PasswordHash     string // bcrypt hash - empty string means no password
-	UserID           *int64 // nullable - nil means no associated user (anonymous upload or legacy)
+	PasswordHash     string  // bcrypt hash - empty string means no password
+	UserID           *int64  // nullable - nil means no associated user (anonymous upload or legacy)
+	Username         *string // optional - populated in admin queries for display purposes
 }
 
 // UploadResponse is the JSON response returned after a successful upload

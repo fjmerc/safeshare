@@ -238,32 +238,34 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		// Prepare response with file details
 		type FileResponse struct {
-			ID               int64     `json:"id"`
-			ClaimCode        string    `json:"claim_code"`
-			OriginalFilename string    `json:"original_filename"`
-			FileSize         int64     `json:"file_size"`
-			MimeType         string    `json:"mime_type"`
-			CreatedAt        time.Time `json:"created_at"`
-			ExpiresAt        time.Time `json:"expires_at"`
-			MaxDownloads     *int      `json:"max_downloads"`
-			DownloadCount    int       `json:"download_count"`
-			UploaderIP       string    `json:"uploader_ip"`
-			PasswordProtected bool     `json:"password_protected"`
+			ID                int64     `json:"id"`
+			ClaimCode         string    `json:"claim_code"`
+			OriginalFilename  string    `json:"original_filename"`
+			FileSize          int64     `json:"file_size"`
+			MimeType          string    `json:"mime_type"`
+			CreatedAt         time.Time `json:"created_at"`
+			ExpiresAt         time.Time `json:"expires_at"`
+			MaxDownloads      *int      `json:"max_downloads"`
+			DownloadCount     int       `json:"download_count"`
+			Username          *string   `json:"username"`           // nullable - nil for anonymous uploads
+			UploaderIP        string    `json:"uploader_ip"`
+			PasswordProtected bool      `json:"password_protected"`
 		}
 
 		fileResponses := make([]FileResponse, len(files))
 		for i, file := range files {
 			fileResponses[i] = FileResponse{
-				ID:               file.ID,
-				ClaimCode:        file.ClaimCode,
-				OriginalFilename: file.OriginalFilename,
-				FileSize:         file.FileSize,
-				MimeType:         file.MimeType,
-				CreatedAt:        file.CreatedAt,
-				ExpiresAt:        file.ExpiresAt,
-				MaxDownloads:     file.MaxDownloads,
-				DownloadCount:    file.DownloadCount,
-				UploaderIP:       file.UploaderIP,
+				ID:                file.ID,
+				ClaimCode:         file.ClaimCode,
+				OriginalFilename:  file.OriginalFilename,
+				FileSize:          file.FileSize,
+				MimeType:          file.MimeType,
+				CreatedAt:         file.CreatedAt,
+				ExpiresAt:         file.ExpiresAt,
+				MaxDownloads:      file.MaxDownloads,
+				DownloadCount:     file.DownloadCount,
+				Username:          file.Username,
+				UploaderIP:        file.UploaderIP,
 				PasswordProtected: file.PasswordHash != "",
 			}
 		}

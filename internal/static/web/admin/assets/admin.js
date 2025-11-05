@@ -100,6 +100,7 @@ function updateFilesTable(files) {
             <td><code>${escapeHtml(file.claim_code)}</code></td>
             <td title="${escapeHtml(file.original_filename)}">${truncate(escapeHtml(file.original_filename), 30)}</td>
             <td>${formatBytes(file.file_size)}</td>
+            <td>${file.username ? escapeHtml(file.username) : '<em style="color: #94a3b8;">Anonymous</em>'}</td>
             <td>${escapeHtml(file.uploader_ip || 'Unknown')}</td>
             <td>${formatDate(file.created_at)}</td>
             <td>${formatDate(file.expires_at)}</td>
