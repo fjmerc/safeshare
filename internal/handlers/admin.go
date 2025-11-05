@@ -60,22 +60,41 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		clientIP := getClientIP(r)
 		userAgent := getUserAgent(r)
 
-		// Validate credentials against database
+		// Try validating against admin_credentials table first
 		valid, err := database.ValidateAdminCredentials(db, username, password)
-		if err != nil || !valid {
-			slog.Warn("admin login failed - invalid credentials",
-				"username", username,
-				"ip", clientIP,
-			)
 
-			// Return error with slight delay to prevent timing attacks
-			time.Sleep(500 * time.Millisecond)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Invalid username or password",
-			})
-			return
+		// If admin_credentials validation fails, try users table with admin role
+		if err != nil || !valid {
+			// Try to get user from users table
+			user, userErr := database.GetUserByUsername(db, username)
+
+			// Check if user exists, password matches, has admin role, and is active
+			if userErr == nil && user != nil &&
+			   utils.VerifyPassword(user.PasswordHash, password) &&
+			   user.Role == "admin" &&
+			   user.IsActive {
+				// User authenticated successfully with admin role
+				slog.Info("admin login successful via users table",
+					"username", username,
+					"user_id", user.ID,
+					"ip", clientIP,
+				)
+			} else {
+				// Both authentication methods failed
+				slog.Warn("admin login failed - invalid credentials",
+					"username", username,
+					"ip", clientIP,
+				)
+
+				// Return error with slight delay to prevent timing attacks
+				time.Sleep(500 * time.Millisecond)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid username or password",
+				})
+				return
+			}
 		}
 
 		// Generate session token
@@ -114,11 +133,14 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			slog.Error("failed to set CSRF cookie", "error", err)
 		}
 
-		slog.Info("admin login successful",
-			"username", username,
-			"ip", clientIP,
-			"user_agent", userAgent,
-		)
+		// Log success (only if not already logged via users table path)
+		if valid {
+			slog.Info("admin login successful via admin_credentials",
+				"username", username,
+				"ip", clientIP,
+				"user_agent", userAgent,
+			)
+		}
 
 		// Return success response with CSRF token
 		w.Header().Set("Content-Type", "application/json")

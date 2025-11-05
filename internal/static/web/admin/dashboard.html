@@ -38,14 +38,14 @@
                         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                     </svg>
                 </button>
-                <a href="/" class="btn-secondary">
+                <a href="/dashboard" class="btn-secondary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
                         <polyline points="9 22 9 12 15 12 15 22"></polyline>
                     </svg>
                     Home
                 </a>
-                <button id="logoutBtn" class="btn-secondary">
+                <button id="logoutBtn" class="btn-danger">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                         <polyline points="16 17 21 12 16 7"></polyline>
@@ -222,6 +222,7 @@
 
         <!-- Settings Tab -->
         <div id="settingsTab" class="tab-content">
+            <div class="settings-grid">
             <div class="settings-section">
                 <h2>Storage Management</h2>
                 <form id="storageForm" class="settings-form">
@@ -284,7 +285,9 @@
                     </button>
                 </form>
             </div>
+            </div>
 
+            <div class="settings-grid">
             <div class="settings-section">
                 <h2>Admin Account</h2>
                 <form id="passwordForm" class="settings-form">
@@ -359,6 +362,7 @@
                         <span>./uploads</span>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
     </div>
@@ -485,8 +489,8 @@
                 <p><strong>New Temporary Password:</strong></p>
                 <code id="resetPassword" style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; display: block; margin: 10px 0;"></code>
                 <button class="btn-secondary" onclick="copyResetPassword()">Copy Password</button>
-                <div style="background: #dbeafe; padding: 12px; border-radius: 4px; margin-top: 16px;">
-                    <small style="color: #1e40af;">Share this temporary password securely with the user.</small>
+                <div class="alert-info" style="margin-top: 16px;">
+                    <span>Share this temporary password securely with the user.</span>
                 </div>
             </div>
             <div class="modal-actions">

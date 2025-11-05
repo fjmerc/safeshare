@@ -72,8 +72,18 @@
 
     // Update theme icon
     function updateThemeIcon(theme) {
-        const icon = themeToggle.querySelector('.theme-icon');
-        icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+        const sunIcon = document.querySelector('.theme-icon-sun');
+        const moonIcon = document.querySelector('.theme-icon-moon');
+
+        if (sunIcon && moonIcon) {
+            if (theme === 'dark') {
+                sunIcon.style.display = 'block';
+                moonIcon.style.display = 'none';
+            } else {
+                sunIcon.style.display = 'none';
+                moonIcon.style.display = 'block';
+            }
+        }
     }
 
     // Fetch max file size from health endpoint
@@ -196,11 +206,11 @@
             });
         });
 
-        // Set default active states on first buttons
-        const firstHourBtn = document.querySelector('.btn-small[data-hours]');
-        const firstDownloadBtn = document.querySelector('.btn-small[data-downloads]');
-        if (firstHourBtn) firstHourBtn.classList.add('active');
-        if (firstDownloadBtn) firstDownloadBtn.classList.add('active');
+        // Set default active states to 24h and unlimited
+        const defaultHourBtn = document.querySelector('.btn-small[data-hours="24"]');
+        const unlimitedDownloadBtn = document.querySelector('.btn-small[data-downloads=""]');
+        if (defaultHourBtn) defaultHourBtn.classList.add('active');
+        if (unlimitedDownloadBtn) unlimitedDownloadBtn.classList.add('active');
 
         // Clear active state when user manually types in input
         expirationHours.addEventListener('input', () => {

@@ -297,7 +297,15 @@ func UserGetCurrentHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Get user from context (set by middleware)
-		user := r.Context().Value("user").(*models.User)
+		contextUser := r.Context().Value("user").(*models.User)
+
+		// Reload user from database to get fresh data (e.g., after password change)
+		user, err := database.GetUserByID(db, contextUser.ID)
+		if err != nil || user == nil {
+			slog.Error("failed to get user", "error", err, "user_id", contextUser.ID)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		response := models.UserLoginResponse{
 			ID:                    user.ID,

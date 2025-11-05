@@ -115,16 +115,6 @@ header h1 {
     font-size: 1.1rem;
 }
 
-/* Top Controls Container */
-.top-controls {
-    position: fixed;
-    top: 1.5rem;
-    right: 1.5rem;
-    display: flex;
-    gap: 0.75rem;
-    z-index: 1000;
-}
-
 .theme-toggle {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
@@ -148,9 +138,46 @@ header h1 {
     box-shadow: var(--shadow-lg);
 }
 
+.theme-toggle-fixed {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #e2e8f0;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.theme-toggle-fixed:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+[data-theme="dark"] .theme-toggle-fixed {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+[data-theme="dark"] .theme-toggle-fixed:hover {
+    background: #4b5563;
+    border-color: #6b7280;
+}
+
 /* User Menu */
 .user-menu {
-    position: relative;
+    position: fixed;
+    top: 1.5rem;
+    left: 1.5rem;
+    z-index: 1000;
 }
 
 .user-menu-trigger {
@@ -177,7 +204,7 @@ header h1 {
 .user-menu-dropdown {
     position: absolute;
     top: calc(100% + 0.5rem);
-    right: 0;
+    left: 0;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 0.5rem;
@@ -373,7 +400,6 @@ header h1 {
 .form-group:hover {
     border-color: var(--primary-color);
     box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-    transform: translateY(-2px);
 }
 
 .form-group label {
@@ -970,21 +996,53 @@ footer a:hover {
         grid-template-columns: 1fr;
     }
 
-    .top-controls {
+    .user-menu {
         top: 1rem;
-        right: 1rem;
-        gap: 0.5rem;
+        left: 1rem;
     }
 
-    .theme-toggle,
     .user-menu-trigger {
         width: 2.25rem;
         height: 2.25rem;
         font-size: 1rem;
     }
 
+    .theme-toggle-fixed {
+        top: 10px;
+        right: 10px;
+        padding: 6px;
+    }
+
     .user-menu-dropdown {
         min-width: 180px;
-        right: 0;
+        left: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .theme-toggle-fixed {
+        top: 8px;
+        right: 8px;
+        padding: 5px;
+    }
+
+    .theme-toggle-fixed svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .user-menu {
+        top: 8px;
+        left: 8px;
+    }
+
+    .user-menu-trigger {
+        width: 2rem;
+        height: 2rem;
+    }
+
+    .user-menu-trigger svg {
+        width: 18px;
+        height: 18px;
     }
 }

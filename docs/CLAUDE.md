@@ -256,6 +256,10 @@ SafeShare implements a comprehensive user authentication system with invite-only
 - **Mobile-optimized**: Progressive button sizing and layout adjustments for tablets (≤1024px) and phones (≤768px)
 - **Enhanced date formatting**: Compact format (e.g., "Nov 5 @ 7:00 PM") saves table space, shows year only when different from current
 - **Tab navigation fix**: Async initialization ensures auth state is known before handling URL hash navigation (fixes Upload Files button redirect)
+- **Password change modal fixes**: Reloads user data from database after password change, removes URL parameter to prevent modal reopening
+- **Grey Change Password button**: Custom styling in light theme (background: #f3f4f6, color: #374151) for visual consistency
+- **Delete file modal**: Equal-width buttons with proper alignment (flex: 1, margin-top: 0) for balanced appearance
+- **Comprehensive mobile responsiveness**: Text overflow protection, scroll indicators, touch-friendly inputs, stacked modal buttons on small screens
 
 ## Admin Dashboard Architecture
 
@@ -271,11 +275,12 @@ The admin dashboard provides web-based administration for SafeShare. It's a full
 - Session cleanup worker: Automatically removes expired admin sessions every 30 minutes
 
 **Authentication & Security** (`internal/middleware/admin.go`):
-- `AdminAuth` middleware: Validates session cookies, auto-refreshes activity timestamps
-- `CSRFProtection` middleware: Validates CSRF tokens for state-changing operations
+- `AdminAuth` middleware: Validates session cookies, supports both admin_session and user_session (with admin role), auto-refreshes activity timestamps
+- `CSRFProtection` middleware: Validates CSRF tokens for state-changing operations, supports both session types
 - `RateLimitAdminLogin` middleware: Limits login attempts to 5 per 15 minutes per IP
 - Session management: Secure tokens generated with crypto/rand (32 bytes, base64-encoded)
 - CSRF tokens: Independent tokens stored in cookies, validated on POST/PUT/DELETE/PATCH
+- Dual authentication: Admin dashboard accessible via admin credentials OR user accounts with admin role
 
 **IP Blocking** (`internal/middleware/ipblock.go`):
 - `IPBlockCheck` middleware: Applied to upload and download routes
@@ -286,7 +291,7 @@ The admin dashboard provides web-based administration for SafeShare. It's a full
 **Handlers** (`internal/handlers/admin.go`, `internal/handlers/admin_users.go`):
 
 *Admin Authentication:*
-- `AdminLoginHandler`: Validates credentials against database, creates session, sets cookies (session + CSRF)
+- `AdminLoginHandler`: Validates credentials against admin_credentials table, falls back to users table (with admin role check), creates session, sets cookies (session + CSRF)
 - `AdminLogoutHandler`: Deletes session from database and clears cookies
 
 *Admin Dashboard:*
@@ -410,6 +415,14 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - Total Users: Active user account count
 
 **Recent UI/UX Improvements**:
+- **Dual authentication support**: Users with admin role can access admin dashboard via user login or admin login page
+- **CSRF token management**: Automatic CSRF token setting when accessing admin dashboard via user login (serveAdminDashboard function)
+- **Navigation improvements**: Home button redirects to /dashboard, logout button uses btn-danger (red) styling
+- **Dark mode fixes**: Password reset form text visible in dark mode, consistent theming across all admin pages
+- **Users table enhancements**: Centered alignment for Role, Status, Files, Created, Last Login, Actions columns with flexbox-centered action buttons
+- **Settings tab optimization**: 2-column grid layout (Storage+Security, Account+System Info) reduces vertical space by ~40%
+- **Compact spacing**: Reduced section padding (32px→20px), form margins (24px→16px), heading sizes (20px→18px)
+- **Button consistency**: Home and Logout buttons use same box-shadow (var(--shadow-sm)) for equal visual weight
 - **Username tracking**: File listings now show which user uploaded each file (requires SQL JOIN with users table)
 - **Async confirmations**: All destructive operations (delete file, delete user, unblock IP) use async/await confirmation dialogs for better UX
 - **Enhanced date formatting**: Compact display format (e.g., "Nov 5 @ 7:00 PM") saves table space, shows year only when different from current year

@@ -14,9 +14,34 @@ import (
 func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get session token from cookie
-			cookie, err := r.Cookie("admin_session")
-			if err != nil {
+			// Try admin_session first
+			adminCookie, adminErr := r.Cookie("admin_session")
+			if adminErr == nil {
+				// Validate admin session
+				session, err := database.GetSession(db, adminCookie.Value)
+				if err != nil {
+					slog.Error("failed to validate admin session",
+						"error", err,
+						"ip", getClientIP(r),
+					)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+					return
+				}
+
+				if session != nil {
+					// Update session activity
+					if err := database.UpdateSessionActivity(db, adminCookie.Value); err != nil {
+						slog.Error("failed to update admin session activity", "error", err)
+					}
+					// Session is valid, proceed
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// Fall back to user_session with role check
+			userCookie, userErr := r.Cookie("user_session")
+			if userErr != nil {
 				slog.Warn("admin authentication failed - no session cookie",
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
@@ -25,10 +50,10 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Validate session
-			session, err := database.GetSession(db, cookie.Value)
+			// Validate user session
+			userSession, err := database.GetUserSession(db, userCookie.Value)
 			if err != nil {
-				slog.Error("failed to validate session",
+				slog.Error("failed to validate user session",
 					"error", err,
 					"ip", getClientIP(r),
 				)
@@ -36,7 +61,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
-			if session == nil {
+			if userSession == nil {
 				slog.Warn("admin authentication failed - invalid session token",
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
@@ -45,13 +70,34 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Update session activity
-			if err := database.UpdateSessionActivity(db, cookie.Value); err != nil {
-				slog.Error("failed to update session activity", "error", err)
-				// Don't fail the request, just log the error
+			// Get user and check role
+			user, err := database.GetUserByID(db, userSession.UserID)
+			if err != nil || user == nil {
+				slog.Error("failed to get user for admin check",
+					"error", err,
+					"user_id", userSession.UserID,
+				)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
 			}
 
-			// Session is valid, proceed
+			if user.Role != "admin" {
+				slog.Warn("admin authentication failed - insufficient permissions",
+					"path", r.URL.Path,
+					"user_id", user.ID,
+					"username", user.Username,
+					"role", user.Role,
+				)
+				http.Error(w, "Forbidden - Admin access required", http.StatusForbidden)
+				return
+			}
+
+			// Update session activity
+			if err := database.UpdateUserSessionActivity(db, userCookie.Value); err != nil {
+				slog.Error("failed to update user session activity", "error", err)
+			}
+
+			// User has admin role, proceed
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -69,21 +115,35 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 					csrfToken = r.FormValue("csrf_token")
 				}
 
-				// Get session token from cookie
-				cookie, err := r.Cookie("admin_session")
-				if err != nil {
-					slog.Warn("CSRF validation failed - no session cookie",
-						"path", r.URL.Path,
-						"ip", getClientIP(r),
-					)
-					http.Error(w, "Forbidden", http.StatusForbidden)
-					return
+				// Try to get session from either admin_session or user_session
+				hasValidSession := false
+
+				// Check admin_session first
+				adminCookie, adminErr := r.Cookie("admin_session")
+				if adminErr == nil {
+					session, err := database.GetSession(db, adminCookie.Value)
+					if err == nil && session != nil {
+						hasValidSession = true
+					}
 				}
 
-				// Get session
-				session, err := database.GetSession(db, cookie.Value)
-				if err != nil || session == nil {
-					slog.Warn("CSRF validation failed - invalid session",
+				// If no admin session, check user_session with admin role
+				if !hasValidSession {
+					userCookie, userErr := r.Cookie("user_session")
+					if userErr == nil {
+						userSession, err := database.GetUserSession(db, userCookie.Value)
+						if err == nil && userSession != nil {
+							// Verify user has admin role
+							user, err := database.GetUserByID(db, userSession.UserID)
+							if err == nil && user != nil && user.Role == "admin" {
+								hasValidSession = true
+							}
+						}
+					}
+				}
+
+				if !hasValidSession {
+					slog.Warn("CSRF validation failed - no valid session",
 						"path", r.URL.Path,
 						"ip", getClientIP(r),
 					)
