@@ -991,7 +991,7 @@ async function toggleUserStatus(userId, currentStatus) {
     const action = currentStatus ? 'disable' : 'enable';
     const message = `Are you sure you want to ${action} this user?`;
 
-    if (!confirm(message)) return;
+    if (!await confirm(message)) return;
 
     try {
         const csrfToken = getCookie('csrf_token');
@@ -1018,7 +1018,7 @@ async function toggleUserStatus(userId, currentStatus) {
 }
 
 async function resetUserPassword(userId) {
-    if (!confirm('Generate a new temporary password for this user?')) return;
+    if (!await confirm('Generate a new temporary password for this user?')) return;
 
     try {
         const csrfToken = getCookie('csrf_token');
@@ -1067,7 +1067,7 @@ function copyResetPassword() {
 }
 
 async function deleteUser(userId) {
-    if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
+    if (!await confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
 
     try {
         const csrfToken = getCookie('csrf_token');

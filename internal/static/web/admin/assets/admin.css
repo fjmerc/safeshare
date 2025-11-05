@@ -979,6 +979,7 @@ input[type="checkbox"] {
     font-size: 20px;
     font-weight: 700;
     color: var(--text-primary);
+    text-align: center;
 }
 
 .modal-content p {
@@ -1235,7 +1236,7 @@ code {
 
 .credential-item:hover {
     border-color: var(--border-hover);
-    background: #f8fafc;
+    background: var(--bg-light);
 }
 
 .credential-highlight {
