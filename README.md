@@ -29,6 +29,7 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ **MIME type detection** (server-side validation)
 - ✅ **Disk space monitoring** (prevents exhaustion)
 - ✅ **Maximum expiration limits** (prevents abuse)
+- ✅ **Storage quota limits** (configurable per-app limits)
 
 ### Frontend (Web UI)
 - ✅ Modern, responsive web interface
@@ -206,6 +207,7 @@ Environment variables:
 | `MAX_EXPIRATION_HOURS` | `168` | Maximum allowed expiration time in hours (default: 7 days) |
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
 | `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
+| `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
 | `TZ` | `UTC` | Timezone for container (logs always use UTC per industry standard) |
 
 ### Reverse Proxy Support
@@ -285,6 +287,7 @@ SafeShare Application
 
 #### Attack Prevention
 - **Rate limiting**: IP-based protection against DoS attacks (10 uploads/hour, 100 downloads/hour)
+- **Storage quota limits**: Configurable per-application storage limits prevent disk abuse
 - **Filename sanitization**: Prevents HTTP header injection and path traversal
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options prevent XSS/clickjacking
 - **Disk space monitoring**: Pre-upload checks prevent disk exhaustion

@@ -57,6 +57,14 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 			response.DiskUsedPercent = diskInfo.UsedPercent
 		}
 
+		// Add quota info if configured
+		if cfg.QuotaLimitGB > 0 {
+			response.QuotaLimitBytes = cfg.QuotaLimitGB * 1024 * 1024 * 1024
+			if response.QuotaLimitBytes > 0 {
+				response.QuotaUsedPercent = (float64(storageUsed) / float64(response.QuotaLimitBytes)) * 100
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)

@@ -89,6 +89,33 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Check quota if configured (0 = unlimited)
+		if cfg.QuotaLimitGB > 0 {
+			currentUsage, err := database.GetTotalUsage(db)
+			if err != nil {
+				slog.Error("failed to get current storage usage", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+
+			quotaBytes := cfg.QuotaLimitGB * 1024 * 1024 * 1024 // Convert GB to bytes
+			if currentUsage+header.Size > quotaBytes {
+				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
+				slog.Warn("quota exceeded",
+					"file_size", header.Size,
+					"current_usage_gb", quotaUsedGB,
+					"quota_limit_gb", cfg.QuotaLimitGB,
+					"client_ip", getClientIP(r),
+				)
+				sendError(w,
+					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.QuotaLimitGB),
+					"QUOTA_EXCEEDED",
+					http.StatusInsufficientStorage,
+				)
+				return
+			}
+		}
+
 		// Parse optional parameters
 		expiresInHours := cfg.DefaultExpirationHours
 		if hoursStr := r.FormValue("expires_in_hours"); hoursStr != "" {

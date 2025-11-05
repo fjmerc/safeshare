@@ -21,6 +21,7 @@ type Config struct {
 	EncryptionKey          string   // Optional: AES-256 encryption key (64 hex chars)
 	RateLimitUpload        int      // Upload requests per hour per IP
 	RateLimitDownload      int      // Download requests per hour per IP
+	QuotaLimitGB           int64    // Maximum total storage in GB (0 = unlimited)
 }
 
 // Load reads configuration from environment variables with sensible defaults
@@ -41,6 +42,7 @@ func Load() (*Config, error) {
 		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""), // Optional
 		RateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),   // 10 uploads per hour per IP
 		RateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100), // 100 downloads per hour per IP
+		QuotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0), // 0 = unlimited (default)
 	}
 
 	// Validate configuration
@@ -91,6 +93,10 @@ func (c *Config) validate() error {
 
 	if c.RateLimitDownload <= 0 {
 		return fmt.Errorf("RATE_LIMIT_DOWNLOAD must be positive, got %d", c.RateLimitDownload)
+	}
+
+	if c.QuotaLimitGB < 0 {
+		return fmt.Errorf("QUOTA_LIMIT_GB must be 0 (unlimited) or positive, got %d", c.QuotaLimitGB)
 	}
 
 	// Validate encryption key if provided (must be 64 hex characters = 32 bytes for AES-256)

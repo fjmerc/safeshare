@@ -189,6 +189,23 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	return deletedCount, nil
 }
 
+// GetTotalUsage returns the total storage used by all active files in bytes
+func GetTotalUsage(db *sql.DB) (int64, error) {
+	query := `
+		SELECT COALESCE(SUM(file_size), 0)
+		FROM files
+		WHERE expires_at > datetime('now')
+	`
+
+	var totalUsage int64
+	err := db.QueryRow(query).Scan(&totalUsage)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get total usage: %w", err)
+	}
+
+	return totalUsage, nil
+}
+
 // GetStats returns statistics about the file storage
 func GetStats(db *sql.DB, uploadDir string) (totalFiles int, storageUsed int64, err error) {
 	// Count active files (not expired)

@@ -177,6 +177,16 @@ Goroutine launched in `main.go` using context for cancellation:
    - Prevents disk space abuse from files that never expire
    - Configured via `MAX_EXPIRATION_HOURS` env var
 
+11. **Storage Quota Management** (`internal/database/files.go`, `internal/handlers/upload.go`):
+   - Configurable per-application storage quota (default: 0 / unlimited)
+   - Tracks total usage via database query: `SELECT SUM(file_size) FROM files`
+   - Pre-upload validation: rejects if `current_usage + file_size > quota`
+   - Returns HTTP 507 (Insufficient Storage) with usage details when quota exceeded
+   - Automatic quota reclamation via cleanup worker (deletes expired files)
+   - Health endpoint exposes quota metrics: `quota_limit_bytes`, `quota_used_percent`
+   - Configured via `QUOTA_LIMIT_GB` env var (0 = unlimited)
+   - Prevents runaway disk usage and enables multi-tenant deployments
+
 ### Configuration
 
 All configuration via environment variables (see `internal/config/config.go`):
@@ -198,6 +208,7 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `MAX_EXPIRATION_HOURS`: Maximum allowed expiration time (default: 168 / 7 days)
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
 - `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
+- `QUOTA_LIMIT_GB`: Maximum total storage quota in GB (default: 0 / unlimited)
 
 **Note on Timestamps**: Logs use UTC timestamps (RFC3339 with `Z` suffix) regardless of TZ setting. This is industry standard for server applications and makes log correlation across timezones easier.
 

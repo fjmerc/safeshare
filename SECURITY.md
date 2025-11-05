@@ -285,7 +285,7 @@ Logs are JSON-formatted for easy parsing by:
 
 ## 🛡️ Production Security Features
 
-SafeShare includes 6 critical security features required for production deployment.
+SafeShare includes 7 critical security features required for production deployment.
 
 ### 1. Rate Limiting
 
@@ -421,6 +421,60 @@ curl -F "file=@test.txt" -F "expires_in_hours=720" \
 # {"error": "Expiration time exceeds maximum allowed (168 hours)"}
 ```
 
+### 7. Storage Quota Management
+
+**Protection**: Prevents disk abuse and enables multi-tenant deployments with per-application limits
+
+**Configuration**:
+```bash
+export QUOTA_LIMIT_GB=20  # Maximum 20GB total storage (0 = unlimited)
+```
+
+**How it works**:
+- Tracks total storage usage via database query
+- Pre-upload validation: rejects if quota would be exceeded
+- Automatic quota reclamation when files expire
+- Health endpoint exposes quota metrics
+- Returns HTTP 507 (Insufficient Storage) when quota exceeded
+
+**Example**:
+```bash
+# Set 20GB quota
+docker run -d -p 8080:8080 \
+  -e QUOTA_LIMIT_GB=20 \
+  safeshare:latest
+
+# Upload will fail if it would exceed quota
+curl -F "file=@large.iso" http://localhost:8080/api/upload
+
+# Response: HTTP 507
+# {"error": "Storage quota exceeded. Current usage: 18.50 GB / 20 GB"}
+```
+
+**Monitoring**:
+```bash
+# Check quota usage
+curl http://localhost:8080/health | jq '{
+  quota_limit_gb: (.quota_limit_bytes / 1073741824),
+  quota_used_percent: .quota_used_percent,
+  storage_used_gb: (.storage_used_bytes / 1073741824)
+}'
+
+# Example output:
+# {
+#   "quota_limit_gb": 20,
+#   "quota_used_percent": 75.5,
+#   "storage_used_gb": 15.1
+# }
+```
+
+**Benefits**:
+- ✅ Prevents runaway disk usage
+- ✅ Enables predictable resource allocation
+- ✅ Supports multi-tenant deployments
+- ✅ Automatic cleanup frees quota
+- ✅ Real-time monitoring via health endpoint
+
 ---
 
 ## 🔒 Complete Enterprise Deployment Example
@@ -440,6 +494,7 @@ docker run -d \
   -e MAX_EXPIRATION_HOURS=168 \
   -e RATE_LIMIT_UPLOAD=10 \
   -e RATE_LIMIT_DOWNLOAD=100 \
+  -e QUOTA_LIMIT_GB=20 \
   -e TZ=Europe/Berlin \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
