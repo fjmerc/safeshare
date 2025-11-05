@@ -28,6 +28,147 @@ SafeShare now includes a modern, embedded web UI that provides an intuitive inte
 - ✅ **Accessibility features** (ARIA labels, keyboard navigation)
 - ✅ **Smooth animations** and transitions
 
+## Admin Dashboard
+
+SafeShare includes a comprehensive admin dashboard for file and user management.
+
+### Features
+
+#### Authentication
+- ✅ **Secure login page** with username/password
+- ✅ **Session management** with configurable expiration
+- ✅ **CSRF protection** on all operations
+- ✅ **Rate-limited login** (5 attempts per 15 minutes)
+- ✅ **Auto-logout** on session expiration
+
+#### Dashboard Interface
+- ✅ **Three-tab navigation** (Files, Blocked IPs, Settings)
+- ✅ **Real-time statistics** cards
+- ✅ **Responsive design** for desktop and tablet
+- ✅ **Modern table views** with sorting and pagination
+- ✅ **Search and filter** capabilities
+- ✅ **Confirmation modals** for destructive actions
+
+#### Files Management
+- ✅ **View all uploaded files** with full metadata
+- ✅ **Search** by claim code, filename, or uploader IP
+- ✅ **Pagination** (20 files per page)
+- ✅ **Delete files** before expiration
+- ✅ **Password protection indicator**
+- ✅ **Download count tracking**
+
+#### IP Blocking
+- ✅ **Block IP addresses** from uploads/downloads
+- ✅ **Custom blocking reason** field
+- ✅ **View all blocked IPs** in table
+- ✅ **Unblock with one click**
+- ✅ **Automatic enforcement** on all endpoints
+
+#### Settings
+- ✅ **Dynamic quota adjustment** (no restart required)
+- ✅ **Real-time percentage updates**
+- ✅ **System information** display
+
+### User Interface
+
+**Login Page** (`/admin/login`):
+- Clean, centered login form
+- Username and password fields
+- Modern gradient background
+- Error message display
+- Responsive layout
+
+**Dashboard** (`/admin/dashboard`):
+- Header with logout button
+- Four stat cards (Files, Storage, Quota, Blocked IPs)
+- Tab navigation
+- Content area with tables and forms
+- Footer information
+
+**Color Scheme**:
+- Primary: `#2563eb` (Blue)
+- Danger: `#dc2626` (Red)
+- Success: `#16a34a` (Green)
+- Background: `#f9fafb` (Light gray)
+- Text: `#111827` (Dark gray)
+
+### File Structure
+
+```
+internal/static/web/admin/
+├── login.html              # Login page
+├── dashboard.html          # Main dashboard
+└── assets/
+    ├── admin.css          # Dashboard styles (~8KB)
+    └── admin.js           # Dashboard logic (~10KB)
+```
+
+### Technical Implementation
+
+**JavaScript Features**:
+- Vanilla JavaScript (no frameworks)
+- Fetch API for AJAX requests
+- Cookie-based session management
+- CSRF token handling
+- Client-side pagination
+- Search debouncing (500ms)
+- Confirmation dialogs
+- Error handling and user feedback
+
+**CSS Features**:
+- CSS Grid for layouts
+- Flexbox for components
+- Responsive tables
+- Modal overlays
+- Hover effects
+- Smooth transitions
+
+**Security**:
+- HttpOnly session cookies
+- SameSite cookie attribute
+- CSRF token validation
+- XSS prevention (innerHTML escaping)
+- Input sanitization
+
+### API Endpoints
+
+**Public** (no auth):
+- `GET /admin/login` - Login page
+- `POST /admin/api/login` - Authentication
+
+**Protected** (requires session):
+- `GET /admin/dashboard` - Dashboard page
+- `GET /admin/api/dashboard` - Dashboard data
+- `POST /admin/api/logout` - Logout
+
+**Protected + CSRF** (requires session + token):
+- `POST /admin/api/files/delete` - Delete file
+- `POST /admin/api/ip/block` - Block IP
+- `POST /admin/api/ip/unblock` - Unblock IP
+- `POST /admin/api/quota/update` - Update quota
+
+### Access Control
+
+Admin dashboard is **disabled by default**. Enable by setting:
+
+```bash
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="secure_password_123"
+```
+
+**URL Access**:
+- Main app: `http://localhost:8080/`
+- Admin login: `http://localhost:8080/admin/login`
+- Admin dashboard: `http://localhost:8080/admin/dashboard`
+
+### Browser Support
+
+Same as main application:
+- ✅ Chrome/Edge 90+
+- ✅ Firefox 88+
+- ✅ Safari 14+
+- ✅ Opera 76+
+
 ## Technical Stack
 
 | Component | Technology | Size |

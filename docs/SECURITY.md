@@ -283,6 +283,208 @@ Logs are JSON-formatted for easy parsing by:
 
 ---
 
+## 🎛️ Admin Dashboard Security
+
+SafeShare includes a secure web-based admin dashboard for managing files, blocking IPs, and adjusting quotas.
+
+### Overview
+
+The admin dashboard provides comprehensive administrative capabilities with enterprise-grade security:
+- Session-based authentication
+- CSRF protection on all state-changing operations
+- Rate-limited login attempts
+- IP blocking and unblocking
+- File management (view, search, delete)
+- Dynamic quota adjustment
+- Complete audit logging
+
+### Setup
+
+Enable the admin dashboard by setting both environment variables:
+
+```bash
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="your_secure_password_here"  # Minimum 8 characters
+export SESSION_EXPIRY_HOURS=24  # Optional, defaults to 24 hours
+```
+
+**Access**:
+- Login: `http://your-server:8080/admin/login`
+- Dashboard: `http://your-server:8080/admin/dashboard`
+
+### Security Features
+
+#### 1. Session Management
+- **Secure tokens**: 32-byte cryptographically random tokens (crypto/rand)
+- **HttpOnly cookies**: Prevents XSS attacks
+- **SameSite=Strict**: Prevents CSRF attacks on cookies
+- **Automatic expiration**: Configurable session timeout (default: 24 hours)
+- **Activity tracking**: Last activity timestamp updated on each request
+- **Background cleanup**: Expired sessions removed every 30 minutes
+
+#### 2. CSRF Protection
+- **Independent tokens**: Separate from session tokens
+- **Token validation**: Required for all POST/PUT/DELETE/PATCH requests
+- **Cookie + header verification**: Token must match between cookie and request header
+- **24-hour lifetime**: Tokens expire automatically
+- **Logged failures**: All CSRF validation failures are logged with IP
+
+#### 3. Rate Limiting
+- **Login protection**: 5 attempts per 15 minutes per IP
+- **In-memory tracking**: Efficient sliding window algorithm
+- **Auto cleanup**: Old attempts automatically removed
+- **HTTP 429 response**: Clear feedback when limit exceeded
+
+#### 4. Audit Logging
+All admin actions are logged with full context:
+
+**Login Success**:
+```json
+{
+  "time": "2025-11-05T07:38:15Z",
+  "level": "INFO",
+  "msg": "admin login successful",
+  "username": "admin",
+  "ip": "192.168.254.1",
+  "user_agent": "Mozilla/5.0..."
+}
+```
+
+**File Deletion**:
+```json
+{
+  "time": "2025-11-05T07:40:52Z",
+  "level": "INFO",
+  "msg": "admin deleted file",
+  "claim_code": "Jsi...ue",
+  "filename": "test-file.txt",
+  "size": 18,
+  "admin_ip": "192.168.254.1"
+}
+```
+
+**IP Blocking**:
+```json
+{
+  "time": "2025-11-05T07:30:14Z",
+  "level": "INFO",
+  "msg": "admin blocked IP",
+  "blocked_ip": "192.168.1.100",
+  "reason": "Test block",
+  "admin_ip": "192.168.254.1"
+}
+```
+
+**Quota Update**:
+```json
+{
+  "time": "2025-11-05T07:30:44Z",
+  "level": "INFO",
+  "msg": "admin updated storage quota",
+  "old_quota_gb": 0,
+  "new_quota_gb": 10,
+  "admin_ip": "192.168.254.1"
+}
+```
+
+### Dashboard Features
+
+#### Files Tab
+- View all uploaded files with full metadata
+- Search by claim code, filename, or uploader IP
+- Pagination (20 files per page)
+- Delete files before expiration
+- See password protection status
+- Monitor download counts
+
+#### Blocked IPs Tab
+- Block IP addresses from uploads/downloads
+- View all blocked IPs with reason and timestamp
+- Unblock IPs with one click
+- Automatic enforcement on all file operations
+
+#### Settings Tab
+- Adjust storage quota without restart
+- View system configuration
+- Real-time stats update
+
+### IP Blocking
+
+When an IP is blocked:
+1. **Immediate enforcement**: Blocks take effect instantly
+2. **Upload prevention**: HTTP 403 on upload attempts
+3. **Download prevention**: HTTP 403 on download attempts
+4. **Audit trail**: All blocked attempts logged
+5. **Admin bypass**: Admin dashboard remains accessible
+
+**Blocked access log**:
+```json
+{
+  "time": "2025-11-05T08:00:00Z",
+  "level": "WARN",
+  "msg": "blocked IP attempted access",
+  "ip": "192.168.1.100",
+  "path": "/api/upload",
+  "method": "POST",
+  "user_agent": "curl/7.81.0"
+}
+```
+
+### Security Best Practices
+
+**1. Strong Credentials**:
+- Use minimum 12-character passwords
+- Mix uppercase, lowercase, numbers, symbols
+- Never use default credentials in production
+
+**2. HTTPS Deployment**:
+- Always use HTTPS in production
+- Update cookie settings to `Secure: true`
+- Configure reverse proxy with TLS
+
+**3. Network Isolation**:
+- Restrict admin dashboard to internal networks
+- Use VPN for remote admin access
+- Consider IP whitelisting at firewall level
+
+**4. Session Management**:
+- Keep SESSION_EXPIRY_HOURS reasonable (12-24 hours)
+- Log out when done with admin tasks
+- Monitor active sessions via database
+
+**5. Audit Review**:
+- Regularly review admin action logs
+- Set up alerts for suspicious activity
+- Export logs to SIEM for analysis
+
+### Database Tables
+
+**admin_sessions**:
+```sql
+CREATE TABLE admin_sessions (
+    id INTEGER PRIMARY KEY,
+    session_token TEXT UNIQUE NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT
+);
+```
+
+**blocked_ips**:
+```sql
+CREATE TABLE blocked_ips (
+    id INTEGER PRIMARY KEY,
+    ip_address TEXT UNIQUE NOT NULL,
+    reason TEXT NOT NULL,
+    blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    blocked_by TEXT DEFAULT 'admin'
+);
+```
+
+---
+
 ## 🛡️ Production Security Features
 
 SafeShare includes 7 critical security features required for production deployment.

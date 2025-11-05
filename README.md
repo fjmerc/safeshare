@@ -31,6 +31,16 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ **Maximum expiration limits** (prevents abuse)
 - ✅ **Storage quota limits** (configurable per-app limits)
 
+### Admin Dashboard 🎛️
+- ✅ **Web-based administration** (secure login with session management)
+- ✅ **File management** (view all files, search, paginate, delete)
+- ✅ **IP blocking** (block/unblock IPs from uploads/downloads)
+- ✅ **Quota management** (adjust storage limits without restart)
+- ✅ **Real-time statistics** (storage usage, file counts, blocked IPs)
+- ✅ **CSRF protection** (secure state-changing operations)
+- ✅ **Rate-limited login** (prevents brute force attacks)
+- ✅ **Audit logging** (all admin actions logged)
+
 ### Frontend (Web UI)
 - ✅ Modern, responsive web interface
 - ✅ Drag & drop file upload
@@ -208,7 +218,34 @@ Environment variables:
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
 | `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
 | `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
+| `ADMIN_USERNAME` | (empty) | Admin username for dashboard access - **Optional, enables admin dashboard** |
+| `ADMIN_PASSWORD` | (empty) | Admin password (minimum 8 characters) - **Optional, requires ADMIN_USERNAME** |
+| `SESSION_EXPIRY_HOURS` | `24` | Admin session expiration time in hours |
 | `TZ` | `UTC` | Timezone for container (logs always use UTC per industry standard) |
+
+### Admin Dashboard
+
+The admin dashboard provides web-based administration for SafeShare. Enable it by setting both `ADMIN_USERNAME` and `ADMIN_PASSWORD`:
+
+```bash
+docker run -d \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=your_secure_password_here \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+**Access the dashboard:**
+- Login: `http://localhost:8080/admin/login`
+- Dashboard: `http://localhost:8080/admin/dashboard` (requires authentication)
+
+**Features:**
+- **Files tab**: View all uploaded files, search by claim code/filename/IP, delete files before expiration
+- **Blocked IPs tab**: Block/unblock IP addresses from uploading or downloading files
+- **Settings tab**: Adjust storage quota without restarting the application
+- **Real-time stats**: Monitor total files, storage usage, quota usage, and blocked IPs
+- **Security**: Session-based authentication, CSRF protection, rate-limited login (5 attempts per 15 minutes)
+- **Audit logging**: All admin actions are logged with IP and timestamp
 
 ### Reverse Proxy Support
 
@@ -224,7 +261,7 @@ docker run -d \
 
 **Auto-detection:** If `PUBLIC_URL` is not set, SafeShare auto-detects from `X-Forwarded-Proto` and `X-Forwarded-Host` headers.
 
-**Full documentation:** See [REVERSE_PROXY.md](REVERSE_PROXY.md) for complete configuration examples with Traefik, nginx, Caddy, and Apache.
+**Full documentation:** See [REVERSE_PROXY.md](docs/REVERSE_PROXY.md) for complete configuration examples with Traefik, nginx, Caddy, and Apache.
 
 ## Building from Source
 
@@ -301,7 +338,7 @@ SafeShare Application
 - **Non-root container user**: Container runs as user ID 1000
 - **File size limits**: Enforced at application and HTTP levels
 
-**📖 For detailed security configuration, see [SECURITY.md](SECURITY.md)**
+**📖 For detailed security configuration, see [SECURITY.md](docs/SECURITY.md)**
 
 ## Example Workflows
 
@@ -434,13 +471,22 @@ Contributions welcome! Please:
 4. Add tests if applicable
 5. Submit a pull request
 
-## Developer Documentation
+## Documentation
 
-For developers working on SafeShare:
-- **[CLAUDE.md](CLAUDE.md)**: Architecture overview, build commands, and development guidelines
-- **[FRONTEND.md](FRONTEND.md)**: Frontend customization guide
-- **[REVERSE_PROXY.md](REVERSE_PROXY.md)**: Reverse proxy configuration examples
-- **[SECURITY.md](SECURITY.md)**: Enterprise security features and best practices
+Comprehensive documentation is available in the [`docs/`](docs/) directory:
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[CLAUDE.md](docs/CLAUDE.md)** | Architecture overview, build commands, development guide | Developers, DevOps |
+| **[SECURITY.md](docs/SECURITY.md)** | Enterprise security features, admin dashboard security, best practices | Security teams, Admins |
+| **[FRONTEND.md](docs/FRONTEND.md)** | Web UI features, customization guide, admin dashboard UI | Frontend developers |
+| **[REVERSE_PROXY.md](docs/REVERSE_PROXY.md)** | Reverse proxy configuration (Traefik, nginx, Caddy, Apache) | DevOps, Sysadmins |
+
+**Quick Links:**
+- 🔐 [Admin Dashboard Security](docs/SECURITY.md#admin-dashboard-security)
+- 🛡️ [Encryption at Rest](docs/SECURITY.md#encryption-at-rest)
+- 🎨 [Frontend Customization](docs/FRONTEND.md#customization)
+- 🔧 [Development Guide](docs/CLAUDE.md#build-and-development-commands)
 
 ## Support
 

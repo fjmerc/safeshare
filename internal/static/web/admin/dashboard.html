@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - SafeShare</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body class="dashboard-page">
+    <header class="admin-header">
+        <div class="header-content">
+            <h1>SafeShare Admin Dashboard</h1>
+            <button id="logoutBtn" class="btn-secondary">Logout</button>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        <!-- Stats Section -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Files</h3>
+                <p class="stat-value" id="statTotalFiles">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Storage Used</h3>
+                <p class="stat-value" id="statStorageUsed">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Quota Usage</h3>
+                <p class="stat-value" id="statQuotaUsage">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Blocked IPs</h3>
+                <p class="stat-value" id="statBlockedIPs">-</p>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="files">Files</button>
+            <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
+        </div>
+
+        <!-- Files Tab -->
+        <div id="filesTab" class="tab-content active">
+            <div class="table-controls">
+                <input type="text" id="searchInput" placeholder="Search by claim code, filename, or IP..." class="search-input">
+                <button id="refreshBtn" class="btn-secondary">Refresh</button>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Claim Code</th>
+                            <th>Filename</th>
+                            <th>Size</th>
+                            <th>Uploader IP</th>
+                            <th>Created</th>
+                            <th>Expires</th>
+                            <th>Downloads</th>
+                            <th>Protected</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="filesTableBody">
+                        <tr>
+                            <td colspan="9" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination" id="pagination">
+                <!-- Pagination will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Blocked IPs Tab -->
+        <div id="blockedIPsTab" class="tab-content">
+            <div class="table-controls">
+                <form id="blockIPForm" class="inline-form">
+                    <input type="text" name="ip_address" placeholder="IP Address" required>
+                    <input type="text" name="reason" placeholder="Reason (optional)">
+                    <button type="submit" class="btn-primary">Block IP</button>
+                </form>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Reason</th>
+                            <th>Blocked At</th>
+                            <th>Blocked By</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blockedIPsTableBody">
+                        <tr>
+                            <td colspan="5" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="settingsTab" class="tab-content">
+            <div class="settings-section">
+                <h2>Storage Quota Management</h2>
+                <form id="quotaForm" class="settings-form">
+                    <div class="form-group">
+                        <label for="quotaGB">Storage Quota (GB)</label>
+                        <input type="number" id="quotaGB" name="quota_gb" min="0" required>
+                        <small>Set to 0 for unlimited storage</small>
+                    </div>
+                    <button type="submit" class="btn-primary">Update Quota</button>
+                </form>
+            </div>
+
+            <div class="settings-section">
+                <h2>System Information</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>Database Path:</strong>
+                        <span>./safeshare.db</span>
+                    </div>
+                    <div class="info-item">
+                        <strong>Upload Directory:</strong>
+                        <span>./uploads</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Confirm Action</h3>
+            <p id="confirmMessage"></p>
+            <div class="modal-actions">
+                <button id="confirmYes" class="btn-danger">Yes</button>
+                <button id="confirmNo" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/admin/assets/admin.js"></script>
+</body>
+</html>

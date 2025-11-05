@@ -33,6 +33,33 @@ const migration = `
 ALTER TABLE files ADD COLUMN password_hash TEXT;
 `
 
+// Admin-related schema
+const adminSchema = `
+CREATE TABLE IF NOT EXISTS blocked_ips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip_address TEXT UNIQUE NOT NULL,
+    reason TEXT NOT NULL,
+    blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    blocked_by TEXT DEFAULT 'admin',
+    UNIQUE(ip_address)
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_token TEXT UNIQUE NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT,
+    UNIQUE(session_token)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_token ON admin_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_session_expires ON admin_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_blocked_ip ON blocked_ips(ip_address);
+`
+
 // Initialize opens the SQLite database and creates the schema
 func Initialize(dbPath string) (*sql.DB, error) {
 	// Open database connection
@@ -72,6 +99,12 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	// Run migration (safe to run multiple times - ALTER TABLE IF NOT EXISTS not supported in SQLite)
 	// This will fail silently if column already exists
 	db.Exec(migration)
+
+	// Create admin schema
+	if _, err := db.Exec(adminSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create admin schema: %w", err)
+	}
 
 	return db, nil
 }

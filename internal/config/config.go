@@ -22,6 +22,9 @@ type Config struct {
 	RateLimitUpload        int      // Upload requests per hour per IP
 	RateLimitDownload      int      // Download requests per hour per IP
 	QuotaLimitGB           int64    // Maximum total storage in GB (0 = unlimited)
+	AdminUsername          string   // Admin username for dashboard access
+	AdminPassword          string   // Admin password (stored as bcrypt hash internally)
+	SessionExpiryHours     int      // Admin session expiry time in hours (default: 24)
 }
 
 // Load reads configuration from environment variables with sensible defaults
@@ -43,6 +46,9 @@ func Load() (*Config, error) {
 		RateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),   // 10 uploads per hour per IP
 		RateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100), // 100 downloads per hour per IP
 		QuotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0), // 0 = unlimited (default)
+		AdminUsername:          getEnv("ADMIN_USERNAME", ""),     // Required for admin access
+		AdminPassword:          getEnv("ADMIN_PASSWORD", ""),     // Required for admin access
+		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24), // 24 hours default
 	}
 
 	// Validate configuration
@@ -97,6 +103,23 @@ func (c *Config) validate() error {
 
 	if c.QuotaLimitGB < 0 {
 		return fmt.Errorf("QUOTA_LIMIT_GB must be 0 (unlimited) or positive, got %d", c.QuotaLimitGB)
+	}
+
+	if c.SessionExpiryHours <= 0 {
+		return fmt.Errorf("SESSION_EXPIRY_HOURS must be positive, got %d", c.SessionExpiryHours)
+	}
+
+	// Admin credentials validation - both or neither must be provided
+	if (c.AdminUsername == "" && c.AdminPassword != "") || (c.AdminUsername != "" && c.AdminPassword == "") {
+		return fmt.Errorf("both ADMIN_USERNAME and ADMIN_PASSWORD must be set to enable admin dashboard")
+	}
+
+	if c.AdminUsername != "" && len(c.AdminUsername) < 3 {
+		return fmt.Errorf("ADMIN_USERNAME must be at least 3 characters")
+	}
+
+	if c.AdminPassword != "" && len(c.AdminPassword) < 8 {
+		return fmt.Errorf("ADMIN_PASSWORD must be at least 8 characters")
 	}
 
 	// Validate encryption key if provided (must be 64 hex characters = 32 bytes for AES-256)

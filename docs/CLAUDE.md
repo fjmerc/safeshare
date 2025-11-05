@@ -61,6 +61,119 @@ curl -O http://localhost:8080/api/claim/<CLAIM_CODE>
 curl http://localhost:8080/health
 ```
 
+## Admin Dashboard Architecture
+
+### Overview
+The admin dashboard provides web-based administration for SafeShare. It's a fully-featured management interface with secure authentication, CSRF protection, and comprehensive file and IP management capabilities.
+
+### Components
+
+**Database Schema** (`internal/database/db.go`, `internal/database/admin.go`):
+- `admin_sessions` table: Stores active admin sessions with expiration tracking
+- `blocked_ips` table: IP blocklist with reason and timestamp tracking
+- Session cleanup worker: Automatically removes expired sessions every 30 minutes
+
+**Authentication & Security** (`internal/middleware/admin.go`):
+- `AdminAuth` middleware: Validates session cookies, auto-refreshes activity timestamps
+- `CSRFProtection` middleware: Validates CSRF tokens for state-changing operations
+- `RateLimitAdminLogin` middleware: Limits login attempts to 5 per 15 minutes per IP
+- Session management: Secure tokens generated with crypto/rand (32 bytes, base64-encoded)
+- CSRF tokens: Independent tokens stored in cookies, validated on POST/PUT/DELETE/PATCH
+
+**IP Blocking** (`internal/middleware/ipblock.go`):
+- `IPBlockCheck` middleware: Applied to upload and download routes
+- Checks incoming IP against blocked_ips table
+- Returns HTTP 403 (Forbidden) for blocked IPs
+- Logs all blocked access attempts with IP, path, method, and user agent
+
+**Handlers** (`internal/handlers/admin.go`):
+- `AdminLoginHandler`: Validates credentials, creates session, sets cookies (session + CSRF)
+- `AdminLogoutHandler`: Deletes session from database and clears cookies
+- `AdminDashboardDataHandler`: Returns paginated files, stats, and blocked IPs
+- `AdminDeleteFileHandler`: Deletes file from database and filesystem (requires CSRF)
+- `AdminBlockIPHandler`: Adds IP to blocklist (requires CSRF)
+- `AdminUnblockIPHandler`: Removes IP from blocklist (requires CSRF)
+- `AdminUpdateQuotaHandler`: Dynamically updates storage quota without restart (requires CSRF)
+
+**Frontend** (`internal/static/web/admin/`):
+- `login.html`: Login page with username/password form
+- `dashboard.html`: Three-tab interface (Files, Blocked IPs, Settings)
+- `admin.css`: Responsive design with light theme, tables, forms, modals
+- `admin.js`: Handles API calls, pagination, search, confirmations, CSRF token management
+
+### Admin Routes
+All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be configured. Routes are conditionally registered in `main.go`:
+
+**Public routes** (no auth):
+- `GET /admin/login` - Login page
+- `POST /admin/api/login` - Login endpoint (rate-limited: 5 attempts per 15 minutes)
+
+**Protected routes** (require session):
+- `GET /admin` - Redirects to /admin/dashboard
+- `GET /admin/dashboard` - Dashboard page (requires AdminAuth middleware)
+- `GET /admin/api/dashboard` - Dashboard data API (requires AdminAuth)
+- `POST /admin/api/logout` - Logout (requires AdminAuth)
+
+**Protected routes with CSRF** (require session + CSRF token):
+- `POST /admin/api/files/delete` - Delete file (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/ip/block` - Block IP (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/ip/unblock` - Unblock IP (requires AdminAuth + CSRFProtection)
+- `POST /admin/api/quota/update` - Update quota (requires AdminAuth + CSRFProtection)
+
+**Static assets**:
+- `GET /admin/assets/*` - Admin CSS/JS files (served from embedded filesystem)
+
+### Security Features
+
+1. **Session Management**:
+   - Secure 32-byte random tokens (base64-encoded)
+   - HttpOnly cookies (prevents XSS)
+   - SameSite=Strict (prevents CSRF on cookies)
+   - Automatic expiration based on SESSION_EXPIRY_HOURS
+   - Activity tracking (last_activity updated on each request)
+   - Background cleanup removes expired sessions every 30 minutes
+
+2. **CSRF Protection**:
+   - Separate CSRF tokens (not derived from session)
+   - Token validation on all state-changing operations
+   - Tokens stored in cookies (JavaScript-readable for inclusion in requests)
+   - Tokens included in X-CSRF-Token header or csrf_token form field
+   - 24-hour token lifetime
+
+3. **Rate Limiting**:
+   - Login endpoint: 5 attempts per 15 minutes per IP
+   - In-memory tracking with automatic cleanup
+   - Returns HTTP 429 when limit exceeded
+
+4. **Audit Logging**:
+   - All admin actions logged with structured JSON logging (slog)
+   - Logged events: login, logout, file deletion, IP blocking/unblocking, quota changes
+   - Each log includes: timestamp, admin IP, user agent, claim code (redacted), file details
+   - Example: `{"time":"...","level":"INFO","msg":"admin deleted file","claim_code":"Jsi...ue","filename":"test.txt","size":18,"admin_ip":"172.17.0.1"}`
+
+### Dashboard Features
+
+**Files Tab**:
+- Table view: claim code, filename, size, uploader IP, created date, expires date, downloads, password protected status
+- Search: Filter by claim code, filename, or uploader IP (live search with 500ms debounce)
+- Pagination: 20 items per page with page navigation
+- Delete: Remove files before expiration (requires confirmation modal)
+
+**Blocked IPs Tab**:
+- Table view: IP address, reason, blocked date, blocked by
+- Add: Block new IP with optional reason
+- Unblock: Remove IP from blocklist (requires confirmation)
+
+**Settings Tab**:
+- Quota management: Update QUOTA_LIMIT_GB dynamically without restart
+- System info: Display database path, upload directory
+
+**Real-time Stats** (top cards):
+- Total Files: Active file count
+- Storage Used: Total bytes used (formatted as B/KB/MB/GB/TB)
+- Quota Usage: Percentage used (or "Unlimited" if quota = 0)
+- Blocked IPs: Count of blocked IPs
+
 ## Architecture Overview
 
 ### Request Flow
@@ -209,6 +322,11 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
 - `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
 - `QUOTA_LIMIT_GB`: Maximum total storage quota in GB (default: 0 / unlimited)
+
+**Admin Dashboard** (Optional):
+- `ADMIN_USERNAME`: Admin username (required to enable dashboard, minimum 3 characters)
+- `ADMIN_PASSWORD`: Admin password (required to enable dashboard, minimum 8 characters)
+- `SESSION_EXPIRY_HOURS`: Admin session expiration time (default: 24 hours)
 
 **Note on Timestamps**: Logs use UTC timestamps (RFC3339 with `Z` suffix) regardless of TZ setting. This is industry standard for server applications and makes log correlation across timezones easier.
 
