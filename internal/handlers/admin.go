@@ -572,11 +572,29 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get old values for audit log
+		oldQuota := cfg.GetQuotaLimitGB()
 		oldMaxFileSize := cfg.GetMaxFileSize()
 		oldDefaultExpiration := cfg.GetDefaultExpirationHours()
 		oldMaxExpiration := cfg.GetMaxExpirationHours()
 
 		updates := make(map[string]interface{})
+
+		// Update storage quota
+		if quotaGB := r.FormValue("quota_gb"); quotaGB != "" {
+			quota, err := strconv.ParseInt(quotaGB, 10, 64)
+			if err != nil || quota < 0 {
+				http.Error(w, "Invalid quota_gb - must be non-negative integer", http.StatusBadRequest)
+				return
+			}
+			if err := cfg.SetQuotaLimitGB(quota); err != nil {
+				http.Error(w, "Storage quota: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			updates["quota_gb"] = map[string]int64{
+				"old": oldQuota,
+				"new": quota,
+			}
+		}
 
 		// Update max file size (in MB, convert to bytes)
 		if maxFileSizeMB := r.FormValue("max_file_size_mb"); maxFileSizeMB != "" {

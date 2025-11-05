@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - SafeShare</title>
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
     <link rel="stylesheet" href="/assets/style.css">
     <style>
         * {
@@ -26,66 +27,243 @@
 
         .header {
             background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 20px 0;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            margin-bottom: 32px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
         }
 
-        .header-left h1 {
-            font-size: 24px;
-            color: #2563eb;
-            margin-bottom: 5px;
-        }
-
-        .header-left p {
-            color: #64748b;
-            font-size: 14px;
-        }
-
-        .header-right {
+        .header-left {
             display: flex;
-            gap: 10px;
+            align-items: center;
+            gap: 16px;
+            flex-shrink: 0;
+            min-width: 0;
         }
 
-        .btn {
-            padding: 8px 16px;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
+        .logo {
+            width: 48px;
+            height: 48px;
+            filter: drop-shadow(0 2px 8px rgba(59, 130, 246, 0.25));
+            transition: all 0.2s ease;
+        }
+
+        .logo:hover {
+            transform: scale(1.05);
+            filter: drop-shadow(0 4px 12px rgba(59, 130, 246, 0.35));
+        }
+
+        .header-text {
+            min-width: 0;
+        }
+
+        .header-text h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #111827;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .header-text p {
+            color: #6b7280;
             font-size: 14px;
-            font-weight: 500;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: nowrap;
+            flex-shrink: 0;
+        }
+
+        /* More compact header buttons */
+        .header-actions .btn-primary,
+        .header-actions .btn-secondary,
+        .header-actions .btn-success,
+        .header-actions .btn-danger {
+            padding: 8px 14px;
+            font-size: 13px;
+            height: 36px;
+            white-space: nowrap;
+            line-height: 1.4;
+            min-height: 36px;
+            margin: 0;
+            width: auto;
+            flex: 0 0 auto;
+        }
+
+        .header-actions .btn-primary svg,
+        .header-actions .btn-secondary svg,
+        .header-actions .btn-success svg,
+        .header-actions .btn-danger svg {
+            width: 15px;
+            height: 15px;
+            flex-shrink: 0;
+            vertical-align: middle;
+        }
+
+        /* Theme Toggle Fixed Position */
+        .theme-toggle-fixed {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            background: white;
+            cursor: pointer;
             transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .theme-toggle-fixed:hover {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        [data-theme="dark"] .theme-toggle-fixed {
+            background: #374151;
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .theme-toggle-fixed:hover {
+            background: #4b5563;
+            border-color: #6b7280;
+        }
+
+        /* Button Styles */
+        .btn-primary, .btn-secondary, .btn-danger, .btn-success {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            text-decoration: none;
+            white-space: nowrap;
+            line-height: 1.5;
+            vertical-align: middle;
+            height: 36px;
+        }
+
+        .btn-primary svg,
+        .btn-secondary svg,
+        .btn-danger svg,
+        .btn-success svg {
+            flex-shrink: 0;
         }
 
         .btn-primary {
-            background: #2563eb;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
             color: white;
+            box-shadow: 0 1px 3px rgba(59, 130, 246, 0.2);
+            border: 1px solid transparent;
         }
 
-        .btn-primary:hover {
-            background: #1d4ed8;
+        .btn-primary:hover:not(:disabled) {
+            box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
         }
 
         .btn-secondary {
-            background: #e2e8f0;
-            color: #475569;
+            background: white;
+            color: #6b7280;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            border: 1px solid #e5e7eb;
         }
 
-        .btn-secondary:hover {
-            background: #cbd5e1;
+        .btn-secondary:hover:not(:disabled) {
+            background: #f9fafb;
+            border-color: #d1d5db;
+            color: #111827;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
         }
 
         .btn-danger {
-            background: #dc2626;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
             color: white;
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+            border: 1px solid transparent;
         }
 
-        .btn-danger:hover {
-            background: #b91c1c;
+        .btn-danger:hover:not(:disabled) {
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn-danger:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            box-shadow: 0 1px 3px rgba(16, 185, 129, 0.2);
+            border: 1px solid transparent;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-success:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .btn-refreshing svg {
+            animation: spin 0.6s linear;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
         .content-section {
@@ -101,13 +279,27 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #e2e8f0;
         }
 
         .section-header h2 {
             font-size: 18px;
             color: #1e293b;
+            font-weight: 700;
+            margin: 0;
+            flex-shrink: 0;
+        }
+
+        .section-header .btn {
+            flex-shrink: 0;
+            flex-grow: 0;
+            width: auto;
+        }
+
+        .files-table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .files-table {
@@ -117,22 +309,31 @@
 
         .files-table th {
             text-align: left;
-            padding: 12px;
-            background: #f1f5f9;
-            color: #475569;
+            padding: 16px;
+            background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+            color: #64748b;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             border-bottom: 2px solid #e2e8f0;
+            white-space: nowrap;
         }
 
         .files-table td {
-            padding: 12px;
+            padding: 16px;
             border-bottom: 1px solid #e2e8f0;
             font-size: 14px;
+            transition: all 0.2s;
+            vertical-align: middle;
         }
 
-        .files-table tr:hover {
-            background: #f8fafc;
+        .files-table tbody tr {
+            transition: all 0.2s;
+        }
+
+        .files-table tbody tr:hover {
+            background: #dbeafe;
         }
 
         .file-name {
@@ -143,14 +344,17 @@
         .file-size {
             color: #64748b;
             font-size: 13px;
+            font-weight: 500;
         }
 
         .claim-code {
             font-family: 'Courier New', monospace;
-            background: #f1f5f9;
+            background: #e0e7ff;
+            color: #3730a3;
             padding: 4px 8px;
             border-radius: 4px;
             font-size: 12px;
+            font-weight: 600;
         }
 
         .badge {
@@ -176,9 +380,70 @@
             color: #991b1b;
         }
 
+        /* Icon Button Styles */
         .btn-icon {
-            padding: 6px 12px;
-            font-size: 12px;
+            padding: 0;
+            margin: 0;
+            border: 1px solid;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            flex-shrink: 0;
+            box-sizing: border-box;
+            vertical-align: middle;
+        }
+
+        .btn-icon svg {
+            display: block;
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .btn-icon.btn-primary {
+            color: #3b82f6;
+            border-color: #e2e8f0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .btn-icon.btn-primary:hover {
+            background: #eff6ff;
+            border-color: #3b82f6;
+            color: #2563eb;
+            transform: translateY(-1px);
+        }
+
+        .btn-icon.btn-danger {
+            color: #ef4444;
+            border-color: #e2e8f0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .btn-icon.btn-danger:hover {
+            background: #fef2f2;
+            border-color: #ef4444;
+            color: #dc2626;
+            transform: translateY(-1px);
+        }
+
+        .actions-cell {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            justify-content: flex-start;
+            flex-wrap: nowrap;
+        }
+
+        .files-table td.actions-col {
+            vertical-align: middle;
         }
 
         .empty-state {
@@ -224,27 +489,53 @@
         .modal-content {
             background: white;
             padding: 24px;
-            border-radius: 8px;
+            border-radius: 12px;
             max-width: 400px;
             width: 90%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            animation: modalSlideIn 0.2s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
         }
 
         .modal-header {
             font-size: 18px;
-            font-weight: 600;
+            font-weight: 700;
             margin-bottom: 16px;
+            color: #1e293b;
+            text-align: left;
         }
 
         .modal-body {
-            margin-bottom: 20px;
+            margin-bottom: 24px;
             color: #64748b;
             font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .modal-body p {
+            margin: 0;
         }
 
         .modal-footer {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             justify-content: flex-end;
+            padding-top: 8px;
+        }
+
+        .modal-footer .btn {
+            min-width: 90px;
+            justify-content: center;
         }
 
         .form-group {
@@ -253,23 +544,53 @@
 
         .form-group label {
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             color: #334155;
             font-weight: 500;
             font-size: 14px;
         }
 
+        .password-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .password-wrapper input {
+            flex: 1;
+            padding-right: 44px;
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 12px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            color: #64748b;
+            transition: color 0.2s;
+        }
+
+        .password-toggle:hover {
+            color: #334155;
+        }
+
         .form-group input {
             width: 100%;
-            padding: 8px;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
+            padding: 10px 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
             font-size: 14px;
+            transition: all 0.2s;
         }
 
         .form-group input:focus {
             outline: none;
-            border-color: #2563eb;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
         .alert {
@@ -297,19 +618,193 @@
             color: #dc2626;
         }
 
-        @media (max-width: 768px) {
+        /* Medium Desktop - Allow button wrapping */
+        @media (max-width: 1200px) {
+            .header-actions {
+                flex-wrap: wrap;
+            }
+        }
+
+        /* Tablet Styles */
+        @media (max-width: 1024px) {
+            .dashboard-container {
+                padding: 16px;
+            }
+
             .header {
+                padding: 16px 20px;
+            }
+
+            .header-actions {
+                flex-wrap: wrap;
+            }
+
+            .btn {
+                font-size: 12px;
+                padding: 6px 12px;
+            }
+        }
+
+        /* Mobile Styles */
+        @media (max-width: 768px) {
+            .theme-toggle-fixed {
+                top: 10px;
+                right: 10px;
+                padding: 6px;
+            }
+
+            .dashboard-container {
+                padding: 12px;
+            }
+
+            .header {
+                gap: 12px;
+                padding: 16px;
+            }
+
+            .header-left {
+                flex-direction: row;
+                gap: 12px;
+                flex: 1;
+                min-width: 0;
+            }
+
+            .logo {
+                width: 40px;
+                height: 40px;
+            }
+
+            .header-text h1 {
+                font-size: 18px;
+            }
+
+            .header-text p {
+                font-size: 12px;
+            }
+
+            .header-actions {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                justify-content: flex-start;
+            }
+
+            .btn {
+                font-size: 12px;
+                padding: 6px 12px;
+                flex: 0 1 auto;
+            }
+
+            .content-section {
+                padding: 16px;
+            }
+
+            .section-header {
                 flex-direction: column;
-                gap: 15px;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .section-header h2 {
+                font-size: 16px;
+            }
+
+            /* Make table scrollable on mobile */
+            .files-table-wrapper {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
             }
 
             .files-table {
                 font-size: 12px;
+                min-width: 800px;
             }
 
             .files-table th,
             .files-table td {
+                padding: 8px 6px;
+                font-size: 11px;
+            }
+
+            .claim-code {
+                font-size: 10px;
+                padding: 3px 6px;
+            }
+
+            .badge {
+                font-size: 10px;
+                padding: 2px 6px;
+            }
+
+            .btn-icon {
+                width: 28px;
+                height: 28px;
+            }
+
+            .btn-icon svg {
+                width: 14px;
+                height: 14px;
+            }
+        }
+
+        /* Small Mobile Styles */
+        @media (max-width: 480px) {
+            .theme-toggle-fixed {
+                top: 8px;
+                right: 8px;
+                padding: 5px;
+            }
+
+            .theme-toggle-fixed svg {
+                width: 18px;
+                height: 18px;
+            }
+
+            .dashboard-container {
                 padding: 8px;
+            }
+
+            .header {
+                padding: 12px;
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .header-left {
+                width: 100%;
+            }
+
+            .header-text h1 {
+                font-size: 16px;
+            }
+
+            .header-text p {
+                font-size: 11px;
+            }
+
+            .header-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .btn {
+                font-size: 11px;
+                padding: 5px 10px;
+                flex: 1 1 auto;
+                min-width: fit-content;
+            }
+
+            .btn svg {
+                width: 14px;
+                height: 14px;
+            }
+
+            .content-section {
+                padding: 12px;
+            }
+
+            .section-header h2 {
+                font-size: 15px;
             }
         }
 
@@ -326,12 +821,19 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
 
-        [data-theme="dark"] .header-left h1 {
+        [data-theme="dark"] .logo {
+            filter: drop-shadow(0 2px 8px rgba(96, 165, 250, 0.3));
+        }
+
+        [data-theme="dark"] .logo:hover {
+            filter: drop-shadow(0 4px 12px rgba(96, 165, 250, 0.4));
+        }
+
+        [data-theme="dark"] .header-text h1 {
             color: #60a5fa;
         }
 
-        [data-theme="dark"] .header-left p,
-        [data-theme="dark"] .stat-label {
+        [data-theme="dark"] .header-text p {
             color: #9ca3af;
         }
 
@@ -340,24 +842,69 @@
         }
 
         [data-theme="dark"] .btn-primary {
-            background: #2563eb;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            border-color: #3b82f6;
+            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
         }
 
         [data-theme="dark"] .btn-primary:hover {
-            background: #1d4ed8;
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            border-color: #2563eb;
+            box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
         }
 
         [data-theme="dark"] .btn-secondary {
             background: #374151;
-            color: #e5e7eb;
+            color: #d1d5db;
+            border-color: #4b5563;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
         }
 
         [data-theme="dark"] .btn-secondary:hover {
             background: #4b5563;
+            border-color: #6b7280;
+            color: #f3f4f6;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        [data-theme="dark"] .btn-danger {
+            background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
+            border-color: #b91c1c;
+            box-shadow: 0 2px 4px rgba(185, 28, 28, 0.3);
+        }
+
+        [data-theme="dark"] .btn-danger:hover {
+            background: linear-gradient(135deg, #991b1b 0%, #7f1d1d 100%);
+            border-color: #991b1b;
+            box-shadow: 0 4px 8px rgba(185, 28, 28, 0.4);
+        }
+
+        [data-theme="dark"] .btn-success {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            border-color: #059669;
+            box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);
+        }
+
+        [data-theme="dark"] .btn-success:hover {
+            background: linear-gradient(135deg, #047857 0%, #065f46 100%);
+            border-color: #047857;
+            box-shadow: 0 4px 8px rgba(5, 150, 105, 0.4);
+        }
+
+        [data-theme="dark"] .section-header {
+            border-bottom-color: #374151;
+        }
+
+        [data-theme="dark"] .section-header h2 {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .content-section {
+            background: #1f2937;
         }
 
         [data-theme="dark"] .files-table th {
-            background: #111827;
+            background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
             color: #9ca3af;
         }
 
@@ -367,7 +914,25 @@
         }
 
         [data-theme="dark"] .files-table tbody tr:hover {
-            background: #374151;
+            background: #1e3a5f;
+            cursor: pointer;
+        }
+
+        [data-theme="dark"] .files-table th {
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .file-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .claim-code {
+            background: #312e81;
+            color: #c7d2fe;
+        }
+
+        [data-theme="dark"] .file-size {
+            color: #9ca3af;
         }
 
         [data-theme="dark"] .badge-success {
@@ -385,23 +950,75 @@
             color: #fca5a5;
         }
 
+        [data-theme="dark"] .modal {
+            background: rgba(0, 0, 0, 0.8);
+        }
+
         [data-theme="dark"] .modal-content {
             background: #1f2937;
             color: #f9fafb;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+            border: 1px solid #374151;
         }
 
-        [data-theme="dark"] .modal-content h3 {
+        [data-theme="dark"] .modal-header {
             color: #f9fafb;
         }
 
-        [data-theme="dark"] input[type="password"] {
+        [data-theme="dark"] .modal-body {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .form-group label {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .form-group input {
             background: #374151;
             border-color: #4b5563;
             color: #f9fafb;
         }
 
-        [data-theme="dark"] input[type="password"]:focus {
+        [data-theme="dark"] .form-group input:focus {
             border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        [data-theme="dark"] .password-toggle {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .password-toggle:hover {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .btn-icon {
+            background: transparent;
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-primary {
+            color: #60a5fa;
+            border-color: #4b5563;
+            background: transparent;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-primary:hover {
+            background: #1e3a5f;
+            border-color: #3b82f6;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-danger {
+            color: #f87171;
+            border-color: #4b5563;
+            background: transparent;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-danger:hover {
+            background: #7f1d1d;
+            border-color: #ef4444;
+            color: #fca5a5;
         }
 
         [data-theme="dark"] .alert-success {
@@ -418,19 +1035,68 @@
     </style>
 </head>
 <body>
+    <!-- Theme Toggle - Fixed Position -->
+    <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme" onclick="toggleTheme()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-moon" style="display: none;">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+    </button>
+
     <div class="dashboard-container">
         <!-- Header -->
-        <div class="header">
-            <div class="header-left">
-                <h1>My Dashboard</h1>
-                <p>Welcome, <span id="userName">User</span>!</p>
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <img src="/assets/logo.svg" alt="SafeShare Logo" class="logo">
+                    <div class="header-text">
+                        <h1>My Dashboard</h1>
+                        <p>Welcome, <span id="userName">User</span>!</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button id="adminDashboardBtn" class="btn-primary" onclick="window.location.href='/admin'" style="display: none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="3" width="7" height="7"></rect>
+                            <rect x="14" y="14" width="7" height="7"></rect>
+                            <rect x="3" y="14" width="7" height="7"></rect>
+                        </svg>
+                        Admin Dashboard
+                    </button>
+                    <button class="btn-secondary" onclick="showChangePasswordModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                        </svg>
+                        Change Password
+                    </button>
+                    <button class="btn-success" onclick="window.location.href='/#dropoff'">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Upload Files
+                    </button>
+                    <button class="btn-danger" onclick="logout()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                            <polyline points="16 17 21 12 16 7"></polyline>
+                            <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                        Logout
+                    </button>
+                </div>
             </div>
-            <div class="header-right">
-                <button class="btn btn-secondary" onclick="showChangePasswordModal()">Change Password</button>
-                <button class="btn btn-primary" onclick="window.location.href='/'">Upload Files</button>
-                <button class="btn btn-secondary" onclick="logout()">Logout</button>
-            </div>
-        </div>
+        </header>
 
         <!-- Alert Messages -->
         <div id="alertContainer"></div>
@@ -439,7 +1105,14 @@
         <div class="content-section">
             <div class="section-header">
                 <h2>My Uploads</h2>
-                <button class="btn btn-secondary btn-icon" onclick="loadFiles()">↻ Refresh</button>
+                <button id="refreshBtn" class="btn btn-secondary" onclick="refreshFiles()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
             </div>
 
             <div id="filesContainer">
@@ -572,6 +1245,11 @@
                     currentUser = await response.json();
                     document.getElementById('userName').textContent = currentUser.username;
 
+                    // Show admin dashboard button if user is admin
+                    if (currentUser.role === 'admin') {
+                        document.getElementById('adminDashboardBtn').style.display = 'inline-flex';
+                    }
+
                     // Check if password change is required
                     const urlParams = new URLSearchParams(window.location.search);
                     if (currentUser.require_password_change || urlParams.get('change_password') === 'true') {
@@ -627,24 +1305,26 @@
             }
 
             let tableHTML = `
-                <table class="files-table">
-                    <thead>
-                        <tr>
-                            <th>File Name</th>
-                            <th>Claim Code</th>
-                            <th>Uploaded</th>
-                            <th>Expires</th>
-                            <th>Downloads</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+                <div class="files-table-wrapper">
+                    <table class="files-table">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>File Size</th>
+                                <th>Claim Code</th>
+                                <th>Uploaded</th>
+                                <th>Expires</th>
+                                <th style="text-align: center;">Downloads</th>
+                                <th style="text-align: center;">Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
             `;
 
             files.forEach(file => {
-                const createdDate = new Date(file.created_at).toLocaleDateString();
-                const expiresDate = new Date(file.expires_at).toLocaleDateString();
+                const createdDate = formatCompactDate(file.created_at);
+                const expiresDate = formatCompactDate(file.expires_at);
                 const downloads = file.max_downloads ? `${file.download_count}/${file.max_downloads}` : file.download_count;
 
                 let statusBadge = '';
@@ -656,20 +1336,34 @@
                     statusBadge = '<span class="badge badge-success">Active</span>';
                 }
 
+                const downloadUrl = `${window.location.origin}/download/${file.claim_code}`;
+
                 tableHTML += `
                     <tr>
                         <td>
                             <div class="file-name">${escapeHtml(file.original_filename)}</div>
-                            <div class="file-size">${formatFileSize(file.file_size)}</div>
                         </td>
+                        <td><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td><span class="claim-code">${file.claim_code}</span></td>
-                        <td>${createdDate}</td>
-                        <td>${expiresDate}</td>
-                        <td>${downloads}</td>
-                        <td>${statusBadge}</td>
-                        <td>
-                            <button class="btn btn-primary btn-icon" onclick="copyDownloadLink('${file.download_url}')">Copy Link</button>
-                            <button class="btn btn-danger btn-icon" onclick="deleteFile(${file.id})">Delete</button>
+                        <td style="white-space: nowrap;">${createdDate}</td>
+                        <td style="white-space: nowrap;">${expiresDate}</td>
+                        <td style="text-align: center;">${downloads}</td>
+                        <td style="text-align: center;">${statusBadge}</td>
+                        <td class="actions-col">
+                            <div class="actions-cell">
+                                <button class="btn-icon btn-primary" onclick="copyDownloadLink('${downloadUrl}', this)" title="Copy Link">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon btn-danger" onclick="deleteFile(${file.id})" title="Delete">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -678,6 +1372,7 @@
             tableHTML += `
                     </tbody>
                 </table>
+            </div>
             `;
 
             container.innerHTML = tableHTML;
@@ -804,10 +1499,63 @@
             }, 5000);
         }
 
-        function copyDownloadLink(url) {
-            navigator.clipboard.writeText(url).then(() => {
+        function copyDownloadLink(url, button) {
+            // Try modern Clipboard API first, with fallback
+            const copyToClipboard = (text) => {
+                // Modern Clipboard API
+                if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(text);
+                } else {
+                    // Fallback for non-secure contexts (HTTP)
+                    return new Promise((resolve, reject) => {
+                        const textArea = document.createElement('textarea');
+                        textArea.value = text;
+                        textArea.style.position = 'fixed';
+                        textArea.style.left = '-999999px';
+                        textArea.style.top = '-999999px';
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+
+                        try {
+                            const successful = document.execCommand('copy');
+                            document.body.removeChild(textArea);
+                            if (successful) {
+                                resolve();
+                            } else {
+                                reject(new Error('Copy command failed'));
+                            }
+                        } catch (err) {
+                            document.body.removeChild(textArea);
+                            reject(err);
+                        }
+                    });
+                }
+            };
+
+            copyToClipboard(url).then(() => {
+                // Visual feedback on button
+                const originalHTML = button.innerHTML;
+                button.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                `;
+                button.style.background = '#10b981';
+                button.style.borderColor = '#10b981';
+                button.style.color = 'white';
+
                 showAlert('success', 'Download link copied to clipboard');
-            }).catch(() => {
+
+                // Reset after 2 seconds
+                setTimeout(() => {
+                    button.innerHTML = originalHTML;
+                    button.style.background = '';
+                    button.style.borderColor = '';
+                    button.style.color = '';
+                }, 2000);
+            }).catch((err) => {
+                console.error('Copy failed:', err);
                 showAlert('error', 'Failed to copy link');
             });
         }
@@ -824,6 +1572,70 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // Format date in compact format (e.g., "Nov 5 @ 5:50 PM")
+        function formatCompactDate(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            const day = date.getDate();
+            const time = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+            // Only show year if different from current year
+            if (date.getFullYear() !== now.getFullYear()) {
+                return `${month} ${day}, ${date.getFullYear()} @ ${time}`;
+            }
+
+            return `${month} ${day} @ ${time}`;
+        }
+
+        // Refresh files with animation
+        function refreshFiles() {
+            const btn = document.getElementById('refreshBtn');
+            btn.classList.add('btn-refreshing');
+            setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+            loadFiles();
+        }
+
+        // Toggle theme
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+
+            // Update theme icon
+            const sunIcon = document.querySelector('.theme-icon-sun');
+            const moonIcon = document.querySelector('.theme-icon-moon');
+
+            if (sunIcon && moonIcon) {
+                if (newTheme === 'dark') {
+                    sunIcon.style.display = 'block';
+                    moonIcon.style.display = 'none';
+                } else {
+                    sunIcon.style.display = 'none';
+                    moonIcon.style.display = 'block';
+                }
+            }
+        }
+
+        // Initialize theme icons on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const theme = document.documentElement.getAttribute('data-theme');
+            const sunIcon = document.querySelector('.theme-icon-sun');
+            const moonIcon = document.querySelector('.theme-icon-moon');
+
+            if (sunIcon && moonIcon) {
+                if (theme === 'dark') {
+                    sunIcon.style.display = 'block';
+                    moonIcon.style.display = 'none';
+                } else {
+                    sunIcon.style.display = 'none';
+                    moonIcon.style.display = 'block';
+                }
+            }
+        });
 
         // Initialize
         checkAuth();

@@ -53,13 +53,15 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ **Audit logging** (all admin actions logged)
 
 ### Frontend (Web UI)
-- ✅ Modern, responsive web interface
-- ✅ Drag & drop file upload
+- ✅ Modern, responsive web interface (mobile, tablet, desktop)
+- ✅ Drag & drop file upload with live validation
 - ✅ QR code generation for mobile sharing
-- ✅ Dark/Light mode toggle
-- ✅ One-click copy to clipboard
-- ✅ Real-time upload progress
-- ✅ Embedded in binary (no separate deployment)
+- ✅ Dark/Light mode toggle (persistent across all pages)
+- ✅ One-click copy to clipboard (HTTP/HTTPS compatible with fallback)
+- ✅ Real-time upload progress with percentage display
+- ✅ Compact, responsive layouts with intelligent button wrapping
+- ✅ Enhanced date formatting (space-saving compact display)
+- ✅ Embedded in binary (no separate deployment, ~27KB total)
 
 ## Screenshots
 

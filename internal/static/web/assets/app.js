@@ -43,11 +43,24 @@
     let currentUser = null;
 
     // Initialize
-    function init() {
+    async function init() {
         loadTheme();
-        checkAuth();
+        await checkAuth(); // Wait for auth check before handling tabs
         fetchMaxFileSize();
         setupEventListeners();
+        handleInitialTab();
+    }
+
+    // Handle initial tab based on URL hash
+    function handleInitialTab() {
+        const hash = window.location.hash.substring(1); // Remove the #
+        if (hash === 'dropoff' || hash === 'pickup') {
+            const tabButton = document.querySelector(`.tab-button[data-tab="${hash}"]`);
+            if (tabButton) {
+                // If trying to access dropoff without auth, will be redirected by handleTabSwitch
+                tabButton.click();
+            }
+        }
     }
 
     // Load theme preference

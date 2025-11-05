@@ -248,6 +248,15 @@ SafeShare implements a comprehensive user authentication system with invite-only
 - Logout button
 - Back to home link
 
+**UI/UX Enhancements**:
+- **Responsive header layout**: Four action buttons (Admin Dashboard, Change Password, Upload Files, Logout) with intelligent wrapping at 1200px breakpoint
+- **Compact button styling**: Optimized padding (8px 14px) and spacing (8px gap) for better horizontal space utilization
+- **Cross-browser clipboard support**: Fallback mechanism for HTTP contexts using execCommand when Clipboard API unavailable
+- **Copy link visual feedback**: Button changes to checkmark with green color feedback for 2 seconds
+- **Mobile-optimized**: Progressive button sizing and layout adjustments for tablets (≤1024px) and phones (≤768px)
+- **Enhanced date formatting**: Compact format (e.g., "Nov 5 @ 7:00 PM") saves table space, shows year only when different from current
+- **Tab navigation fix**: Async initialization ensures auth state is known before handling URL hash navigation (fixes Upload Files button redirect)
+
 ## Admin Dashboard Architecture
 
 ### Overview
@@ -399,6 +408,15 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - Quota Usage: Percentage used (or "Unlimited" if quota = 0)
 - Blocked IPs: Count of blocked IPs
 - Total Users: Active user account count
+
+**Recent UI/UX Improvements**:
+- **Username tracking**: File listings now show which user uploaded each file (requires SQL JOIN with users table)
+- **Async confirmations**: All destructive operations (delete file, delete user, unblock IP) use async/await confirmation dialogs for better UX
+- **Enhanced date formatting**: Compact display format (e.g., "Nov 5 @ 7:00 PM") saves table space, shows year only when different from current year
+- **Improved form controls**: Enhanced styling for input fields, select dropdowns, and form layouts with better focus states
+- **Better table display**: Improved column alignment, consistent spacing, and visual hierarchy
+- **Dynamic storage quota updates**: Settings API now accepts `quota_gb` parameter for runtime updates without container restart
+- **Universal dark mode**: Theme toggle affects all pages (dashboard, login, admin) with localStorage persistence
 
 ## Architecture Overview
 

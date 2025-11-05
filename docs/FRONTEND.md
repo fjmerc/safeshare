@@ -69,6 +69,16 @@ SafeShare includes a comprehensive admin dashboard for file and user management.
 - ✅ **Real-time percentage updates**
 - ✅ **System information** display
 
+#### Recent Improvements
+- ✅ **Username tracking**: File listings now show which user uploaded each file (SQL JOIN with users table)
+- ✅ **Async confirmations**: All destructive operations use async/await confirmation dialogs for smoother UX
+- ✅ **Enhanced date formatting**: Compact format (e.g., "Nov 5 @ 7:00 PM") saves table space
+- ✅ **Improved form controls**: Better styling for inputs, selects, and form layouts with enhanced focus states
+- ✅ **Better table display**: Improved column alignment, consistent spacing, and visual hierarchy
+- ✅ **Dynamic storage quota updates**: Settings API accepts `quota_gb` parameter for runtime updates
+- ✅ **Universal dark mode**: Theme toggle persists across all pages (dashboard, login, admin) using localStorage
+- ✅ **Cross-browser clipboard**: Fallback to execCommand for HTTP contexts when Clipboard API unavailable
+
 ### User Interface
 
 **Login Page** (`/admin/login`):
