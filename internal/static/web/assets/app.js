@@ -83,13 +83,15 @@
         const dropoffContent = document.getElementById('dropoffTab');
         const pickupButton = document.querySelector('.tab-button[data-tab="pickup"]');
         const pickupContent = document.getElementById('pickupTab');
+        const loginToUploadBtn = document.getElementById('loginToUploadBtn');
 
         if (shouldShowDropoff) {
-            // Show Dropoff tab
+            // Show Dropoff tab, hide login button
             if (dropoffButton) dropoffButton.classList.remove('hidden');
             if (dropoffContent) dropoffContent.classList.remove('hidden');
+            if (loginToUploadBtn) loginToUploadBtn.classList.add('hidden');
         } else {
-            // Hide Dropoff tab and activate Pickup as default
+            // Hide Dropoff tab, show login button, activate Pickup as default
             if (dropoffButton) {
                 dropoffButton.classList.add('hidden');
                 dropoffButton.classList.remove('active');
@@ -98,6 +100,9 @@
                 dropoffContent.classList.add('hidden');
                 dropoffContent.classList.remove('active');
             }
+
+            // Show login button for users to authenticate
+            if (loginToUploadBtn) loginToUploadBtn.classList.remove('hidden');
 
             // Make sure Pickup tab is visible and active
             if (pickupButton) pickupButton.classList.add('active');
@@ -224,10 +229,18 @@
 
     // Setup event listeners
     function setupEventListeners() {
-        // Tab switching
-        document.querySelectorAll('.tab-button').forEach(btn => {
+        // Tab switching (exclude login button)
+        document.querySelectorAll('.tab-button:not(.login-to-upload)').forEach(btn => {
             btn.addEventListener('click', handleTabSwitch);
         });
+
+        // Login to upload button
+        const loginToUploadBtn = document.getElementById('loginToUploadBtn');
+        if (loginToUploadBtn) {
+            loginToUploadBtn.addEventListener('click', () => {
+                window.location.href = '/login';
+            });
+        }
 
         // Dropoff Tab - Drop zone events
         dropZone.addEventListener('click', () => fileInput.click());
