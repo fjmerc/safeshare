@@ -7,11 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-### Changed
+## [2.0.1] - 2025-11-06
 
 ### Fixed
+- **Frontend Integration**: Connected ChunkedUploader class to web UI upload flow
+  - Added script tag to load `/chunked-uploader.js` in index.html
+  - Modified upload handler to detect file size and route to chunked or simple upload
+  - Files ≥100MB (configurable via `CHUNKED_UPLOAD_THRESHOLD`) now automatically use chunked upload
+  - Files below threshold continue using simple upload (preserves existing behavior)
+  - Progress bar now shows detailed chunk progress for large files (chunk number, speed, ETA)
+  - Prevents HTTP 413 Payload Too Large errors for large files
+  - Prevents timeout errors during large file uploads
+
+### Changed
+- Upload routing now logs which upload method is being used (console.log)
+- Progress text enhanced to show chunk-level details during chunked uploads
+
+## [2.0.0] - 2025-11-06
+
+### Added
+- **Chunked Upload Support**: Resumable uploads for large files (>100MB) with automatic chunking
+  - New API endpoints: `/api/upload/init`, `/api/upload/chunk/:upload_id/:chunk_number`, `/api/upload/complete/:upload_id`, `/api/upload/status/:upload_id`
+  - Database migration system with `migrations` table and versioned SQL files
+  - `partial_uploads` table to track upload sessions
+  - Background cleanup worker for abandoned uploads (24-hour TTL, runs every 6 hours)
+  - Chunk storage at `/app/uploads/.partial/{upload_id}/chunk_{number}`
+  - Support for up to 10,000 chunks per file (prevents DoS attacks)
+- **Frontend ChunkedUploader Class**: Comprehensive JavaScript class for chunked uploads
+  - Automatic retry logic with exponential backoff (3 attempts)
+  - Parallel chunk uploads (3 concurrent by default, configurable)
+  - Pause/resume capability with localStorage persistence
+  - Progress tracking with ETA calculation
+  - Event-based architecture (`progress`, `error`, `complete`, `chunk_uploaded` events)
+  - Cross-page refresh resume capability via localStorage
+- **Configuration Options** for chunked uploads:
+  - `CHUNKED_UPLOAD_ENABLED` (default: `true`) - Enable/disable chunked uploads
+  - `CHUNKED_UPLOAD_THRESHOLD` (default: `104857600` / 100MB) - File size threshold for chunked mode
+  - `CHUNK_SIZE` (default: `5242880` / 5MB) - Size of each chunk
+  - `PARTIAL_UPLOAD_EXPIRY_HOURS` (default: `24`) - Hours before abandoned uploads are cleaned up
+- Updated `/api/config` endpoint to expose chunked upload settings to frontend
+
+### Changed
+- **BREAKING**: Database schema updated with migrations system
+  - Existing databases will automatically run migrations on startup
+  - New `migrations` table tracks applied schema changes
+  - `partial_uploads` table added for chunked upload sessions
+- Upload flow now automatically chooses simple vs chunked mode based on file size
+- Quota calculation now includes in-progress partial uploads (prevents quota bypass)
+
+### Improved
+- Buffered I/O for chunk assembly (64KB buffer) for efficient large file processing
+- Out-of-order chunk uploads supported (chunks can arrive in any sequence)
+- Idempotent chunk uploads (re-uploading same chunk succeeds, retry-safe)
+- Chunk integrity verification before assembly
+- Comprehensive error handling with detailed error codes
+
+### Security
+- Chunked upload endpoints respect `REQUIRE_AUTH_FOR_UPLOAD` setting
+- Rate limiting applied to upload initialization
+- Validates upload_id (UUID format), chunk_number (range), chunk_size (matches expected)
+- File extension blocking applied to chunked uploads
+- Disk space validation before accepting chunks
+- Maximum chunk count limit (10,000) prevents resource exhaustion
+
+### Fixed
+- HTTP timeout issues for large file uploads (>100MB)
+- Upload progress accuracy for multi-gigabyte files
+
+### Documentation
+- Added `docs/CHUNKED_UPLOAD.md` with comprehensive API documentation
+  - Architecture overview and database schema
+  - API endpoint specifications with request/response examples
+  - curl usage examples for testing
+  - Security considerations and error handling reference
+  - Frontend integration guide
+- Updated inline code documentation
 
 ## [1.2.0] - 2025-11-06
 
@@ -21,71 +91,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User dashboard with file management
 - Password change functionality
 - Admin user management interface
-- Configurable upload authentication via `REQUIRE_AUTH_FOR_UPLOAD` environment variable
-  - Default: `false` (anonymous uploads allowed, maintains backward compatibility)
-  - Set to `true` to enforce authentication for all uploads (invite-only mode)
-- Public configuration API endpoint (`/api/config`) for frontend to fetch server settings
-- Dynamic frontend behavior based on server configuration
-  - Dropoff tab automatically hidden when auth required and user not logged in
-  - "Login to Upload" button appears when uploads require authentication
-  - Dropoff tab dynamically appears after successful login
-  - Seamless UX that adapts to server security policy
-- Comprehensive documentation for upload authentication modes in SECURITY.md
-- User-friendly HTML error pages for expired/invalid file links
-  - Professional error page design with dark/light mode support
-  - Helpful navigation actions (Go to Home, Try Another Code)
-  - Smart content negotiation: returns HTML for browsers, JSON for API calls
-  - Improves UX when users click expired or invalid download links
+- Require authentication for uploads (configurable via `REQUIRE_AUTH_FOR_UPLOAD`)
 
 ### Changed
 - Optimized settings tab with 2-column grid layout
 - Enhanced mobile responsiveness across all pages
 - Improved dark mode consistency
-- Upload endpoint now uses conditional authentication middleware based on configuration
-- Frontend no longer hardcodes authentication requirement for uploads
 
 ### Fixed
 - Fixed password change modal not closing properly
 - Fixed delete file modal button alignment
 - Fixed theme toggle consistency across pages
-- Added missing login button for users when authentication is required for uploads
-- Fixed user dashboard showing expired files as "Active" instead of "Expired"
-  - Corrected IsExpired calculation from `file.ExpiresAt.Before(file.CreatedAt)` to `time.Now().After(file.ExpiresAt)`
-- Fixed dashboard download URLs using non-existent `/download/` route
-  - Changed to correct `/api/claim/` endpoint
 
 ### Security
 - Added rate limiting to user login endpoint
 - Enabled secure cookie flag for HTTPS deployments
 
-## [1.1.0] - 2025-01-01
+## [1.1.0] - 2025-10-15
 
 ### Added
 - Admin dashboard with file management
 - IP blocking functionality
-- Dynamic quota adjustment
+- Dynamic quota adjustment via admin interface
+- File password protection
+
+### Changed
+- Enhanced logging with structured JSON format
+- Improved error messages for user-facing errors
 
 ### Fixed
 - Fixed CSRF token validation on admin endpoints
 
-## [1.0.0] - 2024-12-15
+### Security
+- Added CSRF protection for all admin state-changing operations
+
+## [1.0.0] - 2025-10-01
 
 Initial production release.
 
 ### Added
 - File upload/download with claim codes
-- Automatic file expiration
-- Download limits
-- Encryption at rest support
+- Automatic file expiration based on time
+- Download limits (max downloads per file)
+- Encryption at rest support (AES-256-GCM)
 - Password protection for files
-- Rate limiting (uploads/downloads)
+- Rate limiting (uploads and downloads per IP)
 - Security headers (CSP, X-Frame-Options, etc.)
-- Filename sanitization
-- MIME type detection
-- Admin authentication
+- Filename sanitization to prevent attacks
+- MIME type detection from file content
+- Admin authentication with dashboard
 - Comprehensive audit logging
+- Docker support with multi-stage builds
+- Health check endpoint
+- Graceful shutdown handling
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.2.0...HEAD
+### Security
+- Encryption at rest with AES-256-GCM
+- Rate limiting (10 uploads/hour, 100 downloads/hour per IP)
+- Security headers (CSP, X-Frame-Options, X-Content-Type-Options)
+- Filename sanitization to prevent HTTP header injection
+- MIME type detection to prevent malware disguise
+- File extension blacklist for dangerous file types
+- Disk space monitoring and validation
+- Maximum file expiration enforcement
+
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/fjmerc/safeshare/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/fjmerc/safeshare/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.0.0
