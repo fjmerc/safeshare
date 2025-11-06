@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/config"
-	"github.com/yourusername/safeshare/internal/database"
-	"github.com/yourusername/safeshare/internal/middleware"
-	"github.com/yourusername/safeshare/internal/models"
-	"github.com/yourusername/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminLoginHandler handles admin login
@@ -535,7 +535,7 @@ func AdminUnblockIPHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminUpdateQuotaHandler updates the storage quota dynamically
-func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
+func AdminUpdateQuotaHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -561,9 +561,19 @@ func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
 
 		oldQuota := cfg.GetQuotaLimitGB()
 
+		// Update in-memory config
 		if err := cfg.SetQuotaLimitGB(newQuota); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		// Persist to database for restart persistence
+		if err := database.UpdateQuotaSetting(db, newQuota); err != nil {
+			slog.Error("failed to persist quota setting to database",
+				"error", err,
+				"quota_gb", newQuota,
+			)
+			// Don't fail the request - config is updated, just log the error
 		}
 
 		slog.Info("admin updated storage quota",
@@ -583,7 +593,7 @@ func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminUpdateStorageSettingsHandler updates storage-related settings dynamically
-func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
+func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -614,6 +624,16 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Storage quota: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateQuotaSetting(db, quota); err != nil {
+				slog.Error("failed to persist quota setting to database",
+					"error", err,
+					"quota_gb", quota,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["quota_gb"] = map[string]int64{
 				"old": oldQuota,
 				"new": quota,
@@ -632,6 +652,16 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Max file size: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateMaxFileSizeSetting(db, sizeBytes); err != nil {
+				slog.Error("failed to persist max file size setting to database",
+					"error", err,
+					"max_file_size_bytes", sizeBytes,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["max_file_size_mb"] = map[string]int64{
 				"old": oldMaxFileSize / 1024 / 1024,
 				"new": sizeMB,
@@ -649,6 +679,16 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Default expiration: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateDefaultExpirationSetting(db, hours); err != nil {
+				slog.Error("failed to persist default expiration setting to database",
+					"error", err,
+					"default_expiration_hours", hours,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["default_expiration_hours"] = map[string]int{
 				"old": oldDefaultExpiration,
 				"new": hours,
@@ -666,6 +706,16 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Max expiration: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateMaxExpirationSetting(db, hours); err != nil {
+				slog.Error("failed to persist max expiration setting to database",
+					"error", err,
+					"max_expiration_hours", hours,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["max_expiration_hours"] = map[string]int{
 				"old": oldMaxExpiration,
 				"new": hours,
@@ -692,7 +742,7 @@ func AdminUpdateStorageSettingsHandler(cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminUpdateSecuritySettingsHandler updates security-related settings dynamically
-func AdminUpdateSecuritySettingsHandler(cfg *config.Config) http.HandlerFunc {
+func AdminUpdateSecuritySettingsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -722,6 +772,16 @@ func AdminUpdateSecuritySettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Upload rate limit: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateRateLimitUploadSetting(db, limit); err != nil {
+				slog.Error("failed to persist rate limit upload setting to database",
+					"error", err,
+					"rate_limit_upload", limit,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["rate_limit_upload"] = map[string]int{
 				"old": oldUploadLimit,
 				"new": limit,
@@ -739,6 +799,16 @@ func AdminUpdateSecuritySettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Download rate limit: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateRateLimitDownloadSetting(db, limit); err != nil {
+				slog.Error("failed to persist rate limit download setting to database",
+					"error", err,
+					"rate_limit_download", limit,
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["rate_limit_download"] = map[string]int{
 				"old": oldDownloadLimit,
 				"new": limit,
@@ -758,6 +828,16 @@ func AdminUpdateSecuritySettingsHandler(cfg *config.Config) http.HandlerFunc {
 				http.Error(w, "Blocked extensions: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+
+			// Persist to database for restart persistence
+			if err := database.UpdateBlockedExtensionsSetting(db, cfg.GetBlockedExtensions()); err != nil {
+				slog.Error("failed to persist blocked extensions setting to database",
+					"error", err,
+					"blocked_extensions", cfg.GetBlockedExtensions(),
+				)
+				// Don't fail the request - config is updated, just log the error
+			}
+
 			updates["blocked_extensions"] = map[string]interface{}{
 				"old": oldBlockedExts,
 				"new": cfg.GetBlockedExtensions(),

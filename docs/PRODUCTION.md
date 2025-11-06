@@ -965,5 +965,5 @@ If you suspect a security breach:
 - [REVERSE_PROXY.md](./REVERSE_PROXY.md) - Detailed proxy configs
 
 **Support**:
-- GitHub Issues: https://github.com/yourusername/safeshare/issues
+- GitHub Issues: https://github.com/fjmerc/safeshare/issues
 - Security Issues: security@yourcompany.com (private disclosure)
