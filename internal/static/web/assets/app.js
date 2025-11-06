@@ -53,6 +53,7 @@
         loadTheme();
         await fetchServerConfig(); // Fetch server configuration first
         await checkAuth(); // Wait for auth check before handling tabs
+        updateDropoffTabVisibility(); // Update tab visibility based on config and auth
         fetchMaxFileSize();
         setupEventListeners();
         handleInitialTab();
@@ -70,6 +71,37 @@
             }
         } catch (error) {
             console.error('Error fetching server config:', error);
+        }
+    }
+
+    // Update Dropoff tab visibility based on server config and auth status
+    function updateDropoffTabVisibility() {
+        // Show Dropoff tab if: anonymous uploads allowed OR user is logged in
+        const shouldShowDropoff = !serverConfig.require_auth_for_upload || currentUser !== null;
+
+        const dropoffButton = document.querySelector('.tab-button[data-tab="dropoff"]');
+        const dropoffContent = document.getElementById('dropoffTab');
+        const pickupButton = document.querySelector('.tab-button[data-tab="pickup"]');
+        const pickupContent = document.getElementById('pickupTab');
+
+        if (shouldShowDropoff) {
+            // Show Dropoff tab
+            if (dropoffButton) dropoffButton.classList.remove('hidden');
+            if (dropoffContent) dropoffContent.classList.remove('hidden');
+        } else {
+            // Hide Dropoff tab and activate Pickup as default
+            if (dropoffButton) {
+                dropoffButton.classList.add('hidden');
+                dropoffButton.classList.remove('active');
+            }
+            if (dropoffContent) {
+                dropoffContent.classList.add('hidden');
+                dropoffContent.classList.remove('active');
+            }
+
+            // Make sure Pickup tab is visible and active
+            if (pickupButton) pickupButton.classList.add('active');
+            if (pickupContent) pickupContent.classList.add('active');
         }
     }
 
@@ -152,6 +184,8 @@
         } else {
             userMenu.classList.add('hidden');
         }
+        // Update Dropoff tab visibility when auth status changes
+        updateDropoffTabVisibility();
     }
 
     // Toggle user menu dropdown
