@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2025-11-06
+
+### Fixed
+- **Frontend Integration**: Connected ChunkedUploader class to web UI upload flow
+  - Added script tag to load `/chunked-uploader.js` in index.html
+  - Modified upload handler to detect file size and route to chunked or simple upload
+  - Files ≥100MB (configurable via `CHUNKED_UPLOAD_THRESHOLD`) now automatically use chunked upload
+  - Files below threshold continue using simple upload (preserves existing behavior)
+  - Progress bar now shows detailed chunk progress for large files (chunk number, speed, ETA)
+  - Prevents HTTP 413 Payload Too Large errors for large files
+  - Prevents timeout errors during large file uploads
+
+### Changed
+- Upload routing now logs which upload method is being used (console.log)
+- Progress text enhanced to show chunk-level details during chunked uploads
+
 ## [2.0.0] - 2025-11-06
 
 ### Added
