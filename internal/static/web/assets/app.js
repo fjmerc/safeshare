@@ -42,13 +42,72 @@
     // State - User
     let currentUser = null;
 
+    // State - Server config
+    let serverConfig = {
+        require_auth_for_upload: false,
+        max_file_size: 104857600 // Default 100MB
+    };
+
     // Initialize
     async function init() {
         loadTheme();
+        await fetchServerConfig(); // Fetch server configuration first
         await checkAuth(); // Wait for auth check before handling tabs
+        updateDropoffTabVisibility(); // Update tab visibility based on config and auth
         fetchMaxFileSize();
         setupEventListeners();
         handleInitialTab();
+    }
+
+    // Fetch server configuration
+    async function fetchServerConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (response.ok) {
+                serverConfig = await response.json();
+                console.log('Server config loaded:', serverConfig);
+            } else {
+                console.warn('Failed to fetch server config, using defaults');
+            }
+        } catch (error) {
+            console.error('Error fetching server config:', error);
+        }
+    }
+
+    // Update Dropoff tab visibility based on server config and auth status
+    function updateDropoffTabVisibility() {
+        // Show Dropoff tab if: anonymous uploads allowed OR user is logged in
+        const shouldShowDropoff = !serverConfig.require_auth_for_upload || currentUser !== null;
+
+        const dropoffButton = document.querySelector('.tab-button[data-tab="dropoff"]');
+        const dropoffContent = document.getElementById('dropoffTab');
+        const pickupButton = document.querySelector('.tab-button[data-tab="pickup"]');
+        const pickupContent = document.getElementById('pickupTab');
+        const loginToUploadBtn = document.getElementById('loginToUploadBtn');
+
+        if (shouldShowDropoff) {
+            // Show Dropoff tab, hide login button
+            if (dropoffButton) dropoffButton.classList.remove('hidden');
+            if (dropoffContent) dropoffContent.classList.remove('hidden');
+            if (loginToUploadBtn) loginToUploadBtn.classList.add('hidden');
+        } else {
+            // Hide Dropoff tab, show login button, activate Pickup as default
+            if (dropoffButton) {
+                dropoffButton.classList.add('hidden');
+                dropoffButton.classList.remove('active');
+            }
+            if (dropoffContent) {
+                dropoffContent.classList.add('hidden');
+                dropoffContent.classList.remove('active');
+            }
+
+            // Show login button for users to authenticate
+            if (loginToUploadBtn) loginToUploadBtn.classList.remove('hidden');
+
+            // Make sure Pickup tab is visible and active
+            if (pickupButton) pickupButton.classList.add('active');
+            if (pickupContent) pickupContent.classList.add('active');
+        }
     }
 
     // Handle initial tab based on URL hash
@@ -130,6 +189,8 @@
         } else {
             userMenu.classList.add('hidden');
         }
+        // Update Dropoff tab visibility when auth status changes
+        updateDropoffTabVisibility();
     }
 
     // Toggle user menu dropdown
@@ -168,10 +229,18 @@
 
     // Setup event listeners
     function setupEventListeners() {
-        // Tab switching
-        document.querySelectorAll('.tab-button').forEach(btn => {
+        // Tab switching (exclude login button)
+        document.querySelectorAll('.tab-button:not(.login-to-upload)').forEach(btn => {
             btn.addEventListener('click', handleTabSwitch);
         });
+
+        // Login to upload button
+        const loginToUploadBtn = document.getElementById('loginToUploadBtn');
+        if (loginToUploadBtn) {
+            loginToUploadBtn.addEventListener('click', () => {
+                window.location.href = '/login';
+            });
+        }
 
         // Dropoff Tab - Drop zone events
         dropZone.addEventListener('click', () => fileInput.click());
@@ -578,7 +647,8 @@
         const targetTab = e.target.dataset.tab;
 
         // Check if user is trying to access Dropoff tab without authentication
-        if (targetTab === 'dropoff' && !currentUser) {
+        // Only enforce if server requires authentication for uploads
+        if (targetTab === 'dropoff' && serverConfig.require_auth_for_upload && !currentUser) {
             // Redirect to login page
             window.location.href = '/login';
             return;

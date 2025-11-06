@@ -22,6 +22,7 @@ type Config struct {
 	AdminUsername          string
 	SessionExpiryHours     int
 	HTTPSEnabled           bool
+	RequireAuthForUpload   bool
 
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		AdminUsername:          getEnv("ADMIN_USERNAME", ""),
 		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24),
 		HTTPSEnabled:           getEnvBool("HTTPS_ENABLED", false),
+		RequireAuthForUpload:   getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default

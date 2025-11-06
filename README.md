@@ -51,7 +51,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - ✅ **User dashboard** (view upload history, delete own files)
 - ✅ **Temporary passwords** (forced password change on first login)
 - ✅ **Authenticated uploads** (track files by user)
-- ✅ **Anonymous uploads** (still supported for public use)
+- ✅ **Anonymous uploads** (configurable - enabled by default, can require authentication)
 - ✅ **Public downloads** (no authentication required for claim codes)
 - ✅ **User roles** (user/admin role management)
 
@@ -346,6 +346,7 @@ Environment variables:
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
 | `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
 | `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
+| `REQUIRE_AUTH_FOR_UPLOAD` | `false` | Require user authentication for uploads - **Set to `true` for invite-only mode** |
 | `ADMIN_USERNAME` | (empty) | Admin username for dashboard access - **Optional, enables admin dashboard** |
 | `ADMIN_PASSWORD` | (empty) | Admin password (minimum 8 characters) - **Optional, requires ADMIN_USERNAME** |
 | `SESSION_EXPIRY_HOURS` | `24` | Admin session expiration time in hours |
