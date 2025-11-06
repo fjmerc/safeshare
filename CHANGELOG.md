@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.0] - TBD
+## [2.0.0] - 2025-11-06
 
 ### Added
 - **Chunked Upload Support**: Resumable uploads for large files (>100MB) with automatic chunking
