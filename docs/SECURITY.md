@@ -19,6 +19,32 @@ SafeShare implements a comprehensive user authentication system with invite-only
 - **Anonymous uploads supported**: Public use cases still work without authentication
 - **Public downloads**: No authentication required for claim code downloads
 
+### Upload Authentication Modes
+
+SafeShare supports two authentication modes for file uploads, controlled by the `REQUIRE_AUTH_FOR_UPLOAD` environment variable:
+
+**Anonymous Mode (Default - `REQUIRE_AUTH_FOR_UPLOAD=false`)**:
+- Allows anyone to upload files without creating an account
+- Suitable for public file sharing services
+- Files uploaded by anonymous users have `UserID=NULL` in the database
+- IP address tracking still provides basic accountability
+- Rate limiting and IP blocking still apply
+
+**Authenticated Mode (`REQUIRE_AUTH_FOR_UPLOAD=true`)**:
+- Requires valid user authentication for all uploads
+- Enforces invite-only uploads (only registered users can upload)
+- All uploads are linked to user accounts for full accountability
+- Provides audit trails for compliance requirements
+- Recommended for private deployments and controlled environments
+- Frontend hides Dropoff tab for unauthenticated users and displays "Login to Upload" button
+- After successful login, Dropoff tab appears automatically
+
+**Use Cases:**
+- **Anonymous Mode**: Public file sharing, temporary file transfer services, low-risk environments
+- **Authenticated Mode**: Corporate deployments, compliance-sensitive environments, preventing abuse from strangers, user accountability requirements
+
+**Security Consideration:** Frontend authentication checks can be bypassed. Backend enforcement (via this configuration) ensures actual security by rejecting unauthenticated API requests at the server level.
+
 ### User Management
 
 **Admin-Only User Creation:**

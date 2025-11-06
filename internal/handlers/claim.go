@@ -20,7 +20,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Only accept GET requests
 		if r.Method != http.MethodGet {
-			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
+			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -29,13 +29,13 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		path := r.URL.Path
 		prefix := "/api/claim/"
 		if !strings.HasPrefix(path, prefix) {
-			sendError(w, "Invalid claim URL", "INVALID_URL", http.StatusBadRequest)
+			sendErrorResponse(w, r, "Invalid URL", "The claim URL format is invalid. Please check the link and try again.", "INVALID_URL", http.StatusBadRequest)
 			return
 		}
 
 		claimCode := strings.TrimPrefix(path, prefix)
 		if claimCode == "" {
-			sendError(w, "Claim code required", "NO_CLAIM_CODE", http.StatusBadRequest)
+			sendErrorResponse(w, r, "Missing Claim Code", "No claim code was provided. Please check the link and try again.", "NO_CLAIM_CODE", http.StatusBadRequest)
 			return
 		}
 
@@ -43,7 +43,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		file, err := database.GetFileByClaimCode(db, claimCode)
 		if err != nil {
 			slog.Error("failed to get file by claim code", "claim_code", redactClaimCode(claimCode), "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendErrorResponse(w, r, "Server Error", "An internal error occurred while retrieving the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -54,7 +54,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"claim_code", redactClaimCode(claimCode),
 				"client_ip", getClientIP(r),
 			)
-			sendError(w, "File not found or expired", "NOT_FOUND", http.StatusNotFound)
+			sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
 			return
 		}
 
@@ -69,7 +69,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					"client_ip", getClientIP(r),
 					"user_agent", getUserAgent(r),
 				)
-				sendError(w, "Incorrect password", "INCORRECT_PASSWORD", http.StatusUnauthorized)
+				sendErrorResponse(w, r, "Incorrect Password", "The password provided for this file is incorrect. Please check the password and try again, or contact the sender for the correct password.", "INCORRECT_PASSWORD", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -84,7 +84,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"max_downloads", *file.MaxDownloads,
 				"client_ip", getClientIP(r),
 			)
-			sendError(w, "Download limit reached", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
+			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
 			return
 		}
 
@@ -94,11 +94,11 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if err != nil {
 			if os.IsNotExist(err) {
 				slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(claimCode))
-				sendError(w, "File not found", "NOT_FOUND", http.StatusNotFound)
+				sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
 				return
 			}
 			slog.Error("failed to read file", "path", filePath, "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -108,7 +108,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(claimCode), "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 			dataToServe = decrypted

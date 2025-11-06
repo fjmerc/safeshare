@@ -97,13 +97,24 @@ func main() {
 	// Setup HTTP router
 	mux := http.NewServeMux()
 
-	// Register public API routes (with IP blocking middleware and optional user auth)
+	// Register public API routes (with IP blocking middleware and conditional user auth)
 	ipBlockMw := middleware.IPBlockCheck(db)
 	optionalUserAuth := middleware.OptionalUserAuth(db)
+	userAuth := middleware.UserAuth(db)
 
-	// Upload endpoint with optional user auth (allows both authenticated and anonymous uploads)
+	// Select authentication middleware for uploads based on configuration
+	var uploadAuthMw func(http.Handler) http.Handler
+	if cfg.RequireAuthForUpload {
+		uploadAuthMw = userAuth // Require authentication
+		slog.Info("upload authentication required", "require_auth_for_upload", true)
+	} else {
+		uploadAuthMw = optionalUserAuth // Allow anonymous uploads
+		slog.Info("anonymous uploads enabled", "require_auth_for_upload", false)
+	}
+
+	// Upload endpoint with conditional authentication
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(optionalUserAuth(http.HandlerFunc(handlers.UploadHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadHandler(db, cfg)))).ServeHTTP(w, r)
 	})
 
 	// Note: Order matters - info endpoint must be registered before catch-all claim handler
@@ -119,6 +130,9 @@ func main() {
 	})
 	mux.HandleFunc("/health", handlers.HealthHandler(db, cfg, startTime))
 
+	// Public configuration endpoint (no auth required)
+	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
+
 	// User authentication routes (public - no auth required)
 	mux.HandleFunc("/login", serveUserPage("login.html"))
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +140,7 @@ func main() {
 	})
 
 	// User dashboard routes (auth required)
-	userAuth := middleware.UserAuth(db)
+	// Note: userAuth already defined above for conditional upload middleware
 
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(http.HandlerFunc(serveUserPage("dashboard.html"))).ServeHTTP(w, r)
