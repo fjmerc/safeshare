@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2025-11-06
+
+### Fixed
+- **Critical**: Frontend now respects server's max file size configuration
+  - `maxFileSizeBytes` variable was hardcoded to 100MB in JavaScript
+  - Now correctly updated from `/api/config` endpoint's `max_file_size` value
+  - Fixes "File is too large. Maximum size is 100MB" error when server allows larger files
+  - UI display also updates to show correct maximum file size from server
+
 ## [2.0.2] - 2025-11-06
 
 ### Fixed

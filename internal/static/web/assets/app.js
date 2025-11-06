@@ -78,6 +78,16 @@
                     }
                 }
 
+                // Update max file size from server config
+                if (serverConfig.max_file_size) {
+                    maxFileSizeBytes = serverConfig.max_file_size;
+                    // Update display in UI
+                    const maxFileSizeDisplay = document.getElementById('maxFileSize');
+                    if (maxFileSizeDisplay) {
+                        maxFileSizeDisplay.textContent = formatFileSize(maxFileSizeBytes);
+                    }
+                }
+
                 // Log chunked upload configuration
                 if (serverConfig.chunked_upload_enabled) {
                     console.log('Chunked upload enabled:', {
