@@ -180,5 +180,11 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	// Run user migration (safe to run multiple times)
 	db.Exec(userMigration)
 
+	// Run database migrations
+	if err := RunMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	return db, nil
 }

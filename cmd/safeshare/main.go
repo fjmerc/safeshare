@@ -117,6 +117,23 @@ func main() {
 		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadHandler(db, cfg)))).ServeHTTP(w, r)
 	})
 
+	// Chunked upload endpoints with conditional authentication
+	mux.HandleFunc("/api/upload/init", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadInitHandler(db, cfg)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/upload/chunk/", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadChunkHandler(db, cfg)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/upload/complete/", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadCompleteHandler(db, cfg)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/upload/status/", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadStatusHandler(db, cfg)))).ServeHTTP(w, r)
+	})
+
 	// Note: Order matters - info endpoint must be registered before catch-all claim handler
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
 		handler := func(w http.ResponseWriter, r *http.Request) {
@@ -324,11 +341,14 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start cleanup worker
+	// Start cleanup workers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes)
+
+	// Start partial upload cleanup worker (runs every 6 hours)
+	go utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
 
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
 	go func() {
