@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/yourusername/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // RecoveryMiddleware recovers from panics and returns a 500 error

@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yourusername/safeshare/internal/config"
-	"github.com/yourusername/safeshare/internal/database"
-	"github.com/yourusername/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // ClaimHandler handles file download requests using claim codes

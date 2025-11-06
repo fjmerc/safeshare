@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/config"
-	"github.com/yourusername/safeshare/internal/database"
-	"github.com/yourusername/safeshare/internal/handlers"
-	"github.com/yourusername/safeshare/internal/middleware"
-	"github.com/yourusername/safeshare/internal/static"
-	"github.com/yourusername/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/handlers"
+	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/static"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 func main() {

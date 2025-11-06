@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
 

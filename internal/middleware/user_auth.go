@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/yourusername/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/database"
 )
 
 // UserAuth middleware checks for valid user session
