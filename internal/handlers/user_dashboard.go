@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/yourusername/safeshare/internal/config"
-	"github.com/yourusername/safeshare/internal/database"
-	"github.com/yourusername/safeshare/internal/models"
-	"github.com/yourusername/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UserDashboardDataHandler returns dashboard data for the logged-in user

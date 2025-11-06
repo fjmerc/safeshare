@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/database"
 )
 
 // StartCleanupWorker starts a background goroutine that periodically

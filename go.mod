@@ -1,4 +1,4 @@
-module github.com/yourusername/safeshare
+module github.com/fjmerc/safeshare
 
 go 1.21
 

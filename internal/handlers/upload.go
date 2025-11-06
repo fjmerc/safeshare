@@ -14,10 +14,10 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
-	"github.com/yourusername/safeshare/internal/config"
-	"github.com/yourusername/safeshare/internal/database"
-	"github.com/yourusername/safeshare/internal/models"
-	"github.com/yourusername/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UploadHandler handles file upload requests

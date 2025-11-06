@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // CreateFile inserts a new file record into the database

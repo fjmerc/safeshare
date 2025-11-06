@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yourusername/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/config"
 )
 
 // buildDownloadURL constructs the full download URL for a claim code

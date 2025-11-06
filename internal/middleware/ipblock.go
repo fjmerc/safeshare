@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/yourusername/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/database"
 )
 
 // IPBlockCheck middleware checks if the client IP is blocked

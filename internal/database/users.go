@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourusername/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // CreateUser creates a new user in the database

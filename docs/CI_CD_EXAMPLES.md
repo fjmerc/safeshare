@@ -158,14 +158,14 @@ jobs:
 
 ```bash
 # Pull image from GitHub Container Registry
-docker pull ghcr.io/yourusername/safeshare:latest
-docker pull ghcr.io/yourusername/safeshare:v1.0.0
+docker pull ghcr.io/fjmerc/safeshare:latest
+docker pull ghcr.io/fjmerc/safeshare:v1.0.0
 
 # Authenticate (if private)
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 
 # Run
-docker run -d -p 8080:8080 ghcr.io/yourusername/safeshare:latest
+docker run -d -p 8080:8080 ghcr.io/fjmerc/safeshare:latest
 ```
 
 ---
@@ -237,11 +237,11 @@ jobs:
 
 ```bash
 # Pull from Docker Hub
-docker pull yourusername/safeshare:latest
-docker pull yourusername/safeshare:v1.0.0
+docker pull fjmerc/safeshare:latest
+docker pull fjmerc/safeshare:v1.0.0
 
 # Run
-docker run -d -p 8080:8080 yourusername/safeshare:latest
+docker run -d -p 8080:8080 fjmerc/safeshare:latest
 ```
 
 ---
@@ -356,14 +356,14 @@ release:
 
 ```bash
 # Pull from GitLab Container Registry
-docker pull registry.gitlab.com/yourusername/safeshare:latest
-docker pull registry.gitlab.com/yourusername/safeshare:v1.0.0
+docker pull registry.gitlab.com/fjmerc/safeshare:latest
+docker pull registry.gitlab.com/fjmerc/safeshare:v1.0.0
 
 # Authenticate (if private)
 docker login registry.gitlab.com -u USERNAME -p ACCESS_TOKEN
 
 # Run
-docker run -d -p 8080:8080 registry.gitlab.com/yourusername/safeshare:latest
+docker run -d -p 8080:8080 fjmerc/safeshare:latest
 ```
 
 ---
@@ -418,7 +418,7 @@ services:
       - DRONE_RPC_SECRET=your-rpc-secret
       - DRONE_SERVER_HOST=drone.yourdomain.com
       - DRONE_SERVER_PROTO=https
-      - DRONE_USER_CREATE=username:yourusername,admin:true
+      - DRONE_USER_CREATE=username:fjmerc,admin:true
     restart: always
 
   drone-runner:
@@ -480,7 +480,7 @@ steps:
     image: plugins/docker
     settings:
       registry: gitea.yourdomain.com
-      repo: gitea.yourdomain.com/yourusername/safeshare
+      repo: gitea.yourdomain.com/fjmerc/safeshare
       tags:
         - latest
         - ${DRONE_COMMIT_SHA:0:8}
@@ -497,7 +497,7 @@ steps:
     image: plugins/docker
     settings:
       registry: gitea.yourdomain.com
-      repo: gitea.yourdomain.com/yourusername/safeshare
+      repo: gitea.yourdomain.com/fjmerc/safeshare
       tags:
         - ${DRONE_TAG}
         - latest
@@ -525,7 +525,7 @@ steps:
 
         Pull the image:
         ```bash
-        docker pull gitea.yourdomain.com/yourusername/safeshare:${DRONE_TAG}
+        docker pull gitea.yourdomain.com/fjmerc/safeshare:${DRONE_TAG}
         ```
     when:
       event:
@@ -545,12 +545,12 @@ trigger:
 ```bash
 # Via Drone CLI
 drone secret add \
-  --repository yourusername/safeshare \
+  --repository fjmerc/safeshare \
   --name gitea_username \
-  --data yourusername
+  --data fjmerc
 
 drone secret add \
-  --repository yourusername/safeshare \
+  --repository fjmerc/safeshare \
   --name gitea_token \
   --data your-personal-access-token
 
@@ -562,13 +562,13 @@ drone secret add \
 
 ```bash
 # Pull from Gitea Container Registry
-docker pull gitea.yourdomain.com/yourusername/safeshare:latest
+docker pull gitea.yourdomain.com/fjmerc/safeshare:latest
 
 # Authenticate
 docker login gitea.yourdomain.com -u USERNAME -p ACCESS_TOKEN
 
 # Run
-docker run -d -p 8080:8080 gitea.yourdomain.com/yourusername/safeshare:latest
+docker run -d -p 8080:8080 fjmerc/safeshare:latest
 ```
 
 ---
@@ -589,7 +589,7 @@ docker buildx create --name multiarch --use
 # Build for multiple platforms
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --tag yourusername/safeshare:latest \
+  --tag fjmerc/safeshare:latest \
   --push \
   .
 

@@ -448,10 +448,10 @@ Initial production release.
 - Admin authentication
 - Comprehensive audit logging
 
-[Unreleased]: https://github.com/yourusername/safeshare/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/yourusername/safeshare/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/yourusername/safeshare/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/yourusername/safeshare/releases/tag/v1.0.0
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/fjmerc/safeshare/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/fjmerc/safeshare/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.0.0
 ```
 
 ### Updating Changelog
@@ -486,10 +486,10 @@ v1              # Major version (updates with minor/patch)
 latest          # Latest stable release (main branch only)
 
 # Example:
-ghcr.io/yourusername/safeshare:v1.2.3
-ghcr.io/yourusername/safeshare:v1.2
-ghcr.io/yourusername/safeshare:v1
-ghcr.io/yourusername/safeshare:latest
+ghcr.io/fjmerc/safeshare:v1.2.3
+ghcr.io/fjmerc/safeshare:v1.2
+ghcr.io/fjmerc/safeshare:v1
+ghcr.io/fjmerc/safeshare:latest
 ```
 
 ### Branch-Based Tags
