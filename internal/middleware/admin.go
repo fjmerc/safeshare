@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yourusername/safeshare/internal/config"
 	"github.com/yourusername/safeshare/internal/database"
 	"github.com/yourusername/safeshare/internal/utils"
 )
@@ -171,7 +172,7 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 // SetCSRFCookie sets a CSRF token cookie for admin pages
-func SetCSRFCookie(w http.ResponseWriter, cfg interface{ HTTPSEnabled bool }) (string, error) {
+func SetCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error) {
 	token, err := utils.GenerateCSRFToken()
 	if err != nil {
 		return "", err
