@@ -535,7 +535,7 @@ func AdminUnblockIPHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminUpdateQuotaHandler updates the storage quota dynamically
-func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
+func AdminUpdateQuotaHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -561,9 +561,19 @@ func AdminUpdateQuotaHandler(cfg *config.Config) http.HandlerFunc {
 
 		oldQuota := cfg.GetQuotaLimitGB()
 
+		// Update in-memory config
 		if err := cfg.SetQuotaLimitGB(newQuota); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+
+		// Persist to database for restart persistence
+		if err := database.UpdateQuotaSetting(db, newQuota); err != nil {
+			slog.Error("failed to persist quota setting to database",
+				"error", err,
+				"quota_gb", newQuota,
+			)
+			// Don't fail the request - config is updated, just log the error
 		}
 
 		slog.Info("admin updated storage quota",

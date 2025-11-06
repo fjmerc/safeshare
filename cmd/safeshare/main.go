@@ -60,6 +60,15 @@ func main() {
 		slog.Info("admin credentials initialized", "username", cfg.AdminUsername)
 	}
 
+	// Load quota setting from database (overrides environment variable if set)
+	if dbQuota, err := database.GetQuotaSetting(db); err != nil {
+		slog.Error("failed to load quota setting from database", "error", err)
+	} else if dbQuota >= 0 {
+		// Database has a quota setting - use it instead of env var
+		cfg.SetQuotaLimitGB(dbQuota)
+		slog.Info("loaded quota setting from database", "quota_limit_gb", dbQuota)
+	}
+
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 		slog.Error("failed to create upload directory", "error", err)
@@ -178,7 +187,7 @@ func main() {
 		})
 
 		mux.HandleFunc("/admin/api/quota/update", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateQuotaHandler(cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateQuotaHandler(db, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/storage", func(w http.ResponseWriter, r *http.Request) {

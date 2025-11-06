@@ -111,6 +111,12 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
 CREATE INDEX IF NOT EXISTS idx_session_token ON admin_sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_session_expires ON admin_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_blocked_ip ON blocked_ips(ip_address);
+
+CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    quota_limit_gb INTEGER DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // Initialize opens the SQLite database and creates the schema
