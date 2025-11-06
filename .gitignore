@@ -3,3 +3,4 @@ uploads/
 *.db-journal
 cmd/safeshare/safeshare
 /safeshare
+scripts/
