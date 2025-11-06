@@ -787,4 +787,4 @@ git push origin main v1.2.1
 **See also**:
 - [CI_CD_EXAMPLES.md](./CI_CD_EXAMPLES.md) - Automated release pipelines
 - [PRODUCTION.md](./PRODUCTION.md) - Deployment procedures
-- [CHANGELOG.md](../CHANGELOG.md) - Version history
+- [CHANGELOG.md](./CHANGELOG.md) - Version history
