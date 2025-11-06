@@ -1,6 +1,20 @@
 # SafeShare - Secure Temporary File Sharing
 
-DoD SAFE-like file sharing service with claim codes and automatic expiration.
+A self-hosted secure file sharing service for temporary transfers with automatic expiration and cryptographically secure claim codes.
+
+## Screenshots
+
+### Main Interface
+![SafeShare Main Interface](docs/screenshots/main.png)
+*Modern web interface with drag-drop upload, QR codes, and dark mode support*
+
+### Admin Dashboard
+![Admin Dashboard](docs/screenshots/admin-dashboard.png)
+*Comprehensive admin dashboard for file management and user administration*
+
+### User Dashboard
+![User Dashboard](docs/screenshots/user-dashboard.png)
+*User dashboard for viewing upload history and managing own files*
 
 ## Features
 
@@ -63,12 +77,6 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 - ✅ Enhanced date formatting (space-saving compact display)
 - ✅ Embedded in binary (no separate deployment, ~27KB total)
 
-## Screenshots
-
-![SafeShare Web UI](https://via.placeholder.com/800x400/3b82f6/ffffff?text=SafeShare+Web+UI)
-
-*Modern web interface with drag-drop upload, QR codes, and dark mode support*
-
 ## Quick Start
 
 ### Web UI
@@ -76,7 +84,8 @@ DoD SAFE-like file sharing service with claim codes and automatic expiration.
 Simply visit the root URL after starting the server:
 
 ```
-http://localhost:8080/
+http://localhost:8080/              # Main upload interface
+http://localhost:8080/admin/login   # Admin dashboard login (if configured)
 ```
 
 Features drag-drop upload, QR code generation, and one-click sharing!
@@ -84,13 +93,24 @@ Features drag-drop upload, QR code generation, and one-click sharing!
 ### Docker
 
 ```bash
-# Run with default settings
+# Run with default settings (no admin dashboard)
 docker run -d \
   -p 8080:8080 \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --name safeshare \
-  safeshare:latest
+  fjmerc/safeshare:latest
+
+# Run with admin dashboard enabled
+docker run -d \
+  -p 8080:8080 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD="YourSecurePassword123!" \
+  -v safeshare-data:/app/data \
+  -v safeshare-uploads:/app/uploads \
+  --name safeshare \
+  fjmerc/safeshare:latest
+# Then visit: http://localhost:8080/admin/login
 
 # Run with custom configuration
 docker run -d \
@@ -101,7 +121,7 @@ docker run -d \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --name safeshare \
-  safeshare:latest
+  fjmerc/safeshare:latest
 ```
 
 ### Binary
@@ -390,7 +410,7 @@ docker run -d \
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/safeshare
+git clone https://github.com/fjmerc/safeshare
 cd safeshare
 
 # Build (requires Go installed locally)
@@ -675,7 +695,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 ## Support
 
 For issues and questions:
-- GitHub Issues: https://github.com/yourusername/safeshare/issues
+- GitHub Issues: https://github.com/fjmerc/safeshare/issues
 - Documentation: See this README and developer docs above
 
 ## Changelog
