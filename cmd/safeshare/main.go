@@ -140,7 +140,7 @@ func main() {
 	})
 
 	// User dashboard routes (auth required)
-	userAuth := middleware.UserAuth(db)
+	// Note: userAuth already defined above for conditional upload middleware
 
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(http.HandlerFunc(serveUserPage("dashboard.html"))).ServeHTTP(w, r)
