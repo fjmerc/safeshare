@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
@@ -82,7 +83,7 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				MaxDownloads:     file.MaxDownloads,
 				DownloadCount:    file.DownloadCount,
 				DownloadURL:      buildDownloadURL(r, cfg, file.ClaimCode),
-				IsExpired:        file.ExpiresAt.Before(file.CreatedAt) || (file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads),
+				IsExpired:        time.Now().After(file.ExpiresAt) || (file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",
 			})
 		}
