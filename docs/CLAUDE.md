@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Guidelines
+
+### Before Making Changes
+
+**IMPORTANT**: Always reference `docs/VERSION_STRATEGY.md` before making changes to understand:
+- Semantic versioning (MAJOR.MINOR.PATCH)
+- Git branching strategy (feature/*, release/*, hotfix/*)
+- When to create feature branches vs hotfix branches
+- How to update CHANGELOG.md
+
+### Updating CHANGELOG.md
+
+All notable changes must be documented in `docs/CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format.
+
+**During development** (on feature/develop branches):
+- Add entries to the `[Unreleased]` section
+- Use categories: `Added`, `Changed`, `Fixed`, `Security`
+- Be specific and user-focused in descriptions
+
+**When releasing**:
+- Move `[Unreleased]` items to new version section
+- Add release date
+- Create new empty `[Unreleased]` section
+
+See `docs/VERSION_STRATEGY.md` for complete changelog guidelines.
+
 ## Build and Development Commands
 
 ### Local Development

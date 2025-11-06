@@ -312,17 +312,4 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-// sendError sends a JSON error response
-func sendError(w http.ResponseWriter, message, code string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	errResp := models.ErrorResponse{
-		Error: message,
-		Code:  code,
-	}
-
-	json.NewEncoder(w).Encode(errResp)
-}
-
 // getClientIP extracts the client IP address from the request

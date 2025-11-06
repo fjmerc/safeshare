@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/static"
 )
 
 // buildDownloadURL constructs the full download URL for a claim code
@@ -91,4 +96,72 @@ func redactClaimCode(code string) string {
 		return "***"
 	}
 	return code[:3] + "..." + code[len(code)-2:]
+}
+
+// isHTMLRequest checks if the client accepts HTML responses
+// Browsers send Accept: text/html,application/xhtml+xml,...
+// API clients typically send Accept: application/json or */*
+func isHTMLRequest(r *http.Request) bool {
+	accept := r.Header.Get("Accept")
+	// Check if Accept header contains text/html
+	return strings.Contains(accept, "text/html")
+}
+
+// sendError sends a JSON error response
+// This is used for API clients
+func sendError(w http.ResponseWriter, message, code string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(models.ErrorResponse{
+		Error: message,
+		Code:  code,
+	})
+}
+
+// sendHTMLError sends an HTML error page
+// This is used for browser clients
+func sendHTMLError(w http.ResponseWriter, title, message, code string, statusCode int) {
+	// Read error.html template from embedded filesystem
+	fs := static.FileSystem()
+	file, err := fs.Open("error.html")
+	if err != nil {
+		// Fallback to plain text error if template not found
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(statusCode)
+		fmt.Fprintf(w, "%s\n\n%s\n\nError Code: %s", title, message, code)
+		return
+	}
+	defer file.Close()
+
+	// Read template content
+	templateBytes, err := io.ReadAll(file)
+	if err != nil {
+		// Fallback to plain text error if read fails
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(statusCode)
+		fmt.Fprintf(w, "%s\n\n%s\n\nError Code: %s", title, message, code)
+		return
+	}
+
+	template := string(templateBytes)
+
+	// Replace placeholders
+	template = strings.ReplaceAll(template, "{{TITLE}}", title)
+	template = strings.ReplaceAll(template, "{{MESSAGE}}", message)
+	template = strings.ReplaceAll(template, "{{CODE}}", code)
+
+	// Send response
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+	w.Write([]byte(template))
+}
+
+// sendErrorResponse sends either HTML or JSON error based on client preference
+// This provides smart error handling for both browsers and API clients
+func sendErrorResponse(w http.ResponseWriter, r *http.Request, title, message, code string, statusCode int) {
+	if isHTMLRequest(r) {
+		sendHTMLError(w, title, message, code, statusCode)
+	} else {
+		sendError(w, message, code, statusCode)
+	}
 }

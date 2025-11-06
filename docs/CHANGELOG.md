@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dropoff tab dynamically appears after successful login
   - Seamless UX that adapts to server security policy
 - Comprehensive documentation for upload authentication modes in SECURITY.md
+- User-friendly HTML error pages for expired/invalid file links
+  - Professional error page design with dark/light mode support
+  - Helpful navigation actions (Go to Home, Try Another Code)
+  - Smart content negotiation: returns HTML for browsers, JSON for API calls
+  - Improves UX when users click expired or invalid download links
 
 ### Changed
 - Upload endpoint now uses conditional authentication middleware based on configuration
@@ -25,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Added missing login button for users when authentication is required for uploads
+- Fixed user dashboard showing expired files as "Active" instead of "Expired"
+  - Corrected IsExpired calculation from `file.ExpiresAt.Before(file.CreatedAt)` to `time.Now().After(file.ExpiresAt)`
+- Fixed dashboard download URLs using non-existent `/download/` route
+  - Changed to correct `/api/claim/` endpoint
 
 ## [1.2.0] - 2025-01-15
 
