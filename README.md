@@ -700,6 +700,13 @@ For issues and questions:
 
 ## Changelog
 
+### v1.1.0
+- **Admin settings persistence**: All 7 admin dashboard settings now persist across server restarts
+- **GitHub URLs fixed**: Corrected repository URLs from placeholder to actual repo (21 files updated)
+- **Improved .gitignore**: More specific patterns for better source control
+- **Dynamic configuration**: Settings changeable via admin dashboard without restart
+- **Database-backed settings**: quota_limit_gb, max_file_size_bytes, default_expiration_hours, max_expiration_hours, rate_limit_upload, rate_limit_download, blocked_extensions
+
 ### v1.0.0
 - Initial release
 - File upload with claim codes

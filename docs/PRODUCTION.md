@@ -379,6 +379,27 @@ DEFAULT_EXPIRATION_HOURS=24           # Default file expiration
 CLEANUP_INTERVAL_MINUTES=60           # Cleanup worker interval
 ```
 
+### Dynamic Settings (v1.1.0+)
+
+**Important:** Starting with v1.1.0, most admin settings persist to the database and can be changed dynamically via the admin dashboard **without requiring a restart**.
+
+**Settings with Database Persistence:**
+- `QUOTA_LIMIT_GB` - Storage quota limit
+- `MAX_FILE_SIZE` - Maximum upload file size
+- `DEFAULT_EXPIRATION_HOURS` - Default file expiration time
+- `MAX_EXPIRATION_HOURS` - Maximum allowed expiration time
+- `RATE_LIMIT_UPLOAD` - Upload rate limit per IP
+- `RATE_LIMIT_DOWNLOAD` - Download rate limit per IP
+- `BLOCKED_EXTENSIONS` - Blocked file extensions list
+
+**How It Works:**
+1. On first startup, SafeShare uses environment variable values
+2. Changes made via admin dashboard are saved to the database
+3. On subsequent restarts, database settings override environment variables
+4. Settings take effect immediately (no restart required)
+
+**Recommendation:** Set sensible defaults via environment variables, then use the admin dashboard for runtime adjustments.
+
 ### Secrets Management
 
 **DO NOT** hardcode secrets in docker-compose.yml or scripts!
