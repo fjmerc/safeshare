@@ -42,13 +42,35 @@
     // State - User
     let currentUser = null;
 
+    // State - Server config
+    let serverConfig = {
+        require_auth_for_upload: false,
+        max_file_size: 104857600 // Default 100MB
+    };
+
     // Initialize
     async function init() {
         loadTheme();
+        await fetchServerConfig(); // Fetch server configuration first
         await checkAuth(); // Wait for auth check before handling tabs
         fetchMaxFileSize();
         setupEventListeners();
         handleInitialTab();
+    }
+
+    // Fetch server configuration
+    async function fetchServerConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (response.ok) {
+                serverConfig = await response.json();
+                console.log('Server config loaded:', serverConfig);
+            } else {
+                console.warn('Failed to fetch server config, using defaults');
+            }
+        } catch (error) {
+            console.error('Error fetching server config:', error);
+        }
     }
 
     // Handle initial tab based on URL hash
@@ -578,7 +600,8 @@
         const targetTab = e.target.dataset.tab;
 
         // Check if user is trying to access Dropoff tab without authentication
-        if (targetTab === 'dropoff' && !currentUser) {
+        // Only enforce if server requires authentication for uploads
+        if (targetTab === 'dropoff' && serverConfig.require_auth_for_upload && !currentUser) {
             // Redirect to login page
             window.location.href = '/login';
             return;
