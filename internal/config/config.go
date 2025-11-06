@@ -13,16 +13,20 @@ type Config struct {
 	mu sync.RWMutex // Protects mutable fields
 
 	// Immutable fields (set at startup only)
-	Port                   string
-	DBPath                 string
-	UploadDir              string
-	CleanupIntervalMinutes int
-	PublicURL              string
-	EncryptionKey          string
-	AdminUsername          string
-	SessionExpiryHours     int
-	HTTPSEnabled           bool
-	RequireAuthForUpload   bool
+	Port                     string
+	DBPath                   string
+	UploadDir                string
+	CleanupIntervalMinutes   int
+	PublicURL                string
+	EncryptionKey            string
+	AdminUsername            string
+	SessionExpiryHours       int
+	HTTPSEnabled             bool
+	RequireAuthForUpload     bool
+	ChunkedUploadEnabled     bool
+	ChunkedUploadThreshold   int64
+	ChunkSize                int64
+	PartialUploadExpiryHours int
 
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
@@ -42,16 +46,20 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		// Immutable fields
-		Port:                   getEnv("PORT", "8080"),
-		DBPath:                 getEnv("DB_PATH", "./safeshare.db"),
-		UploadDir:              getEnv("UPLOAD_DIR", "./uploads"),
-		CleanupIntervalMinutes: getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
-		PublicURL:              getEnv("PUBLIC_URL", ""),
-		EncryptionKey:          getEnv("ENCRYPTION_KEY", ""),
-		AdminUsername:          getEnv("ADMIN_USERNAME", ""),
-		SessionExpiryHours:     getEnvInt("SESSION_EXPIRY_HOURS", 24),
-		HTTPSEnabled:           getEnvBool("HTTPS_ENABLED", false),
-		RequireAuthForUpload:   getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
+		Port:                     getEnv("PORT", "8080"),
+		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
+		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
+		CleanupIntervalMinutes:   getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
+		PublicURL:                getEnv("PUBLIC_URL", ""),
+		EncryptionKey:            getEnv("ENCRYPTION_KEY", ""),
+		AdminUsername:            getEnv("ADMIN_USERNAME", ""),
+		SessionExpiryHours:       getEnvInt("SESSION_EXPIRY_HOURS", 24),
+		HTTPSEnabled:             getEnvBool("HTTPS_ENABLED", false),
+		RequireAuthForUpload:     getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
+		ChunkedUploadEnabled:     getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
+		ChunkedUploadThreshold:   getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
+		ChunkSize:                getEnvInt64("CHUNK_SIZE", 5242880),                  // 5MB
+		PartialUploadExpiryHours: getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -298,6 +306,19 @@ func (c *Config) validate() error {
 				return fmt.Errorf("ENCRYPTION_KEY must contain only hexadecimal characters (0-9, a-f, A-F)")
 			}
 		}
+	}
+
+	// Validate chunked upload settings
+	if c.ChunkSize < 1048576 || c.ChunkSize > 10485760 {
+		return fmt.Errorf("CHUNK_SIZE must be between 1MB (1048576) and 10MB (10485760), got %d", c.ChunkSize)
+	}
+
+	if c.ChunkedUploadThreshold < 0 {
+		return fmt.Errorf("CHUNKED_UPLOAD_THRESHOLD must be non-negative, got %d", c.ChunkedUploadThreshold)
+	}
+
+	if c.PartialUploadExpiryHours <= 0 {
+		return fmt.Errorf("PARTIAL_UPLOAD_EXPIRY_HOURS must be positive, got %d", c.PartialUploadExpiryHours)
 	}
 
 	return nil

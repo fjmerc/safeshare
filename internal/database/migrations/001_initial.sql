@@ -1,0 +1,23 @@
+-- Migration 001: Initial baseline
+--
+-- This migration represents the baseline schema created in database/db.go.
+-- The initial schema (files, users, admin, etc.) is created directly in the
+-- Initialize() function for backward compatibility with existing databases.
+--
+-- This migration file exists only to establish a baseline in the migrations
+-- tracking system. No schema changes are made here.
+--
+-- For reference, the baseline schema includes:
+-- - files table (with claim_code, original_filename, etc.)
+-- - users table (username, email, password_hash, role, etc.)
+-- - user_sessions table
+-- - admin_credentials table
+-- - admin_sessions table
+-- - blocked_ips table
+-- - settings table
+--
+-- Date: 2025-01-06
+-- Version: v1.2.0
+
+-- No-op: Schema already exists
+SELECT 1;

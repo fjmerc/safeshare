@@ -21,6 +21,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 ### Backend
 - ✅ Upload files and receive unique claim codes
 - ✅ Download files using claim codes
+- ✅ **Chunked/resumable uploads** for large files (>100MB)
 - ✅ Automatic file expiration
 - ✅ Optional download limits
 - ✅ Configurable expiration times
@@ -28,6 +29,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - ✅ Single binary deployment
 - ✅ Docker container (~26MB)
 - ✅ SQLite database (no external dependencies)
+- ✅ Database migration system
 - ✅ Graceful shutdown
 - ✅ Health check endpoint
 - ✅ Structured JSON logging
@@ -327,6 +329,101 @@ curl http://localhost:8080/health
 }
 ```
 
+### Chunked Upload Endpoints
+
+For large files (>100MB by default), SafeShare supports chunked/resumable uploads. The frontend automatically uses chunked upload mode when file size exceeds the threshold.
+
+**Full documentation:** See [docs/CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md) for complete API specifications, curl examples, and architecture details.
+
+#### Initialize Chunked Upload
+
+**Endpoint:** `POST /api/upload/init`
+
+**Request:**
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filename": "large-file.zip",
+    "total_size": 262144000,
+    "chunk_size": 5242880,
+    "expires_in_hours": 24,
+    "max_downloads": 5
+  }' \
+  http://localhost:8080/api/upload/init
+```
+
+**Response (200 OK):**
+```json
+{
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
+  "chunk_size": 5242880,
+  "total_chunks": 50,
+  "expires_at": "2025-11-07T12:00:00Z"
+}
+```
+
+#### Upload Chunk
+
+**Endpoint:** `POST /api/upload/chunk/:upload_id/:chunk_number`
+
+**Request:**
+```bash
+curl -X POST \
+  -F "chunk=@chunk_0.dat" \
+  http://localhost:8080/api/upload/chunk/550e8400-e29b-41d4-a716-446655440000/0
+```
+
+**Response (200 OK):**
+```json
+{
+  "upload_id": "550e8400-...",
+  "chunk_number": 0,
+  "chunks_received": 1,
+  "total_chunks": 50,
+  "complete": false
+}
+```
+
+#### Complete Upload
+
+**Endpoint:** `POST /api/upload/complete/:upload_id`
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/api/upload/complete/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Response (200 OK):**
+```json
+{
+  "claim_code": "aFYR83-afRPqrb-8",
+  "download_url": "http://localhost:8080/api/claim/aFYR83-afRPqrb-8"
+}
+```
+
+#### Check Upload Status
+
+**Endpoint:** `GET /api/upload/status/:upload_id`
+
+**Request:**
+```bash
+curl http://localhost:8080/api/upload/status/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Response (200 OK):**
+```json
+{
+  "upload_id": "550e8400-...",
+  "filename": "large-file.zip",
+  "chunks_received": 25,
+  "total_chunks": 50,
+  "missing_chunks": [0, 15, 27],
+  "complete": false,
+  "expires_at": "2025-11-07T12:00:00Z"
+}
+```
+
 ## Configuration
 
 Environment variables:
@@ -346,6 +443,10 @@ Environment variables:
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
 | `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
 | `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
+| `CHUNKED_UPLOAD_ENABLED` | `true` | Enable/disable chunked upload support |
+| `CHUNKED_UPLOAD_THRESHOLD` | `104857600` | Files >= this size use chunked upload (default: 100MB) |
+| `CHUNK_SIZE` | `5242880` | Size of each chunk in bytes (default: 5MB) |
+| `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
 | `REQUIRE_AUTH_FOR_UPLOAD` | `false` | Require user authentication for uploads - **Set to `true` for invite-only mode** |
 | `ADMIN_USERNAME` | (empty) | Admin username for dashboard access - **Optional, enables admin dashboard** |
 | `ADMIN_PASSWORD` | (empty) | Admin password (minimum 8 characters) - **Optional, requires ADMIN_USERNAME** |
@@ -441,6 +542,7 @@ SafeShare Application
 ├── HTTP Server (net/http)
 │   ├── Public Handlers
 │   │   ├── Upload Handler (authenticated or anonymous)
+│   │   ├── Chunked Upload Handlers (init, chunk, complete, status)
 │   │   ├── Claim Handler (download files)
 │   │   └── Health Handler
 │   ├── User Authentication
@@ -456,13 +558,16 @@ SafeShare Application
 │       └── Settings Handlers
 ├── SQLite Database (modernc.org/sqlite)
 │   ├── files table (with user_id foreign key)
+│   ├── partial_uploads table (chunked upload sessions)
+│   ├── migrations table (schema versioning)
 │   ├── users table (authentication)
 │   ├── user_sessions table
 │   ├── admin_credentials table
 │   ├── admin_sessions table
 │   └── blocked_ips table
 ├── File Storage
-│   └── UUID-based filenames (encrypted if ENCRYPTION_KEY set)
+│   ├── Completed files: UUID-based filenames (encrypted if ENCRYPTION_KEY set)
+│   └── Partial uploads: .partial/{upload_id}/chunk_{number}
 ├── Middleware
 │   ├── User Authentication (optional or required)
 │   ├── Admin Authentication
@@ -472,6 +577,7 @@ SafeShare Application
 │   └── Security Headers
 └── Background Workers
     ├── Expired File Cleanup
+    ├── Partial Upload Cleanup (abandoned uploads)
     └── Expired Session Cleanup
 ```
 
@@ -683,6 +789,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 | Document | Description | Audience |
 |----------|-------------|----------|
 | **[CLAUDE.md](docs/CLAUDE.md)** | Architecture overview, build commands, development guide | Developers, DevOps |
+| **[CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md)** | Chunked/resumable upload API, architecture, usage examples | Developers, API users |
 | **[SECURITY.md](docs/SECURITY.md)** | Enterprise security features, admin dashboard security, best practices | Security teams, Admins |
 | **[FRONTEND.md](docs/FRONTEND.md)** | Web UI features, customization guide, admin dashboard UI | Frontend developers |
 | **[REVERSE_PROXY.md](docs/REVERSE_PROXY.md)** | Reverse proxy configuration (Traefik, nginx, Caddy, Apache) | DevOps, Sysadmins |
@@ -700,6 +807,24 @@ For issues and questions:
 - Documentation: See this README and developer docs above
 
 ## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for complete version history.
+
+### v2.0.0 (Unreleased)
+- **Chunked Upload Support**: Resumable uploads for large files (>100MB) with automatic chunking
+  - New API endpoints: `/api/upload/init`, `/api/upload/chunk`, `/api/upload/complete`, `/api/upload/status`
+  - Frontend ChunkedUploader class with retry logic, parallel uploads, pause/resume
+  - Database migration system with `migrations` and `partial_uploads` tables
+  - Background cleanup worker for abandoned uploads
+  - Full documentation in [docs/CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md)
+- **BREAKING**: Database schema updated with migrations system (auto-applied on startup)
+
+### v1.2.0
+- User authentication system with invite-only registration
+- Role-based access control (admin/user roles)
+- User dashboard with file management
+- Admin user management interface
+- Optional authentication requirement for uploads
 
 ### v1.1.0
 - **Admin settings persistence**: All 7 admin dashboard settings now persist across server restarts
