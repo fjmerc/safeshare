@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2025-11-06
+
+### Fixed
+- **Critical**: Moved `chunked-uploader.js` to assets directory to fix 404 error
+  - File was in web root but static handler only serves from `/assets/*` route
+  - Updated script tag in index.html to reference `/assets/chunked-uploader.js`
+  - Fixes "stuck at 80%" upload issue where chunked upload code wasn't loading
+  - Prevents fallback to simple upload which causes HTTP 413 errors for large files
+
+### Added
+- **Automatic version display**: Version now shown in footer, fetched from server
+  - Created `internal/handlers/version.go` with version constant
+  - Added `version` field to `/api/config` endpoint response
+  - Frontend dynamically displays version below footer text (centered)
+  - Ensures version display always matches running binary (no version drift)
+  - Single source of truth for version updates
+
 ## [2.0.1] - 2025-11-06
 
 ### Fixed

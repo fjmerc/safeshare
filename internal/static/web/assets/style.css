@@ -851,6 +851,13 @@ footer a:hover {
     text-decoration: underline;
 }
 
+footer .version-info {
+    opacity: 0.6;
+    font-size: 0.8125rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0;
+}
+
 /* Pickup Section */
 .claim-code-input {
     width: 100%;

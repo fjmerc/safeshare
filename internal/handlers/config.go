@@ -9,11 +9,12 @@ import (
 
 // PublicConfigResponse contains public configuration settings safe to expose to clients
 type PublicConfigResponse struct {
-	RequireAuthForUpload   bool  `json:"require_auth_for_upload"`
-	MaxFileSize            int64 `json:"max_file_size"`
-	ChunkedUploadEnabled   bool  `json:"chunked_upload_enabled"`
-	ChunkedUploadThreshold int64 `json:"chunked_upload_threshold"`
-	ChunkSize              int64 `json:"chunk_size"`
+	Version                string `json:"version"`
+	RequireAuthForUpload   bool   `json:"require_auth_for_upload"`
+	MaxFileSize            int64  `json:"max_file_size"`
+	ChunkedUploadEnabled   bool   `json:"chunked_upload_enabled"`
+	ChunkedUploadThreshold int64  `json:"chunked_upload_threshold"`
+	ChunkSize              int64  `json:"chunk_size"`
 }
 
 // PublicConfigHandler returns public configuration settings to the frontend
@@ -27,6 +28,7 @@ func PublicConfigHandler(cfg *config.Config) http.HandlerFunc {
 		}
 
 		response := PublicConfigResponse{
+			Version:                Version,
 			RequireAuthForUpload:   cfg.RequireAuthForUpload,
 			MaxFileSize:            cfg.GetMaxFileSize(),
 			ChunkedUploadEnabled:   cfg.ChunkedUploadEnabled,
