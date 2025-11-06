@@ -70,6 +70,14 @@
                 serverConfig = await response.json();
                 console.log('Server config loaded:', serverConfig);
 
+                // Display version in footer
+                if (serverConfig.version) {
+                    const versionElement = document.getElementById('versionInfo');
+                    if (versionElement) {
+                        versionElement.textContent = `v${serverConfig.version}`;
+                    }
+                }
+
                 // Log chunked upload configuration
                 if (serverConfig.chunked_upload_enabled) {
                     console.log('Chunked upload enabled:', {
