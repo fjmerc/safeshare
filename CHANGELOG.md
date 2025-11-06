@@ -13,12 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Set to `true` to enforce authentication for all uploads (invite-only mode)
 - Public configuration API endpoint (`/api/config`) for frontend to fetch server settings
 - Dynamic frontend behavior based on server configuration
-  - Frontend automatically adapts Dropoff tab access based on server auth requirements
+  - Dropoff tab automatically hidden when auth required and user not logged in
+  - "Login to Upload" button appears when uploads require authentication
+  - Dropoff tab dynamically appears after successful login
+  - Seamless UX that adapts to server security policy
 - Comprehensive documentation for upload authentication modes in SECURITY.md
 
 ### Changed
 - Upload endpoint now uses conditional authentication middleware based on configuration
 - Frontend no longer hardcodes authentication requirement for uploads
+
+### Fixed
+- Added missing login button for users when authentication is required for uploads
 
 ## [1.2.0] - 2025-01-15
 

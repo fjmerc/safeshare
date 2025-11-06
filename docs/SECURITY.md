@@ -36,7 +36,8 @@ SafeShare supports two authentication modes for file uploads, controlled by the 
 - All uploads are linked to user accounts for full accountability
 - Provides audit trails for compliance requirements
 - Recommended for private deployments and controlled environments
-- Frontend automatically redirects unauthenticated users to login page
+- Frontend hides Dropoff tab for unauthenticated users and displays "Login to Upload" button
+- After successful login, Dropoff tab appears automatically
 
 **Use Cases:**
 - **Anonymous Mode**: Public file sharing, temporary file transfer services, low-risk environments
