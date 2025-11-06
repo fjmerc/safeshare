@@ -115,6 +115,12 @@ CREATE INDEX IF NOT EXISTS idx_blocked_ip ON blocked_ips(ip_address);
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     quota_limit_gb INTEGER DEFAULT 0,
+    max_file_size_bytes INTEGER DEFAULT 104857600,
+    default_expiration_hours INTEGER DEFAULT 24,
+    max_expiration_hours INTEGER DEFAULT 168,
+    rate_limit_upload INTEGER DEFAULT 10,
+    rate_limit_download INTEGER DEFAULT 100,
+    blocked_extensions TEXT DEFAULT '.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `

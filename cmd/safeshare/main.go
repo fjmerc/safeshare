@@ -60,13 +60,27 @@ func main() {
 		slog.Info("admin credentials initialized", "username", cfg.AdminUsername)
 	}
 
-	// Load quota setting from database (overrides environment variable if set)
-	if dbQuota, err := database.GetQuotaSetting(db); err != nil {
-		slog.Error("failed to load quota setting from database", "error", err)
-	} else if dbQuota >= 0 {
-		// Database has a quota setting - use it instead of env var
-		cfg.SetQuotaLimitGB(dbQuota)
-		slog.Info("loaded quota setting from database", "quota_limit_gb", dbQuota)
+	// Load all settings from database (overrides environment variables if set)
+	if dbSettings, err := database.GetSettings(db); err != nil {
+		slog.Error("failed to load settings from database", "error", err)
+	} else if dbSettings != nil {
+		// Database has settings - use them instead of env vars
+		cfg.SetQuotaLimitGB(dbSettings.QuotaLimitGB)
+		cfg.SetMaxFileSize(dbSettings.MaxFileSizeBytes)
+		cfg.SetDefaultExpirationHours(dbSettings.DefaultExpirationHours)
+		cfg.SetMaxExpirationHours(dbSettings.MaxExpirationHours)
+		cfg.SetRateLimitUpload(dbSettings.RateLimitUpload)
+		cfg.SetRateLimitDownload(dbSettings.RateLimitDownload)
+		cfg.SetBlockedExtensions(dbSettings.BlockedExtensions)
+		slog.Info("loaded settings from database",
+			"quota_limit_gb", dbSettings.QuotaLimitGB,
+			"max_file_size_bytes", dbSettings.MaxFileSizeBytes,
+			"default_expiration_hours", dbSettings.DefaultExpirationHours,
+			"max_expiration_hours", dbSettings.MaxExpirationHours,
+			"rate_limit_upload", dbSettings.RateLimitUpload,
+			"rate_limit_download", dbSettings.RateLimitDownload,
+			"blocked_extensions", dbSettings.BlockedExtensions,
+		)
 	}
 
 	// Create upload directory if it doesn't exist
@@ -191,11 +205,11 @@ func main() {
 		})
 
 		mux.HandleFunc("/admin/api/settings/storage", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateStorageSettingsHandler(cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateStorageSettingsHandler(db, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/security", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSecuritySettingsHandler(cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSecuritySettingsHandler(db, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/password", func(w http.ResponseWriter, r *http.Request) {
