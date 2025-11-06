@@ -403,9 +403,11 @@ All admin routes require both `ADMIN_USERNAME` and `ADMIN_PASSWORD` to be config
 - Unblock: Remove IP from blocklist (requires confirmation)
 
 **Settings Tab**:
-- Quota management: Update QUOTA_LIMIT_GB dynamically without restart
-- Password management: Change admin password without restart
-- System info: Display database path, upload directory
+- **Storage settings**: Update quota, max file size, expiration times dynamically without restart
+- **Security settings**: Update rate limits, blocked extensions dynamically without restart
+- **Password management**: Change admin password without restart
+- **System info**: Display database path, upload directory
+- **Persistence (v1.1.0+)**: All settings changes are saved to database and persist across restarts
 
 **Real-time Stats** (top cards):
 - Total Files: Active file count
@@ -603,6 +605,41 @@ All configuration via environment variables (see `internal/config/config.go`):
 
 **Validation**:
 The config validates encryption key format (64 hex chars), normalizes blocked extensions (adds `.` prefix, lowercases), and ensures rate limits and expiration values are positive.
+
+### Settings Persistence (v1.1.0+)
+
+Starting with v1.1.0, admin-configurable settings persist to the database and override environment variables on startup.
+
+**Database Schema** (`internal/database/db.go`, `internal/database/settings.go`):
+- `settings` table: Single-row table (id=1) storing 7 admin-configurable settings
+- Fields: quota_limit_gb, max_file_size_bytes, default_expiration_hours, max_expiration_hours, rate_limit_upload, rate_limit_download, blocked_extensions (TEXT, comma-separated)
+- `GetSettings()`: Retrieves all settings from database (returns nil if no settings exist)
+- Individual `Update*Setting()` functions: One for each setting to avoid race conditions
+- `ensureSettingsRow()`: Creates settings row if it doesn't exist (INSERT OR IGNORE pattern)
+- `parseBlockedExtensions()`: Converts comma-separated TEXT to []string slice
+
+**How It Works**:
+1. **First startup**: No settings in database → uses environment variable values
+2. **Admin changes setting**: Handler updates in-memory config AND persists to database
+3. **Subsequent startups**: Database settings loaded and override environment variables
+4. **Fallback**: If database settings don't exist, falls back to environment variables
+
+**Handler Updates** (`internal/handlers/admin.go`):
+- `AdminUpdateStorageSettingsHandler`: Now accepts `db` parameter, persists quota_limit_gb, max_file_size_bytes, default_expiration_hours, max_expiration_hours
+- `AdminUpdateSecuritySettingsHandler`: Now accepts `db` parameter, persists rate_limit_upload, rate_limit_download, blocked_extensions
+- Error handling: Logs database persistence errors but doesn't fail the request (config is updated, persistence is best-effort)
+
+**Startup Loading** (`cmd/safeshare/main.go`):
+- After database initialization, calls `database.GetSettings(db)`
+- If settings exist, applies all 7 values to config
+- Comprehensive logging of loaded settings
+- Backward compatible: works with existing deployments (no migration required)
+
+**Benefits**:
+- No restart required for admin setting changes
+- Settings persist across container restarts
+- Admin dashboard becomes fully dynamic
+- Backward compatible with environment variable-only deployments
 
 ### Frontend Architecture
 
