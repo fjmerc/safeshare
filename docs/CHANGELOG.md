@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [1.2.0] - 2025-11-06
+
+### Added
+- User authentication system with invite-only registration
+- Role-based access control (admin/user roles)
+- User dashboard with file management
+- Password change functionality
+- Admin user management interface
 - Configurable upload authentication via `REQUIRE_AUTH_FOR_UPLOAD` environment variable
   - Default: `false` (anonymous uploads allowed, maintains backward compatibility)
   - Set to `true` to enforce authentication for all uploads (invite-only mode)
@@ -25,34 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improves UX when users click expired or invalid download links
 
 ### Changed
-- Upload endpoint now uses conditional authentication middleware based on configuration
-- Frontend no longer hardcodes authentication requirement for uploads
-
-### Fixed
-- Added missing login button for users when authentication is required for uploads
-- Fixed user dashboard showing expired files as "Active" instead of "Expired"
-  - Corrected IsExpired calculation from `file.ExpiresAt.Before(file.CreatedAt)` to `time.Now().After(file.ExpiresAt)`
-- Fixed dashboard download URLs using non-existent `/download/` route
-  - Changed to correct `/api/claim/` endpoint
-
-## [1.2.0] - 2025-01-15
-
-### Added
-- User authentication system with invite-only registration
-- Role-based access control (admin/user roles)
-- User dashboard with file management
-- Password change functionality
-- Admin user management interface
-
-### Changed
 - Optimized settings tab with 2-column grid layout
 - Enhanced mobile responsiveness across all pages
 - Improved dark mode consistency
+- Upload endpoint now uses conditional authentication middleware based on configuration
+- Frontend no longer hardcodes authentication requirement for uploads
 
 ### Fixed
 - Fixed password change modal not closing properly
 - Fixed delete file modal button alignment
 - Fixed theme toggle consistency across pages
+- Added missing login button for users when authentication is required for uploads
+- Fixed user dashboard showing expired files as "Active" instead of "Expired"
+  - Corrected IsExpired calculation from `file.ExpiresAt.Before(file.CreatedAt)` to `time.Now().After(file.ExpiresAt)`
+- Fixed dashboard download URLs using non-existent `/download/` route
+  - Changed to correct `/api/claim/` endpoint
 
 ### Security
 - Added rate limiting to user login endpoint
