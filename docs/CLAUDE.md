@@ -761,7 +761,7 @@ SafeShare v2.0.0 introduces chunked/resumable uploads for large files (>100MB by
 - `migrations` table tracks applied migrations (id, name, applied_at)
 - Automatic migration execution on startup
 - Transactional migration application
-- Files: `migrations/001_initial.sql`, `migrations/002_chunked_uploads.sql`
+- Files: `internal/database/migrations/001_initial.sql`, `internal/database/migrations/002_chunked_uploads.sql`
 
 **Partial Uploads Table** (`internal/database/partial_uploads.go`):
 ```sql

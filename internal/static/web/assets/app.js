@@ -45,7 +45,10 @@
     // State - Server config
     let serverConfig = {
         require_auth_for_upload: false,
-        max_file_size: 104857600 // Default 100MB
+        max_file_size: 104857600, // Default 100MB
+        chunked_upload_enabled: false,
+        chunked_upload_threshold: 104857600, // Default 100MB
+        chunk_size: 5242880 // Default 5MB
     };
 
     // Initialize
@@ -66,6 +69,14 @@
             if (response.ok) {
                 serverConfig = await response.json();
                 console.log('Server config loaded:', serverConfig);
+
+                // Log chunked upload configuration
+                if (serverConfig.chunked_upload_enabled) {
+                    console.log('Chunked upload enabled:', {
+                        threshold: formatFileSize(serverConfig.chunked_upload_threshold),
+                        chunkSize: formatFileSize(serverConfig.chunk_size)
+                    });
+                }
             } else {
                 console.warn('Failed to fetch server config, using defaults');
             }
@@ -422,8 +433,23 @@
         }
     }
 
-    // Handle upload
+    // Handle upload - routes to chunked or simple upload based on file size
     async function handleUpload() {
+        if (!selectedFile) return;
+
+        // Check if file should use chunked upload
+        if (serverConfig.chunked_upload_enabled &&
+            selectedFile.size >= serverConfig.chunked_upload_threshold) {
+            console.log('Using chunked upload for large file:', formatFileSize(selectedFile.size));
+            await handleChunkedUpload();
+        } else {
+            console.log('Using simple upload for file:', formatFileSize(selectedFile.size));
+            await handleSimpleUpload();
+        }
+    }
+
+    // Handle simple upload (existing logic for files below threshold)
+    async function handleSimpleUpload() {
         if (!selectedFile) return;
 
         const formData = new FormData();
@@ -488,6 +514,73 @@
 
         } catch (error) {
             alert('Upload failed: ' + error.message);
+            resetProgress();
+        }
+    }
+
+    // Handle chunked upload for large files
+    async function handleChunkedUpload() {
+        if (!selectedFile) return;
+
+        // Get upload parameters
+        const expiresIn = parseFloat(expirationHours.value);
+        const maxDl = parseInt(maxDownloads.value) || 0;
+        const password = document.getElementById('uploadPassword').value.trim();
+
+        // Show progress
+        uploadProgress.classList.remove('hidden');
+        uploadButton.disabled = true;
+        progressText.textContent = 'Initializing chunked upload...';
+
+        try {
+            // Create uploader instance
+            const uploader = new ChunkedUploader(selectedFile, {
+                expiresInHours: expiresIn || 24,
+                maxDownloads: maxDl,
+                password: password
+            });
+
+            // Register progress event
+            uploader.on('progress', (data) => {
+                const percent = data.percentage;
+                progressFill.style.width = percent + '%';
+
+                // Show detailed progress with chunk info
+                const uploadedMB = (data.uploadedBytes / (1024 * 1024)).toFixed(1);
+                const totalMB = (data.totalBytes / (1024 * 1024)).toFixed(1);
+                const speedMBps = (data.speed / (1024 * 1024)).toFixed(1);
+
+                progressText.textContent = `Uploading chunk ${data.uploadedChunks} of ${data.totalChunks} (${Math.round(percent)}%) - ${uploadedMB}MB / ${totalMB}MB @ ${speedMBps}MB/s`;
+            });
+
+            // Register error event
+            uploader.on('error', (data) => {
+                console.error('Chunked upload error:', data);
+                alert(`Upload failed at ${data.stage}: ${data.error}`);
+                resetProgress();
+            });
+
+            // Register complete event
+            uploader.on('complete', (data) => {
+                console.log('Chunked upload complete:', data);
+                showResults(data);
+            });
+
+            // Execute upload flow
+            console.log('Initializing chunked upload...');
+            await uploader.init();
+
+            progressText.textContent = 'Uploading chunks...';
+            await uploader.uploadAllChunks();
+
+            progressText.textContent = 'Finalizing upload...';
+            const result = await uploader.complete();
+
+            console.log('Chunked upload successful:', result);
+
+        } catch (error) {
+            console.error('Chunked upload error:', error);
+            alert(`Upload failed: ${error.message}`);
             resetProgress();
         }
     }
