@@ -50,26 +50,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 2. **Make your changes** on the feature branch
 
-3. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (see below)
+3. **STOP - Get user approval before committing**:
+   - **CRITICAL**: DO NOT automatically commit, push, or create PRs without user approval
+   - Show the user a summary of what changes were made
+   - For frontend changes (HTML/CSS/JS): Remind user that Docker rebuild is required to test embedded assets
+   - Ask if the user wants to test the changes first
+   - Ask if the user wants to review the changes
+   - **WAIT for explicit user confirmation before proceeding with any git operations**
 
-4. **Commit changes** with descriptive message:
+4. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (ONLY after user approval, see below)
+
+5. **Commit changes** (ONLY after user approval) with descriptive message:
    ```bash
    git add .
    git commit -m "type: description"
    ```
 
-5. **Push branch**:
+   **Important**: Do NOT add attribution lines like "🤖 Generated with [Claude Code]" or "Co-Authored-By: Claude" to commit messages. Keep commits clean and professional.
+
+6. **Push branch** (ONLY after user approval):
    ```bash
    git push -u origin feature/your-feature-name
    ```
 
-6. **Create Pull Request** using GitHub CLI:
+7. **Create Pull Request** (ONLY after user approval) using GitHub CLI:
    ```bash
    gh pr create --base develop --fill
    ```
    This automatically creates a PR with title/description from commit message.
 
-7. **User reviews and merges PR** using merge helper:
+8. **User reviews and merges PR** using merge helper:
    ```bash
    ./scripts/merge-pr.sh
    ```
