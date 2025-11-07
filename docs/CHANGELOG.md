@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **UI**: Added "Remove File" button to upload interface
+  - Users can now clear selected files without refreshing the page
+  - Button appears after file selection (via drag-drop or file picker)
+  - Clicking removes the file and resets the upload interface
+  - Improves UX by allowing users to easily change their file selection
+
 ## [2.0.7] - 2025-11-07
 
 ### Changed

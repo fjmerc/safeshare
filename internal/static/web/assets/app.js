@@ -10,6 +10,7 @@
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadButton = document.getElementById('uploadButton');
+    const removeFileButton = document.getElementById('removeFileButton');
     const expirationHours = document.getElementById('expirationHours');
     const maxDownloads = document.getElementById('maxDownloads');
     const uploadSection = document.getElementById('uploadSection');
@@ -283,6 +284,9 @@
         // Dropoff Tab - Upload button
         uploadButton.addEventListener('click', handleUpload);
 
+        // Dropoff Tab - Remove file button
+        removeFileButton.addEventListener('click', clearSelectedFile);
+
         // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -442,12 +446,14 @@
                 alert(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`);
                 selectedFile = null;
                 uploadButton.disabled = true;
+                removeFileButton.classList.add('hidden');
                 return;
             }
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
             uploadButton.disabled = false;
+            removeFileButton.classList.remove('hidden');
         }
     }
 
@@ -648,13 +654,19 @@
         }
     }
 
-    // Reset form
-    function resetForm() {
+    // Clear selected file
+    function clearSelectedFile() {
         selectedFile = null;
         fileInput.value = '';
         uploadButton.disabled = true;
+        removeFileButton.classList.add('hidden');
         dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
         dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+    }
+
+    // Reset form
+    function resetForm() {
+        clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
         document.getElementById('uploadPassword').value = '';
