@@ -609,7 +609,9 @@
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = data.download_url;
-            document.getElementById('fileName').textContent = data.original_filename;
+            const fileNameElement = document.getElementById('fileName');
+            fileNameElement.textContent = data.original_filename;
+            fileNameElement.title = data.original_filename; // Show full name on hover
             document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
             document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
             document.getElementById('maxDownloadsInfo').textContent = data.max_downloads || 'Unlimited';
