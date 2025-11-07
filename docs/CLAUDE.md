@@ -4,6 +4,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Guidelines
 
+### Git Flow Workflow - REQUIRED FOR ALL CHANGES
+
+**CRITICAL**: This project follows Git Flow branching strategy (see `docs/VERSION_STRATEGY.md`).
+
+**NEVER commit directly to `develop` or `main` branches.**
+
+**Before making ANY code changes, ALWAYS follow this workflow:**
+
+1. **Create a feature/bugfix/docs branch FIRST** (before editing any files):
+   ```bash
+   # Using helper script (recommended)
+   ./scripts/new-branch.sh
+
+   # Or manually
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/your-feature-name  # or bugfix/*, docs/*
+   ```
+
+2. **Make your changes** on the feature branch
+
+3. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (see below)
+
+4. **Commit changes** with descriptive message:
+   ```bash
+   git add .
+   git commit -m "type: description"
+   ```
+
+5. **Push branch**:
+   ```bash
+   git push -u origin feature/your-feature-name
+   ```
+
+6. **Inform the user** to create a Pull Request to merge into `develop`
+
+**Branch naming conventions** (from VERSION_STRATEGY.md):
+- `feature/*` - New features (base: develop)
+- `bugfix/*` - Bug fixes (base: develop)
+- `docs/*` - Documentation changes (base: develop)
+- `hotfix/*` - Emergency production fixes (base: main)
+- `release/*` - Release preparation (base: develop)
+
+**Helper scripts available:**
+- `./scripts/new-branch.sh` - Interactive branch creation with Git Flow rules
+- `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging
+- `./scripts/create-release.sh` - Create release tags (must be on main branch)
+
 ### Before Making Changes
 
 **IMPORTANT**: Always reference `docs/VERSION_STRATEGY.md` before making changes to understand:
