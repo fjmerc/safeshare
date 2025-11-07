@@ -702,19 +702,30 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			slog.Debug("file encrypted", "upload_id", uploadID, "original_size", len(fileData), "encrypted_size", len(encrypted))
 		}
 
-		// Detect MIME type from assembled file
-		fileData, err := os.ReadFile(finalPath)
-		if err != nil {
-			slog.Error("failed to read file for MIME detection", "error", err)
-			os.Remove(finalPath)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// If encrypted, we can't detect MIME type from encrypted data
+		// Detect MIME type from assembled file (only read first 512 bytes for magic number detection)
 		mimeType := "application/octet-stream"
 		if !utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			detected := utils.DetectMimeType(fileData)
+			file, err := os.Open(finalPath)
+			if err != nil {
+				slog.Error("failed to open file for MIME detection", "error", err)
+				os.Remove(finalPath)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+
+			// Only read first 512 bytes for MIME detection (sufficient for magic number detection)
+			buffer := make([]byte, 512)
+			n, err := file.Read(buffer)
+			file.Close()
+
+			if err != nil && err != io.EOF {
+				slog.Error("failed to read file for MIME detection", "error", err)
+				os.Remove(finalPath)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+
+			detected := utils.DetectMimeType(buffer[:n])
 			if detected != "" {
 				mimeType = detected
 			}
