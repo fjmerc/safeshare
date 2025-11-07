@@ -96,6 +96,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging (legacy/manual)
 - `./scripts/create-release.sh` - Create release tags (must be on main branch)
 
+### Creating Releases - REQUIRED STEPS
+
+**CRITICAL**: When creating a new release, you MUST complete ALL of these steps. Missing the GitHub Release step is a common mistake.
+
+**Complete Release Process:**
+
+1. **Create release branch** from develop:
+   ```bash
+   git checkout -b release/vX.Y.Z develop
+   ```
+
+2. **Update version files**:
+   - Move `[Unreleased]` items in `docs/CHANGELOG.md` to new `[X.Y.Z]` section with date
+   - Update comparison links at bottom of CHANGELOG.md
+   - Update `internal/handlers/version.go` constant
+
+3. **Commit version bump**:
+   ```bash
+   git commit -am "chore: bump version to X.Y.Z"
+   ```
+
+4. **Merge to main**:
+   ```bash
+   git checkout main
+   git pull origin main
+   git merge --no-ff release/vX.Y.Z -m "Merge release vX.Y.Z"
+   ```
+
+5. **Create annotated git tag**:
+   ```bash
+   git tag -a vX.Y.Z -m "Release notes here..."
+   ```
+
+6. **Push main and tag**:
+   ```bash
+   git push origin main vX.Y.Z
+   ```
+
+7. **CREATE GITHUB RELEASE** (DO NOT SKIP THIS STEP):
+   ```bash
+   gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
+   [Release notes from CHANGELOG.md here]
+
+   **Full Changelog**: https://github.com/fjmerc/safeshare/compare/vPREV...vX.Y.Z
+   EOF
+   )"
+   ```
+   **NOTE**: A git tag is NOT the same as a GitHub Release. The GitHub Release is what users see on the releases page.
+
+8. **Merge back to develop**:
+   ```bash
+   git checkout develop
+   git merge --no-ff release/vX.Y.Z -m "Merge release vX.Y.Z back to develop"
+   git push origin develop
+   ```
+
+9. **Delete release branch**:
+   ```bash
+   git branch -d release/vX.Y.Z
+   ```
+
+**Remember**: Git tags and GitHub Releases are different. Always create BOTH.
+
 ### Before Making Changes
 
 **IMPORTANT**: Always reference `docs/VERSION_STRATEGY.md` before making changes to understand:
