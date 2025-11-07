@@ -69,7 +69,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    ```
    This automatically creates a PR with title/description from commit message.
 
-7. **User reviews and merges PR** in GitHub UI (or `gh pr merge` after approval)
+7. **User reviews and merges PR** using merge helper:
+   ```bash
+   ./scripts/merge-pr.sh
+   ```
+   This script automates the complete merge workflow:
+   - Shows PR status and CI/CD checks
+   - Approves PR (if not already approved)
+   - Prompts for merge strategy (merge/squash/rebase)
+   - Merges PR and deletes remote branch
+   - Deletes local branch and switches to base branch
+   - Pulls latest changes
+
+   Alternative: User can use GitHub UI or run `gh pr review <number> --approve && gh pr merge <number>`
 
 **Branch naming conventions** (from VERSION_STRATEGY.md):
 - `feature/*` - New features (base: develop)
@@ -80,7 +92,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Helper scripts available:**
 - `./scripts/new-branch.sh` - Interactive branch creation with Git Flow rules
-- `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging
+- `./scripts/merge-pr.sh` - Approve and merge PRs with automatic cleanup (USER SCRIPT)
+- `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging (legacy/manual)
 - `./scripts/create-release.sh` - Create release tags (must be on main branch)
 
 ### Before Making Changes
