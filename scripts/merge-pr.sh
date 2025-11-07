@@ -105,18 +105,33 @@ if [ "$PR_STATE" != "OPEN" ]; then
     exit 1
 fi
 
+# Get PR author and current user for self-approval check
+PR_AUTHOR=$(gh pr view ${PR_NUMBER} --json author -q '.author.login' 2>/dev/null || echo "unknown")
+CURRENT_USER=$(gh api user -q '.login' 2>/dev/null || echo "unknown")
+
 # Approve PR if not already approved
 if [ "$PR_REVIEW" != "APPROVED" ]; then
-    echo -e "${YELLOW}PR is not approved yet${NC}"
-    read -p "Approve PR now? (y/N): " approve_confirm
-
-    if [[ $approve_confirm == "y" || $approve_confirm == "Y" ]]; then
-        echo -e "${YELLOW}Approving PR...${NC}"
-        gh pr review ${PR_NUMBER} --approve
-        echo -e "${GREEN}✓ PR approved${NC}"
+    # Check if user is the PR author (can't self-approve)
+    if [ "$PR_AUTHOR" = "$CURRENT_USER" ]; then
+        echo -e "${YELLOW}Note: You are the PR author${NC}"
+        echo -e "${BLUE}GitHub does not allow self-approval of pull requests${NC}"
+        echo -e "${GREEN}Proceeding to merge without approval...${NC}"
+        echo ""
+        echo -e "${BLUE}Note: If branch protection requires approval, merge will fail${NC}"
+        echo -e "${BLUE}In that case, ask another team member to review and approve${NC}"
     else
-        echo -e "${RED}Cannot merge unapproved PR${NC}"
-        exit 1
+        # User is not the author, can approve
+        echo -e "${YELLOW}PR is not approved yet${NC}"
+        read -p "Approve PR now? (y/N): " approve_confirm
+
+        if [[ $approve_confirm == "y" || $approve_confirm == "Y" ]]; then
+            echo -e "${YELLOW}Approving PR...${NC}"
+            gh pr review ${PR_NUMBER} --approve
+            echo -e "${GREEN}✓ PR approved${NC}"
+        else
+            echo -e "${YELLOW}Skipping approval${NC}"
+            echo -e "${BLUE}Note: Merge may fail if branch protection requires approval${NC}"
+        fi
     fi
 else
     echo -e "${GREEN}✓ PR is approved${NC}"
