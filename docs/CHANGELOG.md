@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.7] - 2025-11-07
+
 ### Changed
 - **Performance**: Increased chunked upload concurrency from 3 to 6 parallel chunks
   - Improves upload throughput by up to 2x for large files
@@ -225,7 +227,9 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
+[2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
 [2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/fjmerc/safeshare/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/fjmerc/safeshare/compare/v1.0.0...v1.1.0
