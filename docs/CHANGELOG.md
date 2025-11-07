@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **CRITICAL**: Moved CLAUDE.md from docs/ to project root
-  - Claude Code only reads CLAUDE.md from project root, not subdirectories
-  - Previous location (docs/CLAUDE.md) meant all workflow automation was invisible
-  - Sequential Thinking requirement, Git Flow workflow, helper scripts now properly loaded
-  - Updated README.md references to point to new location
-  - This fix ensures all Git Flow automation works in new sessions
-
 ### Added
 - **Merge Script**: New `scripts/merge-pr.sh` for automated PR approval and merging
   - Displays PR status, CI/CD checks, and approval status
