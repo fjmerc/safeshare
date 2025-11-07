@@ -4,6 +4,98 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Guidelines
 
+### Sequential Thinking - REQUIRED FOR ALL TASKS
+
+**CRITICAL**: Always use sequential thinking (via `mcp__sequential-thinking__sequentialthinking` tool) when analyzing problems, making decisions, or executing multi-step tasks.
+
+**When to use sequential thinking:**
+- Analyzing code or architecture
+- Planning changes or implementations
+- Debugging issues
+- Making decisions about approach
+- Understanding user requirements
+- Evaluating tradeoffs
+- ANY complex task that requires reasoning
+
+**Why this matters:**
+- Provides transparent reasoning process
+- Catches errors before execution
+- Allows for mid-course corrections
+- Documents decision-making for the user
+
+**Usage:**
+- Use sequential thinking at the START of each task
+- Break down the problem into steps
+- Verify assumptions before acting
+- Adjust approach if initial thinking reveals issues
+
+### Git Flow Workflow - REQUIRED FOR ALL CHANGES
+
+**CRITICAL**: This project follows Git Flow branching strategy (see `docs/VERSION_STRATEGY.md`).
+
+**NEVER commit directly to `develop` or `main` branches.**
+
+**Before making ANY code changes, ALWAYS follow this workflow:**
+
+1. **Create a feature/bugfix/docs branch FIRST** (before editing any files):
+   ```bash
+   # Using helper script (recommended)
+   ./scripts/new-branch.sh
+
+   # Or manually
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/your-feature-name  # or bugfix/*, docs/*
+   ```
+
+2. **Make your changes** on the feature branch
+
+3. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (see below)
+
+4. **Commit changes** with descriptive message:
+   ```bash
+   git add .
+   git commit -m "type: description"
+   ```
+
+5. **Push branch**:
+   ```bash
+   git push -u origin feature/your-feature-name
+   ```
+
+6. **Create Pull Request** using GitHub CLI:
+   ```bash
+   gh pr create --base develop --fill
+   ```
+   This automatically creates a PR with title/description from commit message.
+
+7. **User reviews and merges PR** using merge helper:
+   ```bash
+   ./scripts/merge-pr.sh
+   ```
+   This script automates the complete merge workflow:
+   - Shows PR status and CI/CD checks
+   - Approves PR (if not already approved)
+   - Prompts for merge strategy (merge/squash/rebase)
+   - Merges PR and deletes remote branch
+   - Deletes local branch and switches to base branch
+   - Pulls latest changes
+
+   Alternative: User can use GitHub UI or run `gh pr review <number> --approve && gh pr merge <number>`
+
+**Branch naming conventions** (from VERSION_STRATEGY.md):
+- `feature/*` - New features (base: develop)
+- `bugfix/*` - Bug fixes (base: develop)
+- `docs/*` - Documentation changes (base: develop)
+- `hotfix/*` - Emergency production fixes (base: main)
+- `release/*` - Release preparation (base: develop)
+
+**Helper scripts available:**
+- `./scripts/new-branch.sh` - Interactive branch creation with Git Flow rules
+- `./scripts/merge-pr.sh` - Approve and merge PRs with automatic cleanup (USER SCRIPT)
+- `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging (legacy/manual)
+- `./scripts/create-release.sh` - Create release tags (must be on main branch)
+
 ### Before Making Changes
 
 **IMPORTANT**: Always reference `docs/VERSION_STRATEGY.md` before making changes to understand:
@@ -14,10 +106,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Updating CHANGELOG.md
 
-All notable changes must be documented in `docs/CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format.
+**CRITICAL**: `docs/CHANGELOG.md` is ONLY for user-facing application changes. DO NOT document development workflow, tooling, or CLAUDE.md changes in the changelog.
+
+**What belongs in CHANGELOG.md:**
+- ✅ New features users can use (e.g., chunked uploads, authentication)
+- ✅ Bug fixes that affect users (e.g., UI fixes, API fixes)
+- ✅ Breaking changes to application behavior
+- ✅ Security improvements users should know about
+
+**What does NOT belong in CHANGELOG.md:**
+- ❌ Development scripts (new-branch.sh, merge-pr.sh, etc.)
+- ❌ CLAUDE.md updates or workflow documentation
+- ❌ Git Flow process changes
+- ❌ Developer tooling or CI/CD changes
+- ❌ Anything that doesn't impact the deployed application
+
+All notable **application** changes must be documented in `docs/CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format.
 
 **During development** (on feature/develop branches):
-- Add entries to the `[Unreleased]` section
+- Add entries to the `[Unreleased]` section ONLY for application changes
 - Use categories: `Added`, `Changed`, `Fixed`, `Security`
 - Be specific and user-focused in descriptions
 

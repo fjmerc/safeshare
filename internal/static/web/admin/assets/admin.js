@@ -102,10 +102,10 @@ function updateFilesTable(files) {
                 <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}">
             </td>
             <td><code>${escapeHtml(file.claim_code)}</code></td>
-            <td title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</td>
+            <td class="filename-cell" title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</td>
             <td>${formatBytes(file.file_size)}</td>
             <td>${file.username ? escapeHtml(file.username) : '<em style="color: #94a3b8;">Anonymous</em>'}</td>
-            <td>${escapeHtml(file.uploader_ip || 'Unknown')}</td>
+            <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
             <td>${formatDate(file.created_at)}</td>
             <td>${formatDate(file.expires_at)}</td>
             <td>${file.download_count} / ${file.max_downloads || '∞'}</td>

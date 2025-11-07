@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5] - 2025-11-07
+
+### Fixed
+- **UI**: Improved filename truncation in user dashboard
+  - Reduced filename column `max-width` from 300px to 200px
+  - Prevents horizontal scroll bar with extremely long filenames
+  - More aggressive truncation ensures table stays within viewport
+
 ## [2.0.4] - 2025-11-06
 
 ### Fixed
