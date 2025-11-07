@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Release Script**: Added Git Flow safety checks to `scripts/create-release.sh`
+  - Verifies on `main` branch before tagging (prevents tagging wrong branches)
+  - Checks for uncommitted changes before creating tag
+  - Validates local `main` is synced with `origin/main`
+  - Adds CHANGELOG.md update reminder with checklist
+  - Shows complete Git Flow release process guidance if on wrong branch
+  - Updates next steps to include merge back to develop
+  - Aligns with VERSION_STRATEGY.md requirements
+
+### Changed
+- **Documentation**: Enhanced CLAUDE.md with Git Flow workflow and automation
+  - Added complete Git Flow workflow with step-by-step instructions
+  - Integrated GitHub CLI (`gh pr create`) for automatic PR creation
+  - Added Sequential Thinking requirement for all tasks
+  - Branch naming conventions reference
+  - Helper scripts documentation
+  - Ensures Git Flow and best practices are followed automatically
+
 ## [2.0.4] - 2025-11-06
 
 ### Fixed
