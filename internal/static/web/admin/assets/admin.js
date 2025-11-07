@@ -5,6 +5,10 @@ let currentPage = 1;
 let searchTerm = '';
 let csrfToken = '';
 
+// Unsaved changes tracking for Settings tab
+let hasUnsavedChanges = false;
+let originalSettingsValues = {};
+
 // Initialize CSRF token
 function getCSRFToken() {
     const cookies = document.cookie.split(';');
@@ -298,6 +302,8 @@ async function updateStorageSettings(formData) {
         if (response.ok && data.success) {
             showSuccess(data.message);
             loadDashboardData(currentPage, searchTerm);
+            // Clear unsaved changes flag and update original values
+            captureOriginalSettingsValues();
         } else {
             showError(data.message || 'Failed to update storage settings');
         }
@@ -324,6 +330,8 @@ async function updateSecuritySettings(formData) {
         if (response.ok && data.success) {
             showSuccess(data.message);
             loadDashboardData(currentPage, searchTerm);
+            // Clear unsaved changes flag and update original values
+            captureOriginalSettingsValues();
         } else {
             showError(data.message || 'Failed to update security settings');
         }
@@ -351,6 +359,8 @@ async function changePassword(formData) {
             showSuccess(data.message);
             // Clear password form
             document.getElementById('passwordForm').reset();
+            // Clear unsaved changes flag and update original values
+            captureOriginalSettingsValues();
         } else {
             showError(data.message || 'Failed to change password');
         }
@@ -382,9 +392,55 @@ async function loadConfigValues() {
         document.getElementById('rateLimitUpload').value = data.rate_limit_upload || 10;
         document.getElementById('rateLimitDownload').value = data.rate_limit_download || 100;
         document.getElementById('blockedExtensions').value = (data.blocked_extensions || []).join(',');
+
+        // Capture original values for change detection
+        captureOriginalSettingsValues();
     } catch (error) {
         console.error('Error loading config values:', error);
     }
+}
+
+// Capture current settings values as original (for unsaved changes detection)
+function captureOriginalSettingsValues() {
+    originalSettingsValues = {
+        quotaGB: document.getElementById('quotaGB')?.value || '',
+        maxFileSizeMB: document.getElementById('maxFileSizeMB')?.value || '',
+        defaultExpirationHours: document.getElementById('defaultExpirationHours')?.value || '',
+        maxExpirationHours: document.getElementById('maxExpirationHours')?.value || '',
+        rateLimitUpload: document.getElementById('rateLimitUpload')?.value || '',
+        rateLimitDownload: document.getElementById('rateLimitDownload')?.value || '',
+        blockedExtensions: document.getElementById('blockedExtensions')?.value || '',
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+    };
+    hasUnsavedChanges = false;
+}
+
+// Check if settings have changed from original values
+function checkSettingsChanged() {
+    const currentValues = {
+        quotaGB: document.getElementById('quotaGB')?.value || '',
+        maxFileSizeMB: document.getElementById('maxFileSizeMB')?.value || '',
+        defaultExpirationHours: document.getElementById('defaultExpirationHours')?.value || '',
+        maxExpirationHours: document.getElementById('maxExpirationHours')?.value || '',
+        rateLimitUpload: document.getElementById('rateLimitUpload')?.value || '',
+        rateLimitDownload: document.getElementById('rateLimitDownload')?.value || '',
+        blockedExtensions: document.getElementById('blockedExtensions')?.value || '',
+        currentPassword: document.getElementById('currentPassword')?.value || '',
+        newPassword: document.getElementById('newPassword')?.value || '',
+        confirmPassword: document.getElementById('confirmPassword')?.value || ''
+    };
+
+    // Check if any value has changed
+    for (const key in currentValues) {
+        if (currentValues[key] !== originalSettingsValues[key]) {
+            hasUnsavedChanges = true;
+            return;
+        }
+    }
+
+    hasUnsavedChanges = false;
 }
 
 // Logout
@@ -644,10 +700,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // Get CSRF token
     csrfToken = getCSRFToken();
 
-    // Tab switching
+    // Tab switching with unsaved changes warning
     document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async (e) => {
             const tabName = btn.dataset.tab;
+
+            // Check for unsaved changes when leaving Settings tab
+            const currentTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+            if (currentTab === 'settings' && hasUnsavedChanges) {
+                const leave = await confirm('You have unsaved changes that will be lost. Do you want to leave this page?');
+                if (!leave) {
+                    return; // Stay on Settings tab
+                }
+                // User chose to leave, clear the unsaved changes flag
+                hasUnsavedChanges = false;
+            }
 
             // Update active button
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -769,6 +836,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadConfigValues();
             }
         });
+    });
+
+    // Add input event listeners for Settings tab fields to detect changes
+    const settingsFields = [
+        'quotaGB',
+        'maxFileSizeMB',
+        'defaultExpirationHours',
+        'maxExpirationHours',
+        'rateLimitUpload',
+        'rateLimitDownload',
+        'blockedExtensions',
+        'currentPassword',
+        'newPassword',
+        'confirmPassword'
+    ];
+
+    settingsFields.forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.addEventListener('input', checkSettingsChanged);
+        }
+    });
+
+    // Browser navigation warning (beforeunload)
+    window.addEventListener('beforeunload', (e) => {
+        if (hasUnsavedChanges) {
+            e.preventDefault();
+            e.returnValue = ''; // Chrome requires returnValue to be set
+        }
     });
 
     // Load initial data
