@@ -671,35 +671,42 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Encrypt if encryption is enabled
 		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			slog.Debug("encrypting assembled file", "upload_id", uploadID)
+			slog.Debug("encrypting assembled file using streaming encryption", "upload_id", uploadID)
 
-			// Read file
-			fileData, err := os.ReadFile(finalPath)
-			if err != nil {
-				slog.Error("failed to read file for encryption", "error", err)
-				os.Remove(finalPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
+			// Use streaming encryption to avoid loading entire file into memory
+			// Encrypt to temporary file, then replace original
+			tempEncryptedPath := finalPath + ".encrypted.tmp"
 
-			// Encrypt
-			encrypted, err := utils.EncryptFile(fileData, cfg.EncryptionKey)
-			if err != nil {
+			if err := utils.EncryptFileStreaming(finalPath, tempEncryptedPath, cfg.EncryptionKey); err != nil {
 				slog.Error("failed to encrypt file", "error", err)
 				os.Remove(finalPath)
+				os.Remove(tempEncryptedPath)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			// Write encrypted data back
-			if err := os.WriteFile(finalPath, encrypted, 0644); err != nil {
-				slog.Error("failed to write encrypted file", "error", err)
-				os.Remove(finalPath)
+			// Get file sizes for logging
+			originalInfo, _ := os.Stat(finalPath)
+			encryptedInfo, _ := os.Stat(tempEncryptedPath)
+
+			// Replace original with encrypted version
+			if err := os.Remove(finalPath); err != nil {
+				slog.Error("failed to remove original file", "error", err)
+				os.Remove(tempEncryptedPath)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
+				slog.Error("failed to rename encrypted file", "error", err)
+				os.Remove(tempEncryptedPath)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			slog.Debug("file encrypted", "upload_id", uploadID, "original_size", len(fileData), "encrypted_size", len(encrypted))
+			slog.Debug("file encrypted with streaming encryption",
+				"upload_id", uploadID,
+				"original_size", originalInfo.Size(),
+				"encrypted_size", encryptedInfo.Size())
 		}
 
 		// Detect MIME type from assembled file (only read first 512 bytes for magic number detection)

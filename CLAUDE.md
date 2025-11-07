@@ -200,6 +200,27 @@ See `docs/VERSION_STRATEGY.md` for complete changelog guidelines.
 
 ## Build and Development Commands
 
+### Important: Docker Rebuild Policy
+
+**CRITICAL**: When making changes to Go code, handlers, or any server-side logic, **DO NOT** automatically rebuild the Docker image. Instead:
+
+1. **Inform the user** that a rebuild is required
+2. **Show the rebuild command** they should run
+3. **Wait for user confirmation** before proceeding
+
+**Rebuild command to show user:**
+```bash
+docker build -t safeshare:latest . && docker stop safeshare && docker rm safeshare && docker run -d --name safeshare -p 8080:8080 -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD=admin123 -v safeshare-data:/app/data -v safeshare-uploads:/app/uploads safeshare:latest
+```
+
+**Why this matters:**
+- Docker builds can take 30-60 seconds
+- User may want to review changes before rebuilding
+- User may have different environment variables or configuration
+- Gives user control over when to apply changes
+
+**Exception:** Only rebuild automatically if the user explicitly asks you to rebuild the container.
+
 ### Local Development
 ```bash
 # Build binary
