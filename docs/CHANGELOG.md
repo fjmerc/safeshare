@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.5] - 2025-11-07
 
 ### Fixed
-- **UI**: Improved filename truncation in user dashboard
-  - Reduced filename column `max-width` from 300px to 200px
-  - Prevents horizontal scroll bar with extremely long filenames
-  - More aggressive truncation ensures table stays within viewport
+- **UI**: Comprehensive text overflow improvements across all pages
+  - **User dashboard**: Reduced filename column `max-width` from 300px to 200px to prevent horizontal scroll with extremely long filenames
+  - **Admin dashboard**: Reduced filename column to 200px with ellipsis and hover tooltip for full filename visibility
+  - **Admin dashboard**: Added IPv6 address truncation in Uploader IP column (150px max-width with ellipsis)
+  - **Admin dashboard**: Fixed action button text truncation with 120px fixed width
+  - **Admin dashboard**: Improved table scrolling with 1700px min-width for 11-column layout
+  - **Upload success display**: Added filename truncation with ellipsis and hover tooltip
+  - **Drop zone**: Improved word-break handling for filenames with sequential characters
+  - All text overflow changes ensure content remains accessible while preventing layout issues
 
 ## [2.0.4] - 2025-11-06
 
