@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Authentication**: Fixed admin login session compatibility issue
+  - Admins logging in via `/admin/login` now receive `user_session` cookies instead of `admin_session` cookies
+  - This allows admins to access both admin routes (`/admin/dashboard`) and user routes (`/dashboard`) seamlessly
+  - Legacy `admin_credentials` authentication still creates `admin_session` cookies for backward compatibility
+  - Users with admin role now get consistent session behavior regardless of which login page they use
 - **UI**: Added "Remove File" button to upload interface
   - Users can now clear selected files without refreshing the page
   - Button appears after file selection (via drag-drop or file picker)

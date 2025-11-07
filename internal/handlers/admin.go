@@ -60,12 +60,16 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		clientIP := getClientIP(r)
 		userAgent := getUserAgent(r)
 
+		// Track authentication method and user (if applicable)
+		var authenticatedUser *models.User
+		isAdminCredentials := false
+
 		// Try validating against admin_credentials table first
 		valid, err := database.ValidateAdminCredentials(db, username, password)
-
-		// If admin_credentials validation fails, try users table with admin role
-		if err != nil || !valid {
-			// Try to get user from users table
+		if err == nil && valid {
+			isAdminCredentials = true
+		} else {
+			// Try to get user from users table with admin role
 			user, userErr := database.GetUserByUsername(db, username)
 
 			// Check if user exists, password matches, has admin role, and is active
@@ -74,27 +78,30 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			   user.Role == "admin" &&
 			   user.IsActive {
 				// User authenticated successfully with admin role
+				authenticatedUser = user
 				slog.Info("admin login successful via users table",
 					"username", username,
 					"user_id", user.ID,
 					"ip", clientIP,
 				)
-			} else {
-				// Both authentication methods failed
-				slog.Warn("admin login failed - invalid credentials",
-					"username", username,
-					"ip", clientIP,
-				)
-
-				// Return error with slight delay to prevent timing attacks
-				time.Sleep(500 * time.Millisecond)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{
-					"error": "Invalid username or password",
-				})
-				return
 			}
+		}
+
+		// If both authentication methods failed
+		if !isAdminCredentials && authenticatedUser == nil {
+			slog.Warn("admin login failed - invalid credentials",
+				"username", username,
+				"ip", clientIP,
+			)
+
+			// Return error with slight delay to prevent timing attacks
+			time.Sleep(500 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid username or password",
+			})
+			return
 		}
 
 		// Generate session token
@@ -108,46 +115,89 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Calculate expiry time
 		expiresAt := time.Now().Add(time.Duration(cfg.SessionExpiryHours) * time.Hour)
 
-		// Store session in database
-		err = database.CreateSession(db, sessionToken, expiresAt, clientIP, userAgent)
-		if err != nil {
-			slog.Error("failed to create session", "error", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		// Create appropriate session type based on authentication method
+		if isAdminCredentials {
+			// Legacy admin_credentials path: create admin_session
+			err = database.CreateSession(db, sessionToken, expiresAt, clientIP, userAgent)
+			if err != nil {
+				slog.Error("failed to create admin session", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
 
-		// Set session cookie
-		http.SetCookie(w, &http.Cookie{
-			Name:     "admin_session",
-			Value:    sessionToken,
-			Path:     "/admin",
-			HttpOnly: true,
-			Secure:   cfg.HTTPSEnabled,
-			SameSite: http.SameSiteStrictMode,
-			Expires:  expiresAt,
-		})
+			// Set admin session cookie
+			http.SetCookie(w, &http.Cookie{
+				Name:     "admin_session",
+				Value:    sessionToken,
+				Path:     "/admin",
+				HttpOnly: true,
+				Secure:   cfg.HTTPSEnabled,
+				SameSite: http.SameSiteStrictMode,
+				Expires:  expiresAt,
+			})
 
-		// Generate and set CSRF token
-		csrfToken, err := middleware.SetCSRFCookie(w, cfg)
-		if err != nil {
-			slog.Error("failed to set CSRF cookie", "error", err)
-		}
+			// Generate and set CSRF token
+			csrfToken, err := middleware.SetCSRFCookie(w, cfg)
+			if err != nil {
+				slog.Error("failed to set CSRF cookie", "error", err)
+			}
 
-		// Log success (only if not already logged via users table path)
-		if valid {
 			slog.Info("admin login successful via admin_credentials",
 				"username", username,
 				"ip", clientIP,
 				"user_agent", userAgent,
 			)
-		}
 
-		// Return success response with CSRF token
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":    true,
-			"csrf_token": csrfToken,
-		})
+			// Return success response with CSRF token
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":    true,
+				"csrf_token": csrfToken,
+			})
+		} else {
+			// Users table path: create user_session for better compatibility
+			err = database.CreateUserSession(db, authenticatedUser.ID, sessionToken, expiresAt, clientIP, userAgent)
+			if err != nil {
+				slog.Error("failed to create user session", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Update last login timestamp
+			if err := database.UpdateUserLastLogin(db, authenticatedUser.ID); err != nil {
+				slog.Error("failed to update last login", "error", err)
+				// Don't fail the request, just log
+			}
+
+			// Set user session cookie (site-wide path for access to /dashboard)
+			http.SetCookie(w, &http.Cookie{
+				Name:     "user_session",
+				Value:    sessionToken,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   cfg.HTTPSEnabled,
+				SameSite: http.SameSiteStrictMode,
+				Expires:  expiresAt,
+			})
+
+			// Generate and set CSRF token
+			csrfToken, err := middleware.SetCSRFCookie(w, cfg)
+			if err != nil {
+				slog.Error("failed to set CSRF cookie", "error", err)
+			}
+
+			// Return user info response (similar to UserLoginHandler)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":                true,
+				"csrf_token":             csrfToken,
+				"id":                     authenticatedUser.ID,
+				"username":               authenticatedUser.Username,
+				"email":                  authenticatedUser.Email,
+				"role":                   authenticatedUser.Role,
+				"require_password_change": authenticatedUser.RequirePasswordChange,
+			})
+		}
 	}
 }
 
