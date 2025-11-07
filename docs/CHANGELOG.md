@@ -6,39 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-
-### Added
-- **Merge Script**: New `scripts/merge-pr.sh` for automated PR approval and merging
-  - Displays PR status, CI/CD checks, and approval status
-  - Interactive approval workflow
-  - Detailed merge strategy explanations (merge/squash/rebase)
-  - Choice of merge strategies with recommendations
-  - Automatic branch cleanup (local and remote)
-  - Switches to base branch and pulls latest changes
-  - Complete Git Flow automation from branch creation to cleanup
-  - Eliminates need for GitHub web UI
-
-### Fixed
-- **Release Script**: Added Git Flow safety checks to `scripts/create-release.sh`
-  - Verifies on `main` branch before tagging (prevents tagging wrong branches)
-  - Checks for uncommitted changes before creating tag
-  - Validates local `main` is synced with `origin/main`
-  - Adds CHANGELOG.md update reminder with checklist
-  - Shows complete Git Flow release process guidance if on wrong branch
-  - Updates next steps to include merge back to develop
-  - Aligns with VERSION_STRATEGY.md requirements
-
-### Changed
-- **Documentation**: Enhanced CLAUDE.md with complete Git Flow automation
-  - Added complete Git Flow workflow with step-by-step instructions
-  - Integrated GitHub CLI (`gh pr create`) for automatic PR creation
-  - Documented `merge-pr.sh` usage for PR approval and merging
-  - Added Sequential Thinking requirement for all tasks
-  - Branch naming conventions reference
-  - Helper scripts documentation (including merge-pr.sh)
-  - Ensures Git Flow and best practices are followed automatically
-  - Eliminates need for GitHub web UI in development workflow
-
 ## [2.0.4] - 2025-11-06
 
 ### Fixed

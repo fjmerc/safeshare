@@ -106,10 +106,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Updating CHANGELOG.md
 
-All notable changes must be documented in `docs/CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format.
+**CRITICAL**: `docs/CHANGELOG.md` is ONLY for user-facing application changes. DO NOT document development workflow, tooling, or CLAUDE.md changes in the changelog.
+
+**What belongs in CHANGELOG.md:**
+- ✅ New features users can use (e.g., chunked uploads, authentication)
+- ✅ Bug fixes that affect users (e.g., UI fixes, API fixes)
+- ✅ Breaking changes to application behavior
+- ✅ Security improvements users should know about
+
+**What does NOT belong in CHANGELOG.md:**
+- ❌ Development scripts (new-branch.sh, merge-pr.sh, etc.)
+- ❌ CLAUDE.md updates or workflow documentation
+- ❌ Git Flow process changes
+- ❌ Developer tooling or CI/CD changes
+- ❌ Anything that doesn't impact the deployed application
+
+All notable **application** changes must be documented in `docs/CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format.
 
 **During development** (on feature/develop branches):
-- Add entries to the `[Unreleased]` section
+- Add entries to the `[Unreleased]` section ONLY for application changes
 - Use categories: `Added`, `Changed`, `Fixed`, `Security`
 - Be specific and user-focused in descriptions
 
