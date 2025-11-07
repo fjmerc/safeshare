@@ -781,13 +781,19 @@ button:disabled {
     background: var(--bg-white);
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     box-shadow: var(--shadow-sm);
 }
 
 .data-table {
     width: 100%;
     border-collapse: collapse;
+}
+
+/* Files tab table - force min-width for many columns */
+#filesTab .data-table {
+    min-width: 1700px; /* Force horizontal scroll to prevent column squeezing */
 }
 
 .data-table th {
@@ -811,8 +817,17 @@ button:disabled {
 }
 
 /* Filename column - truncate with ellipsis */
-.data-table td:nth-child(3) {
-    max-width: 250px;
+.data-table td:nth-child(3),
+.data-table td.filename-cell {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Uploader IP column - truncate long IPv6 addresses */
+.data-table td.ip-cell {
+    max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -834,6 +849,13 @@ button:disabled {
 .data-table td:nth-child(10),
 .data-table th:nth-child(10) {
     text-align: center;
+}
+
+/* Actions column - ensure enough width for buttons */
+.data-table td:nth-child(11),
+.data-table th:nth-child(11) {
+    width: 120px;
+    min-width: 120px;
 }
 
 /* Users table - center all columns except Username and Email */

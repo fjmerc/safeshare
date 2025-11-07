@@ -361,6 +361,8 @@ header h1 {
 .drop-zone h2 {
     font-size: 1.5rem;
     margin-bottom: 0.5rem;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .drop-zone p {
@@ -781,6 +783,7 @@ header h1 {
 
 .detail {
     text-align: center;
+    min-width: 0; /* Allow flex items to shrink below content size */
 }
 
 .detail-label {
@@ -793,8 +796,13 @@ header h1 {
 }
 
 .detail span:last-child {
+    display: block;
     font-weight: 600;
     color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
 }
 
 /* QR Code */
