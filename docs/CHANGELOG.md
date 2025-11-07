@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2025-11-06
+
+### Fixed
+- **UI**: Long filenames in user dashboard now truncate with ellipsis instead of causing horizontal scroll
+  - Added `max-width: 300px` to filename cells
+  - Applied `text-overflow: ellipsis` for better readability
+  - Prevents table overflow on mobile and desktop devices
+
 ## [2.0.3] - 2025-11-06
 
 ### Fixed
