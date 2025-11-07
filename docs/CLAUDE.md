@@ -4,6 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Guidelines
 
+### Sequential Thinking - REQUIRED FOR ALL TASKS
+
+**CRITICAL**: Always use sequential thinking (via `mcp__sequential-thinking__sequentialthinking` tool) when analyzing problems, making decisions, or executing multi-step tasks.
+
+**When to use sequential thinking:**
+- Analyzing code or architecture
+- Planning changes or implementations
+- Debugging issues
+- Making decisions about approach
+- Understanding user requirements
+- Evaluating tradeoffs
+- ANY complex task that requires reasoning
+
+**Why this matters:**
+- Provides transparent reasoning process
+- Catches errors before execution
+- Allows for mid-course corrections
+- Documents decision-making for the user
+
+**Usage:**
+- Use sequential thinking at the START of each task
+- Break down the problem into steps
+- Verify assumptions before acting
+- Adjust approach if initial thinking reveals issues
+
 ### Git Flow Workflow - REQUIRED FOR ALL CHANGES
 
 **CRITICAL**: This project follows Git Flow branching strategy (see `docs/VERSION_STRATEGY.md`).
@@ -38,7 +63,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    git push -u origin feature/your-feature-name
    ```
 
-6. **Inform the user** to create a Pull Request to merge into `develop`
+6. **Create Pull Request** using GitHub CLI:
+   ```bash
+   gh pr create --base develop --fill
+   ```
+   This automatically creates a PR with title/description from commit message.
+
+7. **User reviews and merges PR** in GitHub UI (or `gh pr merge` after approval)
 
 **Branch naming conventions** (from VERSION_STRATEGY.md):
 - `feature/*` - New features (base: develop)

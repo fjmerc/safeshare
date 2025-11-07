@@ -18,11 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Aligns with VERSION_STRATEGY.md requirements
 
 ### Changed
-- **Documentation**: Added Git Flow workflow section to CLAUDE.md
-  - Explicit workflow steps for all code changes
+- **Documentation**: Enhanced CLAUDE.md with Git Flow workflow and automation
+  - Added complete Git Flow workflow with step-by-step instructions
+  - Integrated GitHub CLI (`gh pr create`) for automatic PR creation
+  - Added Sequential Thinking requirement for all tasks
   - Branch naming conventions reference
   - Helper scripts documentation
-  - Ensures Git Flow is followed automatically
+  - Ensures Git Flow and best practices are followed automatically
 
 ## [2.0.4] - 2025-11-06
 
