@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - HTTP/2 connections benefit from full parallelization
   - No performance impact on server or client stability
 
+### Fixed
+- **Critical**: Fixed memory exhaustion bug in chunked upload completion for large files
+  - MIME type detection now reads only first 512 bytes instead of entire file into memory
+  - Prevents out-of-memory errors and server crashes when uploading large ISO files (>100MB)
+  - Fixes "Unexpected token '<'" error caused by HTML error pages being returned instead of JSON
+  - Magic number detection works correctly with partial file reads
+
 ## [2.0.6] - 2025-11-07
 
 ### Fixed
