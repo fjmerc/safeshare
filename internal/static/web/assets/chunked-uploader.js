@@ -32,7 +32,7 @@ class ChunkedUploader {
             expiresInHours: options.expiresInHours || 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
-            concurrency: options.concurrency || 3, // Number of parallel chunk uploads
+            concurrency: options.concurrency || 6, // Number of parallel chunk uploads (optimized for throughput)
             retryAttempts: options.retryAttempts || 3,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
         };
