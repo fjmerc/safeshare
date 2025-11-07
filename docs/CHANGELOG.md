@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.6] - 2025-11-07
+
+### Fixed
+- **Version Display**: Corrected version constant in `/api/config` endpoint
+  - Version now correctly displays as "v2.0.6" in footer
+  - Fixed bug where v2.0.5 release showed "v2.0.4" due to missed version constant update
+  - Updated `internal/handlers/version.go` to reflect actual release version
+
 ## [2.0.5] - 2025-11-07
 
 ### Fixed
