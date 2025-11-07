@@ -447,11 +447,11 @@ function showToast(message, type = 'success') {
 
     container.appendChild(toast);
 
-    // Auto-remove after 5 seconds
+    // Auto-remove after 2 seconds
     setTimeout(() => {
         toast.style.animation = 'slideInRight 0.3s ease reverse';
         setTimeout(() => toast.remove(), 300);
-    }, 5000);
+    }, 2000);
 }
 
 function showError(message) {
