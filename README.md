@@ -788,7 +788,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 | Document | Description | Audience |
 |----------|-------------|----------|
-| **[CLAUDE.md](docs/CLAUDE.md)** | Architecture overview, build commands, development guide | Developers, DevOps |
+| **[CLAUDE.md](CLAUDE.md)** | Architecture overview, build commands, development guide | Developers, DevOps |
 | **[CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md)** | Chunked/resumable upload API, architecture, usage examples | Developers, API users |
 | **[SECURITY.md](docs/SECURITY.md)** | Enterprise security features, admin dashboard security, best practices | Security teams, Admins |
 | **[FRONTEND.md](docs/FRONTEND.md)** | Web UI features, customization guide, admin dashboard UI | Frontend developers |
@@ -798,7 +798,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 - 🔐 [Admin Dashboard Security](docs/SECURITY.md#admin-dashboard-security)
 - 🛡️ [Encryption at Rest](docs/SECURITY.md#encryption-at-rest)
 - 🎨 [Frontend Customization](docs/FRONTEND.md#customization)
-- 🔧 [Development Guide](docs/CLAUDE.md#build-and-development-commands)
+- 🔧 [Development Guide](CLAUDE.md#build-and-development-commands)
 
 ## Support
 
