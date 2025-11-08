@@ -23,6 +23,7 @@
     const progressText = document.getElementById('progressText');
     const newUploadButton = document.getElementById('newUploadButton');
     const themeToggle = document.getElementById('themeToggle');
+    const uploadWarningBanner = document.getElementById('uploadWarningBanner');
 
     // DOM Elements - Pickup Tab
     const claimCodeInput = document.getElementById('claimCodeInput');
@@ -262,6 +263,16 @@
 
     // Setup event listeners
     function setupEventListeners() {
+        // Warn user before navigating away during upload
+        window.addEventListener('beforeunload', (e) => {
+            if (uploadState === 'uploading') {
+                // Standard way to trigger browser's confirmation dialog
+                e.preventDefault();
+                e.returnValue = ''; // Required for Chrome
+                return ''; // Required for some browsers
+            }
+        });
+
         // Tab switching (exclude login button)
         document.querySelectorAll('.tab-button:not(.login-to-upload)').forEach(btn => {
             btn.addEventListener('click', handleTabSwitch);
@@ -476,6 +487,20 @@
         }
     }
 
+    // Show upload warning banner
+    function showUploadWarning() {
+        if (uploadWarningBanner) {
+            uploadWarningBanner.classList.remove('hidden');
+        }
+    }
+
+    // Hide upload warning banner
+    function hideUploadWarning() {
+        if (uploadWarningBanner) {
+            uploadWarningBanner.classList.add('hidden');
+        }
+    }
+
     // Handle simple upload (existing logic for files below threshold)
     async function handleSimpleUpload() {
         if (!selectedFile) return;
@@ -501,6 +526,7 @@
         // Update upload state
         uploadState = 'uploading';
         updateRemoveButtonState();
+        showUploadWarning();
 
         // Show progress
         uploadProgress.classList.remove('hidden');
@@ -569,6 +595,7 @@
         // Update upload state
         uploadState = 'uploading';
         updateRemoveButtonState();
+        showUploadWarning();
 
         // Show progress
         uploadProgress.classList.remove('hidden');
@@ -589,12 +616,12 @@
                 const percent = data.percentage;
                 progressFill.style.width = percent + '%';
 
-                // Show detailed progress with chunk info
-                const uploadedMB = (data.uploadedBytes / (1024 * 1024)).toFixed(1);
-                const totalMB = (data.totalBytes / (1024 * 1024)).toFixed(1);
-                const speedMBps = (data.speed / (1024 * 1024)).toFixed(1);
+                // Show user-friendly progress (no technical chunk details)
+                const uploaded = formatFileSize(data.uploadedBytes);
+                const total = formatFileSize(data.totalBytes);
+                const timeRemaining = formatTimeRemaining(data.estimatedTimeRemaining);
 
-                progressText.textContent = `Uploading chunk ${data.uploadedChunks} of ${data.totalChunks} (${Math.round(percent)}%) - ${uploadedMB}MB / ${totalMB}MB @ ${speedMBps}MB/s`;
+                progressText.textContent = `Uploading... ${Math.round(percent)}% • ${uploaded} / ${total} • ${timeRemaining} remaining`;
             });
 
             // Register error event
@@ -761,6 +788,7 @@
         currentUploadXhr = null;
         currentChunkedUploader = null;
         updateRemoveButtonState();
+        hideUploadWarning();
     }
 
     // Toggle theme
@@ -816,6 +844,24 @@
         const i = Math.floor(Math.log(bytes) / Math.log(k));
 
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Format time remaining (seconds to human-readable)
+    function formatTimeRemaining(seconds) {
+        if (!seconds || seconds < 0 || !isFinite(seconds)) {
+            return 'calculating...';
+        }
+
+        if (seconds < 60) {
+            return `${Math.round(seconds)} sec`;
+        } else if (seconds < 3600) {
+            const minutes = Math.floor(seconds / 60);
+            return `${minutes} min`;
+        } else {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+        }
     }
 
     // Format date

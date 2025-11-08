@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **UI**: Upload in progress warning banner
+  - Fixed-position banner at bottom of viewport appears during active uploads
+  - Clear message: "Upload in Progress - Do not navigate away or close this page"
+  - Prevents accidental data loss from navigating away during uploads
+  - Automatically shows/hides based on upload state
+  - Works for both simple and chunked uploads
+  - Includes `beforeunload` handler as fallback for tab closes
+  - Responsive design with dark mode support
+
+### Changed
+- **UI**: Improved chunked upload progress display
+  - Removed technical chunk information ("chunk X of Y") from progress text
+  - Now shows user-friendly format: "Uploading... X% • SIZE / TOTAL • TIME remaining"
+  - Added estimated time remaining (ETA) instead of just upload speed
+  - Smart file size formatting (automatically uses MB/GB as appropriate)
+  - Human-readable time format (e.g., "6 min", "2h 15m", "45 sec")
+  - Cleaner visual presentation with bullet separators
+
 ### Fixed
 - **Authentication**: Fixed admin login session compatibility issue
   - Admins logging in via `/admin/login` now receive `user_session` cookies instead of `admin_session` cookies
