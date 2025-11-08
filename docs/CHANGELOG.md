@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cleaner visual presentation with bullet separators
 
 ### Fixed
+- **Authentication**: Fixed admin logout button not working for user accounts with admin role
+  - AdminLogoutHandler now properly handles both `admin_session` and `user_session` cookies
+  - Clears sessions from correct database table based on authentication method
+  - Clears all cookies (admin_session, user_session, CSRF) for complete logout
+  - Fixes issue where users with admin role could not logout from admin dashboard
 - **Authentication**: Fixed admin login session compatibility issue
   - Admins logging in via `/admin/login` now receive `user_session` cookies instead of `admin_session` cookies
   - This allows admins to access both admin routes (`/admin/dashboard`) and user routes (`/dashboard`) seamlessly
