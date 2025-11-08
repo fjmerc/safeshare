@@ -131,7 +131,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space before accepting upload
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, req.TotalSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, req.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -148,7 +150,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check quota if configured (0 = unlimited)
-		if cfg.GetQuotaLimitGB() > 0 {
+		if quotaConfigured {
 			// Get current usage from both completed files and partial uploads
 			completedUsage, err := database.GetTotalUsage(db)
 			if err != nil {
@@ -434,7 +436,9 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space before saving chunk
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -592,7 +596,9 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space for final file
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, partialUpload.TotalSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, partialUpload.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
