@@ -23,6 +23,272 @@ function getCSRFToken() {
     return sessionStorage.getItem('csrf_token') || '';
 }
 
+// Storage quota unit conversion helpers
+function populateStorageQuotaWithUnit(quotaGB) {
+    const quotaInput = document.getElementById('storageQuota');
+    const unitSelect = document.getElementById('storageQuotaUnit');
+
+    // Smart unit selection: show in TB if divisible by 1024
+    if (quotaGB >= 1024 && quotaGB % 1024 === 0) {
+        quotaInput.value = quotaGB / 1024;
+        unitSelect.value = 'TB';
+    } else {
+        quotaInput.value = quotaGB;
+        unitSelect.value = 'GB';
+    }
+
+    updateStorageQuotaHelperText();
+}
+
+function convertQuotaToGB(value, unit) {
+    const multipliers = { 'GB': 1, 'TB': 1024 };
+    return Math.round(value * multipliers[unit]);
+}
+
+function convertQuotaFromGB(quotaGB, targetUnit) {
+    const divisors = { 'GB': 1, 'TB': 1024 };
+    return quotaGB / divisors[targetUnit];
+}
+
+function updateStorageQuotaHelperText() {
+    const helperText = document.getElementById('storageQuotaHelp');
+    if (helperText) {
+        helperText.textContent = 'Set to 0 for unlimited storage';
+    }
+}
+
+function handleStorageQuotaUnitChange() {
+    const quotaInput = document.getElementById('storageQuota');
+    const unitSelect = document.getElementById('storageQuotaUnit');
+    const oldUnit = unitSelect.dataset.previousUnit || 'GB';
+    const newUnit = unitSelect.value;
+
+    if (oldUnit === newUnit) return;
+
+    const currentValue = parseFloat(quotaInput.value);
+    if (isNaN(currentValue) || currentValue < 0) {
+        unitSelect.dataset.previousUnit = newUnit;
+        updateStorageQuotaHelperText();
+        return;
+    }
+
+    // Convert current value to new unit
+    const quotaGB = convertQuotaToGB(currentValue, oldUnit);
+    const newValue = convertQuotaFromGB(quotaGB, newUnit);
+    quotaInput.value = Math.round(newValue * 1000) / 1000; // Round to 3 decimals
+
+    unitSelect.dataset.previousUnit = newUnit;
+    updateStorageQuotaHelperText();
+}
+
+// File size unit conversion helpers
+function populateFileSizeWithUnit(sizeMB) {
+    const sizeInput = document.getElementById('maxFileSize');
+    const unitSelect = document.getElementById('maxFileSizeUnit');
+
+    // Smart unit selection: show in GB if divisible by 1024, TB if very large
+    if (sizeMB >= 1024 && sizeMB % 1024 === 0) {
+        const sizeGB = sizeMB / 1024;
+        if (sizeGB >= 1024 && sizeGB % 1024 === 0) {
+            sizeInput.value = sizeGB / 1024;
+            unitSelect.value = 'TB';
+        } else {
+            sizeInput.value = sizeGB;
+            unitSelect.value = 'GB';
+        }
+    } else {
+        sizeInput.value = sizeMB;
+        unitSelect.value = 'MB';
+    }
+
+    updateFileSizeHelperText();
+}
+
+function convertToMB(value, unit) {
+    const multipliers = { 'MB': 1, 'GB': 1024, 'TB': 1024 * 1024 };
+    return Math.round(value * multipliers[unit]);
+}
+
+function convertFromMB(sizeMB, targetUnit) {
+    const divisors = { 'MB': 1, 'GB': 1024, 'TB': 1024 * 1024 };
+    return sizeMB / divisors[targetUnit];
+}
+
+function updateFileSizeHelperText() {
+    const helperText = document.getElementById('maxFileSizeHelp');
+    if (helperText) {
+        helperText.textContent = 'Maximum allowed file size for uploads';
+    }
+}
+
+function handleFileSizeUnitChange() {
+    const sizeInput = document.getElementById('maxFileSize');
+    const unitSelect = document.getElementById('maxFileSizeUnit');
+    const oldUnit = unitSelect.dataset.previousUnit || 'MB';
+    const newUnit = unitSelect.value;
+
+    if (oldUnit === newUnit) return;
+
+    const currentValue = parseFloat(sizeInput.value);
+    if (isNaN(currentValue) || currentValue <= 0) {
+        unitSelect.dataset.previousUnit = newUnit;
+        updateFileSizeHelperText();
+        return;
+    }
+
+    // Convert current value to new unit
+    const sizeMB = convertToMB(currentValue, oldUnit);
+    const newValue = convertFromMB(sizeMB, newUnit);
+    sizeInput.value = Math.round(newValue * 1000) / 1000; // Round to 3 decimals
+
+    unitSelect.dataset.previousUnit = newUnit;
+    updateFileSizeHelperText();
+}
+
+// Expiration time unit conversion helpers
+function populateExpirationWithUnit(hours) {
+    const expirationInput = document.getElementById('maxExpiration');
+    const unitSelect = document.getElementById('maxExpirationUnit');
+
+    // Smart unit selection: show in days if divisible by 24
+    if (hours >= 24 && hours % 24 === 0) {
+        expirationInput.value = hours / 24;
+        unitSelect.value = 'days';
+    } else {
+        expirationInput.value = hours;
+        unitSelect.value = 'hours';
+    }
+
+    updateExpirationHelperText();
+}
+
+function populateDefaultExpirationWithUnit(hours) {
+    const expirationInput = document.getElementById('defaultExpiration');
+    const unitSelect = document.getElementById('defaultExpirationUnit');
+
+    // Smart unit selection: show in days if divisible by 24
+    if (hours >= 24 && hours % 24 === 0) {
+        expirationInput.value = hours / 24;
+        unitSelect.value = 'days';
+    } else {
+        expirationInput.value = hours;
+        unitSelect.value = 'hours';
+    }
+
+    updateDefaultExpirationHelperText();
+}
+
+function convertToHours(value, unit) {
+    const multipliers = { 'hours': 1, 'days': 24 };
+    return Math.round(value * multipliers[unit]);
+}
+
+function convertFromHours(hours, targetUnit) {
+    const divisors = { 'hours': 1, 'days': 24 };
+    return hours / divisors[targetUnit];
+}
+
+function updateExpirationHelperText() {
+    const helperText = document.getElementById('maxExpirationHelp');
+    if (helperText) {
+        helperText.textContent = 'Maximum allowed expiration time';
+    }
+}
+
+function updateDefaultExpirationHelperText() {
+    const helperText = document.getElementById('defaultExpirationHelp');
+    if (helperText) {
+        helperText.textContent = 'Default time before files expire';
+    }
+}
+
+function handleExpirationUnitChange() {
+    const expirationInput = document.getElementById('maxExpiration');
+    const unitSelect = document.getElementById('maxExpirationUnit');
+    const oldUnit = unitSelect.dataset.previousUnit || 'hours';
+    const newUnit = unitSelect.value;
+
+    if (oldUnit === newUnit) return;
+
+    const currentValue = parseFloat(expirationInput.value);
+    if (isNaN(currentValue) || currentValue <= 0) {
+        unitSelect.dataset.previousUnit = newUnit;
+        updateExpirationHelperText();
+        return;
+    }
+
+    // Convert current value to new unit
+    const hours = convertToHours(currentValue, oldUnit);
+    const newValue = convertFromHours(hours, newUnit);
+    expirationInput.value = Math.round(newValue * 1000) / 1000; // Round to 3 decimals
+
+    unitSelect.dataset.previousUnit = newUnit;
+    updateExpirationHelperText();
+}
+
+function handleDefaultExpirationUnitChange() {
+    const expirationInput = document.getElementById('defaultExpiration');
+    const unitSelect = document.getElementById('defaultExpirationUnit');
+    const oldUnit = unitSelect.dataset.previousUnit || 'hours';
+    const newUnit = unitSelect.value;
+
+    if (oldUnit === newUnit) return;
+
+    const currentValue = parseFloat(expirationInput.value);
+    if (isNaN(currentValue) || currentValue <= 0) {
+        unitSelect.dataset.previousUnit = newUnit;
+        updateDefaultExpirationHelperText();
+        return;
+    }
+
+    // Convert current value to new unit
+    const hours = convertToHours(currentValue, oldUnit);
+    const newValue = convertFromHours(hours, newUnit);
+    expirationInput.value = Math.round(newValue * 1000) / 1000; // Round to 3 decimals
+
+    unitSelect.dataset.previousUnit = newUnit;
+    updateDefaultExpirationHelperText();
+}
+
+// Reset to default values functions
+async function resetStorageDefaults() {
+    const confirmed = await confirm('Reset all storage settings to default values? This will not save automatically.');
+    if (!confirmed) return;
+
+    // Default values from internal/config/config.go
+    // Storage Quota: 0 GB = unlimited
+    populateStorageQuotaWithUnit(0);
+
+    // Max File Size: 104857600 bytes = 100 MB
+    populateFileSizeWithUnit(100);
+
+    // Default Expiration: 24 hours = 1 day
+    populateDefaultExpirationWithUnit(24);
+
+    // Max Expiration: 168 hours = 7 days
+    populateExpirationWithUnit(168);
+
+    // Trigger unsaved changes detection
+    checkSettingsChanged();
+
+    showSuccess('Storage settings reset to defaults. Click "Update Settings" to save.');
+}
+
+async function resetSecurityDefaults() {
+    const confirmed = await confirm('Reset all security settings to default values? This will not save automatically.');
+    if (!confirmed) return;
+
+    // Default values from internal/config/config.go
+    document.getElementById('rateLimitUpload').value = 10;
+    document.getElementById('rateLimitDownload').value = 50;
+    document.getElementById('blockedExtensions').value = '.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm';
+
+    // Trigger unsaved changes detection
+    checkSettingsChanged();
+
+    showSuccess('Security settings reset to defaults. Click "Update Settings" to save.');
+}
+
 // Format bytes to human-readable size
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -383,10 +649,20 @@ async function loadConfigValues() {
         const data = await response.json();
 
         // Populate storage settings
-        document.getElementById('quotaGB').value = data.quota_limit_gb || 0;
-        document.getElementById('maxFileSizeMB').value = Math.round(data.max_file_size_bytes / (1024 * 1024)) || 100;
-        document.getElementById('defaultExpirationHours').value = data.default_expiration_hours || 24;
-        document.getElementById('maxExpirationHours').value = data.max_expiration_hours || 168;
+        const quotaGB = data.quota_limit_gb || 0;
+        populateStorageQuotaWithUnit(quotaGB);
+
+        // Populate max file size with smart unit selection
+        const maxFileSizeMB = Math.round(data.max_file_size_bytes / (1024 * 1024)) || 100;
+        populateFileSizeWithUnit(maxFileSizeMB);
+
+        // Populate default expiration with smart unit selection
+        const defaultExpirationHours = data.default_expiration_hours || 24;
+        populateDefaultExpirationWithUnit(defaultExpirationHours);
+
+        // Populate max expiration with smart unit selection
+        const maxExpirationHours = data.max_expiration_hours || 168;
+        populateExpirationWithUnit(maxExpirationHours);
 
         // Populate security settings
         document.getElementById('rateLimitUpload').value = data.rate_limit_upload || 10;
@@ -403,10 +679,14 @@ async function loadConfigValues() {
 // Capture current settings values as original (for unsaved changes detection)
 function captureOriginalSettingsValues() {
     originalSettingsValues = {
-        quotaGB: document.getElementById('quotaGB')?.value || '',
-        maxFileSizeMB: document.getElementById('maxFileSizeMB')?.value || '',
-        defaultExpirationHours: document.getElementById('defaultExpirationHours')?.value || '',
-        maxExpirationHours: document.getElementById('maxExpirationHours')?.value || '',
+        storageQuota: document.getElementById('storageQuota')?.value || '',
+        storageQuotaUnit: document.getElementById('storageQuotaUnit')?.value || 'GB',
+        maxFileSize: document.getElementById('maxFileSize')?.value || '',
+        maxFileSizeUnit: document.getElementById('maxFileSizeUnit')?.value || 'MB',
+        defaultExpiration: document.getElementById('defaultExpiration')?.value || '',
+        defaultExpirationUnit: document.getElementById('defaultExpirationUnit')?.value || 'hours',
+        maxExpiration: document.getElementById('maxExpiration')?.value || '',
+        maxExpirationUnit: document.getElementById('maxExpirationUnit')?.value || 'hours',
         rateLimitUpload: document.getElementById('rateLimitUpload')?.value || '',
         rateLimitDownload: document.getElementById('rateLimitDownload')?.value || '',
         blockedExtensions: document.getElementById('blockedExtensions')?.value || '',
@@ -420,10 +700,14 @@ function captureOriginalSettingsValues() {
 // Check if settings have changed from original values
 function checkSettingsChanged() {
     const currentValues = {
-        quotaGB: document.getElementById('quotaGB')?.value || '',
-        maxFileSizeMB: document.getElementById('maxFileSizeMB')?.value || '',
-        defaultExpirationHours: document.getElementById('defaultExpirationHours')?.value || '',
-        maxExpirationHours: document.getElementById('maxExpirationHours')?.value || '',
+        storageQuota: document.getElementById('storageQuota')?.value || '',
+        storageQuotaUnit: document.getElementById('storageQuotaUnit')?.value || 'GB',
+        maxFileSize: document.getElementById('maxFileSize')?.value || '',
+        maxFileSizeUnit: document.getElementById('maxFileSizeUnit')?.value || 'MB',
+        defaultExpiration: document.getElementById('defaultExpiration')?.value || '',
+        defaultExpirationUnit: document.getElementById('defaultExpirationUnit')?.value || 'hours',
+        maxExpiration: document.getElementById('maxExpiration')?.value || '',
+        maxExpirationUnit: document.getElementById('maxExpirationUnit')?.value || 'hours',
         rateLimitUpload: document.getElementById('rateLimitUpload')?.value || '',
         rateLimitDownload: document.getElementById('rateLimitDownload')?.value || '',
         blockedExtensions: document.getElementById('blockedExtensions')?.value || '',
@@ -762,6 +1046,56 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('storageForm')?.addEventListener('submit', (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
+
+        // Convert storage quota to GB before sending
+        const quota = parseFloat(formData.get('storage_quota'));
+        const quotaUnit = formData.get('storage_quota_unit');
+        const quotaGB = convertQuotaToGB(quota, quotaUnit);
+
+        // Convert file size to MB before sending
+        const fileSize = parseFloat(formData.get('max_file_size'));
+        const fileUnit = formData.get('max_file_size_unit');
+        const fileSizeMB = convertToMB(fileSize, fileUnit);
+
+        // Convert default expiration to hours before sending
+        const defaultExpiration = parseFloat(formData.get('default_expiration'));
+        const defaultExpirationUnit = formData.get('default_expiration_unit');
+        const defaultExpirationHours = convertToHours(defaultExpiration, defaultExpirationUnit);
+
+        // Convert max expiration to hours before sending
+        const maxExpiration = parseFloat(formData.get('max_expiration'));
+        const maxExpirationUnit = formData.get('max_expiration_unit');
+        const maxExpirationHours = convertToHours(maxExpiration, maxExpirationUnit);
+
+        // Validation: Default Expiration cannot exceed Max Expiration
+        if (defaultExpirationHours > maxExpirationHours) {
+            showError('Default Expiration cannot exceed Max Expiration. Please reduce the default expiration or increase the maximum.');
+            return;
+        }
+
+        // Validation: Max File Size cannot exceed Storage Quota (when quota is not unlimited)
+        if (quotaGB > 0) {
+            const quotaMB = quotaGB * 1024;
+            if (fileSizeMB > quotaMB) {
+                showError('Max File Size cannot exceed Storage Quota. Please reduce the file size limit or increase the storage quota.');
+                return;
+            }
+        }
+
+        // Replace with GB, MB, and hours values
+        formData.set('quota_gb', quotaGB);
+        formData.set('max_file_size_mb', fileSizeMB);
+        formData.set('default_expiration_hours', defaultExpirationHours);
+        formData.set('max_expiration_hours', maxExpirationHours);
+        formData.delete('storage_quota');
+        formData.delete('storage_quota_unit');
+        formData.delete('max_file_size');
+        formData.delete('max_file_size_unit');
+        formData.delete('default_expiration');
+        formData.delete('default_expiration_unit');
+        formData.delete('max_expiration');
+        formData.delete('max_expiration_unit');
+
         updateStorageSettings(formData);
     });
 
@@ -840,10 +1174,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add input event listeners for Settings tab fields to detect changes
     const settingsFields = [
-        'quotaGB',
-        'maxFileSizeMB',
-        'defaultExpirationHours',
-        'maxExpirationHours',
+        'storageQuota',
+        'storageQuotaUnit',
+        'maxFileSize',
+        'maxFileSizeUnit',
+        'defaultExpiration',
+        'defaultExpirationUnit',
+        'maxExpiration',
+        'maxExpirationUnit',
         'rateLimitUpload',
         'rateLimitDownload',
         'blockedExtensions',
@@ -858,6 +1196,86 @@ document.addEventListener('DOMContentLoaded', () => {
             field.addEventListener('input', checkSettingsChanged);
         }
     });
+
+    // Add special handlers for storage quota unit conversion
+    const storageQuotaUnitSelect = document.getElementById('storageQuotaUnit');
+    const storageQuotaInput = document.getElementById('storageQuota');
+
+    if (storageQuotaUnitSelect) {
+        // Initialize previous unit tracking
+        storageQuotaUnitSelect.dataset.previousUnit = storageQuotaUnitSelect.value;
+
+        // Handle unit changes
+        storageQuotaUnitSelect.addEventListener('change', () => {
+            handleStorageQuotaUnitChange();
+            checkSettingsChanged();
+        });
+    }
+
+    if (storageQuotaInput) {
+        // Update helper text when value changes
+        storageQuotaInput.addEventListener('input', updateStorageQuotaHelperText);
+    }
+
+    // Add special handlers for file size unit conversion
+    const fileSizeUnitSelect = document.getElementById('maxFileSizeUnit');
+    const fileSizeInput = document.getElementById('maxFileSize');
+
+    if (fileSizeUnitSelect) {
+        // Initialize previous unit tracking
+        fileSizeUnitSelect.dataset.previousUnit = fileSizeUnitSelect.value;
+
+        // Handle unit changes
+        fileSizeUnitSelect.addEventListener('change', () => {
+            handleFileSizeUnitChange();
+            checkSettingsChanged();
+        });
+    }
+
+    if (fileSizeInput) {
+        // Update helper text when value changes
+        fileSizeInput.addEventListener('input', updateFileSizeHelperText);
+    }
+
+    // Add special handlers for default expiration unit conversion
+    const defaultExpirationUnitSelect = document.getElementById('defaultExpirationUnit');
+    const defaultExpirationInput = document.getElementById('defaultExpiration');
+
+    if (defaultExpirationUnitSelect) {
+        // Initialize previous unit tracking
+        defaultExpirationUnitSelect.dataset.previousUnit = defaultExpirationUnitSelect.value;
+
+        // Handle unit changes
+        defaultExpirationUnitSelect.addEventListener('change', () => {
+            handleDefaultExpirationUnitChange();
+            checkSettingsChanged();
+        });
+    }
+
+    if (defaultExpirationInput) {
+        // Update helper text when value changes
+        defaultExpirationInput.addEventListener('input', updateDefaultExpirationHelperText);
+    }
+
+    // Add special handlers for max expiration unit conversion
+    const maxExpirationUnitSelect = document.getElementById('maxExpirationUnit');
+    const maxExpirationInput = document.getElementById('maxExpiration');
+
+    if (maxExpirationUnitSelect) {
+        // Initialize previous unit tracking
+        maxExpirationUnitSelect.dataset.previousUnit = maxExpirationUnitSelect.value;
+
+        // Handle unit changes
+        maxExpirationUnitSelect.addEventListener('change', () => {
+            handleExpirationUnitChange();
+            checkSettingsChanged();
+        });
+    }
+
+    if (maxExpirationInput) {
+        // Update helper text when value changes
+        maxExpirationInput.addEventListener('input', updateExpirationHelperText);
+    }
 
     // Browser navigation warning (beforeunload)
     window.addEventListener('beforeunload', (e) => {

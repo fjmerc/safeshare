@@ -67,7 +67,7 @@ func Load() (*Config, error) {
 		maxExpirationHours:     getEnvInt("MAX_EXPIRATION_HOURS", 168), // 7 days default
 		blockedExtensions:      getEnvList("BLOCKED_EXTENSIONS", defaultBlocked),
 		rateLimitUpload:        getEnvInt("RATE_LIMIT_UPLOAD", 10),        // 10 uploads per hour per IP
-		rateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 100),     // 100 downloads per hour per IP
+		rateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 50),      // 50 downloads per hour per IP
 		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),          // 0 = unlimited (default)
 		adminPassword:          getEnv("ADMIN_PASSWORD", ""),              // Required for admin access
 	}
