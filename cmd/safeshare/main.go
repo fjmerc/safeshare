@@ -151,7 +151,21 @@ func main() {
 	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
 
 	// User authentication routes (public - no auth required)
-	mux.HandleFunc("/login", serveUserPage("login.html"))
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		// Check if user is already authenticated
+		cookie, err := r.Cookie("user_session")
+		if err == nil {
+			// Has cookie, verify it's valid
+			session, _ := database.GetUserSession(db, cookie.Value)
+			if session != nil {
+				// Valid session, redirect to dashboard
+				http.Redirect(w, r, "/dashboard", http.StatusFound)
+				return
+			}
+		}
+		// Not authenticated, serve login page
+		serveUserPage("login.html")(w, r)
+	})
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(db, cfg))).ServeHTTP(w, r)
 	})
@@ -188,7 +202,36 @@ func main() {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)
 
 		// Admin authentication routes (no auth required)
-		mux.HandleFunc("/admin/login", serveAdminPage("admin/login.html"))
+		mux.HandleFunc("/admin/login", func(w http.ResponseWriter, r *http.Request) {
+			// Check if admin is already authenticated (admin_session or user with admin role)
+			adminCookie, adminErr := r.Cookie("admin_session")
+			if adminErr == nil {
+				// Has admin cookie, verify it's valid
+				session, _ := database.GetSession(db, adminCookie.Value)
+				if session != nil {
+					// Valid admin session, redirect to admin dashboard
+					http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
+					return
+				}
+			}
+
+			// Check for user_session with admin role
+			userCookie, userErr := r.Cookie("user_session")
+			if userErr == nil {
+				session, _ := database.GetUserSession(db, userCookie.Value)
+				if session != nil {
+					user, _ := database.GetUserByID(db, session.UserID)
+					if user != nil && user.Role == "admin" {
+						// User has admin role, redirect to admin dashboard
+						http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
+						return
+					}
+				}
+			}
+
+			// Not authenticated as admin, serve login page
+			serveAdminPage("admin/login.html")(w, r)
+		})
 		mux.HandleFunc("/admin/api/login", func(w http.ResponseWriter, r *http.Request) {
 			middleware.RateLimitAdminLogin()(http.HandlerFunc(handlers.AdminLoginHandler(db, cfg))).ServeHTTP(w, r)
 		})

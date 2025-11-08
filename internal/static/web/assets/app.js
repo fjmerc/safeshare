@@ -5,11 +5,15 @@
     // State
     let selectedFile = null;
     let maxFileSizeBytes = 104857600; // 100MB default
+    let uploadState = 'idle'; // 'idle', 'uploading', 'completed'
+    let currentUploadXhr = null; // For simple upload cancellation
+    let currentChunkedUploader = null; // For chunked upload cancellation
 
     // DOM Elements - Dropoff Tab
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadButton = document.getElementById('uploadButton');
+    const removeFileButton = document.getElementById('removeFileButton');
     const expirationHours = document.getElementById('expirationHours');
     const maxDownloads = document.getElementById('maxDownloads');
     const uploadSection = document.getElementById('uploadSection');
@@ -19,6 +23,7 @@
     const progressText = document.getElementById('progressText');
     const newUploadButton = document.getElementById('newUploadButton');
     const themeToggle = document.getElementById('themeToggle');
+    const uploadWarningBanner = document.getElementById('uploadWarningBanner');
 
     // DOM Elements - Pickup Tab
     const claimCodeInput = document.getElementById('claimCodeInput');
@@ -50,6 +55,8 @@
         chunked_upload_threshold: 104857600, // Default 100MB
         chunk_size: 5242880 // Default 5MB
     };
+
+    // Note: Toast notification system is now loaded from toast.js
 
     // Initialize
     async function init() {
@@ -258,6 +265,16 @@
 
     // Setup event listeners
     function setupEventListeners() {
+        // Warn user before navigating away during upload
+        window.addEventListener('beforeunload', (e) => {
+            if (uploadState === 'uploading') {
+                // Standard way to trigger browser's confirmation dialog
+                e.preventDefault();
+                e.returnValue = ''; // Required for Chrome
+                return ''; // Required for some browsers
+            }
+        });
+
         // Tab switching (exclude login button)
         document.querySelectorAll('.tab-button:not(.login-to-upload)').forEach(btn => {
             btn.addEventListener('click', handleTabSwitch);
@@ -282,6 +299,9 @@
 
         // Dropoff Tab - Upload button
         uploadButton.addEventListener('click', handleUpload);
+
+        // Dropoff Tab - Remove file / Cancel upload button
+        removeFileButton.addEventListener('click', handleRemoveOrCancel);
 
         // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
@@ -439,15 +459,18 @@
         if (selectedFile) {
             // Validate file size
             if (selectedFile.size > maxFileSizeBytes) {
-                alert(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`);
+                showToast(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 4000);
                 selectedFile = null;
                 uploadButton.disabled = true;
+                uploadState = 'idle';
+                updateRemoveButtonState();
                 return;
             }
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
             uploadButton.disabled = false;
+            updateRemoveButtonState();
         }
     }
 
@@ -463,6 +486,20 @@
         } else {
             console.log('Using simple upload for file:', formatFileSize(selectedFile.size));
             await handleSimpleUpload();
+        }
+    }
+
+    // Show upload warning banner
+    function showUploadWarning() {
+        if (uploadWarningBanner) {
+            uploadWarningBanner.classList.remove('hidden');
+        }
+    }
+
+    // Hide upload warning banner
+    function hideUploadWarning() {
+        if (uploadWarningBanner) {
+            uploadWarningBanner.classList.add('hidden');
         }
     }
 
@@ -488,12 +525,18 @@
             formData.append('password', password);
         }
 
+        // Update upload state
+        uploadState = 'uploading';
+        updateRemoveButtonState();
+        showUploadWarning();
+
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
 
         try {
             const xhr = new XMLHttpRequest();
+            currentUploadXhr = xhr; // Store for cancellation
 
             // Progress event
             xhr.upload.addEventListener('progress', (e) => {
@@ -514,16 +557,23 @@
                     // Show user-friendly error message
                     let errorMsg = error.error || 'Upload failed';
                     if (error.code === 'BLOCKED_EXTENSION') {
-                        errorMsg = `⚠️ Security Alert\n\n${error.error}\n\nBlocked file types include executables and scripts for security reasons.`;
+                        showToast(`Security Alert: ${error.error}. Blocked file types include executables and scripts.`, 'error', 5000);
+                    } else {
+                        showToast(errorMsg, 'error', 4000);
                     }
-                    alert(errorMsg);
                     resetProgress();
                 }
             });
 
             // Error event
             xhr.addEventListener('error', () => {
-                alert('Upload failed. Please try again.');
+                showToast('Upload failed. Please try again.', 'error', 4000);
+                resetProgress();
+            });
+
+            // Abort event
+            xhr.addEventListener('abort', () => {
+                console.log('Upload cancelled by user');
                 resetProgress();
             });
 
@@ -531,7 +581,7 @@
             xhr.send(formData);
 
         } catch (error) {
-            alert('Upload failed: ' + error.message);
+            showToast('Upload failed: ' + error.message, 'error', 4000);
             resetProgress();
         }
     }
@@ -545,6 +595,11 @@
         const maxDl = parseInt(maxDownloads.value) || 0;
         const password = document.getElementById('uploadPassword').value.trim();
 
+        // Update upload state
+        uploadState = 'uploading';
+        updateRemoveButtonState();
+        showUploadWarning();
+
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
@@ -557,24 +612,25 @@
                 maxDownloads: maxDl,
                 password: password
             });
+            currentChunkedUploader = uploader; // Store for cancellation
 
             // Register progress event
             uploader.on('progress', (data) => {
                 const percent = data.percentage;
                 progressFill.style.width = percent + '%';
 
-                // Show detailed progress with chunk info
-                const uploadedMB = (data.uploadedBytes / (1024 * 1024)).toFixed(1);
-                const totalMB = (data.totalBytes / (1024 * 1024)).toFixed(1);
-                const speedMBps = (data.speed / (1024 * 1024)).toFixed(1);
+                // Show user-friendly progress (no technical chunk details)
+                const uploaded = formatFileSize(data.uploadedBytes);
+                const total = formatFileSize(data.totalBytes);
+                const timeRemaining = formatTimeRemaining(data.estimatedTimeRemaining);
 
-                progressText.textContent = `Uploading chunk ${data.uploadedChunks} of ${data.totalChunks} (${Math.round(percent)}%) - ${uploadedMB}MB / ${totalMB}MB @ ${speedMBps}MB/s`;
+                progressText.textContent = `Uploading... ${Math.round(percent)}% • ${uploaded} / ${total} • ${timeRemaining} remaining`;
             });
 
             // Register error event
             uploader.on('error', (data) => {
                 console.error('Chunked upload error:', data);
-                alert(`Upload failed at ${data.stage}: ${data.error}`);
+                showToast(`Upload failed at ${data.stage}: ${data.error}`, 'error', 4000);
                 resetProgress();
             });
 
@@ -582,6 +638,12 @@
             uploader.on('complete', (data) => {
                 console.log('Chunked upload complete:', data);
                 showResults(data);
+            });
+
+            // Register cancelled event
+            uploader.on('cancelled', (data) => {
+                console.log('Chunked upload cancelled:', data);
+                resetProgress();
             });
 
             // Execute upload flow
@@ -598,7 +660,10 @@
 
         } catch (error) {
             console.error('Chunked upload error:', error);
-            alert(`Upload failed: ${error.message}`);
+            // Don't show error toast for user-initiated cancellation
+            if (error.message !== 'Upload cancelled') {
+                showToast(`Upload failed: ${error.message}`, 'error', 4000);
+            }
             resetProgress();
         }
     }
@@ -642,19 +707,82 @@
             // Hide upload section, show results
             uploadSection.classList.add('hidden');
             resultsSection.classList.remove('hidden');
+
+            // Reset upload state to prevent beforeunload warning
+            uploadState = 'idle';
+
+            // Hide upload warning banner
+            hideUploadWarning();
+
+            // Show success toast
+            showToast('File uploaded successfully', 'success', 3000);
         } catch (error) {
             console.error('Error showing results:', error);
-            alert('Upload successful but error displaying results. Claim code: ' + data.claim_code);
+            showToast('Upload successful but error displaying results', 'warning', 4000);
+            // Hide warning banner even if there's an error displaying results
+            hideUploadWarning();
+        }
+    }
+
+    // Clear selected file
+    function clearSelectedFile() {
+        selectedFile = null;
+        fileInput.value = '';
+        uploadButton.disabled = true;
+        uploadState = 'idle';
+        updateRemoveButtonState();
+        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
+        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+    }
+
+    // Handle remove file or cancel upload based on current state
+    function handleRemoveOrCancel() {
+        if (uploadState === 'uploading') {
+            // Cancel the upload
+            cancelUpload();
+        } else {
+            // Remove the selected file
+            clearSelectedFile();
+        }
+    }
+
+    // Cancel current upload (simple or chunked)
+    function cancelUpload() {
+        if (currentUploadXhr) {
+            // Cancel simple upload
+            currentUploadXhr.abort();
+            currentUploadXhr = null;
+        } else if (currentChunkedUploader) {
+            // Cancel chunked upload
+            currentChunkedUploader.abort();
+            currentChunkedUploader = null;
+        }
+        // resetProgress() will be called by the abort/cancelled event handlers
+    }
+
+    // Update remove button state based on upload state
+    function updateRemoveButtonState() {
+        if (uploadState === 'uploading') {
+            // Show as cancel button
+            removeFileButton.textContent = '✕ Cancel Upload';
+            removeFileButton.classList.remove('btn-remove-file');
+            removeFileButton.classList.add('btn-cancel');
+            removeFileButton.classList.remove('hidden');
+        } else if (selectedFile) {
+            // Show as remove button
+            removeFileButton.textContent = '✕ Remove File';
+            removeFileButton.classList.add('btn-remove-file');
+            removeFileButton.classList.remove('btn-cancel');
+            removeFileButton.classList.remove('hidden');
+        } else {
+            // Hide button
+            removeFileButton.classList.add('hidden');
         }
     }
 
     // Reset form
     function resetForm() {
-        selectedFile = null;
-        fileInput.value = '';
-        uploadButton.disabled = true;
-        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
-        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
         document.getElementById('uploadPassword').value = '';
@@ -671,6 +799,13 @@
         progressFill.style.width = '0%';
         progressText.textContent = 'Uploading...';
         uploadButton.disabled = false;
+
+        // Reset upload state
+        uploadState = 'idle';
+        currentUploadXhr = null;
+        currentChunkedUploader = null;
+        updateRemoveButtonState();
+        hideUploadWarning();
     }
 
     // Toggle theme
@@ -692,7 +827,7 @@
         try {
             await navigator.clipboard.writeText(text);
 
-            // Visual feedback
+            // Visual feedback on button
             const btn = e.currentTarget;
             const originalText = btn.textContent;
             btn.textContent = '✓';
@@ -702,6 +837,9 @@
                 btn.textContent = originalText;
                 btn.classList.remove('copied');
             }, 2000);
+
+            // Show toast notification
+            showToast('Link copied to clipboard', 'success', 3000);
         } catch (error) {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
@@ -710,10 +848,20 @@
             textarea.style.opacity = '0';
             document.body.appendChild(textarea);
             textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
 
-            alert('Copied to clipboard!');
+            try {
+                const success = document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                if (success) {
+                    showToast('Link copied to clipboard', 'success', 3000);
+                } else {
+                    showToast('Failed to copy to clipboard', 'error', 3000);
+                }
+            } catch (fallbackError) {
+                document.body.removeChild(textarea);
+                showToast('Failed to copy to clipboard', 'error', 3000);
+            }
         }
     }
 
@@ -726,6 +874,24 @@
         const i = Math.floor(Math.log(bytes) / Math.log(k));
 
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Format time remaining (seconds to human-readable)
+    function formatTimeRemaining(seconds) {
+        if (!seconds || seconds < 0 || !isFinite(seconds)) {
+            return 'calculating...';
+        }
+
+        if (seconds < 60) {
+            return `${Math.round(seconds)} sec`;
+        } else if (seconds < 3600) {
+            const minutes = Math.floor(seconds / 60);
+            return `${minutes} min`;
+        } else {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+        }
     }
 
     // Format date
@@ -787,7 +953,7 @@
         const claimCode = claimCodeInput.value.trim();
 
         if (!claimCode) {
-            alert('Please enter a claim code');
+            showToast('Please enter a claim code', 'warning', 3000);
             return;
         }
 
@@ -800,7 +966,7 @@
 
             if (!response.ok) {
                 const error = await response.json();
-                alert(`Error: ${error.error || 'File not found or expired'}`);
+                showToast(`Error: ${error.error || 'File not found or expired'}`, 'error', 4000);
                 retrieveButton.disabled = false;
                 retrieveButton.textContent = 'Retrieve File';
                 return;
@@ -811,7 +977,7 @@
             displayFileInfo(data);
 
         } catch (error) {
-            alert('Failed to retrieve file info: ' + error.message);
+            showToast('Failed to retrieve file info: ' + error.message, 'error', 4000);
             retrieveButton.disabled = false;
             retrieveButton.textContent = 'Retrieve File';
         }
@@ -863,7 +1029,7 @@
         if (currentFileInfo.password_required) {
             const password = document.getElementById('downloadPassword').value.trim();
             if (!password) {
-                alert('Please enter the password to download this file');
+                showToast('Please enter the password to download this file', 'warning', 3000);
                 return;
             }
             downloadUrl += `?password=${encodeURIComponent(password)}`;
@@ -872,17 +1038,9 @@
         // Open in new tab - browser will prompt for download location
         window.open(downloadUrl, '_blank');
 
-        // Alternative: Force download with invisible link
-        // const link = document.createElement('a');
-        // link.href = downloadUrl;
-        // link.download = currentFileInfo.original_filename;
-        // document.body.appendChild(link);
-        // link.click();
-        // document.body.removeChild(link);
-
-        // Show success message
+        // Show info message
         setTimeout(() => {
-            alert('Download started! Check your browser\'s download location.');
+            showToast('Download started', 'info', 2000);
         }, 500);
     }
 

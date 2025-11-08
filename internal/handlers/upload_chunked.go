@@ -131,7 +131,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space before accepting upload
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, req.TotalSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, req.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -148,7 +150,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check quota if configured (0 = unlimited)
-		if cfg.GetQuotaLimitGB() > 0 {
+		if quotaConfigured {
 			// Get current usage from both completed files and partial uploads
 			completedUsage, err := database.GetTotalUsage(db)
 			if err != nil {
@@ -408,13 +410,16 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					slog.Error("failed to update partial upload activity", "error", err)
 				}
 
+				// Count actual chunks from disk instead of relying on DB counter
+				chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 				// Return success response
 				response := models.UploadChunkResponse{
 					UploadID:       uploadID,
 					ChunkNumber:    chunkNumber,
-					ChunksReceived: partialUpload.ChunksReceived,
+					ChunksReceived: chunksReceived,
 					TotalChunks:    partialUpload.TotalChunks,
-					Complete:       partialUpload.ChunksReceived == partialUpload.TotalChunks,
+					Complete:       chunksReceived == partialUpload.TotalChunks,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -434,7 +439,9 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space before saving chunk
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -458,13 +465,12 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Increment chunks_received in database
-		if err := database.IncrementChunksReceived(db, uploadID, chunkSize); err != nil {
-			slog.Error("failed to increment chunks received", "error", err)
-			// Don't fail the request - chunk is already saved
-		}
+		// NOTE: We no longer increment chunks_received in the database on every chunk upload.
+		// This caused severe database lock contention (31-35% SQLITE_BUSY errors with concurrency=3).
+		// Instead, chunk count is calculated on-demand from disk when status is requested.
+		// This eliminates all database writes during upload, allowing higher concurrency.
 
-		// Refresh partial upload data to get updated counts
+		// Get updated partial upload data (no longer need to refresh counts from DB)
 		partialUpload, err = database.GetPartialUpload(db, uploadID)
 		if err != nil {
 			slog.Error("failed to refresh partial upload", "error", err)
@@ -472,10 +478,13 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Send response
+	// Count actual chunks from disk instead of relying on DB counter
+	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,
 			ChunkNumber:    chunkNumber,
-			ChunksReceived: partialUpload.ChunksReceived,
+			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
 			Complete:       partialUpload.ChunksReceived >= partialUpload.TotalChunks,
 		}
@@ -488,7 +497,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"upload_id", uploadID,
 			"chunk_number", chunkNumber,
 			"chunk_size", chunkSize,
-			"chunks_received", partialUpload.ChunksReceived,
+			"chunks_received", chunksReceived,
 			"total_chunks", partialUpload.TotalChunks,
 			"filename", chunkHeader.Filename,
 		)
@@ -534,12 +543,21 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check if already completed
 		if partialUpload.Completed {
-			// Already completed - return existing claim code
+		}
+			// Already completed - return existing claim code with full file info
 			if partialUpload.ClaimCode != nil {
 				downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+				
+				// Calculate expiration time
+				expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+				
 				response := models.UploadCompleteResponse{
-					ClaimCode:   *partialUpload.ClaimCode,
-					DownloadURL: downloadURL,
+					ClaimCode:        *partialUpload.ClaimCode,
+					DownloadURL:      downloadURL,
+					OriginalFilename: partialUpload.Filename,
+					FileSize:         partialUpload.TotalSize,
+					ExpiresAt:        expiresAt,
+					MaxDownloads:     partialUpload.MaxDownloads,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -547,7 +565,6 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				json.NewEncoder(w).Encode(response)
 				return
 			}
-		}
 
 		// Check if upload has expired
 		expiryTime := partialUpload.LastActivity.Add(time.Duration(cfg.PartialUploadExpiryHours) * time.Hour)
@@ -592,7 +609,9 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space for final file
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, partialUpload.TotalSize)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, partialUpload.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -671,35 +690,42 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Encrypt if encryption is enabled
 		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			slog.Debug("encrypting assembled file", "upload_id", uploadID)
+			slog.Debug("encrypting assembled file using streaming encryption", "upload_id", uploadID)
 
-			// Read file
-			fileData, err := os.ReadFile(finalPath)
-			if err != nil {
-				slog.Error("failed to read file for encryption", "error", err)
-				os.Remove(finalPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
+			// Use streaming encryption to avoid loading entire file into memory
+			// Encrypt to temporary file, then replace original
+			tempEncryptedPath := finalPath + ".encrypted.tmp"
 
-			// Encrypt
-			encrypted, err := utils.EncryptFile(fileData, cfg.EncryptionKey)
-			if err != nil {
+			if err := utils.EncryptFileStreaming(finalPath, tempEncryptedPath, cfg.EncryptionKey); err != nil {
 				slog.Error("failed to encrypt file", "error", err)
 				os.Remove(finalPath)
+				os.Remove(tempEncryptedPath)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			// Write encrypted data back
-			if err := os.WriteFile(finalPath, encrypted, 0644); err != nil {
-				slog.Error("failed to write encrypted file", "error", err)
-				os.Remove(finalPath)
+			// Get file sizes for logging
+			originalInfo, _ := os.Stat(finalPath)
+			encryptedInfo, _ := os.Stat(tempEncryptedPath)
+
+			// Replace original with encrypted version
+			if err := os.Remove(finalPath); err != nil {
+				slog.Error("failed to remove original file", "error", err)
+				os.Remove(tempEncryptedPath)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
+				slog.Error("failed to rename encrypted file", "error", err)
+				os.Remove(tempEncryptedPath)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			slog.Debug("file encrypted", "upload_id", uploadID, "original_size", len(fileData), "encrypted_size", len(encrypted))
+			slog.Debug("file encrypted with streaming encryption",
+				"upload_id", uploadID,
+				"original_size", originalInfo.Size(),
+				"encrypted_size", encryptedInfo.Size())
 		}
 
 		// Detect MIME type from assembled file (only read first 512 bytes for magic number detection)
@@ -775,24 +801,27 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// Don't fail the request - chunks will be cleaned up later
 		}
 
-		// Delete partial upload record
-		if err := database.DeletePartialUpload(db, uploadID); err != nil {
-			slog.Error("failed to delete partial upload record", "error", err)
-			// Don't fail the request - will be cleaned up later
-		}
+		// Don't delete partial upload record immediately - keep it for idempotency
+		// Duplicate completion requests can retrieve the claim_code from the completed record
+		// The cleanup worker will delete completed uploads after 1 hour
+		// Note: Lines 540-554 already handle the idempotency check
 
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, claimCode)
 
-		// Send response
-		response := models.UploadCompleteResponse{
-			ClaimCode:   claimCode,
-			DownloadURL: downloadURL,
-		}
+	// Send response with complete file information
+	response := models.UploadCompleteResponse{
+		 ClaimCode:        claimCode,
+		 DownloadURL:      downloadURL,
+		 OriginalFilename: partialUpload.Filename,
+		 FileSize:         partialUpload.TotalSize,
+		 ExpiresAt:        expiresAt,
+		 MaxDownloads:     partialUpload.MaxDownloads,
+	}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(response)
 
 		slog.Info("chunked upload completed",
 			"upload_id", uploadID,
@@ -859,11 +888,14 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
+	// Count actual chunks from disk
+	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 		// Build response
 		response := models.UploadStatusResponse{
 			UploadID:       uploadID,
 			Filename:       partialUpload.Filename,
-			ChunksReceived: partialUpload.ChunksReceived,
+			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
 			MissingChunks:  missingChunks,
 			Complete:       partialUpload.Completed,

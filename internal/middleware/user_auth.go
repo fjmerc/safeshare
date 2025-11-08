@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/fjmerc/safeshare/internal/database"
 )
@@ -20,6 +21,11 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
 				)
+				// Redirect HTML requests to login page
+				if isHTMLRequest(r) {
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -40,6 +46,11 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
 				)
+				// Redirect HTML requests to login page
+				if isHTMLRequest(r) {
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -59,6 +70,11 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 				slog.Warn("user authentication failed - user not found",
 					"user_id", session.UserID,
 				)
+				// Redirect HTML requests to login page
+				if isHTMLRequest(r) {
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -69,6 +85,11 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"user_id", user.ID,
 					"username", user.Username,
 				)
+				// Redirect HTML requests to login page
+				if isHTMLRequest(r) {
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Account has been disabled", http.StatusForbidden)
 				return
 			}
@@ -126,4 +147,15 @@ func OptionalUserAuth(db *sql.DB) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// isHTMLRequest detects if the request is for an HTML page vs an API endpoint
+func isHTMLRequest(r *http.Request) bool {
+	// API requests start with /api/
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		return false
+	}
+	// Check Accept header for HTML
+	accept := r.Header.Get("Accept")
+	return strings.Contains(accept, "text/html")
 }

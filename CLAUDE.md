@@ -50,26 +50,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 2. **Make your changes** on the feature branch
 
-3. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (see below)
+3. **STOP - Get user approval before committing**:
+   - **CRITICAL**: DO NOT automatically commit, push, or create PRs without user approval
+   - Show the user a summary of what changes were made
+   - For frontend changes (HTML/CSS/JS): Remind user that Docker rebuild is required to test embedded assets
+   - Ask if the user wants to test the changes first
+   - Ask if the user wants to review the changes
+   - **WAIT for explicit user confirmation before proceeding with any git operations**
 
-4. **Commit changes** with descriptive message:
+4. **Update CHANGELOG.md**: Add entry to `[Unreleased]` section (ONLY after user approval, see below)
+
+5. **Commit changes** (ONLY after user approval) with descriptive message:
    ```bash
    git add .
    git commit -m "type: description"
    ```
 
-5. **Push branch**:
+   **Important**: Do NOT add attribution lines like "🤖 Generated with [Claude Code]" or "Co-Authored-By: Claude" to commit messages. Keep commits clean and professional.
+
+6. **Push branch** (ONLY after user approval):
    ```bash
    git push -u origin feature/your-feature-name
    ```
 
-6. **Create Pull Request** using GitHub CLI:
+7. **Create Pull Request** (ONLY after user approval) using GitHub CLI:
    ```bash
    gh pr create --base develop --fill
    ```
    This automatically creates a PR with title/description from commit message.
 
-7. **User reviews and merges PR** using merge helper:
+8. **User reviews and merges PR** using merge helper:
    ```bash
    ./scripts/merge-pr.sh
    ```
@@ -95,6 +105,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `./scripts/merge-pr.sh` - Approve and merge PRs with automatic cleanup (USER SCRIPT)
 - `./scripts/cleanup-branches.sh` - Safe branch cleanup after merging (legacy/manual)
 - `./scripts/create-release.sh` - Create release tags (must be on main branch)
+
+### Creating Releases - REQUIRED STEPS
+
+**CRITICAL**: When creating a new release, you MUST complete ALL of these steps. Missing the GitHub Release step is a common mistake.
+
+**Complete Release Process:**
+
+1. **Create release branch** from develop:
+   ```bash
+   git checkout -b release/vX.Y.Z develop
+   ```
+
+2. **Update version files**:
+   - Move `[Unreleased]` items in `docs/CHANGELOG.md` to new `[X.Y.Z]` section with date
+   - Update comparison links at bottom of CHANGELOG.md
+   - Update `internal/handlers/version.go` constant
+
+3. **Commit version bump**:
+   ```bash
+   git commit -am "chore: bump version to X.Y.Z"
+   ```
+
+4. **Merge to main**:
+   ```bash
+   git checkout main
+   git pull origin main
+   git merge --no-ff release/vX.Y.Z -m "Merge release vX.Y.Z"
+   ```
+
+5. **Create annotated git tag**:
+   ```bash
+   git tag -a vX.Y.Z -m "Release notes here..."
+   ```
+
+6. **Push main and tag**:
+   ```bash
+   git push origin main vX.Y.Z
+   ```
+
+7. **CREATE GITHUB RELEASE** (DO NOT SKIP THIS STEP):
+   ```bash
+   gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
+   [Release notes from CHANGELOG.md here]
+
+   **Full Changelog**: https://github.com/fjmerc/safeshare/compare/vPREV...vX.Y.Z
+   EOF
+   )"
+   ```
+   **NOTE**: A git tag is NOT the same as a GitHub Release. The GitHub Release is what users see on the releases page.
+
+8. **Merge back to develop**:
+   ```bash
+   git checkout develop
+   git merge --no-ff release/vX.Y.Z -m "Merge release vX.Y.Z back to develop"
+   git push origin develop
+   ```
+
+9. **Delete release branch**:
+   ```bash
+   git branch -d release/vX.Y.Z
+   ```
+
+**Remember**: Git tags and GitHub Releases are different. Always create BOTH.
 
 ### Before Making Changes
 
@@ -136,6 +209,27 @@ All notable **application** changes must be documented in `docs/CHANGELOG.md` fo
 See `docs/VERSION_STRATEGY.md` for complete changelog guidelines.
 
 ## Build and Development Commands
+
+### Important: Docker Rebuild Policy
+
+**CRITICAL**: When making changes to Go code, handlers, or any server-side logic, **DO NOT** automatically rebuild the Docker image. Instead:
+
+1. **Inform the user** that a rebuild is required
+2. **Show the rebuild command** they should run
+3. **Wait for user confirmation** before proceeding
+
+**Rebuild command to show user:**
+```bash
+docker build -t safeshare:latest . && docker stop safeshare && docker rm safeshare && docker run -d --name safeshare -p 8080:8080 -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD=admin123 -v safeshare-data:/app/data -v safeshare-uploads:/app/uploads safeshare:latest
+```
+
+**Why this matters:**
+- Docker builds can take 30-60 seconds
+- User may want to review changes before rebuilding
+- User may have different environment variables or configuration
+- Gives user control over when to apply changes
+
+**Exception:** Only rebuild automatically if the user explicitly asks you to rebuild the container.
 
 ### Local Development
 ```bash

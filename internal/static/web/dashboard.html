@@ -1267,9 +1267,6 @@
             </div>
         </header>
 
-        <!-- Alert Messages -->
-        <div id="alertContainer"></div>
-
         <!-- Files Section -->
         <div class="content-section">
             <div class="section-header">
@@ -1422,7 +1419,7 @@
                     // Check if password change is required
                     const urlParams = new URLSearchParams(window.location.search);
                     if (currentUser.require_password_change || urlParams.get('change_password') === 'true') {
-                        showAlert('info', 'Please change your temporary password to continue.');
+                        showToast('Please change your temporary password to continue.', 'info');
                         showChangePasswordModal();
                     }
 
@@ -1448,11 +1445,11 @@
                     const data = await response.json();
                     displayFiles(data.files);
                 } else {
-                    showAlert('error', 'Failed to load files');
+                    showToast('Failed to load files', 'error');
                 }
             } catch (error) {
                 console.error('Failed to load files:', error);
-                showAlert('error', 'Network error loading files');
+                showToast('Network error loading files', 'error');
             }
         }
 
@@ -1567,15 +1564,15 @@
                 });
 
                 if (response.ok) {
-                    showAlert('success', 'File deleted successfully');
+                    showToast('File deleted successfully', 'success');
                     loadFiles();
                 } else {
                     const data = await response.json();
-                    showAlert('error', data.error || 'Failed to delete file');
+                    showToast(data.error || 'Failed to delete file', 'error');
                 }
             } catch (error) {
                 console.error('Delete failed:', error);
-                showAlert('error', 'Network error deleting file');
+                showToast('Network error deleting file', 'error');
             }
 
             hideDeleteModal();
@@ -1602,12 +1599,12 @@
             const confirmPassword = document.getElementById('confirmPassword').value;
 
             if (newPassword !== confirmPassword) {
-                showAlert('error', 'New passwords do not match');
+                showToast('New passwords do not match', 'error');
                 return;
             }
 
             if (newPassword.length < 8) {
-                showAlert('error', 'Password must be at least 8 characters');
+                showToast('Password must be at least 8 characters', 'error');
                 return;
             }
 
@@ -1628,7 +1625,7 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showAlert('success', 'Password changed successfully');
+                    showToast('Password changed successfully', 'success');
                     hideChangePasswordModal();
 
                     // Remove change_password URL parameter if present
@@ -1641,11 +1638,11 @@
                     // Refresh user info
                     checkAuth();
                 } else {
-                    showAlert('error', data.error || 'Failed to change password');
+                    showToast(data.error || 'Failed to change password', 'error');
                 }
             } catch (error) {
                 console.error('Password change failed:', error);
-                showAlert('error', 'Network error changing password');
+                showToast('Network error changing password', 'error');
             }
         }
 
@@ -1664,17 +1661,6 @@
         }
 
         // Utility functions
-        function showAlert(type, message) {
-            const container = document.getElementById('alertContainer');
-            const alert = document.createElement('div');
-            alert.className = `alert alert-${type}`;
-            alert.textContent = message;
-            container.appendChild(alert);
-
-            setTimeout(() => {
-                alert.remove();
-            }, 5000);
-        }
 
         function copyDownloadLink(url, button) {
             // Try modern Clipboard API first, with fallback
@@ -1722,7 +1708,7 @@
                 button.style.borderColor = '#10b981';
                 button.style.color = 'white';
 
-                showAlert('success', 'Download link copied to clipboard');
+                showToast('Download link copied to clipboard', 'success');
 
                 // Reset after 2 seconds
                 setTimeout(() => {
@@ -1733,7 +1719,7 @@
                 }, 2000);
             }).catch((err) => {
                 console.error('Copy failed:', err);
-                showAlert('error', 'Failed to copy link');
+                showToast('Failed to copy link', 'error');
             });
         }
 
@@ -1817,5 +1803,11 @@
         // Initialize
         checkAuth();
     </script>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Toast Notification System -->
+    <script src="/assets/toast.js"></script>
 </body>
 </html>

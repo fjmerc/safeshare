@@ -17,6 +17,12 @@
     <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
+    <!-- Upload Warning Banner - Fixed Position -->
+    <div id="uploadWarningBanner" class="upload-warning-banner hidden">
+        <span class="upload-warning-icon">⚠️</span>
+        <span class="upload-warning-text">Upload in Progress - Do not navigate away or close this page</span>
+    </div>
+
     <!-- Theme Toggle - Fixed Position -->
     <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
@@ -102,6 +108,10 @@
                         <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
                         <input type="file" id="fileInput" hidden>
                     </div>
+
+                    <button id="removeFileButton" class="btn-remove-file hidden">
+                        ✕ Remove File
+                    </button>
 
                     <div class="settings">
                         <h3>Upload Settings</h3>
@@ -310,8 +320,13 @@
         </footer>
     </div>
 
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
     <!-- QR Code Library -->
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <!-- Toast Notification System (must load before other scripts) -->
+    <script src="/assets/toast.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
     <script src="/assets/app.js"></script>

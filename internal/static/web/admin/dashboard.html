@@ -227,33 +227,69 @@
                 <h2>Storage Management</h2>
                 <form id="storageForm" class="settings-form">
                     <div class="form-group">
-                        <label for="quotaGB">Storage Quota (GB)</label>
-                        <input type="number" id="quotaGB" name="quota_gb" min="0" required>
-                        <small>Set to 0 for unlimited storage</small>
+                        <label for="storageQuota">Storage Quota</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="storageQuota" name="storage_quota" min="0" step="0.001" required>
+                            <select id="storageQuotaUnit" name="storage_quota_unit">
+                                <option value="GB">GB</option>
+                                <option value="TB">TB</option>
+                            </select>
+                        </div>
+                        <small id="storageQuotaHelp">Set to 0 for unlimited storage</small>
                     </div>
                     <div class="form-group">
-                        <label for="maxFileSizeMB">Max File Size (MB)</label>
-                        <input type="number" id="maxFileSizeMB" name="max_file_size_mb" min="1" required>
-                        <small>Maximum allowed file size for uploads</small>
+                        <label for="maxFileSize">Max File Size</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="maxFileSize" name="max_file_size" min="0.001" step="0.001" required>
+                            <select id="maxFileSizeUnit" name="max_file_size_unit">
+                                <option value="MB">MB</option>
+                                <option value="GB">GB</option>
+                                <option value="TB">TB</option>
+                            </select>
+                        </div>
+                        <small id="maxFileSizeHelp">Maximum allowed file size for uploads</small>
                     </div>
                     <div class="form-group">
-                        <label for="defaultExpirationHours">Default Expiration (hours)</label>
-                        <input type="number" id="defaultExpirationHours" name="default_expiration_hours" min="1" required>
-                        <small>Default time before files expire</small>
+                        <label for="defaultExpiration">Default Expiration</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="defaultExpiration" name="default_expiration" min="0.001" step="0.001" required>
+                            <select id="defaultExpirationUnit" name="default_expiration_unit">
+                                <option value="hours">Hours</option>
+                                <option value="days">Days</option>
+                            </select>
+                        </div>
+                        <small id="defaultExpirationHelp">Default time before files expire</small>
                     </div>
                     <div class="form-group">
-                        <label for="maxExpirationHours">Max Expiration (hours)</label>
-                        <input type="number" id="maxExpirationHours" name="max_expiration_hours" min="1" required>
-                        <small>Maximum allowed expiration time</small>
+                        <label for="maxExpiration">Max Expiration</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="maxExpiration" name="max_expiration" min="0.001" step="0.001" required>
+                            <select id="maxExpirationUnit" name="max_expiration_unit">
+                                <option value="hours">Hours</option>
+                                <option value="days">Days</option>
+                            </select>
+                        </div>
+                        <small id="maxExpirationHelp">Maximum allowed expiration time</small>
                     </div>
-                    <button type="submit" class="btn-primary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                            <polyline points="7 3 7 8 15 8"></polyline>
-                        </svg>
-                        Update Settings
-                    </button>
+                    <div class="button-group">
+                        <button type="submit" class="btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                <polyline points="7 3 7 8 15 8"></polyline>
+                            </svg>
+                            Update Settings
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="resetStorageDefaults()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                                <path d="M21 3v5h-5"></path>
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                                <path d="M3 21v-5h5"></path>
+                            </svg>
+                            Reset to Defaults
+                        </button>
+                    </div>
                 </form>
             </div>
 
@@ -275,14 +311,25 @@
                         <input type="text" id="blockedExtensions" name="blocked_extensions" required>
                         <small>Comma-separated list (e.g., .exe,.bat,.sh)</small>
                     </div>
-                    <button type="submit" class="btn-primary">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                            <polyline points="7 3 7 8 15 8"></polyline>
-                        </svg>
-                        Update Settings
-                    </button>
+                    <div class="button-group">
+                        <button type="submit" class="btn-primary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                <polyline points="7 3 7 8 15 8"></polyline>
+                            </svg>
+                            Update Settings
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="resetSecurityDefaults()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                                <path d="M21 3v5h-5"></path>
+                                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                                <path d="M3 21v-5h5"></path>
+                            </svg>
+                            Reset to Defaults
+                        </button>
+                    </div>
                 </form>
             </div>
             </div>
@@ -514,6 +561,8 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
+    <!-- Toast Notification System (must load before admin.js) -->
+    <script src="/assets/toast.js"></script>
     <script src="/admin/assets/admin.js"></script>
 </body>
 </html>

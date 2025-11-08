@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -47,6 +48,11 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
 				)
+				// Redirect HTML requests to admin login page
+				if isAdminHTMLRequest(r) {
+					http.Redirect(w, r, "/admin/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -67,6 +73,11 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"ip", getClientIP(r),
 				)
+				// Redirect HTML requests to admin login page
+				if isAdminHTMLRequest(r) {
+					http.Redirect(w, r, "/admin/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -89,6 +100,11 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 					"username", user.Username,
 					"role", user.Role,
 				)
+				// Redirect HTML requests to admin login page
+				if isAdminHTMLRequest(r) {
+					http.Redirect(w, r, "/admin/login", http.StatusFound)
+					return
+				}
 				http.Error(w, "Forbidden - Admin access required", http.StatusForbidden)
 				return
 			}
@@ -298,4 +314,15 @@ func RateLimitUserLogin() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isAdminHTMLRequest detects if the request is for an HTML page vs an API endpoint
+func isAdminHTMLRequest(r *http.Request) bool {
+	// Admin API requests start with /admin/api/
+	if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+		return false
+	}
+	// Check Accept header for HTML
+	accept := r.Header.Get("Accept")
+	return strings.Contains(accept, "text/html")
 }

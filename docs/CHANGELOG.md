@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+## [2.1.0] - 2025-11-08
+
+### Added
+- **UI**: Professional toast notification system across entire application
+  - Non-blocking notifications with 4 types: info (blue), success (green), error (red), warning (orange)
+  - Top-right positioning with smooth slide-in/fade-out animations
+  - Auto-dismiss after 3 seconds (configurable per toast)
+  - Click to dismiss instantly
+  - Multiple toasts stack vertically without overlap
+  - Full dark mode support with theme-aware colors
+  - Mobile responsive (full-width on small screens)
+  - Available on all 6 pages (main, login, dashboard, error, admin login, admin dashboard)
+  - XSS protection via HTML escaping
+- **UI**: Upload in progress warning banner
+  - Fixed-position banner at bottom of viewport appears during active uploads
+  - Clear message: "Upload in Progress - Do not navigate away or close this page"
+  - Prevents accidental data loss from navigating away during uploads
+  - Automatically shows/hides based on upload state
+  - Works for both simple and chunked uploads
+  - Includes `beforeunload` handler as fallback for tab closes
+  - Responsive design with dark mode support
+- **Upload**: Cancel upload functionality
+  - Users can now abort in-progress uploads (both simple and chunked)
+  - Smart button transformation: grey "Remove File" (idle) → red "Cancel Upload" (uploading)
+  - File remains selected after cancel for easy re-upload
+  - Follows modern upload UX patterns
+- **Admin**: Settings validation
+  - Max File Size cannot exceed Storage Quota (when quota > 0)
+  - Default Expiration cannot exceed Max Expiration
+  - Clear error messages with actionable guidance
+- **Admin**: Unsaved changes warning
+  - Detects unsaved changes in Settings tab
+  - Shows confirmation dialog when navigating away
+  - Browser beforeunload warning when closing/navigating away from page
+  - Automatically clears warning after successful save
+
+### Changed
+- **UX**: Replaced all blocking alert() dialogs with non-blocking toast notifications
+  - Upload errors now show as dismissible error toasts (4s duration)
+  - File validation errors (too large, blocked extension) show as error toasts
+  - Success messages (upload complete, link copied) show as success toasts
+  - Informational messages (download started, upload cancelled) show as info toasts
+  - Warning messages (missing claim code, missing password) show as warning toasts
+  - Improves user experience by not interrupting workflow
+  - Follows enterprise UX patterns (Google Drive, Dropbox, OneDrive)
+- **UI**: Improved chunked upload progress display
+  - Removed technical chunk information ("chunk X of Y") from progress text
+  - Now shows user-friendly format: "Uploading... X% • SIZE / TOTAL • TIME remaining"
+  - Added estimated time remaining (ETA) instead of just upload speed
+  - Smart file size formatting (automatically uses MB/GB as appropriate)
+  - Human-readable time format (e.g., "6 min", "2h 15m", "45 sec")
+  - Cleaner visual presentation with bullet separators
+- **Config**: Updated default download rate limit from 100 to 50 per hour
+  - Aligns with industry standards (GitHub: 60/hour, npm: 50/hour)
+  - Better DoS protection by default
+
+### Fixed
+- **Critical**: Fixed memory exhaustion bug for large encrypted files
+  - Implemented streaming encryption using chunked AES-256-GCM (64MB chunks)
+  - Prevents OOM crashes when uploading/downloading encrypted files >1GB
+  - New SFSE1 format (SafeShare File Stream Encrypted v1) for large files
+  - Backward compatible with legacy encrypted files
+  - Constant memory usage (~64MB buffer) regardless of file size
+- **Authentication**: Fixed admin logout button not working for user accounts with admin role
+  - AdminLogoutHandler now properly handles both `admin_session` and `user_session` cookies
+  - Clears sessions from correct database table based on authentication method
+  - Clears all cookies (admin_session, user_session, CSRF) for complete logout
+- **Authentication**: Fixed admin login session compatibility issue
+  - Admins logging in via `/admin/login` now receive `user_session` cookies instead of `admin_session` cookies
+  - Allows admins to access both admin routes and user routes seamlessly
+  - Legacy `admin_credentials` authentication still creates `admin_session` cookies for backward compatibility
+- **Authentication**: Implemented server-side authentication redirects
+  - Replaces client-side redirects with HTTP 302 redirects
+  - Eliminates 401 errors in console during navigation
+  - No page flashing during authentication flow
+  - Login pages redirect to dashboard if already authenticated
+- **Upload**: Fixed 80% disk check blocking uploads when quota configured
+  - Disk space check now skips 80% limit when quota is set
+  - Allows full utilization of configured quota
+  - Still validates minimum 1GB free space and actual disk availability
+- **Upload**: Improved chunked upload reliability
+  - Fixed SQLITE_BUSY errors by using disk-based chunk counting instead of database counter
+  - Fixed duplicate response structure syntax error in completion handler
+  - Enhanced error handling and status checking
+- **UI**: Fixed browser "Leave site?" warning appearing after successful upload
+  - Upload state now properly resets to 'idle' after upload completes
+  - Users can navigate away from success page without unnecessary warnings
+- **UI**: Added "Remove File" button to upload interface
+  - Users can now clear selected files without refreshing the page
+  - Button appears after file selection (via drag-drop or file picker)
+- **UI**: Fixed toast notification positioning and styling on Admin Dashboard
+  - Toast notifications now appear 100px from top, preventing overlap with header elements
+  - Toast styling now matches user dashboard
+  - Removed legacy toast notification system to prevent conflicts
+- **UI**: Improved upload warning banner UX
+  - Reduced banner height by ~25-30% for less screen intrusion
+  - Banner now auto-hides when upload completes (success or error)
+
 ## [2.0.7] - 2025-11-07
 
 ### Changed
@@ -227,7 +331,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.0.7...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
 [2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
 [2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0

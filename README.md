@@ -441,7 +441,7 @@ Environment variables:
 | `BLOCKED_EXTENSIONS` | `.exe,.bat,...` | Comma-separated list of blocked file extensions |
 | `MAX_EXPIRATION_HOURS` | `168` | Maximum allowed expiration time in hours (default: 7 days) |
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
-| `RATE_LIMIT_DOWNLOAD` | `100` | Maximum download requests per hour per IP |
+| `RATE_LIMIT_DOWNLOAD` | `50` | Maximum download requests per hour per IP |
 | `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
 | `CHUNKED_UPLOAD_ENABLED` | `true` | Enable/disable chunked upload support |
 | `CHUNKED_UPLOAD_THRESHOLD` | `104857600` | Files >= this size use chunked upload (default: 100MB) |
@@ -591,7 +591,7 @@ SafeShare Application
 - **Maximum expiration limits**: Prevents disk abuse (default: 7 days max)
 
 #### Attack Prevention
-- **Rate limiting**: IP-based protection against DoS attacks (10 uploads/hour, 100 downloads/hour)
+- **Rate limiting**: IP-based protection against DoS attacks (10 uploads/hour, 50 downloads/hour)
 - **Storage quota limits**: Configurable per-application storage limits prevent disk abuse
 - **Filename sanitization**: Prevents HTTP header injection and path traversal
 - **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options prevent XSS/clickjacking

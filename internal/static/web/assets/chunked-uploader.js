@@ -32,7 +32,7 @@ class ChunkedUploader {
             expiresInHours: options.expiresInHours || 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
-            concurrency: options.concurrency || 6, // Number of parallel chunk uploads (optimized for throughput)
+            concurrency: options.concurrency || 6, // Number of parallel chunk uploads (restored to 6 after removing DB writes during upload)
             retryAttempts: options.retryAttempts || 3,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
         };
@@ -142,7 +142,7 @@ class ChunkedUploader {
             try {
                 // Check if paused
                 if (this.isPaused) {
-                    throw new Error('Upload paused');
+                    throw new Error('Upload cancelled');
                 }
 
                 // Calculate chunk boundaries
@@ -231,7 +231,7 @@ class ChunkedUploader {
         for (const batch of batches) {
             if (this.isPaused) {
                 this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                throw new Error('Upload paused');
+                throw new Error('Upload cancelled');
             }
 
             // Upload batch in parallel
@@ -244,40 +244,55 @@ class ChunkedUploader {
      * @returns {Promise<Object>} - Returns claim code and download URL
      */
     async complete() {
+        // Prevent duplicate completion requests (race condition protection)
+        if (this.isCompleting) {
+            console.warn('Complete already in progress, ignoring duplicate call');
+            return this.completionPromise;
+        }
+
+        this.isCompleting = true;
+
         try {
-            const response = await fetch(`/api/upload/complete/${this.uploadId}`, {
-                method: 'POST'
-            });
+            // Store promise for duplicate calls to wait on
+            this.completionPromise = (async () => {
+                const response = await fetch(`/api/upload/complete/${this.uploadId}`, {
+                    method: 'POST'
+                });
 
-            if (!response.ok) {
-                const error = await response.json();
+                if (!response.ok) {
+                    const error = await response.json();
 
-                // Handle missing chunks
-                if (error.missing_chunks) {
-                    this.emit('error', {
-                        stage: 'complete',
-                        error: error.error,
-                        missing_chunks: error.missing_chunks
-                    });
-                    throw new Error(`Missing ${error.missing_chunks.length} chunks: ${error.missing_chunks.join(', ')}`);
+                    // Handle missing chunks
+                    if (error.missing_chunks) {
+                        this.emit('error', {
+                            stage: 'complete',
+                            error: error.error,
+                            missing_chunks: error.missing_chunks
+                        });
+                        throw new Error(`Missing ${error.missing_chunks.length} chunks: ${error.missing_chunks.join(', ')}`);
+                    }
+
+                    throw new Error(error.error || 'Failed to complete upload');
                 }
 
-                throw new Error(error.error || 'Failed to complete upload');
-            }
+                const data = await response.json();
+                this.isCompleted = true;
 
-            const data = await response.json();
-            this.isCompleted = true;
+                // Clear saved state from localStorage
+                this.clearState();
 
-            // Clear saved state from localStorage
-            this.clearState();
+                this.emit('complete', data);
 
-            this.emit('complete', data);
+                return data;
+            })();
 
-            return data;
+            return await this.completionPromise;
 
         } catch (error) {
             this.emit('error', { stage: 'complete', error: error.message });
             throw error;
+        } finally {
+            this.isCompleting = false;
         }
     }
 
@@ -327,6 +342,35 @@ class ChunkedUploader {
 
         // Continue uploading remaining chunks
         await this.uploadAllChunks();
+    }
+
+    /**
+     * Abort/cancel upload
+     * Stops all in-progress uploads and clears state
+     */
+    abort() {
+        this.isPaused = true; // Stop new chunk uploads
+        this.isCompleted = true; // Prevent resume
+
+        // Clear localStorage state
+        if (this.storageKey) {
+            try {
+                localStorage.removeItem(this.storageKey);
+            } catch (e) {
+                console.warn('Failed to clear upload state from localStorage:', e);
+            }
+        }
+
+        // Show toast notification
+        if (typeof window.showToast === 'function') {
+            window.showToast('Upload cancelled', 'info', 3000);
+        }
+
+        this.emit('cancelled', {
+            uploadedChunks: this.uploadedChunks.size,
+            totalChunks: this.totalChunks,
+            uploadId: this.uploadId
+        });
     }
 
     /**
