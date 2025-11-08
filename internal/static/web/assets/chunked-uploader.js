@@ -142,7 +142,7 @@ class ChunkedUploader {
             try {
                 // Check if paused
                 if (this.isPaused) {
-                    throw new Error('Upload paused');
+                    throw new Error('Upload cancelled');
                 }
 
                 // Calculate chunk boundaries
@@ -231,7 +231,7 @@ class ChunkedUploader {
         for (const batch of batches) {
             if (this.isPaused) {
                 this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                throw new Error('Upload paused');
+                throw new Error('Upload cancelled');
             }
 
             // Upload batch in parallel

@@ -657,7 +657,10 @@
 
         } catch (error) {
             console.error('Chunked upload error:', error);
-            alert(`Upload failed: ${error.message}`);
+            // Don't show error alert for user-initiated cancellation
+            if (error.message !== 'Upload cancelled') {
+                alert(`Upload failed: ${error.message}`);
+            }
             resetProgress();
         }
     }
