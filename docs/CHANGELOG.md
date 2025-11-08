@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Button appears after file selection (via drag-drop or file picker)
   - Clicking removes the file and resets the upload interface
   - Improves UX by allowing users to easily change their file selection
+- **UI**: Fixed browser "Leave site?" warning appearing after successful upload
+  - Upload state now properly resets to 'idle' after upload completes
+  - Users can navigate away from success page without unnecessary warnings
+  - Improves UX by not blocking navigation after upload is complete
 
 ## [2.0.7] - 2025-11-07
 
