@@ -410,13 +410,16 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					slog.Error("failed to update partial upload activity", "error", err)
 				}
 
+				// Count actual chunks from disk instead of relying on DB counter
+				chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 				// Return success response
 				response := models.UploadChunkResponse{
 					UploadID:       uploadID,
 					ChunkNumber:    chunkNumber,
-					ChunksReceived: partialUpload.ChunksReceived,
+					ChunksReceived: chunksReceived,
 					TotalChunks:    partialUpload.TotalChunks,
-					Complete:       partialUpload.ChunksReceived == partialUpload.TotalChunks,
+					Complete:       chunksReceived == partialUpload.TotalChunks,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -462,13 +465,12 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Increment chunks_received in database
-		if err := database.IncrementChunksReceived(db, uploadID, chunkSize); err != nil {
-			slog.Error("failed to increment chunks received", "error", err)
-			// Don't fail the request - chunk is already saved
-		}
+		// NOTE: We no longer increment chunks_received in the database on every chunk upload.
+		// This caused severe database lock contention (31-35% SQLITE_BUSY errors with concurrency=3).
+		// Instead, chunk count is calculated on-demand from disk when status is requested.
+		// This eliminates all database writes during upload, allowing higher concurrency.
 
-		// Refresh partial upload data to get updated counts
+		// Get updated partial upload data (no longer need to refresh counts from DB)
 		partialUpload, err = database.GetPartialUpload(db, uploadID)
 		if err != nil {
 			slog.Error("failed to refresh partial upload", "error", err)
@@ -476,10 +478,13 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Send response
+	// Count actual chunks from disk instead of relying on DB counter
+	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,
 			ChunkNumber:    chunkNumber,
-			ChunksReceived: partialUpload.ChunksReceived,
+			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
 			Complete:       partialUpload.ChunksReceived >= partialUpload.TotalChunks,
 		}
@@ -492,7 +497,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"upload_id", uploadID,
 			"chunk_number", chunkNumber,
 			"chunk_size", chunkSize,
-			"chunks_received", partialUpload.ChunksReceived,
+			"chunks_received", chunksReceived,
 			"total_chunks", partialUpload.TotalChunks,
 			"filename", chunkHeader.Filename,
 		)
@@ -538,12 +543,21 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check if already completed
 		if partialUpload.Completed {
-			// Already completed - return existing claim code
+		}
+			// Already completed - return existing claim code with full file info
 			if partialUpload.ClaimCode != nil {
 				downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+				
+				// Calculate expiration time
+				expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+				
 				response := models.UploadCompleteResponse{
-					ClaimCode:   *partialUpload.ClaimCode,
-					DownloadURL: downloadURL,
+					ClaimCode:        *partialUpload.ClaimCode,
+					DownloadURL:      downloadURL,
+					OriginalFilename: partialUpload.Filename,
+					FileSize:         partialUpload.TotalSize,
+					ExpiresAt:        expiresAt,
+					MaxDownloads:     partialUpload.MaxDownloads,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -551,7 +565,6 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				json.NewEncoder(w).Encode(response)
 				return
 			}
-		}
 
 		// Check if upload has expired
 		expiryTime := partialUpload.LastActivity.Add(time.Duration(cfg.PartialUploadExpiryHours) * time.Hour)
@@ -788,24 +801,27 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// Don't fail the request - chunks will be cleaned up later
 		}
 
-		// Delete partial upload record
-		if err := database.DeletePartialUpload(db, uploadID); err != nil {
-			slog.Error("failed to delete partial upload record", "error", err)
-			// Don't fail the request - will be cleaned up later
-		}
+		// Don't delete partial upload record immediately - keep it for idempotency
+		// Duplicate completion requests can retrieve the claim_code from the completed record
+		// The cleanup worker will delete completed uploads after 1 hour
+		// Note: Lines 540-554 already handle the idempotency check
 
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, claimCode)
 
-		// Send response
-		response := models.UploadCompleteResponse{
-			ClaimCode:   claimCode,
-			DownloadURL: downloadURL,
-		}
+	// Send response with complete file information
+	response := models.UploadCompleteResponse{
+		 ClaimCode:        claimCode,
+		 DownloadURL:      downloadURL,
+		 OriginalFilename: partialUpload.Filename,
+		 FileSize:         partialUpload.TotalSize,
+		 ExpiresAt:        expiresAt,
+		 MaxDownloads:     partialUpload.MaxDownloads,
+	}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(response)
 
 		slog.Info("chunked upload completed",
 			"upload_id", uploadID,
@@ -872,11 +888,14 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
+	// Count actual chunks from disk
+	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+
 		// Build response
 		response := models.UploadStatusResponse{
 			UploadID:       uploadID,
 			Filename:       partialUpload.Filename,
-			ChunksReceived: partialUpload.ChunksReceived,
+			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
 			MissingChunks:  missingChunks,
 			Complete:       partialUpload.Completed,
