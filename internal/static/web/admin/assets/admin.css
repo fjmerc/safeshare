@@ -328,6 +328,18 @@ body {
     background: var(--bg-white);
 }
 
+/* Remove spinner arrows from number inputs */
+.form-group input[type="number"]::-webkit-inner-spin-button,
+.form-group input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.form-group input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
 .form-group input:focus {
     outline: none;
     border-color: var(--primary-color);
@@ -361,6 +373,25 @@ body {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+/* Input with unit selector (flex layout) */
+.input-with-unit {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.input-with-unit input {
+    flex: 1;
+    min-width: 0;
+}
+
+.input-with-unit select {
+    flex-shrink: 0;
+    width: 90px;
+    padding-right: 32px;
+    background-position: right 8px center;
 }
 
 .error-message {
@@ -511,11 +542,19 @@ body {
     box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
 }
 
+/* Button group for side-by-side buttons */
+.button-group {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
 .btn-secondary {
     background: var(--bg-white);
     color: var(--text-secondary);
     box-shadow: var(--shadow-sm);
-    border: 1px solid var(--border-color);
+    border: 2px solid var(--border-color);
 }
 
 .btn-secondary:hover:not(:disabled) {
@@ -523,6 +562,7 @@ body {
     border-color: var(--border-hover);
     color: var(--text-primary);
     transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 .btn-secondary:active:not(:disabled) {
