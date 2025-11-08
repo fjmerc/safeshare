@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [2.1.0] - 2025-11-08
+
+### Added
 - **UI**: Professional toast notification system across entire application
   - Non-blocking notifications with 4 types: info (blue), success (green), error (red), warning (orange)
   - Top-right positioning with smooth slide-in/fade-out animations
@@ -26,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Works for both simple and chunked uploads
   - Includes `beforeunload` handler as fallback for tab closes
   - Responsive design with dark mode support
+- **Upload**: Cancel upload functionality
+  - Users can now abort in-progress uploads (both simple and chunked)
+  - Smart button transformation: grey "Remove File" (idle) → red "Cancel Upload" (uploading)
+  - File remains selected after cancel for easy re-upload
+  - Follows modern upload UX patterns
+- **Admin**: Settings validation
+  - Max File Size cannot exceed Storage Quota (when quota > 0)
+  - Default Expiration cannot exceed Max Expiration
+  - Clear error messages with actionable guidance
+- **Admin**: Unsaved changes warning
+  - Detects unsaved changes in Settings tab
+  - Shows confirmation dialog when navigating away
+  - Browser beforeunload warning when closing/navigating away from page
+  - Automatically clears warning after successful save
 
 ### Changed
 - **UX**: Replaced all blocking alert() dialogs with non-blocking toast notifications
@@ -43,32 +65,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Smart file size formatting (automatically uses MB/GB as appropriate)
   - Human-readable time format (e.g., "6 min", "2h 15m", "45 sec")
   - Cleaner visual presentation with bullet separators
+- **Config**: Updated default download rate limit from 100 to 50 per hour
+  - Aligns with industry standards (GitHub: 60/hour, npm: 50/hour)
+  - Better DoS protection by default
 
 ### Fixed
+- **Critical**: Fixed memory exhaustion bug for large encrypted files
+  - Implemented streaming encryption using chunked AES-256-GCM (64MB chunks)
+  - Prevents OOM crashes when uploading/downloading encrypted files >1GB
+  - New SFSE1 format (SafeShare File Stream Encrypted v1) for large files
+  - Backward compatible with legacy encrypted files
+  - Constant memory usage (~64MB buffer) regardless of file size
 - **Authentication**: Fixed admin logout button not working for user accounts with admin role
   - AdminLogoutHandler now properly handles both `admin_session` and `user_session` cookies
   - Clears sessions from correct database table based on authentication method
   - Clears all cookies (admin_session, user_session, CSRF) for complete logout
-  - Fixes issue where users with admin role could not logout from admin dashboard
 - **Authentication**: Fixed admin login session compatibility issue
   - Admins logging in via `/admin/login` now receive `user_session` cookies instead of `admin_session` cookies
-  - This allows admins to access both admin routes (`/admin/dashboard`) and user routes (`/dashboard`) seamlessly
+  - Allows admins to access both admin routes and user routes seamlessly
   - Legacy `admin_credentials` authentication still creates `admin_session` cookies for backward compatibility
-  - Users with admin role now get consistent session behavior regardless of which login page they use
-- **UI**: Added "Remove File" button to upload interface
-  - Users can now clear selected files without refreshing the page
-  - Button appears after file selection (via drag-drop or file picker)
-  - Clicking removes the file and resets the upload interface
-  - Improves UX by allowing users to easily change their file selection
+- **Authentication**: Implemented server-side authentication redirects
+  - Replaces client-side redirects with HTTP 302 redirects
+  - Eliminates 401 errors in console during navigation
+  - No page flashing during authentication flow
+  - Login pages redirect to dashboard if already authenticated
+- **Upload**: Fixed 80% disk check blocking uploads when quota configured
+  - Disk space check now skips 80% limit when quota is set
+  - Allows full utilization of configured quota
+  - Still validates minimum 1GB free space and actual disk availability
+- **Upload**: Improved chunked upload reliability
+  - Fixed SQLITE_BUSY errors by using disk-based chunk counting instead of database counter
+  - Fixed duplicate response structure syntax error in completion handler
+  - Enhanced error handling and status checking
 - **UI**: Fixed browser "Leave site?" warning appearing after successful upload
   - Upload state now properly resets to 'idle' after upload completes
   - Users can navigate away from success page without unnecessary warnings
-  - Improves UX by not blocking navigation after upload is complete
+- **UI**: Added "Remove File" button to upload interface
+  - Users can now clear selected files without refreshing the page
+  - Button appears after file selection (via drag-drop or file picker)
 - **UI**: Fixed toast notification positioning and styling on Admin Dashboard
   - Toast notifications now appear 100px from top, preventing overlap with header elements
-  - Toast styling now matches user dashboard (font-weight: 500, no text-shadow)
+  - Toast styling now matches user dashboard
   - Removed legacy toast notification system to prevent conflicts
-  - Ensures consistent toast appearance across all dashboard pages
+- **UI**: Improved upload warning banner UX
+  - Reduced banner height by ~25-30% for less screen intrusion
+  - Banner now auto-hides when upload completes (success or error)
 
 ## [2.0.7] - 2025-11-07
 
@@ -290,7 +331,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.0.7...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
 [2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
 [2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0
