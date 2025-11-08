@@ -767,33 +767,7 @@ function truncate(str, length) {
     return str.length > length ? str.substring(0, length) + '...' : str;
 }
 
-// Toast notification system
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-
-    const title = type === 'success' ? 'Success' : type === 'error' ? 'Error' : 'Warning';
-
-    toast.innerHTML = `
-        <div class="toast-content">
-            <div class="toast-title">${title}</div>
-            <div class="toast-message">${escapeHtml(message)}</div>
-        </div>
-        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
-    `;
-
-    container.appendChild(toast);
-
-    // Auto-remove after 2 seconds
-    setTimeout(() => {
-        toast.style.animation = 'slideInRight 0.3s ease reverse';
-        setTimeout(() => toast.remove(), 300);
-    }, 2000);
-}
-
+// Helper functions for toast notifications (use universal toast.js)
 function showError(message) {
     showToast(message, 'error');
 }

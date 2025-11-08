@@ -87,20 +87,6 @@
             cursor: not-allowed;
         }
 
-        .error-message {
-            padding: 12px;
-            background: #fee2e2;
-            border: 1px solid #fecaca;
-            border-radius: 4px;
-            color: #dc2626;
-            font-size: 14px;
-            margin-bottom: 20px;
-            display: none;
-        }
-
-        .error-message.show {
-            display: block;
-        }
 
         .info-message {
             padding: 12px;
@@ -156,12 +142,6 @@
             color: #6b7280;
         }
 
-        [data-theme="dark"] .error-message {
-            background: #7f1d1d;
-            border-color: #991b1b;
-            color: #fecaca;
-        }
-
         [data-theme="dark"] .info-message {
             background: #1e3a5f;
             border-color: #2563eb;
@@ -177,8 +157,6 @@
             </div>
             <p>Sign in to access your dashboard</p>
         </div>
-
-        <div id="errorMessage" class="error-message"></div>
 
         <form id="loginForm">
             <div class="form-group">
@@ -244,7 +222,6 @@
 
         const loginForm = document.getElementById('loginForm');
         const loginBtn = document.getElementById('loginBtn');
-        const errorMessage = document.getElementById('errorMessage');
 
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -255,7 +232,6 @@
             // Disable button and show loading state
             loginBtn.disabled = true;
             loginBtn.textContent = 'Signing in...';
-            errorMessage.classList.remove('show');
 
             try {
                 const response = await fetch('/api/auth/login', {
@@ -270,18 +246,24 @@
                 const data = await response.json();
 
                 if (response.ok) {
+                    // Show success toast
+                    showToast('Login successful! Redirecting...', 'success');
+
                     // Check if password change is required
                     if (data.require_password_change) {
                         // Redirect to dashboard where they'll be prompted to change password
-                        window.location.href = '/dashboard?change_password=true';
+                        setTimeout(() => {
+                            window.location.href = '/dashboard?change_password=true';
+                        }, 1000);
                     } else {
                         // Normal login - redirect to dashboard
-                        window.location.href = '/dashboard';
+                        setTimeout(() => {
+                            window.location.href = '/dashboard';
+                        }, 1000);
                     }
                 } else {
-                    // Show error message
-                    errorMessage.textContent = data.error || 'Login failed. Please try again.';
-                    errorMessage.classList.add('show');
+                    // Show error toast
+                    showToast(data.error || 'Login failed. Please try again.', 'error');
 
                     // Re-enable button
                     loginBtn.disabled = false;
@@ -289,8 +271,7 @@
                 }
             } catch (error) {
                 console.error('Login error:', error);
-                errorMessage.textContent = 'Network error. Please check your connection and try again.';
-                errorMessage.classList.add('show');
+                showToast('Network error. Please check your connection and try again.', 'error');
 
                 // Re-enable button
                 loginBtn.disabled = false;
