@@ -78,19 +78,29 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 	start := time.Now()
 
-	// Get abandoned partial uploads
+	// Get abandoned partial uploads (incomplete uploads that are old)
 	abandoned, err := database.GetAbandonedPartialUploads(db, expiryHours)
 	if err != nil {
 		slog.Error("failed to get abandoned partial uploads", "error", err)
 		return
 	}
 
-	if len(abandoned) == 0 {
+	// Get completed uploads older than 1 hour (for idempotency cleanup)
+	completed, err := database.GetOldCompletedUploads(db, 1) // 1 hour retention for idempotency
+	if err != nil {
+		slog.Error("failed to get old completed uploads", "error", err)
+		// Continue with abandoned cleanup even if this fails
+	}
+
+	totalToClean := len(abandoned) + len(completed)
+	if totalToClean == 0 {
 		slog.Debug("partial upload cleanup completed", "deleted", 0, "duration", time.Since(start))
 		return
 	}
 
 	deleted := 0
+
+	// Clean up abandoned (incomplete) uploads
 	for _, upload := range abandoned {
 		// Delete chunks from filesystem
 		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
@@ -121,6 +131,32 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 		deleted++
 	}
 
+	// Clean up completed uploads (older than 1 hour, kept for idempotency)
+	for _, upload := range completed {
+		// Chunks should already be deleted, but check anyway
+		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
+			// Chunks likely already deleted during completion, ignore error
+			slog.Debug("chunks already deleted", "upload_id", upload.UploadID)
+		}
+
+		// Delete partial upload record from database
+		if err := database.DeletePartialUpload(db, upload.UploadID); err != nil {
+			slog.Error("failed to delete completed upload record",
+				"upload_id", upload.UploadID,
+				"error", err,
+			)
+			continue
+		}
+
+		slog.Debug("cleaned up old completed upload",
+			"upload_id", upload.UploadID,
+			"filename", upload.Filename,
+			"claim_code", upload.ClaimCode,
+		)
+
+		deleted++
+	}
+
 	// Clean up empty partial upload directories
 	if err := CleanupPartialUploadsDir(uploadDir); err != nil {
 		slog.Error("failed to cleanup partial uploads directory", "error", err)
@@ -130,6 +166,8 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 	if deleted > 0 {
 		slog.Info("partial upload cleanup completed",
 			"deleted", deleted,
+			"abandoned", len(abandoned),
+			"completed", len(completed),
 			"duration", duration,
 		)
 	} else {

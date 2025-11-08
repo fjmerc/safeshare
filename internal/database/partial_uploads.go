@@ -221,6 +221,73 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 	return uploads, nil
 }
 
+// GetOldCompletedUploads returns completed uploads older than the specified hours
+// These are kept for idempotency (duplicate completion requests) and cleaned up after retention period
+func GetOldCompletedUploads(db *sql.DB, retentionHours int) ([]models.PartialUpload, error) {
+	query := `
+		SELECT
+			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
+			chunks_received, received_bytes, expires_in_hours, max_downloads,
+			password_hash, created_at, last_activity, completed, claim_code
+		FROM partial_uploads
+		WHERE completed = 1
+		AND datetime(last_activity) < datetime('now', '-' || ? || ' hours')
+		ORDER BY last_activity ASC
+	`
+
+	rows, err := db.Query(query, retentionHours)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get old completed uploads: %w", err)
+	}
+	defer rows.Close()
+
+	var uploads []models.PartialUpload
+	for rows.Next() {
+		var upload models.PartialUpload
+		var userID sql.NullInt64
+		var claimCode sql.NullString
+
+		err := rows.Scan(
+			&upload.UploadID,
+			&userID,
+			&upload.Filename,
+			&upload.TotalSize,
+			&upload.ChunkSize,
+			&upload.TotalChunks,
+			&upload.ChunksReceived,
+			&upload.ReceivedBytes,
+			&upload.ExpiresInHours,
+			&upload.MaxDownloads,
+			&upload.PasswordHash,
+			&upload.CreatedAt,
+			&upload.LastActivity,
+			&upload.Completed,
+			&claimCode,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan completed upload: %w", err)
+		}
+
+		// Handle nullable fields
+		if userID.Valid {
+			upload.UserID = &userID.Int64
+		}
+
+		if claimCode.Valid {
+			upload.ClaimCode = &claimCode.String
+		}
+
+		uploads = append(uploads, upload)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating completed uploads: %w", err)
+	}
+
+	return uploads, nil
+}
+
 // GetPartialUploadsByUserID returns all partial uploads for a specific user
 func GetPartialUploadsByUserID(db *sql.DB, userID int64) ([]models.PartialUpload, error) {
 	query := `
