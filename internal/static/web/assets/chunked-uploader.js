@@ -330,6 +330,30 @@ class ChunkedUploader {
     }
 
     /**
+     * Abort/cancel upload
+     * Stops all in-progress uploads and clears state
+     */
+    abort() {
+        this.isPaused = true; // Stop new chunk uploads
+        this.isCompleted = true; // Prevent resume
+
+        // Clear localStorage state
+        if (this.storageKey) {
+            try {
+                localStorage.removeItem(this.storageKey);
+            } catch (e) {
+                console.warn('Failed to clear upload state from localStorage:', e);
+            }
+        }
+
+        this.emit('cancelled', {
+            uploadedChunks: this.uploadedChunks.size,
+            totalChunks: this.totalChunks,
+            uploadId: this.uploadId
+        });
+    }
+
+    /**
      * Emit progress event with calculated metrics
      */
     emitProgress() {

@@ -5,6 +5,9 @@
     // State
     let selectedFile = null;
     let maxFileSizeBytes = 104857600; // 100MB default
+    let uploadState = 'idle'; // 'idle', 'uploading', 'completed'
+    let currentUploadXhr = null; // For simple upload cancellation
+    let currentChunkedUploader = null; // For chunked upload cancellation
 
     // DOM Elements - Dropoff Tab
     const dropZone = document.getElementById('dropZone');
@@ -284,8 +287,8 @@
         // Dropoff Tab - Upload button
         uploadButton.addEventListener('click', handleUpload);
 
-        // Dropoff Tab - Remove file button
-        removeFileButton.addEventListener('click', clearSelectedFile);
+        // Dropoff Tab - Remove file / Cancel upload button
+        removeFileButton.addEventListener('click', handleRemoveOrCancel);
 
         // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
@@ -446,14 +449,15 @@
                 alert(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`);
                 selectedFile = null;
                 uploadButton.disabled = true;
-                removeFileButton.classList.add('hidden');
+                uploadState = 'idle';
+                updateRemoveButtonState();
                 return;
             }
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
             uploadButton.disabled = false;
-            removeFileButton.classList.remove('hidden');
+            updateRemoveButtonState();
         }
     }
 
@@ -494,12 +498,17 @@
             formData.append('password', password);
         }
 
+        // Update upload state
+        uploadState = 'uploading';
+        updateRemoveButtonState();
+
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
 
         try {
             const xhr = new XMLHttpRequest();
+            currentUploadXhr = xhr; // Store for cancellation
 
             // Progress event
             xhr.upload.addEventListener('progress', (e) => {
@@ -533,6 +542,12 @@
                 resetProgress();
             });
 
+            // Abort event
+            xhr.addEventListener('abort', () => {
+                console.log('Upload cancelled by user');
+                resetProgress();
+            });
+
             xhr.open('POST', '/api/upload');
             xhr.send(formData);
 
@@ -551,6 +566,10 @@
         const maxDl = parseInt(maxDownloads.value) || 0;
         const password = document.getElementById('uploadPassword').value.trim();
 
+        // Update upload state
+        uploadState = 'uploading';
+        updateRemoveButtonState();
+
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
@@ -563,6 +582,7 @@
                 maxDownloads: maxDl,
                 password: password
             });
+            currentChunkedUploader = uploader; // Store for cancellation
 
             // Register progress event
             uploader.on('progress', (data) => {
@@ -588,6 +608,12 @@
             uploader.on('complete', (data) => {
                 console.log('Chunked upload complete:', data);
                 showResults(data);
+            });
+
+            // Register cancelled event
+            uploader.on('cancelled', (data) => {
+                console.log('Chunked upload cancelled:', data);
+                resetProgress();
             });
 
             // Execute upload flow
@@ -659,9 +685,55 @@
         selectedFile = null;
         fileInput.value = '';
         uploadButton.disabled = true;
-        removeFileButton.classList.add('hidden');
+        uploadState = 'idle';
+        updateRemoveButtonState();
         dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
         dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+    }
+
+    // Handle remove file or cancel upload based on current state
+    function handleRemoveOrCancel() {
+        if (uploadState === 'uploading') {
+            // Cancel the upload
+            cancelUpload();
+        } else {
+            // Remove the selected file
+            clearSelectedFile();
+        }
+    }
+
+    // Cancel current upload (simple or chunked)
+    function cancelUpload() {
+        if (currentUploadXhr) {
+            // Cancel simple upload
+            currentUploadXhr.abort();
+            currentUploadXhr = null;
+        } else if (currentChunkedUploader) {
+            // Cancel chunked upload
+            currentChunkedUploader.abort();
+            currentChunkedUploader = null;
+        }
+        // resetProgress() will be called by the abort/cancelled event handlers
+    }
+
+    // Update remove button state based on upload state
+    function updateRemoveButtonState() {
+        if (uploadState === 'uploading') {
+            // Show as cancel button
+            removeFileButton.textContent = '✕ Cancel Upload';
+            removeFileButton.classList.remove('btn-remove-file');
+            removeFileButton.classList.add('btn-cancel');
+            removeFileButton.classList.remove('hidden');
+        } else if (selectedFile) {
+            // Show as remove button
+            removeFileButton.textContent = '✕ Remove File';
+            removeFileButton.classList.add('btn-remove-file');
+            removeFileButton.classList.remove('btn-cancel');
+            removeFileButton.classList.remove('hidden');
+        } else {
+            // Hide button
+            removeFileButton.classList.add('hidden');
+        }
     }
 
     // Reset form
@@ -683,6 +755,12 @@
         progressFill.style.width = '0%';
         progressText.textContent = 'Uploading...';
         uploadButton.disabled = false;
+
+        // Reset upload state
+        uploadState = 'idle';
+        currentUploadXhr = null;
+        currentChunkedUploader = null;
+        updateRemoveButtonState();
     }
 
     // Toggle theme
