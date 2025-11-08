@@ -56,6 +56,8 @@
         chunk_size: 5242880 // Default 5MB
     };
 
+    // Note: Toast notification system is now loaded from toast.js
+
     // Initialize
     async function init() {
         loadTheme();
@@ -457,7 +459,7 @@
         if (selectedFile) {
             // Validate file size
             if (selectedFile.size > maxFileSizeBytes) {
-                alert(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`);
+                showToast(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 4000);
                 selectedFile = null;
                 uploadButton.disabled = true;
                 uploadState = 'idle';
@@ -555,16 +557,17 @@
                     // Show user-friendly error message
                     let errorMsg = error.error || 'Upload failed';
                     if (error.code === 'BLOCKED_EXTENSION') {
-                        errorMsg = `⚠️ Security Alert\n\n${error.error}\n\nBlocked file types include executables and scripts for security reasons.`;
+                        showToast(`Security Alert: ${error.error}. Blocked file types include executables and scripts.`, 'error', 5000);
+                    } else {
+                        showToast(errorMsg, 'error', 4000);
                     }
-                    alert(errorMsg);
                     resetProgress();
                 }
             });
 
             // Error event
             xhr.addEventListener('error', () => {
-                alert('Upload failed. Please try again.');
+                showToast('Upload failed. Please try again.', 'error', 4000);
                 resetProgress();
             });
 
@@ -578,7 +581,7 @@
             xhr.send(formData);
 
         } catch (error) {
-            alert('Upload failed: ' + error.message);
+            showToast('Upload failed: ' + error.message, 'error', 4000);
             resetProgress();
         }
     }
@@ -627,7 +630,7 @@
             // Register error event
             uploader.on('error', (data) => {
                 console.error('Chunked upload error:', data);
-                alert(`Upload failed at ${data.stage}: ${data.error}`);
+                showToast(`Upload failed at ${data.stage}: ${data.error}`, 'error', 4000);
                 resetProgress();
             });
 
@@ -657,9 +660,9 @@
 
         } catch (error) {
             console.error('Chunked upload error:', error);
-            // Don't show error alert for user-initiated cancellation
+            // Don't show error toast for user-initiated cancellation
             if (error.message !== 'Upload cancelled') {
-                alert(`Upload failed: ${error.message}`);
+                showToast(`Upload failed: ${error.message}`, 'error', 4000);
             }
             resetProgress();
         }
@@ -707,9 +710,12 @@
 
             // Hide upload warning banner
             hideUploadWarning();
+
+            // Show success toast
+            showToast('File uploaded successfully', 'success', 3000);
         } catch (error) {
             console.error('Error showing results:', error);
-            alert('Upload successful but error displaying results. Claim code: ' + data.claim_code);
+            showToast('Upload successful but error displaying results', 'warning', 4000);
             // Hide warning banner even if there's an error displaying results
             hideUploadWarning();
         }
@@ -818,7 +824,7 @@
         try {
             await navigator.clipboard.writeText(text);
 
-            // Visual feedback
+            // Visual feedback on button
             const btn = e.currentTarget;
             const originalText = btn.textContent;
             btn.textContent = '✓';
@@ -828,6 +834,9 @@
                 btn.textContent = originalText;
                 btn.classList.remove('copied');
             }, 2000);
+
+            // Show toast notification
+            showToast('Link copied to clipboard', 'success', 3000);
         } catch (error) {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
@@ -836,10 +845,20 @@
             textarea.style.opacity = '0';
             document.body.appendChild(textarea);
             textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
 
-            alert('Copied to clipboard!');
+            try {
+                const success = document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                if (success) {
+                    showToast('Link copied to clipboard', 'success', 3000);
+                } else {
+                    showToast('Failed to copy to clipboard', 'error', 3000);
+                }
+            } catch (fallbackError) {
+                document.body.removeChild(textarea);
+                showToast('Failed to copy to clipboard', 'error', 3000);
+            }
         }
     }
 
@@ -931,7 +950,7 @@
         const claimCode = claimCodeInput.value.trim();
 
         if (!claimCode) {
-            alert('Please enter a claim code');
+            showToast('Please enter a claim code', 'warning', 3000);
             return;
         }
 
@@ -944,7 +963,7 @@
 
             if (!response.ok) {
                 const error = await response.json();
-                alert(`Error: ${error.error || 'File not found or expired'}`);
+                showToast(`Error: ${error.error || 'File not found or expired'}`, 'error', 4000);
                 retrieveButton.disabled = false;
                 retrieveButton.textContent = 'Retrieve File';
                 return;
@@ -955,7 +974,7 @@
             displayFileInfo(data);
 
         } catch (error) {
-            alert('Failed to retrieve file info: ' + error.message);
+            showToast('Failed to retrieve file info: ' + error.message, 'error', 4000);
             retrieveButton.disabled = false;
             retrieveButton.textContent = 'Retrieve File';
         }
@@ -1007,7 +1026,7 @@
         if (currentFileInfo.password_required) {
             const password = document.getElementById('downloadPassword').value.trim();
             if (!password) {
-                alert('Please enter the password to download this file');
+                showToast('Please enter the password to download this file', 'warning', 3000);
                 return;
             }
             downloadUrl += `?password=${encodeURIComponent(password)}`;
@@ -1016,17 +1035,9 @@
         // Open in new tab - browser will prompt for download location
         window.open(downloadUrl, '_blank');
 
-        // Alternative: Force download with invisible link
-        // const link = document.createElement('a');
-        // link.href = downloadUrl;
-        // link.download = currentFileInfo.original_filename;
-        // document.body.appendChild(link);
-        // link.click();
-        // document.body.removeChild(link);
-
-        // Show success message
+        // Show info message
         setTimeout(() => {
-            alert('Download started! Check your browser\'s download location.');
+            showToast('Download started', 'info', 2000);
         }, 500);
     }
 

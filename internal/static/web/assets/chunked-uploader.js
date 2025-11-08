@@ -361,6 +361,11 @@ class ChunkedUploader {
             }
         }
 
+        // Show toast notification
+        if (typeof window.showToast === 'function') {
+            window.showToast('Upload cancelled', 'info', 3000);
+        }
+
         this.emit('cancelled', {
             uploadedChunks: this.uploadedChunks.size,
             totalChunks: this.totalChunks,
