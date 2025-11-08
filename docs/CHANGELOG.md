@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Backward compatible with existing deployments
 
 ### Fixed
+- **UI**: Eliminated white flash when navigating between pages with dark mode enabled
+  - Theme preference now loads before CSS rendering to prevent light theme flash
+  - Applied across all 6 pages (main, login, dashboard, error, admin login, admin dashboard)
+  - Provides seamless dark mode experience during page transitions
 - **Upload**: Fixed chunk size validation bug that prevented use of larger chunk sizes
   - HTTP parser now correctly accepts chunk sizes up to configured maximum
   - Previously limited to 5MB default regardless of requested chunk size

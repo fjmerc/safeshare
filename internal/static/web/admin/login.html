@@ -12,6 +12,14 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <meta name="theme-color" content="#3b82f6">
 
+    <!-- Load theme before CSS to prevent flash -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        })();
+    </script>
+
     <link rel="stylesheet" href="/admin/assets/admin.css">
 </head>
 <body class="login-page">
