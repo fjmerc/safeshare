@@ -701,9 +701,14 @@
             // Hide upload section, show results
             uploadSection.classList.add('hidden');
             resultsSection.classList.remove('hidden');
+
+            // Hide upload warning banner
+            hideUploadWarning();
         } catch (error) {
             console.error('Error showing results:', error);
             alert('Upload successful but error displaying results. Claim code: ' + data.claim_code);
+            // Hide warning banner even if there's an error displaying results
+            hideUploadWarning();
         }
     }
 
