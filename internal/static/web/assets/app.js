@@ -708,6 +708,9 @@
             uploadSection.classList.add('hidden');
             resultsSection.classList.remove('hidden');
 
+            // Reset upload state to prevent beforeunload warning
+            uploadState = 'idle';
+
             // Hide upload warning banner
             hideUploadWarning();
 

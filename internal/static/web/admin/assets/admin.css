@@ -1186,94 +1186,6 @@ input[type="checkbox"] {
     margin-top: 32px;
 }
 
-/* Toast Notifications */
-.toast-container {
-    position: fixed;
-    top: 80px;
-    right: 24px;
-    z-index: 2000;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    pointer-events: none;
-}
-
-.toast {
-    background: var(--bg-white);
-    padding: 16px 20px;
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    border-left: 4px solid;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    min-width: 320px;
-    max-width: 420px;
-    pointer-events: auto;
-    animation: slideInRight 0.3s ease;
-}
-
-@keyframes slideInRight {
-    from {
-        opacity: 0;
-        transform: translateX(100%);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-
-.toast.toast-success {
-    border-left-color: var(--success-color);
-}
-
-.toast.toast-error {
-    border-left-color: var(--danger-color);
-}
-
-.toast.toast-warning {
-    border-left-color: var(--warning-color);
-}
-
-.toast-content {
-    flex: 1;
-    padding-top: 2px;
-}
-
-.toast-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--text-primary);
-    margin-bottom: 2px;
-}
-
-.toast-message {
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.toast-close {
-    background: none;
-    border: none;
-    font-size: 20px;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    transition: var(--transition);
-}
-
-.toast-close:hover {
-    background: var(--bg-light);
-    color: var(--text-primary);
-}
-
 /* Loading Spinner */
 .spinner {
     display: inline-block;
@@ -1328,17 +1240,6 @@ input[type="checkbox"] {
 
     .dashboard-container {
         padding: 24px 16px;
-    }
-
-    .toast-container {
-        top: 12px;
-        right: 12px;
-        left: 12px;
-    }
-
-    .toast {
-        min-width: auto;
-        width: 100%;
     }
 
     .table-container {
@@ -1745,7 +1646,7 @@ code {
 
 .toast-container {
     position: fixed;
-    top: 20px;
+    top: 100px;
     right: 20px;
     z-index: 10000;
     display: flex;
