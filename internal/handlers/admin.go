@@ -209,18 +209,29 @@ func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Get session cookie
-		cookie, err := r.Cookie("admin_session")
-		if err == nil {
-			// Delete session from database
-			database.DeleteSession(db, cookie.Value)
+		// Check for admin_session cookie (legacy admin_credentials login)
+		adminCookie, adminErr := r.Cookie("admin_session")
+		if adminErr == nil {
+			// Delete admin session from database
+			database.DeleteSession(db, adminCookie.Value)
 
-			slog.Info("admin logout",
+			slog.Info("admin logout via admin_session",
 				"ip", getClientIP(r),
 			)
 		}
 
-		// Clear session cookie
+		// Check for user_session cookie (users table with admin role)
+		userCookie, userErr := r.Cookie("user_session")
+		if userErr == nil {
+			// Delete user session from database
+			database.DeleteUserSession(db, userCookie.Value)
+
+			slog.Info("admin logout via user_session",
+				"ip", getClientIP(r),
+			)
+		}
+
+		// Clear admin_session cookie
 		http.SetCookie(w, &http.Cookie{
 			Name:     "admin_session",
 			Value:    "",
@@ -231,11 +242,30 @@ func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			MaxAge:   -1, // Delete cookie
 		})
 
-		// Clear CSRF cookie
+		// Clear user_session cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "user_session",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   cfg.HTTPSEnabled,
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   -1, // Delete cookie
+		})
+
+		// Clear CSRF cookie for /admin path
 		http.SetCookie(w, &http.Cookie{
 			Name:   "csrf_token",
 			Value:  "",
 			Path:   "/admin",
+			MaxAge: -1,
+		})
+
+		// Clear CSRF cookie for / path
+		http.SetCookie(w, &http.Cookie{
+			Name:   "csrf_token",
+			Value:  "",
+			Path:   "/",
 			MaxAge: -1,
 		})
 
