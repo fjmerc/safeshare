@@ -48,7 +48,8 @@ func GetDiskSpace(path string) (*DiskSpaceInfo, error) {
 
 // CheckDiskSpace checks if there is enough disk space for an upload
 // Returns true if space is available, false otherwise with an error message
-func CheckDiskSpace(path string, uploadSize int64) (bool, string, error) {
+// skipPercentCheck should be true when quota is configured (quota takes precedence)
+func CheckDiskSpace(path string, uploadSize int64, skipPercentCheck bool) (bool, string, error) {
 	info, err := GetDiskSpace(path)
 	if err != nil {
 		return false, "Failed to check disk space", err
@@ -60,11 +61,14 @@ func CheckDiskSpace(path string, uploadSize int64) (bool, string, error) {
 	}
 
 	// Check if upload would exceed maximum disk usage percentage
-	projectedUsed := info.UsedBytes + uint64(uploadSize)
-	projectedPercent := float64(projectedUsed) / float64(info.TotalBytes) * 100
+	// Skip this check when quota is configured, as quota is the primary limit
+	if !skipPercentCheck {
+		projectedUsed := info.UsedBytes + uint64(uploadSize)
+		projectedPercent := float64(projectedUsed) / float64(info.TotalBytes) * 100
 
-	if projectedPercent > MaximumDiskUsagePercent {
-		return false, fmt.Sprintf("Upload would exceed disk capacity limit (%d%%)", MaximumDiskUsagePercent), nil
+		if projectedPercent > MaximumDiskUsagePercent {
+			return false, fmt.Sprintf("Upload would exceed disk capacity limit (%d%%)", MaximumDiskUsagePercent), nil
+		}
 	}
 
 	// Check if upload is larger than available space

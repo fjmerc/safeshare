@@ -73,7 +73,9 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check disk space before accepting upload
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, header.Size)
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, header.Size, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -90,7 +92,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check quota if configured (0 = unlimited)
-		if cfg.GetQuotaLimitGB() > 0 {
+		if quotaConfigured {
 			currentUsage, err := database.GetTotalUsage(db)
 			if err != nil {
 				slog.Error("failed to get current storage usage", "error", err)
