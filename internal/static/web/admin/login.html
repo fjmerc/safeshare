@@ -64,8 +64,6 @@
                     </div>
                 </div>
 
-                <div id="errorMessage" class="error-message" style="display: none;"></div>
-
                 <div class="button-container">
                     <button type="submit" class="btn-primary btn-login">Login</button>
                 </div>
@@ -85,11 +83,9 @@
 
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            const errorDiv = document.getElementById('errorMessage');
             const submitBtn = e.target.querySelector('button[type="submit"]');
 
-            // Reset error
-            errorDiv.style.display = 'none';
+            // Disable button and show loading state
             submitBtn.disabled = true;
             submitBtn.textContent = 'Logging in...';
 
@@ -112,18 +108,21 @@
                     if (data.csrf_token) {
                         sessionStorage.setItem('csrf_token', data.csrf_token);
                     }
-                    // Redirect to dashboard
-                    window.location.href = '/admin/dashboard';
+                    // Show success toast
+                    showToast('Login successful! Redirecting...', 'success');
+
+                    // Redirect to dashboard after brief delay
+                    setTimeout(() => {
+                        window.location.href = '/admin/dashboard';
+                    }, 1000);
                 } else {
-                    errorDiv.textContent = data.error || 'Login failed. Please try again.';
-                    errorDiv.style.display = 'block';
+                    showToast(data.error || 'Login failed. Please try again.', 'error');
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Login';
                 }
             } catch (error) {
                 console.error('Login error:', error);
-                errorDiv.textContent = 'Network error. Please try again.';
-                errorDiv.style.display = 'block';
+                showToast('Network error. Please try again.', 'error');
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Login';
             }
