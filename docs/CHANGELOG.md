@@ -64,10 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Upload state now properly resets to 'idle' after upload completes
   - Users can navigate away from success page without unnecessary warnings
   - Improves UX by not blocking navigation after upload is complete
-- **UI**: Fixed toast notification positioning and readability on Admin Dashboard
-  - Toast notifications now appear 100px from top instead of 20px, preventing overlap with header elements
-  - Improved font readability with bolder text (font-weight: 600) and subtle text shadow
-  - Ensures toasts are clearly visible without blocking navigation buttons
+- **UI**: Fixed toast notification positioning and styling on Admin Dashboard
+  - Toast notifications now appear 100px from top, preventing overlap with header elements
+  - Toast styling now matches user dashboard (font-weight: 500, no text-shadow)
+  - Removed legacy toast notification system to prevent conflicts
+  - Ensures consistent toast appearance across all dashboard pages
 
 ## [2.0.7] - 2025-11-07
 
