@@ -309,8 +309,8 @@ func (c *Config) validate() error {
 	}
 
 	// Validate chunked upload settings
-	if c.ChunkSize < 1048576 || c.ChunkSize > 10485760 {
-		return fmt.Errorf("CHUNK_SIZE must be between 1MB (1048576) and 10MB (10485760), got %d", c.ChunkSize)
+	if c.ChunkSize < 1048576 || c.ChunkSize > 52428800 {
+		return fmt.Errorf("CHUNK_SIZE must be between 1MB (1048576) and 50MB (52428800), got %d", c.ChunkSize)
 	}
 
 	if c.ChunkedUploadThreshold < 0 {

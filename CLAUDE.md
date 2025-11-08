@@ -1062,7 +1062,7 @@ CREATE TABLE partial_uploads (
 
 #### Configuration Validation
 
-- `CHUNK_SIZE` must be between 1MB and 10MB
+- `CHUNK_SIZE` must be between 1MB and 50MB
 - `total_chunks` (calculated: total_size / chunk_size) must be <= 10,000
 - `total_size` must be <= `MAX_FILE_SIZE`
 - Validates disk space before initializing upload

@@ -89,9 +89,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Validate chunk_size (must be between 1MB and 10MB)
-		if req.ChunkSize < 1048576 || req.ChunkSize > 10485760 {
-			sendError(w, "Chunk size must be between 1MB and 10MB", "INVALID_CHUNK_SIZE", http.StatusBadRequest)
+		// Validate chunk_size (must be between 1MB and 50MB)
+		if req.ChunkSize < 1048576 || req.ChunkSize > 52428800 {
+			sendError(w, "Chunk size must be between 1MB and 50MB", "INVALID_CHUNK_SIZE", http.StatusBadRequest)
 			return
 		}
 
@@ -343,9 +343,10 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Parse multipart form
-		r.Body = http.MaxBytesReader(w, r.Body, cfg.ChunkSize+1024) // chunk size + 1KB overhead
-		if err := r.ParseMultipartForm(cfg.ChunkSize + 1024); err != nil {
+		// Parse multipart form with the requested chunk size (not config default)
+		maxChunkSize := partialUpload.ChunkSize + 1024 // requested chunk size + 1KB overhead
+		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
+		if err := r.ParseMultipartForm(maxChunkSize); err != nil {
 			sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
 			return
 		}
