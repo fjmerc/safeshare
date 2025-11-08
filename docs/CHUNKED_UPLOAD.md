@@ -77,7 +77,7 @@ Initialize a chunked upload session.
 
 **Validation:**
 - `total_size` <= `MAX_FILE_SIZE`
-- `chunk_size` between 1MB and 10MB
+- `chunk_size` between 1MB and 50MB
 - `total_chunks` (calculated) <= 10,000
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
 - Checks disk space and quota before accepting
