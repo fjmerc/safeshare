@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **UI**: Professional toast notification system across entire application
+  - Non-blocking notifications with 4 types: info (blue), success (green), error (red), warning (orange)
+  - Top-right positioning with smooth slide-in/fade-out animations
+  - Auto-dismiss after 3 seconds (configurable per toast)
+  - Click to dismiss instantly
+  - Multiple toasts stack vertically without overlap
+  - Full dark mode support with theme-aware colors
+  - Mobile responsive (full-width on small screens)
+  - Available on all 6 pages (main, login, dashboard, error, admin login, admin dashboard)
+  - XSS protection via HTML escaping
 - **UI**: Upload in progress warning banner
   - Fixed-position banner at bottom of viewport appears during active uploads
   - Clear message: "Upload in Progress - Do not navigate away or close this page"
@@ -18,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Responsive design with dark mode support
 
 ### Changed
+- **UX**: Replaced all blocking alert() dialogs with non-blocking toast notifications
+  - Upload errors now show as dismissible error toasts (4s duration)
+  - File validation errors (too large, blocked extension) show as error toasts
+  - Success messages (upload complete, link copied) show as success toasts
+  - Informational messages (download started, upload cancelled) show as info toasts
+  - Warning messages (missing claim code, missing password) show as warning toasts
+  - Improves user experience by not interrupting workflow
+  - Follows enterprise UX patterns (Google Drive, Dropbox, OneDrive)
 - **UI**: Improved chunked upload progress display
   - Removed technical chunk information ("chunk X of Y") from progress text
   - Now shows user-friendly format: "Uploading... X% • SIZE / TOTAL • TIME remaining"

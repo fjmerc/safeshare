@@ -142,7 +142,7 @@ class ChunkedUploader {
             try {
                 // Check if paused
                 if (this.isPaused) {
-                    throw new Error('Upload paused');
+                    throw new Error('Upload cancelled');
                 }
 
                 // Calculate chunk boundaries
@@ -231,7 +231,7 @@ class ChunkedUploader {
         for (const batch of batches) {
             if (this.isPaused) {
                 this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                throw new Error('Upload paused');
+                throw new Error('Upload cancelled');
             }
 
             // Upload batch in parallel
@@ -359,6 +359,11 @@ class ChunkedUploader {
             } catch (e) {
                 console.warn('Failed to clear upload state from localStorage:', e);
             }
+        }
+
+        // Show toast notification
+        if (typeof window.showToast === 'function') {
+            window.showToast('Upload cancelled', 'info', 3000);
         }
 
         this.emit('cancelled', {
