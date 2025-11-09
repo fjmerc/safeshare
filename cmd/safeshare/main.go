@@ -393,6 +393,9 @@ func main() {
 	// Start partial upload cleanup worker (runs every 6 hours)
 	go utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
 
+	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)
+	go utils.StartAssemblyRecoveryWorker(ctx, db, cfg, handlers.AssembleUploadAsync)
+
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
 	go func() {
 		ticker := time.NewTicker(30 * time.Minute)
