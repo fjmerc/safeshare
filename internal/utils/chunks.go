@@ -40,11 +40,21 @@ func SaveChunk(uploadDir, uploadID string, chunkNumber int, data []byte) error {
 		return fmt.Errorf("failed to create chunks directory: %w", err)
 	}
 
-	// Write chunk to file
+	// Open chunk file (avoid os.WriteFile to prevent implicit sync)
 	chunkPath := GetChunkPath(uploadDir, uploadID, chunkNumber)
-	if err := os.WriteFile(chunkPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write chunk file: %w", err)
+	file, err := os.OpenFile(chunkPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create chunk file: %w", err)
 	}
+	defer file.Close()
+
+	// Write chunk data
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("failed to write chunk data: %w", err)
+	}
+
+	// Intentionally NO file.Sync() - let OS flush asynchronously
+	// Chunks are resumable if server crashes, so this is safe
 
 	slog.Debug("chunk saved",
 		"upload_id", uploadID,

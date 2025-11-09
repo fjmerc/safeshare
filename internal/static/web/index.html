@@ -14,6 +14,14 @@
     <link rel="manifest" href="/site.webmanifest">
     <meta name="theme-color" content="#3b82f6">
 
+    <!-- Load theme before CSS to prevent flash -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+        })();
+    </script>
+
     <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
