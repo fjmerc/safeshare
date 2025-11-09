@@ -89,15 +89,10 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Validate chunk_size (must be between 1MB and 50MB)
-		if req.ChunkSize < 1048576 || req.ChunkSize > 52428800 {
-			sendError(w, "Chunk size must be between 1MB and 50MB", "INVALID_CHUNK_SIZE", http.StatusBadRequest)
-			return
-		}
-
-		// Calculate total chunks
-		totalChunks := int(req.TotalSize / req.ChunkSize)
-		if req.TotalSize%req.ChunkSize != 0 {
+		// Calculate total chunks using server-configured chunk size
+		// (client's chunk_size in request is ignored)
+		totalChunks := int(req.TotalSize / cfg.ChunkSize)
+		if req.TotalSize%cfg.ChunkSize != 0 {
 			totalChunks++
 		}
 
@@ -213,7 +208,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			UserID:         userID,
 			Filename:       req.Filename,
 			TotalSize:      req.TotalSize,
-			ChunkSize:      req.ChunkSize,
+			ChunkSize:      cfg.ChunkSize,
 			TotalChunks:    totalChunks,
 			ChunksReceived: 0,
 			ReceivedBytes:  0,
@@ -238,7 +233,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Send response
 		response := models.UploadInitResponse{
 			UploadID:    uploadID,
-			ChunkSize:   req.ChunkSize,
+			ChunkSize:   cfg.ChunkSize,
 			TotalChunks: totalChunks,
 			ExpiresAt:   expiresAt,
 		}
@@ -251,7 +246,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"upload_id", uploadID,
 			"filename", req.Filename,
 			"total_size", req.TotalSize,
-			"chunk_size", req.ChunkSize,
+			"chunk_size", cfg.ChunkSize,
 			"total_chunks", totalChunks,
 			"expires_in_hours", req.ExpiresInHours,
 			"password_protected", passwordHash != "",
