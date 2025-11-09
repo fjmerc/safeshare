@@ -46,6 +46,67 @@ Chunks are stored on the filesystem at:
 | `CHUNKED_UPLOAD_THRESHOLD` | `104857600` (100MB) | Files >= this size use chunked upload |
 | `CHUNK_SIZE` | `5242880` (5MB) | Size of each chunk |
 | `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
+| `READ_TIMEOUT` | `15` | HTTP read timeout in seconds |
+| `WRITE_TIMEOUT` | `15` | HTTP write timeout in seconds |
+
+### ⚠️ CRITICAL: HTTP Timeout Configuration
+
+**If you're uploading large files (multi-GB), you MUST increase HTTP timeouts or reduce chunk size.**
+
+**The Problem:**
+- Default HTTP timeouts are **15 seconds**
+- Large chunks (50MB) over slow networks can take **longer than 15 seconds** to upload
+- This causes **HTTP 413 (Request Entity Too Large)** errors or **ERR_CONNECTION_RESET** errors
+- Uploads will fail repeatedly despite correct configuration
+
+**Solution Options:**
+
+**Option 1: Increase Timeouts (Recommended for Large Files)**
+```bash
+docker run -d \
+  -e READ_TIMEOUT=120 \
+  -e WRITE_TIMEOUT=120 \
+  -e CHUNK_SIZE=10485760 \
+  # ... other options
+  safeshare:latest
+```
+- `READ_TIMEOUT=120` allows 2 minutes per chunk upload
+- `CHUNK_SIZE=10485760` (10MB) balances speed and reliability
+- Suitable for multi-GB files over typical network speeds
+
+**Option 2: Smaller Chunks (Quick Fix)**
+```bash
+docker run -d \
+  -e CHUNK_SIZE=5242880 \
+  # ... other options (default 15s timeouts)
+  safeshare:latest
+```
+- 5MB chunks upload faster, fit within 15-second timeout
+- More chunks = more overhead, but works with default timeouts
+
+**Option 3: Reverse Proxy Considerations**
+If running behind nginx/Apache/Traefik, also configure:
+- **nginx**: `client_max_body_size 100m;` and `proxy_read_timeout 120s;`
+- **Apache**: `LimitRequestBody 104857600` and `ProxyTimeout 120`
+- **Traefik**: `respondingTimeouts.readTimeout=120s`
+
+**Recommended Production Config for Large Files (up to 8GB):**
+```bash
+docker run -d --name safeshare -p 8080:8080 \
+  -e MAX_FILE_SIZE=8589934592 \
+  -e CHUNK_SIZE=10485760 \
+  -e READ_TIMEOUT=120 \
+  -e WRITE_TIMEOUT=120 \
+  -v safeshare-data:/app/data \
+  -v safeshare-uploads:/app/uploads \
+  safeshare:latest
+```
+
+**How to Calculate Required Timeout:**
+```
+Required Timeout (seconds) = (CHUNK_SIZE in MB) / (Upload Speed in MB/s) × 2
+```
+Example: 10MB chunk at 1MB/s = 10/1 × 2 = 20 seconds minimum
 
 ## API Endpoints
 
@@ -294,3 +355,129 @@ Test results:
 - Existing claim codes remain valid
 - No breaking changes to existing API
 - Chunked upload is opt-in based on file size
+
+## Troubleshooting
+
+### HTTP 413 (Request Entity Too Large) Errors
+
+**Symptoms:**
+- Chunks fail with status 413
+- Some chunks succeed, others fail randomly
+- Browser console shows "Request Entity Too Large"
+
+**Causes:**
+1. **HTTP timeout too short** - Default 15-second timeout
+2. **Reverse proxy body size limit** - nginx/Apache/Traefik
+3. **Network too slow** - Chunks take longer than timeout to upload
+
+**Solutions:**
+
+**1. Increase HTTP Timeouts (Most Common Fix)**
+```bash
+docker run -d \
+  -e READ_TIMEOUT=120 \
+  -e WRITE_TIMEOUT=120 \
+  safeshare:latest
+```
+
+**2. Reduce Chunk Size**
+```bash
+docker run -d \
+  -e CHUNK_SIZE=5242880 \
+  safeshare:latest
+```
+
+**3. Configure Reverse Proxy** (if applicable)
+```nginx
+# nginx
+client_max_body_size 100m;
+proxy_read_timeout 120s;
+proxy_send_timeout 120s;
+```
+
+### ERR_CONNECTION_RESET or ERR_EMPTY_RESPONSE
+
+**Symptoms:**
+- Browser shows "connection reset" errors
+- Some chunks upload successfully, then failures start
+- Server logs show request duration exactly 15 seconds
+
+**Cause:** HTTP timeout reached before chunk upload completes
+
+**Solution:** Increase `READ_TIMEOUT` and `WRITE_TIMEOUT`:
+```bash
+docker run -d \
+  -e READ_TIMEOUT=180 \
+  -e WRITE_TIMEOUT=180 \
+  safeshare:latest
+```
+
+### Upload Initialization Succeeds but All Chunks Fail
+
+**Symptoms:**
+- `/api/upload/init` returns success with upload_id
+- All chunk uploads fail with 413 or timeouts
+- File size > MAX_FILE_SIZE but init didn't reject it
+
+**Cause:** `MAX_FILE_SIZE` was increased via admin settings but timeouts weren't
+
+**Solution:** Match timeouts to file size:
+```bash
+# For 8GB files with 10MB chunks at ~5MB/s
+# Each chunk takes ~2 seconds, add 2x safety margin = 4 seconds
+# Use 120 seconds to be safe
+docker run -d \
+  -e MAX_FILE_SIZE=8589934592 \
+  -e CHUNK_SIZE=10485760 \
+  -e READ_TIMEOUT=120 \
+  -e WRITE_TIMEOUT=120 \
+  safeshare:latest
+```
+
+### Calculating Appropriate Timeout
+
+**Formula:**
+```
+Timeout (seconds) = (CHUNK_SIZE in MB / Upload Speed in MB/s) × Safety Factor
+```
+
+**Safety Factor:** 2-3x (accounts for network variance, processing overhead)
+
+**Examples:**
+| Chunk Size | Upload Speed | Calculation | Recommended Timeout |
+|-----------|-------------|-------------|-------------------|
+| 5MB | 1 MB/s | (5/1) × 2 | 10-15s (default OK) |
+| 10MB | 1 MB/s | (10/1) × 2 | 20-30s |
+| 50MB | 5 MB/s | (50/5) × 2 | 20-30s |
+| 10MB | 0.5 MB/s | (10/0.5) × 2 | 40-60s |
+
+**Network Speed Test:**
+```bash
+# Test actual upload speed to your server
+time curl -X POST -F "file=@10mb-test.file" http://your-server:8080/api/upload
+# If it takes 15+ seconds for 10MB, increase timeouts
+```
+
+### Server Logs Show 413 but Browser Sees Connection Reset
+
+**Cause:** Timeout expires during request body reading, server returns 413, but browser already gave up
+
+**Solution:** Increase both server timeout AND chunk size:
+```bash
+docker run -d \
+  -e READ_TIMEOUT=180 \
+  -e CHUNK_SIZE=5242880 \
+  safeshare:latest
+```
+
+### Production Deployment Checklist
+
+Before deploying for large file uploads (>1GB), verify:
+
+- [ ] `MAX_FILE_SIZE` set to desired limit (bytes)
+- [ ] `READ_TIMEOUT` ≥ (CHUNK_SIZE / slowest_upload_speed) × 2
+- [ ] `WRITE_TIMEOUT` ≥ same as READ_TIMEOUT
+- [ ] `CHUNK_SIZE` between 5-10MB for reliability
+- [ ] Reverse proxy (if used) configured for large bodies and long timeouts
+- [ ] Test upload with target file size from slowest expected network
+- [ ] Monitor server logs for 413/timeout errors during testing
