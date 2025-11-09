@@ -695,7 +695,7 @@
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
-        progressText.textContent = 'Initializing chunked upload...';
+        progressText.textContent = 'Preparing to upload...';
 
         try {
             // Create uploader instance
@@ -751,10 +751,10 @@
             console.log('Initializing chunked upload...');
             await uploader.init();
 
-            progressText.textContent = 'Uploading chunks...';
+            progressText.textContent = 'Starting upload...';
             await uploader.uploadAllChunks();
 
-            progressText.textContent = 'Finalizing upload...';
+            progressText.textContent = 'Completing upload...';
             const result = await uploader.complete();
 
             console.log('Chunked upload successful:', result);
