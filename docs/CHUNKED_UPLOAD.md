@@ -44,20 +44,20 @@ Chunks are stored on the filesystem at:
 |---------------------|---------|-------------|
 | `CHUNKED_UPLOAD_ENABLED` | `true` | Enable/disable chunked uploads |
 | `CHUNKED_UPLOAD_THRESHOLD` | `104857600` (100MB) | Files >= this size use chunked upload |
-| `CHUNK_SIZE` | `5242880` (5MB) | Size of each chunk |
+| `CHUNK_SIZE` | `10485760` (10MB) | Size of each chunk |
 | `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
-| `READ_TIMEOUT` | `15` | HTTP read timeout in seconds |
-| `WRITE_TIMEOUT` | `15` | HTTP write timeout in seconds |
+| `READ_TIMEOUT` | `120` | HTTP read timeout in seconds |
+| `WRITE_TIMEOUT` | `120` | HTTP write timeout in seconds |
 
-### ⚠️ CRITICAL: HTTP Timeout Configuration
+### ⚠️ HTTP Timeout Configuration for Very Large Files or Slow Networks
 
-**If you're uploading large files (multi-GB), you MUST increase HTTP timeouts or reduce chunk size.**
+**The new defaults (120s timeouts, 10MB chunks) work well for most use cases, including multi-GB files over typical networks. However, if you have very slow upload speeds (<1 MB/s) or use very large chunks, you may need to adjust these settings.**
 
-**The Problem:**
-- Default HTTP timeouts are **15 seconds**
-- Large chunks (50MB) over slow networks can take **longer than 15 seconds** to upload
-- This causes **HTTP 413 (Request Entity Too Large)** errors or **ERR_CONNECTION_RESET** errors
-- Uploads will fail repeatedly despite correct configuration
+**The Problem (mostly solved by v2.3.0+ defaults):**
+- Previous default HTTP timeouts were **15 seconds**
+- Large chunks (50MB) over slow networks could take **longer than 15 seconds** to upload
+- This caused **HTTP 413 (Request Entity Too Large)** errors or **ERR_CONNECTION_RESET** errors
+- **Now fixed:** Defaults are 120s timeouts with 10MB chunks
 
 **Solution Options:**
 

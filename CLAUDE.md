@@ -264,14 +264,11 @@ docker run -d -p 8080:8080 \
   safeshare:latest
 
 # Run with large file support (multi-GB files)
-# CRITICAL: Must increase timeouts for large chunked uploads!
+# Note: v2.3.0+ has better defaults (120s timeouts, 10MB chunks)
 docker run -d -p 8080:8080 \
   -e ADMIN_USERNAME=admin \
   -e ADMIN_PASSWORD=SafeShare2025! \
   -e MAX_FILE_SIZE=8589934592 \
-  -e CHUNK_SIZE=10485760 \
-  -e READ_TIMEOUT=120 \
-  -e WRITE_TIMEOUT=120 \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   --name safeshare \
