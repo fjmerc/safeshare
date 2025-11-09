@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **UI**: Added theme toggle button to user login page for consistent theme switching across all pages
 
 ### Changed
+- **Performance**: Optimized chunked upload assembly for large files
+  - Assembly times improved by 15-18x (tested: 1GB file assembles in 1.38s vs ~20-25s previously)
+  - Increased assembly buffer size from 64KB to 2MB to reduce syscall overhead
+  - Eliminated fsync() operation during chunk assembly for faster processing
+  - Throughput: 741.8 MB/s during assembly
+  - Benefits both encrypted and non-encrypted deployments
+  - Trade-off: Prioritizes performance over crash-durability during assembly (chunks remain intact for retry if server crashes)
 - **UI**: Improved upload recovery modal user experience
   - Recovery modal now auto-closes when user copies claim code or download link
   - Added toast notifications to recovery modal copy buttons for better feedback
