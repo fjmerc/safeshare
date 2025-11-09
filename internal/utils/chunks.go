@@ -8,13 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 )
 
 const (
-	// chunkBufferSize is the buffer size for chunk assembly (64KB)
-	chunkBufferSize = 64 * 1024
+	// chunkBufferSize is the buffer size for chunk assembly (2MB)
+	// Optimized for large file performance - reduces syscall overhead
+	chunkBufferSize = 2 * 1024 * 1024
 )
 
 // GetPartialUploadDir returns the directory path for partial uploads
@@ -103,6 +105,8 @@ func GetMissingChunks(uploadDir, uploadID string, totalChunks int) ([]int, error
 // AssembleChunks assembles all chunks into a single file
 // Returns the total bytes written
 func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath string) (int64, error) {
+	startTime := time.Now()
+
 	slog.Info("assembling chunks",
 		"upload_id", uploadID,
 		"total_chunks", totalChunks,
@@ -168,15 +172,22 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 		return 0, fmt.Errorf("failed to flush output file: %w", err)
 	}
 
-	// Sync to disk
-	if err := outFile.Sync(); err != nil {
-		return 0, fmt.Errorf("failed to sync output file: %w", err)
-	}
+	// NOTE: Deliberately NOT calling outFile.Sync() here for performance
+	// Rationale: Assembly can take 60-70s for large files on HDD with fsync()
+	// Trade-off: If server crashes during assembly, chunks are still intact
+	//            and user can retry the "complete" operation
+	// Modern filesystems (ext4, xfs) have journaling which provides some protection
+
+	duration := time.Since(startTime)
+	durationMs := duration.Milliseconds()
+	throughputMBps := float64(totalBytesWritten) / duration.Seconds() / (1024 * 1024)
 
 	slog.Info("chunk assembly complete",
 		"upload_id", uploadID,
 		"total_chunks", totalChunks,
 		"total_bytes", totalBytesWritten,
+		"duration_ms", durationMs,
+		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
 	)
 
 	return totalBytesWritten, nil
