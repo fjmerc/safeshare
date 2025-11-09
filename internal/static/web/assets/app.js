@@ -67,6 +67,8 @@
         fetchMaxFileSize();
         setupEventListeners();
         handleInitialTab();
+        checkForCompletedUploads(); // Check for saved completions to recover
+        setupBeforeUnloadProtection(); // Prevent navigation during upload
     }
 
     // Fetch server configuration
@@ -671,6 +673,12 @@
     // Show results
     function showResults(data) {
         try {
+            // Save completion to localStorage IMMEDIATELY for recovery
+            ChunkedUploader.saveCompletion(data);
+
+            // Send browser notification
+            sendUploadCompleteNotification(data);
+
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = data.download_url;
@@ -1052,6 +1060,188 @@
         currentFileInfo = null;
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
+    }
+
+    // ========================================
+    // Upload Recovery & Protection Features
+    // ========================================
+
+    /**
+     * Check for completed uploads in localStorage and show recovery modal
+     */
+    function checkForCompletedUploads() {
+        const completions = ChunkedUploader.getUnviewedCompletions();
+
+        if (completions.length > 0) {
+            console.log('Found', completions.length, 'unviewed completed uploads');
+            showRecoveryModal(completions);
+        }
+    }
+
+    /**
+     * Show recovery modal with completed uploads
+     * @param {Array} completions - Array of completion objects
+     */
+    function showRecoveryModal(completions) {
+        // Create modal HTML
+        const modal = document.createElement('div');
+        modal.id = 'recoveryModal';
+        modal.className = 'recovery-modal';
+        modal.innerHTML = `
+            <div class="recovery-modal-content">
+                <div class="recovery-header">
+                    <div class="recovery-icon">✓</div>
+                    <h2>Upload${completions.length > 1 ? 's' : ''} Completed!</h2>
+                    <p>Your upload${completions.length > 1 ? 's have' : ' has'} finished. Here ${completions.length > 1 ? 'are' : 'is'} your claim code${completions.length > 1 ? 's' : ''}:</p>
+                </div>
+                <div class="recovery-uploads">
+                    ${completions.map((completion, index) => `
+                        <div class="recovery-upload" data-index="${index}">
+                            <div class="recovery-file-info">
+                                <div class="recovery-filename" title="${escapeHtml(completion.filename)}">
+                                    ${escapeHtml(completion.filename)}
+                                </div>
+                                <div class="recovery-filesize">${formatFileSize(completion.file_size)}</div>
+                            </div>
+                            <div class="recovery-claim">
+                                <label>Claim Code:</label>
+                                <div class="recovery-code-display">
+                                    <code class="recovery-claim-code">${completion.claim_code}</code>
+                                    <button class="btn-copy-recovery" data-claim="${completion.claim_code}" aria-label="Copy claim code">
+                                        📋
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="recovery-actions">
+                                <button class="btn-recovery-download" data-url="${escapeHtml(completion.download_url)}">
+                                    ⬇️ Download
+                                </button>
+                                <button class="btn-recovery-copy-url" data-url="${escapeHtml(completion.download_url)}">
+                                    🔗 Copy Link
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="recovery-footer">
+                    <button id="dismissRecoveryModal" class="btn-primary">Got it, thanks!</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Add event listeners
+        modal.querySelector('#dismissRecoveryModal').addEventListener('click', () => {
+            ChunkedUploader.markCompletionsAsViewed();
+            modal.remove();
+        });
+
+        // Copy claim code buttons
+        modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const claimCode = e.currentTarget.dataset.claim;
+                copyToClipboard(claimCode, 'Claim code copied!');
+            });
+        });
+
+        // Download buttons
+        modal.querySelectorAll('.btn-recovery-download').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.currentTarget.dataset.url;
+                window.open(url, '_blank');
+            });
+        });
+
+        // Copy URL buttons
+        modal.querySelectorAll('.btn-recovery-copy-url').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.currentTarget.dataset.url;
+                copyToClipboard(url, 'Download link copied!');
+            });
+        });
+
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                ChunkedUploader.markCompletionsAsViewed();
+                modal.remove();
+            }
+        });
+    }
+
+    /**
+     * Setup beforeunload protection to prevent navigation during upload
+     */
+    function setupBeforeUnloadProtection() {
+        window.addEventListener('beforeunload', (e) => {
+            // Only show warning if upload is in progress
+            if (uploadState === 'uploading') {
+                e.preventDefault();
+                e.returnValue = ''; // Chrome requires returnValue to be set
+                return ''; // Some browsers show this message
+            }
+        });
+    }
+
+    /**
+     * Request notification permission and send upload complete notification
+     * @param {Object} data - Upload completion data
+     */
+    function sendUploadCompleteNotification(data) {
+        // Check if Notification API is supported
+        if (!('Notification' in window)) {
+            console.log('Browser does not support notifications');
+            return;
+        }
+
+        // Check permission
+        if (Notification.permission === 'granted') {
+            showNotification(data);
+        } else if (Notification.permission !== 'denied') {
+            // Request permission
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    showNotification(data);
+                }
+            });
+        }
+    }
+
+    /**
+     * Show browser notification
+     * @param {Object} data - Upload completion data
+     */
+    function showNotification(data) {
+        try {
+            const notification = new Notification('Upload Complete!', {
+                body: `${data.original_filename} (${formatFileSize(data.file_size)}) is ready to download`,
+                icon: '/assets/logo.svg',
+                badge: '/assets/logo.svg',
+                tag: 'safeshare-upload',
+                requireInteraction: false
+            });
+
+            // Focus window when notification is clicked
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+
+        } catch (e) {
+            console.warn('Failed to show notification:', e);
+        }
+    }
+
+    /**
+     * Escape HTML to prevent XSS in dynamically created content
+     * @param {string} str - String to escape
+     * @returns {string} - Escaped string
+     */
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     // Initialize when DOM is ready
