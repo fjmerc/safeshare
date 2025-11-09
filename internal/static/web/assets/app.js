@@ -6,6 +6,7 @@
     let selectedFile = null;
     let maxFileSizeBytes = 104857600; // 100MB default
     let uploadState = 'idle'; // 'idle', 'uploading', 'completed'
+    let filePreparationState = 'idle'; // 'idle', 'preparing', 'ready'
     let currentUploadXhr = null; // For simple upload cancellation
     let currentChunkedUploader = null; // For chunked upload cancellation
 
@@ -444,7 +445,7 @@
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             selectedFile = files[0];
-            updateDropZone();
+            prepareFile(selectedFile);
         }
     }
 
@@ -452,26 +453,115 @@
     function handleFileSelect(e) {
         if (e.target.files.length > 0) {
             selectedFile = e.target.files[0];
-            updateDropZone();
+            prepareFile(selectedFile);
         }
+    }
+
+    // Prepare file for upload (show loading state and verify accessibility)
+    async function prepareFile(file) {
+        // Set preparing state
+        filePreparationState = 'preparing';
+        showFilePreparationState(file);
+
+        try {
+            // Check file is accessible
+            const fileSize = file.size;
+            const fileName = file.name;
+
+            // Ensure minimum visual feedback (300ms) so users see the loading state
+            const minDelay = new Promise(resolve => setTimeout(resolve, 300));
+
+            // For large files (>100MB), verify file is accessible by reading first byte
+            const fileCheck = new Promise((resolve, reject) => {
+                if (fileSize > 100 * 1024 * 1024) { // > 100MB
+                    const reader = new FileReader();
+                    reader.onload = () => resolve();
+                    reader.onerror = () => reject(new Error('File is not accessible'));
+                    // Read just 1 byte to verify accessibility without loading entire file
+                    reader.readAsArrayBuffer(file.slice(0, 1));
+                } else {
+                    // Small files don't need accessibility check
+                    resolve();
+                }
+            });
+
+            // Wait for both minimum delay and file check
+            await Promise.all([minDelay, fileCheck]);
+
+            // File is ready
+            filePreparationState = 'ready';
+            updateDropZone();
+
+        } catch (error) {
+            // File preparation failed
+            filePreparationState = 'idle';
+            selectedFile = null;
+            showToast('Failed to prepare file: ' + error.message, 'error', 4000);
+            resetDropZoneDisplay();
+        }
+    }
+
+    // Show file preparation loading state
+    function showFilePreparationState(file) {
+        const dropZoneTitle = dropZone.querySelector('h2');
+        const dropZoneText = dropZone.querySelector('p');
+        const spinner = dropZone.querySelector('.file-preparation-spinner');
+
+        // Show spinner
+        if (spinner) {
+            spinner.classList.remove('hidden');
+        }
+
+        // Update text
+        dropZoneTitle.textContent = file.name;
+        dropZoneText.innerHTML = `<span class="preparing-text">Preparing file...</span>`;
+
+        // Disable upload button and show preparing state
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Preparing...';
+
+        // Hide remove button during preparation
+        removeFileButton.classList.add('hidden');
+    }
+
+    // Reset drop zone to initial state
+    function resetDropZoneDisplay() {
+        const spinner = dropZone.querySelector('.file-preparation-spinner');
+        if (spinner) {
+            spinner.classList.add('hidden');
+        }
+
+        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
+        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Upload File';
+        removeFileButton.classList.add('hidden');
     }
 
     // Update drop zone display
     function updateDropZone() {
-        if (selectedFile) {
+        if (selectedFile && filePreparationState === 'ready') {
+            // Hide spinner
+            const spinner = dropZone.querySelector('.file-preparation-spinner');
+            if (spinner) {
+                spinner.classList.add('hidden');
+            }
+
             // Validate file size
             if (selectedFile.size > maxFileSizeBytes) {
                 showToast(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 4000);
                 selectedFile = null;
                 uploadButton.disabled = true;
-                uploadState = 'idle';
+                filePreparationState = 'idle';
                 updateRemoveButtonState();
+                resetDropZoneDisplay();
                 return;
             }
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
             uploadButton.disabled = false;
+            uploadButton.textContent = 'Upload File';
             updateRemoveButtonState();
         }
     }
@@ -755,9 +845,9 @@
         fileInput.value = '';
         uploadButton.disabled = true;
         uploadState = 'idle';
+        filePreparationState = 'idle';
         updateRemoveButtonState();
-        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
-        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        resetDropZoneDisplay();
     }
 
     // Handle remove file or cancel upload based on current state
