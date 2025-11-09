@@ -16,6 +16,10 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 ![User Dashboard](docs/screenshots/user-dashboard.png)
 *User dashboard for viewing upload history and managing own files*
 
+### Admin Login (Dark Theme)
+![Admin Login Dark Theme](docs/screenshots/admin-login-dark.png)
+*Beautiful dark mode with gradient background for admin authentication*
+
 ## Features
 
 ### Backend
