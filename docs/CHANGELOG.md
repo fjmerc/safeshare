@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+
+### Fixed
+
+## [2.2.0] - 2025-11-09
+
+### Changed
 - **Performance**: Optimized chunked upload performance for large files on VPS/cloud storage
   - Upload times improved by 30-150x on network storage (from ~100 minutes to ~2-5 minutes for 1GB files)
   - Increased maximum chunk size from 10MB to 50MB (default remains 5MB)
@@ -344,7 +350,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
 [2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
