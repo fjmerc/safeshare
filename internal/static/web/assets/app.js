@@ -747,6 +747,26 @@
                 resetProgress();
             });
 
+            // Register assembling event (when file assembly starts)
+            uploader.on('assembling', (data) => {
+                console.log('File assembly started:', data);
+                progressText.textContent = 'Assembling file... This may take a moment for large files.';
+                // Keep progress bar at 100% (chunks are uploaded)
+                progressFill.style.width = '100%';
+            });
+
+            // Register assembling progress event (polling updates)
+            uploader.on('assembling_progress', (data) => {
+                console.log('Assembly progress:', data);
+                // Update UI with polling status
+                const elapsed = Math.round((data.attempts * 2) / 60); // Rough estimate in minutes
+                if (elapsed > 0) {
+                    progressText.textContent = `Assembling file... (~${elapsed} min elapsed)`;
+                } else {
+                    progressText.textContent = 'Assembling file... Please wait.';
+                }
+            });
+
             // Execute upload flow
             console.log('Initializing chunked upload...');
             await uploader.init();
