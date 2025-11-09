@@ -29,6 +29,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Verify assumptions before acting
 - Adjust approach if initial thinking reveals issues
 
+### Testing and Cleanup Guidelines
+
+**CRITICAL**: Always clean up temporary test files after they've served their purpose.
+
+**Test File Cleanup Policy:**
+- Any files created in `/tmp` directory for testing MUST be removed after testing completes
+- This applies to all test files: chunks, sample data, temporary uploads, etc.
+- Use `rm` command or cleanup commands at the end of test sequences
+- Prevents disk space accumulation and keeps the test environment clean
+
+**Example:**
+```bash
+# Create test files
+dd if=/dev/urandom of=/tmp/test-file.dat bs=1M count=10
+
+# Run tests with the file
+curl -F "file=@/tmp/test-file.dat" http://localhost:8080/api/upload
+
+# Clean up after testing
+rm /tmp/test-file.dat
+```
+
+**Why this matters:**
+- Prevents /tmp directory from filling up with abandoned test files
+- Maintains a clean development environment
+- Good practice for automated testing scripts
+
 ### Git Flow Workflow - REQUIRED FOR ALL CHANGES
 
 **CRITICAL**: This project follows Git Flow branching strategy (see `docs/VERSION_STRATEGY.md`).
