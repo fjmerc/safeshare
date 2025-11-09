@@ -643,6 +643,8 @@
             xhr.addEventListener('load', () => {
                 if (xhr.status === 201) {
                     const response = JSON.parse(xhr.responseText);
+                    // Save completion to localStorage for recovery
+                    ChunkedUploader.saveCompletion(response);
                     showResults(response);
                 } else {
                     const error = JSON.parse(xhr.responseText);
@@ -800,8 +802,8 @@
     // Show results
     function showResults(data) {
         try {
-            // Save completion to localStorage IMMEDIATELY for recovery
-            ChunkedUploader.saveCompletion(data);
+            // Recovery feature: Upload completions are saved by upload handlers
+            // (ChunkedUploader.complete() for chunked, XHR handler for simple)
 
             // Send browser notification
             sendUploadCompleteNotification(data);
