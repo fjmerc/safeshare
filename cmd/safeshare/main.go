@@ -290,6 +290,10 @@ func main() {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminChangePasswordHandler(cfg)))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/partial-uploads/cleanup", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCleanupPartialUploadsHandler(db, cfg)))).ServeHTTP(w, r)
+		})
+
 		mux.HandleFunc("/admin/api/config", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(handlers.AdminGetConfigHandler(cfg))).ServeHTTP(w, r)
 		})

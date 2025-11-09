@@ -144,22 +144,14 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check quota if configured (0 = unlimited)
 		if quotaConfigured {
-			// Get current usage from both completed files and partial uploads
-			completedUsage, err := database.GetTotalUsage(db)
+			// Get current usage (includes both completed files and partial uploads)
+			currentUsage, err := database.GetTotalUsage(db)
 			if err != nil {
-				slog.Error("failed to get completed storage usage", "error", err)
+				slog.Error("failed to get storage usage", "error", err)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			partialUsage, err := database.GetTotalPartialUploadUsage(db)
-			if err != nil {
-				slog.Error("failed to get partial upload usage", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			currentUsage := completedUsage + partialUsage
 			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 
 			if currentUsage+req.TotalSize > quotaBytes {

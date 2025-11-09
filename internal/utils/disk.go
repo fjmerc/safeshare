@@ -2,6 +2,8 @@ package utils
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -91,4 +93,38 @@ func FormatBytes(bytes uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// GetPartialUploadsSize calculates the total disk space used by partial uploads
+// Returns the total size in bytes of all files in the .partial directory
+func GetPartialUploadsSize(uploadDir string) (int64, error) {
+	partialDir := filepath.Join(uploadDir, ".partial")
+
+	// Check if .partial directory exists
+	if _, err := os.Stat(partialDir); os.IsNotExist(err) {
+		return 0, nil // Directory doesn't exist, return 0 bytes
+	}
+
+	var totalSize int64
+
+	// Walk through .partial directory and sum all file sizes
+	err := filepath.Walk(partialDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// Skip files/directories we can't access
+			return nil
+		}
+
+		// Only count regular files (not directories)
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to calculate partial uploads size: %w", err)
+	}
+
+	return totalSize, nil
 }
