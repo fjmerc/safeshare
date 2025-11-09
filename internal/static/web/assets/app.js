@@ -897,6 +897,9 @@
 
     // Reset form
     function resetForm() {
+        // Mark completions as viewed since user has seen results and is moving on
+        ChunkedUploader.markCompletionsAsViewed();
+
         clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
@@ -933,28 +936,12 @@
         updateThemeIcon(newTheme);
     }
 
-    // Handle copy to clipboard
-    async function handleCopy(e) {
-        const copyId = e.currentTarget.dataset.copy;
-        const element = document.getElementById(copyId);
-        const text = element.tagName === 'INPUT' ? element.value : element.textContent;
-
+    // Copy text to clipboard with toast notification
+    async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
         try {
             await navigator.clipboard.writeText(text);
-
-            // Visual feedback on button
-            const btn = e.currentTarget;
-            const originalText = btn.textContent;
-            btn.textContent = '✓';
-            btn.classList.add('copied');
-
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.classList.remove('copied');
-            }, 2000);
-
-            // Show toast notification
-            showToast('Link copied to clipboard', 'success', 3000);
+            showToast(successMessage, 'success', 3000);
+            return true;
         } catch (error) {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
@@ -969,13 +956,43 @@
                 document.body.removeChild(textarea);
 
                 if (success) {
-                    showToast('Link copied to clipboard', 'success', 3000);
+                    showToast(successMessage, 'success', 3000);
+                    return true;
                 } else {
                     showToast('Failed to copy to clipboard', 'error', 3000);
+                    return false;
                 }
             } catch (fallbackError) {
                 document.body.removeChild(textarea);
                 showToast('Failed to copy to clipboard', 'error', 3000);
+                return false;
+            }
+        }
+    }
+
+    // Handle copy to clipboard
+    async function handleCopy(e) {
+        const copyId = e.currentTarget.dataset.copy;
+        const element = document.getElementById(copyId);
+        const text = element.tagName === 'INPUT' ? element.value : element.textContent;
+
+        const success = await copyToClipboard(text, 'Link copied to clipboard');
+
+        if (success) {
+            // Visual feedback on button
+            const btn = e.currentTarget;
+            const originalText = btn.textContent;
+            btn.textContent = '✓';
+            btn.classList.add('copied');
+
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove('copied');
+            }, 2000);
+
+            // Mark completions as viewed if user copied claim code or download URL
+            if (copyId === 'claimCode' || copyId === 'downloadUrl') {
+                ChunkedUploader.markCompletionsAsViewed();
             }
         }
     }
@@ -1230,25 +1247,20 @@
                         </div>
                     `).join('')}
                 </div>
-                <div class="recovery-footer">
-                    <button id="dismissRecoveryModal" class="btn-primary">Got it, thanks!</button>
-                </div>
             </div>
         `;
 
         document.body.appendChild(modal);
 
-        // Add event listeners
-        modal.querySelector('#dismissRecoveryModal').addEventListener('click', () => {
-            ChunkedUploader.markCompletionsAsViewed();
-            modal.remove();
-        });
-
         // Copy claim code buttons
         modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const claimCode = e.currentTarget.dataset.claim;
-                copyToClipboard(claimCode, 'Claim code copied!');
+                const success = await copyToClipboard(claimCode, 'Claim code copied!');
+                if (success) {
+                    ChunkedUploader.markCompletionsAsViewed();
+                    modal.remove();
+                }
             });
         });
 
@@ -1262,9 +1274,13 @@
 
         // Copy URL buttons
         modal.querySelectorAll('.btn-recovery-copy-url').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const url = e.currentTarget.dataset.url;
-                copyToClipboard(url, 'Download link copied!');
+                const success = await copyToClipboard(url, 'Download link copied!');
+                if (success) {
+                    ChunkedUploader.markCompletionsAsViewed();
+                    modal.remove();
+                }
             });
         });
 

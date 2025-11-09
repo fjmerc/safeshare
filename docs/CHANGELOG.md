@@ -10,8 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+- **UI**: Improved upload recovery modal user experience
+  - Recovery modal now auto-closes when user copies claim code or download link
+  - Added toast notifications to recovery modal copy buttons for better feedback
+  - Streamlined interface by removing redundant "Got it, thanks!" dismiss button
+  - Copy buttons now provide visual confirmation before closing modal
 
 ### Fixed
+- **UI**: Fixed upload recovery modal appearing on every page refresh after normal upload completion
+  - Modal now correctly tracks when user has seen and dismissed upload results
+  - Copying claim code or download URL properly marks completion as viewed
+  - Clicking "Upload Another File" properly marks completion as viewed
+  - Recovery modal only appears for legitimate cases (browser crash, navigation before viewing)
 - **Upload**: Server now enforces configured CHUNK_SIZE instead of accepting client's requested chunk size
   - Server's CHUNK_SIZE environment variable now properly controls chunk size for all uploads
   - Previously server validated but used client's chunk_size, ignoring server configuration
