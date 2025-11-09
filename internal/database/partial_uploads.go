@@ -411,6 +411,19 @@ func GetTotalPartialUploadUsage(db *sql.DB) (int64, error) {
 	return total, nil
 }
 
+// GetIncompletePartialUploadsCount returns the count of incomplete partial upload sessions
+func GetIncompletePartialUploadsCount(db *sql.DB) (int, error) {
+	query := `SELECT COUNT(*) FROM partial_uploads WHERE completed = 0`
+
+	var count int
+	err := db.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get partial uploads count: %w", err)
+	}
+
+	return count, nil
+}
+
 // UpdatePartialUploadStatus updates the status and error_message (if provided)
 func UpdatePartialUploadStatus(db *sql.DB, uploadID, status string, errorMessage *string) error {
 	query := `UPDATE partial_uploads SET status = ?, error_message = ?, last_activity = ? WHERE upload_id = ?`

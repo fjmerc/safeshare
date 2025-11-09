@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Admin Dashboard**: Added comprehensive partial upload monitoring and management
+  - New "Partial Upload Size" stat card displays disk space used by incomplete uploads
+  - System Info section now shows database path, upload directory, and partial uploads directory
+  - Manual cleanup button allows admins to remove abandoned uploads (inactive for >24 hours)
+  - Cleanup operation reports deleted count and bytes reclaimed
+  - Partial upload metrics included in quota calculations for accurate storage tracking
+  - Health endpoint now includes partial uploads in storage usage
 - **UI**: Added theme toggle button to user login page for consistent theme switching across all pages
 
 ### Changed

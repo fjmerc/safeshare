@@ -195,10 +195,13 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	return deletedCount, nil
 }
 
-// GetTotalUsage returns the total storage used by all active files in bytes
+// GetTotalUsage returns the total storage used by all active files AND partial uploads in bytes
+// This includes both completed files and incomplete chunked uploads for accurate quota tracking
 func GetTotalUsage(db *sql.DB) (int64, error) {
 	query := `
-		SELECT COALESCE(SUM(file_size), 0)
+		SELECT
+			COALESCE(SUM(file_size), 0) +
+			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE expires_at > datetime('now')
 	`
