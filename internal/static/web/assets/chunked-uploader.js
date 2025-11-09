@@ -259,7 +259,8 @@ class ChunkedUploader {
                     method: 'POST'
                 });
 
-                if (!response.ok) {
+                // Handle error responses (4xx, 5xx)
+                if (!response.ok && response.status !== 202) {
                     const error = await response.json();
 
                     // Handle missing chunks
@@ -276,6 +277,33 @@ class ChunkedUploader {
                 }
 
                 const data = await response.json();
+
+                // Check if response is HTTP 202 (Accepted) or has status "processing"
+                // This means file assembly is happening asynchronously
+                if (response.status === 202 || data.status === 'processing') {
+                    // Emit assembling event to notify UI
+                    this.emit('assembling', {
+                        uploadId: this.uploadId,
+                        message: data.message || 'File is being assembled...'
+                    });
+
+                    // Start polling for completion
+                    const result = await this.pollStatus();
+
+                    this.isCompleted = true;
+
+                    // Save completion data to localStorage BEFORE clearing upload state
+                    ChunkedUploader.saveCompletion(result);
+
+                    // Clear saved state from localStorage
+                    this.clearState();
+
+                    this.emit('complete', result);
+
+                    return result;
+                }
+
+                // If not 202, handle as synchronous completion (backward compatibility)
                 this.isCompleted = true;
 
                 // Save completion data to localStorage BEFORE clearing upload state
@@ -318,6 +346,86 @@ class ChunkedUploader {
             this.emit('error', { stage: 'status', error: error.message });
             throw error;
         }
+    }
+
+    /**
+     * Poll status endpoint until file assembly is complete
+     * @param {number} pollInterval - Polling interval in milliseconds (default: 2000ms / 2 seconds)
+     * @param {number} maxAttempts - Maximum number of polling attempts (default: 600 = 20 minutes)
+     * @returns {Promise<Object>} - Final upload result with claim_code and download_url
+     */
+    async pollStatus(pollInterval = 2000, maxAttempts = 600) {
+        let attempts = 0;
+
+        while (attempts < maxAttempts) {
+            try {
+                // Get current status
+                const status = await this.getStatus();
+
+                // Emit progress event for UI updates
+                this.emit('assembling_progress', {
+                    status: status.status,
+                    uploadId: this.uploadId,
+                    filename: status.filename,
+                    attempts: attempts + 1,
+                    maxAttempts: maxAttempts
+                });
+
+                // Check status field
+                if (status.status === 'completed') {
+                    // Assembly complete - return result
+                    if (!status.claim_code || !status.download_url) {
+                        throw new Error('Assembly completed but missing claim_code or download_url');
+                    }
+
+                    // Build complete response matching expected format
+                    return {
+                        claim_code: status.claim_code,
+                        download_url: status.download_url,
+                        original_filename: status.filename,
+                        file_size: this.file.size,
+                        expires_at: status.expires_at,
+                        max_downloads: this.options.maxDownloads
+                    };
+                }
+
+                if (status.status === 'failed') {
+                    // Assembly failed - throw error
+                    const errorMsg = status.error_message || 'File assembly failed';
+                    throw new Error(errorMsg);
+                }
+
+                // Status is still "processing" or "uploading" - continue polling
+                // Wait before next poll
+                await this.sleep(pollInterval);
+                attempts++;
+
+            } catch (error) {
+                // If this is a known error (failed status), rethrow immediately
+                if (error.message.includes('assembly failed') || error.message.includes('missing claim_code')) {
+                    this.emit('error', { stage: 'assembly', error: error.message });
+                    throw error;
+                }
+
+                // For network errors, retry with exponential backoff
+                attempts++;
+                if (attempts >= maxAttempts) {
+                    this.emit('error', {
+                        stage: 'assembly_polling',
+                        error: `Polling failed after ${maxAttempts} attempts: ${error.message}`
+                    });
+                    throw new Error(`Assembly status polling timed out after ${maxAttempts} attempts`);
+                }
+
+                // Exponential backoff for network errors (up to 10 seconds)
+                const backoffDelay = Math.min(pollInterval * Math.pow(1.5, attempts), 10000);
+                console.warn(`Status polling attempt ${attempts} failed, retrying in ${backoffDelay}ms...`, error.message);
+                await this.sleep(backoffDelay);
+            }
+        }
+
+        // Max attempts reached without completion
+        throw new Error(`Assembly polling timed out after ${maxAttempts} attempts (${(maxAttempts * pollInterval) / 60000} minutes)`);
     }
 
     /**
