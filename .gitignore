@@ -3,3 +3,6 @@ uploads/
 *.db-journal
 cmd/safeshare/safeshare
 /safeshare
+
+# Claude Code agent definitions (local only)
+.claude/agents/
