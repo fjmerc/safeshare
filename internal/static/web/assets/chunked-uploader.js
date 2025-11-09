@@ -278,6 +278,9 @@ class ChunkedUploader {
                 const data = await response.json();
                 this.isCompleted = true;
 
+                // Save completion data to localStorage BEFORE clearing upload state
+                ChunkedUploader.saveCompletion(data);
+
                 // Clear saved state from localStorage
                 this.clearState();
 
@@ -539,5 +542,102 @@ class ChunkedUploader {
             isPaused: this.isPaused,
             isCompleted: this.isCompleted
         };
+    }
+
+    /**
+     * Save upload completion to localStorage for recovery
+     * @param {Object} data - Completion data from server
+     */
+    static saveCompletion(data) {
+        const STORAGE_KEY = 'safeshare_completed_uploads';
+        const RETENTION_DAYS = 7;
+
+        try {
+            // Get existing completions
+            let completions = [];
+            const existing = localStorage.getItem(STORAGE_KEY);
+            if (existing) {
+                completions = JSON.parse(existing);
+            }
+
+            // Add new completion
+            completions.push({
+                claim_code: data.claim_code,
+                download_url: data.download_url,
+                filename: data.original_filename,
+                file_size: data.file_size,
+                expires_at: data.expires_at,
+                max_downloads: data.max_downloads,
+                timestamp: Date.now(),
+                viewed: false
+            });
+
+            // Clean up old completions (older than RETENTION_DAYS)
+            const cutoffTime = Date.now() - (RETENTION_DAYS * 24 * 60 * 60 * 1000);
+            completions = completions.filter(c => c.timestamp > cutoffTime);
+
+            // Save back to localStorage
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(completions));
+            console.log('Saved completion to localStorage:', data.claim_code);
+
+        } catch (e) {
+            console.warn('Failed to save completion to localStorage:', e);
+        }
+    }
+
+    /**
+     * Get all unviewed completed uploads from localStorage
+     * @returns {Array<Object>} - Array of completion objects
+     */
+    static getUnviewedCompletions() {
+        const STORAGE_KEY = 'safeshare_completed_uploads';
+
+        try {
+            const existing = localStorage.getItem(STORAGE_KEY);
+            if (!existing) return [];
+
+            const completions = JSON.parse(existing);
+            return completions.filter(c => !c.viewed);
+
+        } catch (e) {
+            console.warn('Failed to load completions from localStorage:', e);
+            return [];
+        }
+    }
+
+    /**
+     * Mark all completions as viewed
+     */
+    static markCompletionsAsViewed() {
+        const STORAGE_KEY = 'safeshare_completed_uploads';
+
+        try {
+            const existing = localStorage.getItem(STORAGE_KEY);
+            if (!existing) return;
+
+            const completions = JSON.parse(existing);
+            completions.forEach(c => c.viewed = true);
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(completions));
+            console.log('Marked all completions as viewed');
+
+        } catch (e) {
+            console.warn('Failed to mark completions as viewed:', e);
+        }
+    }
+
+    /**
+     * Clear all completions from localStorage
+     */
+    static clearAllCompletions() {
+        const STORAGE_KEY = 'safeshare_completed_uploads';
+
+        try {
+            localStorage.removeItem(STORAGE_KEY);
+            console.log('Cleared all completions from localStorage');
+
+        } catch (e) {
+            console.warn('Failed to clear completions:', e);
+        }
     }
 }

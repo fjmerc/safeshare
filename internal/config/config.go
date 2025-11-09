@@ -27,6 +27,8 @@ type Config struct {
 	ChunkedUploadThreshold   int64
 	ChunkSize                int64
 	PartialUploadExpiryHours int
+	ReadTimeoutSeconds       int
+	WriteTimeoutSeconds      int
 
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
@@ -58,8 +60,10 @@ func Load() (*Config, error) {
 		RequireAuthForUpload:     getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
 		ChunkedUploadEnabled:     getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
 		ChunkedUploadThreshold:   getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
-		ChunkSize:                getEnvInt64("CHUNK_SIZE", 5242880),                  // 5MB
+		ChunkSize:                getEnvInt64("CHUNK_SIZE", 10485760),                 // 10MB (was 5MB)
 		PartialUploadExpiryHours: getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
+		ReadTimeoutSeconds:       getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
+		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default

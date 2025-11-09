@@ -263,6 +263,17 @@ docker run -d -p 8080:8080 \
   --name safeshare \
   safeshare:latest
 
+# Run with large file support (multi-GB files)
+# Note: v2.3.0+ has better defaults (120s timeouts, 10MB chunks)
+docker run -d -p 8080:8080 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=SafeShare2025! \
+  -e MAX_FILE_SIZE=8589934592 \
+  -v safeshare-data:/app/data \
+  -v safeshare-uploads:/app/uploads \
+  --name safeshare \
+  safeshare:latest
+
 # Rebuild and restart after changes
 docker stop safeshare && docker rm safeshare
 docker build -t safeshare:latest . && docker run -d -p 8080:8080 --name safeshare safeshare:latest

@@ -428,6 +428,52 @@ header h1 {
     color: var(--text-secondary);
 }
 
+/* File Preparation Spinner */
+.file-preparation-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 1rem 0;
+}
+
+.file-preparation-spinner.hidden {
+    display: none;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.preparing-text {
+    color: var(--primary-color);
+    font-weight: 600;
+    font-size: 1rem;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
 /* Settings */
 .settings {
     margin-top: 2rem;
@@ -1308,5 +1354,284 @@ footer .version-info {
     .user-menu-trigger svg {
         width: 18px;
         height: 18px;
+    }
+}
+
+/* ============================================
+   Recovery Modal Styles
+   ============================================ */
+
+.recovery-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 1rem;
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.recovery-modal-content {
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    max-width: 600px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.recovery-header {
+    text-align: center;
+    padding: 2rem 2rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.recovery-icon {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, #10b981, #059669);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1rem;
+    font-size: 32px;
+    color: white;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.recovery-header h2 {
+    margin: 0 0 0.5rem;
+    color: var(--text-color);
+    font-size: 1.5rem;
+}
+
+.recovery-header p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.recovery-uploads {
+    padding: 1.5rem 2rem;
+}
+
+.recovery-upload {
+    background: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.recovery-upload:last-child {
+    margin-bottom: 0;
+}
+
+.recovery-file-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.recovery-filename {
+    font-weight: 600;
+    color: var(--text-color);
+    font-size: 1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    margin-right: 1rem;
+}
+
+.recovery-filesize {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+
+.recovery-claim {
+    margin-bottom: 1rem;
+}
+
+.recovery-claim label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.recovery-code-display {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.recovery-claim-code {
+    flex: 1;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    color: var(--primary-color);
+    font-weight: 600;
+    word-break: break-all;
+}
+
+.btn-copy-recovery {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.btn-copy-recovery:hover {
+    background: var(--primary-hover);
+    transform: scale(1.05);
+}
+
+.btn-copy-recovery:active {
+    transform: scale(0.95);
+}
+
+.recovery-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.btn-recovery-download,
+.btn-recovery-copy-url {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.btn-recovery-download {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-recovery-download:hover {
+    background: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-recovery-copy-url {
+    background: var(--input-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.btn-recovery-copy-url:hover {
+    background: var(--card-bg);
+    border-color: var(--primary-color);
+}
+
+.recovery-footer {
+    padding: 1.5rem 2rem;
+    border-top: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.recovery-footer .btn-primary {
+    width: 100%;
+    max-width: 300px;
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .recovery-modal {
+        padding: 0.5rem;
+    }
+
+    .recovery-modal-content {
+        max-height: 95vh;
+    }
+
+    .recovery-header {
+        padding: 1.5rem 1rem 1rem;
+    }
+
+    .recovery-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .recovery-uploads {
+        padding: 1rem;
+    }
+
+    .recovery-upload {
+        padding: 1rem;
+    }
+
+    .recovery-file-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .recovery-filename {
+        margin-right: 0;
+    }
+
+    .recovery-actions {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .recovery-footer .btn-primary {
+        max-width: none;
     }
 }

@@ -6,6 +6,7 @@
     let selectedFile = null;
     let maxFileSizeBytes = 104857600; // 100MB default
     let uploadState = 'idle'; // 'idle', 'uploading', 'completed'
+    let filePreparationState = 'idle'; // 'idle', 'preparing', 'ready'
     let currentUploadXhr = null; // For simple upload cancellation
     let currentChunkedUploader = null; // For chunked upload cancellation
 
@@ -67,6 +68,8 @@
         fetchMaxFileSize();
         setupEventListeners();
         handleInitialTab();
+        checkForCompletedUploads(); // Check for saved completions to recover
+        setupBeforeUnloadProtection(); // Prevent navigation during upload
     }
 
     // Fetch server configuration
@@ -442,7 +445,7 @@
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             selectedFile = files[0];
-            updateDropZone();
+            prepareFile(selectedFile);
         }
     }
 
@@ -450,26 +453,115 @@
     function handleFileSelect(e) {
         if (e.target.files.length > 0) {
             selectedFile = e.target.files[0];
-            updateDropZone();
+            prepareFile(selectedFile);
         }
+    }
+
+    // Prepare file for upload (show loading state and verify accessibility)
+    async function prepareFile(file) {
+        // Set preparing state
+        filePreparationState = 'preparing';
+        showFilePreparationState(file);
+
+        try {
+            // Check file is accessible
+            const fileSize = file.size;
+            const fileName = file.name;
+
+            // Ensure minimum visual feedback (300ms) so users see the loading state
+            const minDelay = new Promise(resolve => setTimeout(resolve, 300));
+
+            // For large files (>100MB), verify file is accessible by reading first byte
+            const fileCheck = new Promise((resolve, reject) => {
+                if (fileSize > 100 * 1024 * 1024) { // > 100MB
+                    const reader = new FileReader();
+                    reader.onload = () => resolve();
+                    reader.onerror = () => reject(new Error('File is not accessible'));
+                    // Read just 1 byte to verify accessibility without loading entire file
+                    reader.readAsArrayBuffer(file.slice(0, 1));
+                } else {
+                    // Small files don't need accessibility check
+                    resolve();
+                }
+            });
+
+            // Wait for both minimum delay and file check
+            await Promise.all([minDelay, fileCheck]);
+
+            // File is ready
+            filePreparationState = 'ready';
+            updateDropZone();
+
+        } catch (error) {
+            // File preparation failed
+            filePreparationState = 'idle';
+            selectedFile = null;
+            showToast('Failed to prepare file: ' + error.message, 'error', 4000);
+            resetDropZoneDisplay();
+        }
+    }
+
+    // Show file preparation loading state
+    function showFilePreparationState(file) {
+        const dropZoneTitle = dropZone.querySelector('h2');
+        const dropZoneText = dropZone.querySelector('p');
+        const spinner = dropZone.querySelector('.file-preparation-spinner');
+
+        // Show spinner
+        if (spinner) {
+            spinner.classList.remove('hidden');
+        }
+
+        // Update text
+        dropZoneTitle.textContent = file.name;
+        dropZoneText.innerHTML = `<span class="preparing-text">Preparing file...</span>`;
+
+        // Disable upload button and show preparing state
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Preparing...';
+
+        // Hide remove button during preparation
+        removeFileButton.classList.add('hidden');
+    }
+
+    // Reset drop zone to initial state
+    function resetDropZoneDisplay() {
+        const spinner = dropZone.querySelector('.file-preparation-spinner');
+        if (spinner) {
+            spinner.classList.add('hidden');
+        }
+
+        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
+        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Upload File';
+        removeFileButton.classList.add('hidden');
     }
 
     // Update drop zone display
     function updateDropZone() {
-        if (selectedFile) {
+        if (selectedFile && filePreparationState === 'ready') {
+            // Hide spinner
+            const spinner = dropZone.querySelector('.file-preparation-spinner');
+            if (spinner) {
+                spinner.classList.add('hidden');
+            }
+
             // Validate file size
             if (selectedFile.size > maxFileSizeBytes) {
                 showToast(`File is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 4000);
                 selectedFile = null;
                 uploadButton.disabled = true;
-                uploadState = 'idle';
+                filePreparationState = 'idle';
                 updateRemoveButtonState();
+                resetDropZoneDisplay();
                 return;
             }
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
             uploadButton.disabled = false;
+            uploadButton.textContent = 'Upload File';
             updateRemoveButtonState();
         }
     }
@@ -603,7 +695,7 @@
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
-        progressText.textContent = 'Initializing chunked upload...';
+        progressText.textContent = 'Preparing to upload...';
 
         try {
             // Create uploader instance
@@ -630,7 +722,16 @@
             // Register error event
             uploader.on('error', (data) => {
                 console.error('Chunked upload error:', data);
-                showToast(`Upload failed at ${data.stage}: ${data.error}`, 'error', 4000);
+
+                // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
+                let errorMessage;
+                if (data.error && data.error.includes('Failed to fetch')) {
+                    errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
+                } else {
+                    errorMessage = `Upload failed at ${data.stage}: ${data.error}`;
+                }
+
+                showToast(errorMessage, 'error', 4000);
                 resetProgress();
             });
 
@@ -650,10 +751,10 @@
             console.log('Initializing chunked upload...');
             await uploader.init();
 
-            progressText.textContent = 'Uploading chunks...';
+            progressText.textContent = 'Starting upload...';
             await uploader.uploadAllChunks();
 
-            progressText.textContent = 'Finalizing upload...';
+            progressText.textContent = 'Completing upload...';
             const result = await uploader.complete();
 
             console.log('Chunked upload successful:', result);
@@ -662,7 +763,15 @@
             console.error('Chunked upload error:', error);
             // Don't show error toast for user-initiated cancellation
             if (error.message !== 'Upload cancelled') {
-                showToast(`Upload failed: ${error.message}`, 'error', 4000);
+                // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
+                let errorMessage;
+                if (error.message && error.message.includes('Failed to fetch')) {
+                    errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
+                } else {
+                    errorMessage = error.message;
+                }
+
+                showToast(`Upload failed: ${errorMessage}`, 'error', 4000);
             }
             resetProgress();
         }
@@ -671,6 +780,12 @@
     // Show results
     function showResults(data) {
         try {
+            // Save completion to localStorage IMMEDIATELY for recovery
+            ChunkedUploader.saveCompletion(data);
+
+            // Send browser notification
+            sendUploadCompleteNotification(data);
+
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = data.download_url;
@@ -730,9 +845,9 @@
         fileInput.value = '';
         uploadButton.disabled = true;
         uploadState = 'idle';
+        filePreparationState = 'idle';
         updateRemoveButtonState();
-        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
-        dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
+        resetDropZoneDisplay();
     }
 
     // Handle remove file or cancel upload based on current state
@@ -782,6 +897,9 @@
 
     // Reset form
     function resetForm() {
+        // Mark completions as viewed since user has seen results and is moving on
+        ChunkedUploader.markCompletionsAsViewed();
+
         clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
@@ -818,28 +936,12 @@
         updateThemeIcon(newTheme);
     }
 
-    // Handle copy to clipboard
-    async function handleCopy(e) {
-        const copyId = e.currentTarget.dataset.copy;
-        const element = document.getElementById(copyId);
-        const text = element.tagName === 'INPUT' ? element.value : element.textContent;
-
+    // Copy text to clipboard with toast notification
+    async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
         try {
             await navigator.clipboard.writeText(text);
-
-            // Visual feedback on button
-            const btn = e.currentTarget;
-            const originalText = btn.textContent;
-            btn.textContent = '✓';
-            btn.classList.add('copied');
-
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.classList.remove('copied');
-            }, 2000);
-
-            // Show toast notification
-            showToast('Link copied to clipboard', 'success', 3000);
+            showToast(successMessage, 'success', 3000);
+            return true;
         } catch (error) {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
@@ -854,13 +956,43 @@
                 document.body.removeChild(textarea);
 
                 if (success) {
-                    showToast('Link copied to clipboard', 'success', 3000);
+                    showToast(successMessage, 'success', 3000);
+                    return true;
                 } else {
                     showToast('Failed to copy to clipboard', 'error', 3000);
+                    return false;
                 }
             } catch (fallbackError) {
                 document.body.removeChild(textarea);
                 showToast('Failed to copy to clipboard', 'error', 3000);
+                return false;
+            }
+        }
+    }
+
+    // Handle copy to clipboard
+    async function handleCopy(e) {
+        const copyId = e.currentTarget.dataset.copy;
+        const element = document.getElementById(copyId);
+        const text = element.tagName === 'INPUT' ? element.value : element.textContent;
+
+        const success = await copyToClipboard(text, 'Link copied to clipboard');
+
+        if (success) {
+            // Visual feedback on button
+            const btn = e.currentTarget;
+            const originalText = btn.textContent;
+            btn.textContent = '✓';
+            btn.classList.add('copied');
+
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove('copied');
+            }, 2000);
+
+            // Mark completions as viewed if user copied claim code or download URL
+            if (copyId === 'claimCode' || copyId === 'downloadUrl') {
+                ChunkedUploader.markCompletionsAsViewed();
             }
         }
     }
@@ -1052,6 +1184,187 @@
         currentFileInfo = null;
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
+    }
+
+    // ========================================
+    // Upload Recovery & Protection Features
+    // ========================================
+
+    /**
+     * Check for completed uploads in localStorage and show recovery modal
+     */
+    function checkForCompletedUploads() {
+        const completions = ChunkedUploader.getUnviewedCompletions();
+
+        if (completions.length > 0) {
+            console.log('Found', completions.length, 'unviewed completed uploads');
+            showRecoveryModal(completions);
+        }
+    }
+
+    /**
+     * Show recovery modal with completed uploads
+     * @param {Array} completions - Array of completion objects
+     */
+    function showRecoveryModal(completions) {
+        // Create modal HTML
+        const modal = document.createElement('div');
+        modal.id = 'recoveryModal';
+        modal.className = 'recovery-modal';
+        modal.innerHTML = `
+            <div class="recovery-modal-content">
+                <div class="recovery-header">
+                    <div class="recovery-icon">✓</div>
+                    <h2>Upload${completions.length > 1 ? 's' : ''} Completed!</h2>
+                    <p>Your upload${completions.length > 1 ? 's have' : ' has'} finished. Here ${completions.length > 1 ? 'are' : 'is'} your claim code${completions.length > 1 ? 's' : ''}:</p>
+                </div>
+                <div class="recovery-uploads">
+                    ${completions.map((completion, index) => `
+                        <div class="recovery-upload" data-index="${index}">
+                            <div class="recovery-file-info">
+                                <div class="recovery-filename" title="${escapeHtml(completion.filename)}">
+                                    ${escapeHtml(completion.filename)}
+                                </div>
+                                <div class="recovery-filesize">${formatFileSize(completion.file_size)}</div>
+                            </div>
+                            <div class="recovery-claim">
+                                <label>Claim Code:</label>
+                                <div class="recovery-code-display">
+                                    <code class="recovery-claim-code">${completion.claim_code}</code>
+                                    <button class="btn-copy-recovery" data-claim="${completion.claim_code}" aria-label="Copy claim code">
+                                        📋
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="recovery-actions">
+                                <button class="btn-recovery-download" data-url="${escapeHtml(completion.download_url)}">
+                                    ⬇️ Download
+                                </button>
+                                <button class="btn-recovery-copy-url" data-url="${escapeHtml(completion.download_url)}">
+                                    🔗 Copy Link
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Copy claim code buttons
+        modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const claimCode = e.currentTarget.dataset.claim;
+                const success = await copyToClipboard(claimCode, 'Claim code copied!');
+                if (success) {
+                    ChunkedUploader.markCompletionsAsViewed();
+                    modal.remove();
+                }
+            });
+        });
+
+        // Download buttons
+        modal.querySelectorAll('.btn-recovery-download').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.currentTarget.dataset.url;
+                window.open(url, '_blank');
+            });
+        });
+
+        // Copy URL buttons
+        modal.querySelectorAll('.btn-recovery-copy-url').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const url = e.currentTarget.dataset.url;
+                const success = await copyToClipboard(url, 'Download link copied!');
+                if (success) {
+                    ChunkedUploader.markCompletionsAsViewed();
+                    modal.remove();
+                }
+            });
+        });
+
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                ChunkedUploader.markCompletionsAsViewed();
+                modal.remove();
+            }
+        });
+    }
+
+    /**
+     * Setup beforeunload protection to prevent navigation during upload
+     */
+    function setupBeforeUnloadProtection() {
+        window.addEventListener('beforeunload', (e) => {
+            // Only show warning if upload is in progress
+            if (uploadState === 'uploading') {
+                e.preventDefault();
+                e.returnValue = ''; // Chrome requires returnValue to be set
+                return ''; // Some browsers show this message
+            }
+        });
+    }
+
+    /**
+     * Request notification permission and send upload complete notification
+     * @param {Object} data - Upload completion data
+     */
+    function sendUploadCompleteNotification(data) {
+        // Check if Notification API is supported
+        if (!('Notification' in window)) {
+            console.log('Browser does not support notifications');
+            return;
+        }
+
+        // Check permission
+        if (Notification.permission === 'granted') {
+            showNotification(data);
+        } else if (Notification.permission !== 'denied') {
+            // Request permission
+            Notification.requestPermission().then(permission => {
+                if (permission === 'granted') {
+                    showNotification(data);
+                }
+            });
+        }
+    }
+
+    /**
+     * Show browser notification
+     * @param {Object} data - Upload completion data
+     */
+    function showNotification(data) {
+        try {
+            const notification = new Notification('Upload Complete!', {
+                body: `${data.original_filename} (${formatFileSize(data.file_size)}) is ready to download`,
+                icon: '/assets/logo.svg',
+                badge: '/assets/logo.svg',
+                tag: 'safeshare-upload',
+                requireInteraction: false
+            });
+
+            // Focus window when notification is clicked
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+
+        } catch (e) {
+            console.warn('Failed to show notification:', e);
+        }
+    }
+
+    /**
+     * Escape HTML to prevent XSS in dynamically created content
+     * @param {string} str - String to escape
+     * @returns {string} - Escaped string
+     */
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
     }
 
     // Initialize when DOM is ready
