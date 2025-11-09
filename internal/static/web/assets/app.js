@@ -632,7 +632,16 @@
             // Register error event
             uploader.on('error', (data) => {
                 console.error('Chunked upload error:', data);
-                showToast(`Upload failed at ${data.stage}: ${data.error}`, 'error', 4000);
+
+                // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
+                let errorMessage;
+                if (data.error && data.error.includes('Failed to fetch')) {
+                    errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
+                } else {
+                    errorMessage = `Upload failed at ${data.stage}: ${data.error}`;
+                }
+
+                showToast(errorMessage, 'error', 4000);
                 resetProgress();
             });
 
@@ -664,7 +673,15 @@
             console.error('Chunked upload error:', error);
             // Don't show error toast for user-initiated cancellation
             if (error.message !== 'Upload cancelled') {
-                showToast(`Upload failed: ${error.message}`, 'error', 4000);
+                // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
+                let errorMessage;
+                if (error.message && error.message.includes('Failed to fetch')) {
+                    errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
+                } else {
+                    errorMessage = error.message;
+                }
+
+                showToast(`Upload failed: ${errorMessage}`, 'error', 4000);
             }
             resetProgress();
         }
