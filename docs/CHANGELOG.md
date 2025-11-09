@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 ### Fixed
+- **Upload**: Server now enforces configured CHUNK_SIZE instead of accepting client's requested chunk size
+  - Server's CHUNK_SIZE environment variable now properly controls chunk size for all uploads
+  - Previously server validated but used client's chunk_size, ignoring server configuration
+  - Fixes issue where uploads always used 5MB chunks regardless of CHUNK_SIZE setting
 
 ## [2.2.0] - 2025-11-09
 
