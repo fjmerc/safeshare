@@ -602,7 +602,8 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		fileRecord.MaxDownloads = &opts.MaxDownloads
 	}
 	if opts.UserID > 0 {
-		fileRecord.UserID = &opts.UserID
+		userID := int64(opts.UserID)
+		fileRecord.UserID = &userID
 	}
 	if opts.Password != "" {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(opts.Password), bcrypt.DefaultCost)
