@@ -996,6 +996,13 @@
     async function handleCopy(e) {
         const copyId = e.currentTarget.dataset.copy;
         const element = document.getElementById(copyId);
+
+        // Defensive null check: element might not exist if results section is hidden/cleared
+        if (!element) {
+            console.error(`Copy failed: Element with ID '${copyId}' not found in DOM`);
+            return;
+        }
+
         const text = element.tagName === 'INPUT' ? element.value : element.textContent;
 
         const success = await copyToClipboard(text, 'Link copied to clipboard');
