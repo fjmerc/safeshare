@@ -412,10 +412,19 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 	encryptedChunkSize := int(chunkSize) + gcm.NonceSize() + gcm.Overhead()
 	buffer := make([]byte, encryptedChunkSize)
 
-	var totalWritten int64
-	currentChunk := int64(0)
+	// PERFORMANCE OPTIMIZATION: Seek to the first chunk we need instead of reading from start
+	// Header size: magic(5) + version(1) + chunk_size(4) = 10 bytes
+	headerSize := int64(10)
+	firstChunkOffset := headerSize + (startChunk * int64(encryptedChunkSize))
 
-	for {
+	if _, err := srcFile.Seek(firstChunkOffset, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("failed to seek to chunk %d: %w", startChunk, err)
+	}
+
+	var totalWritten int64
+	currentChunk := startChunk // Start from the first chunk we need, not 0
+
+	for currentChunk <= endChunk {
 		// Read encrypted chunk (may be partial on last chunk)
 		n, err := srcFile.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -425,52 +434,45 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 			break
 		}
 
-		// Only process chunks in our range
-		if currentChunk >= startChunk && currentChunk <= endChunk {
-			// Extract nonce
-			if n < gcm.NonceSize() {
-				return totalWritten, fmt.Errorf("chunk too small: %d bytes", n)
-			}
-			nonce := buffer[:gcm.NonceSize()]
-			ciphertext := buffer[gcm.NonceSize():n]
+		// Extract nonce
+		if n < gcm.NonceSize() {
+			return totalWritten, fmt.Errorf("chunk too small: %d bytes", n)
+		}
+		nonce := buffer[:gcm.NonceSize()]
+		ciphertext := buffer[gcm.NonceSize():n]
 
-			// Decrypt chunk
-			plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-			if err != nil {
-				return totalWritten, fmt.Errorf("failed to decrypt chunk %d: %w", currentChunk, err)
-			}
+		// Decrypt chunk
+		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			return totalWritten, fmt.Errorf("failed to decrypt chunk %d: %w", currentChunk, err)
+		}
 
-			// Determine what portion of this chunk to write
-			var chunkStart, chunkEnd int64
-			if currentChunk == startChunk {
-				chunkStart = offsetInFirstChunk
-			} else {
-				chunkStart = 0
-			}
+		// Determine what portion of this chunk to write
+		var chunkStart, chunkEnd int64
+		if currentChunk == startChunk {
+			chunkStart = offsetInFirstChunk
+		} else {
+			chunkStart = 0
+		}
 
-			if currentChunk == endChunk {
-				// Calculate offset within the last chunk
-				chunkEnd = (endByte % chunkSize) + 1
-				if chunkEnd > int64(len(plaintext)) {
-					chunkEnd = int64(len(plaintext))
-				}
-			} else {
+		if currentChunk == endChunk {
+			// Calculate offset within the last chunk
+			chunkEnd = (endByte % chunkSize) + 1
+			if chunkEnd > int64(len(plaintext)) {
 				chunkEnd = int64(len(plaintext))
 			}
-
-			// Write the relevant portion
-			if chunkStart < chunkEnd {
-				written, err := writer.Write(plaintext[chunkStart:chunkEnd])
-				if err != nil {
-					return totalWritten, fmt.Errorf("failed to write decrypted data: %w", err)
-				}
-				totalWritten += int64(written)
-			}
-		} else if currentChunk > endChunk {
-			// We've processed all chunks we need
-			break
+		} else {
+			chunkEnd = int64(len(plaintext))
 		}
-		// If currentChunk < startChunk, skip this chunk (don't decrypt)
+
+		// Write the relevant portion
+		if chunkStart < chunkEnd {
+			written, err := writer.Write(plaintext[chunkStart:chunkEnd])
+			if err != nil {
+				return totalWritten, fmt.Errorf("failed to write decrypted data: %w", err)
+			}
+			totalWritten += int64(written)
+		}
 
 		currentChunk++
 
