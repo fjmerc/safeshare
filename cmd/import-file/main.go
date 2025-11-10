@@ -251,7 +251,7 @@ func loadSettings(opts *ImportOptions) error {
 
 	// Apply settings if they exist, otherwise use defaults
 	if settings != nil {
-		opts.BlockedExtensions = parseBlockedExtensions(settings.BlockedExtensions)
+		opts.BlockedExtensions = settings.BlockedExtensions
 		opts.QuotaLimitGB = settings.QuotaLimitGB
 	} else {
 		// No settings in database, use environment variable defaults
