@@ -438,6 +438,12 @@ header h1 {
     transform: scale(1.02);
 }
 
+.drop-zone.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .drop-zone-icon {
     font-size: 4rem;
     margin-bottom: 1rem;
@@ -519,6 +525,63 @@ header h1 {
 .settings h3::before {
     content: "⚙️ ";
     margin-right: 0.5rem;
+}
+
+/* Collapsible Upload Settings */
+.settings-toggle {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    margin: -0.5rem -0.5rem 1.5rem -0.5rem;
+    border-radius: var(--radius);
+    transition: var(--transition);
+}
+
+.settings-toggle:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.settings-toggle:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.settings-toggle.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.settings-toggle .chevron-icon {
+    transition: transform 0.3s ease;
+    flex-shrink: 0;
+    margin-left: 0.5rem;
+}
+
+.settings.collapsed {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.settings.collapsed .settings-toggle {
+    margin-bottom: 0;
+}
+
+.settings.collapsed .chevron-icon {
+    transform: rotate(-90deg);
+}
+
+.settings-content {
+    max-height: 1500px;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.settings.collapsed .settings-content {
+    max-height: 0;
 }
 
 .form-group {

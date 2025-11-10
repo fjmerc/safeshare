@@ -130,8 +130,21 @@
                         <input type="text" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
 
                         <div class="settings">
-                            <h3>Upload Settings</h3>
+                            <h3
+                                id="uploadSettingsToggle"
+                                class="settings-toggle"
+                                role="button"
+                                tabindex="0"
+                                aria-expanded="true"
+                                aria-controls="uploadSettingsContent"
+                            >
+                                Upload Settings
+                                <svg class="chevron-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </h3>
 
+                            <div id="uploadSettingsContent" class="settings-content">
                             <div class="form-group">
                                 <label for="expirationHours">
                                     Expires in (hours):
@@ -178,6 +191,7 @@
                                         </svg>
                                     </button>
                                 </div>
+                            </div>
                             </div>
                         </div>
                     </form>
