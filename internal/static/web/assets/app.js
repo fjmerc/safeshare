@@ -360,6 +360,42 @@
             });
         });
 
+        // Dropoff Tab - Upload Settings Toggle
+        const uploadSettingsToggle = document.getElementById('uploadSettingsToggle');
+        const uploadSettingsSection = uploadSettingsToggle?.closest('.settings');
+
+        if (uploadSettingsToggle && uploadSettingsSection) {
+            // Restore state from localStorage (default: expanded)
+            const savedState = localStorage.getItem('uploadSettingsExpanded');
+            const isExpanded = savedState === null ? true : savedState === 'true';
+
+            if (!isExpanded) {
+                uploadSettingsSection.classList.add('collapsed');
+                uploadSettingsToggle.setAttribute('aria-expanded', 'false');
+            }
+
+            // Toggle function
+            const toggleUploadSettings = () => {
+                const isCurrentlyExpanded = uploadSettingsToggle.getAttribute('aria-expanded') === 'true';
+                const newState = !isCurrentlyExpanded;
+
+                uploadSettingsSection.classList.toggle('collapsed');
+                uploadSettingsToggle.setAttribute('aria-expanded', newState.toString());
+                localStorage.setItem('uploadSettingsExpanded', newState.toString());
+            };
+
+            // Click event
+            uploadSettingsToggle.addEventListener('click', toggleUploadSettings);
+
+            // Keyboard support (Enter and Space)
+            uploadSettingsToggle.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleUploadSettings();
+                }
+            });
+        }
+
         // Dropoff Tab - New upload button
         newUploadButton.addEventListener('click', resetForm);
 
@@ -635,6 +671,8 @@
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
+        setUploadSettingsDisabled(true);
+        setDropZoneDisabled(true);
 
         try {
             const xhr = new XMLHttpRequest();
@@ -707,6 +745,8 @@
         // Show progress
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
+        setUploadSettingsDisabled(true);
+        setDropZoneDisabled(true);
         progressText.textContent = 'Preparing to upload...';
 
         try {
@@ -927,6 +967,49 @@
         }
     }
 
+    // Disable/enable upload settings during upload
+    function setUploadSettingsDisabled(disabled) {
+        const uploadSettingsToggle = document.getElementById('uploadSettingsToggle');
+        const uploadSettingsContent = document.getElementById('uploadSettingsContent');
+
+        if (uploadSettingsToggle) {
+            if (disabled) {
+                uploadSettingsToggle.classList.add('disabled');
+                uploadSettingsToggle.setAttribute('aria-disabled', 'true');
+            } else {
+                uploadSettingsToggle.classList.remove('disabled');
+                uploadSettingsToggle.setAttribute('aria-disabled', 'false');
+            }
+        }
+
+        if (uploadSettingsContent) {
+            // Disable all form inputs
+            uploadSettingsContent.querySelectorAll('input').forEach(input => {
+                input.disabled = disabled;
+            });
+
+            // Disable all buttons (quick select and password toggles)
+            uploadSettingsContent.querySelectorAll('button').forEach(button => {
+                button.disabled = disabled;
+            });
+        }
+    }
+
+    // Disable/enable drop zone during upload
+    function setDropZoneDisabled(disabled) {
+        if (dropZone) {
+            if (disabled) {
+                dropZone.classList.add('disabled');
+            } else {
+                dropZone.classList.remove('disabled');
+            }
+        }
+
+        if (fileInput) {
+            fileInput.disabled = disabled;
+        }
+    }
+
     // Reset form
     function resetForm() {
         // Mark completions as viewed since user has seen results and is moving on
@@ -949,6 +1032,8 @@
         progressFill.style.width = '0%';
         progressText.textContent = 'Uploading...';
         uploadButton.disabled = false;
+        setUploadSettingsDisabled(false);
+        setDropZoneDisabled(false);
 
         // Reset upload state
         uploadState = 'idle';
