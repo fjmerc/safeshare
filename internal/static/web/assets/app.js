@@ -419,9 +419,19 @@
             });
         });
 
-        // Copy buttons
-        document.querySelectorAll('.btn-copy').forEach(btn => {
-            btn.addEventListener('click', handleCopy);
+        // Copy buttons - Use event delegation to handle dynamically created buttons
+        // This prevents the recurring null reference error when buttons are recreated
+        document.addEventListener('click', (e) => {
+            const copyButton = e.target.closest('.btn-copy');
+            if (copyButton) {
+                // Create a synthetic event with the button as currentTarget
+                const syntheticEvent = {
+                    currentTarget: copyButton,
+                    preventDefault: () => e.preventDefault(),
+                    stopPropagation: () => e.stopPropagation()
+                };
+                handleCopy(syntheticEvent);
+            }
         });
     }
 
@@ -1003,9 +1013,23 @@
             return;
         }
 
+        // Additional defensive check: ensure element has text content or value
         const text = element.tagName === 'INPUT' ? element.value : element.textContent;
+        if (!text || text.trim() === '') {
+            console.error(`Copy failed: Element with ID '${copyId}' has no text content`);
+            showToast('Nothing to copy', 'error', 3000);
+            return;
+        }
 
-        const success = await copyToClipboard(text, 'Link copied to clipboard');
+        // Context-specific toast messages
+        let successMessage = 'Copied to clipboard';
+        if (copyId === 'claimCode') {
+            successMessage = 'Claim code copied!';
+        } else if (copyId === 'downloadUrl') {
+            successMessage = 'Download link copied to clipboard';
+        }
+
+        const success = await copyToClipboard(text, successMessage);
 
         if (success) {
             // Visual feedback on button
