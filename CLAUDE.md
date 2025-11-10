@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Directory Structure
+
+**IMPORTANT**: This project uses a symlinked directory structure that may appear as two separate paths, but they reference the SAME physical location.
+
+**Directory Relationship:**
+- `/home/fray/Documents` is a symbolic link → `/mnt/ironwolfdisk`
+- Therefore: `/home/fray/Documents/projects/safeshare` and `/mnt/ironwolfdisk/projects/safeshare` are **THE SAME DIRECTORY**
+- Confirmed by matching inode numbers (1181750)
+
+**What this means:**
+- Changes made to files using either path affect the same physical files
+- If you see a file modification in both paths, it's not a duplicate - it's the same file accessed via two different paths
+- The "additional working directory" shown in the environment is just an alias via the symlink
+- There is only ONE git repository, not two
+- File operations (read, write, edit, delete) in either path modify the same underlying files
+
+**Storage:**
+- `/mnt/ironwolfdisk` is a 147GB mounted drive (/dev/sdb1) - likely an IronWolf HDD
+- The user has symlinked their Documents folder to this mount point for additional storage
+
+**Why this matters:**
+- Prevents confusion about "duplicate" files or changes
+- Understand that file edits appear in "both" locations because they're the same location
+- Avoid unnecessary file copies between these paths
+- Only one set of `.claude/agents/` configuration files exists (not separate configs per path)
+
 ## Development Guidelines
 
 ### Sequential Thinking - REQUIRED FOR ALL TASKS
