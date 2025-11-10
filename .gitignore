@@ -3,3 +3,7 @@ uploads/
 *.db-journal
 cmd/safeshare/safeshare
 /safeshare
+
+# Claude Code configuration (local only)
+.claude/agents/
+CLAUDE.md
