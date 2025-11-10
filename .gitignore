@@ -2,6 +2,7 @@ uploads/
 *.db
 *.db-journal
 cmd/safeshare/safeshare
+cmd/import-file/import-file
 /safeshare
 
 # Claude Code configuration (local only)
