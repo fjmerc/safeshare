@@ -4,5 +4,6 @@ uploads/
 cmd/safeshare/safeshare
 /safeshare
 
-# Claude Code agent definitions (local only)
+# Claude Code configuration (local only)
 .claude/agents/
+CLAUDE.md
