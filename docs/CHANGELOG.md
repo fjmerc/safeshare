@@ -7,11 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2025-11-10
+
 ### Added
+- **Upload Recovery System**: localStorage-based recovery prevents claim code loss
+  - Automatically saves completed uploads to browser storage
+  - Recovery modal appears after browser crash or premature navigation
+  - Supports multiple completion recovery
+  - Browser notification support for completed uploads
+  - Protects users from losing access to uploaded files
+- **Async File Assembly**: Background processing for large uploads (>4GB)
+  - HTTP 202 response pattern prevents browser/proxy timeouts during assembly
+  - Database status tracking (uploading/processing/completed/failed) with error messages
+  - Background goroutine handles chunk assembly and encryption asynchronously
+  - Recovery worker automatically resumes interrupted assemblies after server restarts
+  - Frontend polling support via enhanced status endpoint
+  - Prevents 192+ second timeouts that previously failed large file uploads
+- **File Preparation State**: Visual feedback during file selection
+  - Rotating spinner animation while browser loads file into memory
+  - "Preparing file..." status text with pulsing animation
+  - Upload button disabled until file fully ready
+  - 300ms minimum delay for visual feedback
+  - Prevents ERR_UPLOAD_FILE_CHANGED errors from premature upload clicks
+  - Verifies large file (>100MB) accessibility before enabling upload
+- **Admin Dashboard**: Comprehensive partial upload monitoring and management
+  - New "Partial Upload Size" stat card displays disk space used by incomplete uploads
+  - System Info section now shows database path, upload directory, and partial uploads directory
+  - Manual cleanup button allows admins to remove abandoned uploads (inactive for >24 hours)
+  - Cleanup operation reports deleted count and bytes reclaimed
+  - Partial upload metrics included in quota calculations for accurate storage tracking
+  - Health endpoint now includes partial uploads in storage usage
+- **PWA Support**: Progressive Web App manifest for improved mobile experience
+  - Created manifest.json with app metadata
+  - Linked from all pages (index, login, dashboard, admin)
+  - Eliminates manifest 404 errors in browser console
+- **UI**: Theme toggle button on user login page for consistent theme switching across all pages
 
 ### Changed
+- **BREAKING**: HTTP timeout defaults increased for better large file support
+  - Read timeout: 15s → 120s (configurable via READ_TIMEOUT env var)
+  - Write timeout: 15s → 120s (configurable via WRITE_TIMEOUT env var)
+  - Default chunk size: 5MB → 10MB (configurable via CHUNK_SIZE env var)
+  - Performance improvement: 4.46GB upload reduced from 11 min → 4 min (~3x faster)
+  - 120s timeout supports 10MB chunks on networks as slow as 0.5 MB/s
+  - Makes SafeShare work well for large files "out of the box" without manual tuning
+  - Existing deployments with explicit READ_TIMEOUT/WRITE_TIMEOUT env vars retain custom values
+- **Performance**: Optimized chunked upload assembly for large files
+  - Assembly times improved by 15-18x (tested: 1GB file assembles in 1.38s vs ~20-25s previously)
+  - Increased assembly buffer size from 64KB to 2MB to reduce syscall overhead
+  - Eliminated fsync() operation during chunk assembly for faster processing
+  - Throughput: 741.8 MB/s during assembly
+  - Benefits both encrypted and non-encrypted deployments
+  - Trade-off: Prioritizes performance over crash-durability during assembly (chunks remain intact for retry if server crashes)
+- **UX**: User-friendly upload status messages replace technical terminology
+  - "Initializing chunked upload..." → "Preparing to upload..."
+  - "Uploading chunks..." → "Starting upload..."
+  - "Finalizing upload..." → "Completing upload..."
+  - Hides implementation details from users for clearer status updates
+- **UI**: Improved upload recovery modal user experience
+  - Recovery modal now auto-closes when user copies claim code or download link
+  - Added toast notifications to recovery modal copy buttons for better feedback
+  - Streamlined interface by removing redundant "Got it, thanks!" dismiss button
+  - Copy buttons now provide visual confirmation before closing modal
 
 ### Fixed
+- **UI**: Fixed copy button TypeError in recovery modal and other copy operations
+  - Added defensive null checking in handleCopy function before accessing element properties
+  - Prevents console errors when copy buttons reference non-existent DOM elements
+  - Improves robustness of clipboard operations throughout application
+- **UI**: Fixed browser console warnings for password forms and PWA manifest
+  - Wrapped password inputs in proper `<form>` tags with autocomplete attributes
+  - Added hidden username fields for password manager compatibility (Chrome/Firefox requirements)
+  - Created and linked manifest.json to eliminate 404 errors
+  - Improves accessibility and password manager integration
+- **Upload**: User-friendly error message for file changes during upload
+  - Detects ERR_UPLOAD_FILE_CHANGED (file modified while being read)
+  - Replaces technical "Failed to fetch" with clear explanation
+  - Provides actionable guidance: ensure file isn't being modified by other processes
+  - Commonly occurs when file is still downloading or under antivirus scan
+- **UI**: Fixed upload recovery modal appearing on every page refresh after normal upload completion
+  - Modal now correctly tracks when user has seen and dismissed upload results
+  - Copying claim code or download URL properly marks completion as viewed
+  - Clicking "Upload Another File" properly marks completion as viewed
+  - Recovery modal only appears for legitimate cases (browser crash, navigation before viewing)
+- **Upload**: Server now enforces configured CHUNK_SIZE instead of accepting client's requested chunk size
+  - Server's CHUNK_SIZE environment variable now properly controls chunk size for all uploads
+  - Previously server validated but used client's chunk_size, ignoring server configuration
+  - Fixes issue where uploads always used 5MB chunks regardless of CHUNK_SIZE setting
 
 ## [2.2.0] - 2025-11-09
 
@@ -350,7 +432,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
 [2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7

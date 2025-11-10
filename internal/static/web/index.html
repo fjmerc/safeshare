@@ -11,7 +11,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
-    <link rel="manifest" href="/site.webmanifest">
+    <link rel="manifest" href="/assets/manifest.json">
     <meta name="theme-color" content="#3b82f6">
 
     <!-- Load theme before CSS to prevent flash -->
@@ -112,6 +112,10 @@
                 <div class="card">
                     <div id="dropZone" class="drop-zone">
                         <div class="drop-zone-icon">📁</div>
+                        <!-- File Preparation Spinner -->
+                        <div class="file-preparation-spinner hidden">
+                            <div class="spinner"></div>
+                        </div>
                         <h2>Drop file here or click to browse</h2>
                         <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
                         <input type="file" id="fileInput" hidden>
@@ -121,57 +125,62 @@
                         ✕ Remove File
                     </button>
 
-                    <div class="settings">
-                        <h3>Upload Settings</h3>
+                    <form id="uploadSettingsForm" autocomplete="on">
+                        <!-- Hidden username field for password manager compatibility -->
+                        <input type="text" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
 
-                        <div class="form-group">
-                            <label for="expirationHours">
-                                Expires in (hours):
-                                <span class="tooltip" data-tooltip="File will be automatically deleted after this time">i</span>
-                            </label>
-                            <input type="number" id="expirationHours" min="0.1" max="168" step="0.1" value="24">
-                            <div class="quick-select">
-                                <button type="button" class="btn-small" data-hours="1">1h</button>
-                                <button type="button" class="btn-small" data-hours="24">24h</button>
-                                <button type="button" class="btn-small" data-hours="48">48h</button>
-                                <button type="button" class="btn-small" data-hours="168">7d</button>
+                        <div class="settings">
+                            <h3>Upload Settings</h3>
+
+                            <div class="form-group">
+                                <label for="expirationHours">
+                                    Expires in (hours):
+                                    <span class="tooltip" data-tooltip="File will be automatically deleted after this time">i</span>
+                                </label>
+                                <input type="number" id="expirationHours" name="expiration-hours" min="0.1" max="168" step="0.1" value="24">
+                                <div class="quick-select">
+                                    <button type="button" class="btn-small" data-hours="1">1h</button>
+                                    <button type="button" class="btn-small" data-hours="24">24h</button>
+                                    <button type="button" class="btn-small" data-hours="48">48h</button>
+                                    <button type="button" class="btn-small" data-hours="168">7d</button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="maxDownloads">
+                                    Max downloads (optional):
+                                    <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">i</span>
+                                </label>
+                                <input type="number" id="maxDownloads" name="max-downloads" min="1" max="1000" placeholder="Unlimited">
+                                <div class="quick-select">
+                                    <button type="button" class="btn-small" data-downloads="1">Once</button>
+                                    <button type="button" class="btn-small" data-downloads="5">5x</button>
+                                    <button type="button" class="btn-small" data-downloads="10">10x</button>
+                                    <button type="button" class="btn-small" data-downloads="">∞</button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="uploadPassword">
+                                    Password (optional):
+                                    <span class="tooltip" data-tooltip="Require a password to download this file">i</span>
+                                </label>
+                                <div class="password-wrapper">
+                                    <input type="password" id="uploadPassword" name="upload-password" placeholder="Leave blank for no password" maxlength="128" autocomplete="new-password">
+                                    <button type="button" class="password-toggle" data-password-toggle="uploadPassword" aria-label="Toggle password visibility">
+                                        <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                        </svg>
+                                        <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                                        </svg>
+                                    </button>
+                                </div>
                             </div>
                         </div>
-
-                        <div class="form-group">
-                            <label for="maxDownloads">
-                                Max downloads (optional):
-                                <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">i</span>
-                            </label>
-                            <input type="number" id="maxDownloads" min="1" max="1000" placeholder="Unlimited">
-                            <div class="quick-select">
-                                <button type="button" class="btn-small" data-downloads="1">Once</button>
-                                <button type="button" class="btn-small" data-downloads="5">5x</button>
-                                <button type="button" class="btn-small" data-downloads="10">10x</button>
-                                <button type="button" class="btn-small" data-downloads="">∞</button>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="uploadPassword">
-                                Password (optional):
-                                <span class="tooltip" data-tooltip="Require a password to download this file">i</span>
-                            </label>
-                            <div class="password-wrapper">
-                                <input type="password" id="uploadPassword" placeholder="Leave blank for no password" maxlength="128">
-                                <button type="button" class="password-toggle" data-password-toggle="uploadPassword" aria-label="Toggle password visibility">
-                                    <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                        <circle cx="12" cy="12" r="3"></circle>
-                                    </svg>
-                                    <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
-                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                        <line x1="1" y1="1" x2="23" y2="23"></line>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    </form>
 
                     <div id="uploadProgress" class="upload-progress hidden">
                         <div class="progress-bar">
@@ -289,25 +298,30 @@
                         ⚠️ This file has reached its download limit and can no longer be downloaded.
                     </div>
 
-                    <div class="form-group hidden" id="passwordPrompt">
-                        <label for="downloadPassword">
-                            🔒 Password Required:
-                            <span class="tooltip" data-tooltip="This file is password protected">i</span>
-                        </label>
-                        <div class="password-wrapper">
-                            <input type="password" id="downloadPassword" placeholder="Enter password" maxlength="128">
-                            <button type="button" class="password-toggle" data-password-toggle="downloadPassword" aria-label="Toggle password visibility">
-                                <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                    <circle cx="12" cy="12" r="3"></circle>
-                                </svg>
-                                <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
-                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                    <line x1="1" y1="1" x2="23" y2="23"></line>
-                                </svg>
-                            </button>
+                    <form id="downloadPasswordForm" autocomplete="on">
+                        <!-- Hidden username field for password manager compatibility -->
+                        <input type="text" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
+
+                        <div class="form-group hidden" id="passwordPrompt">
+                            <label for="downloadPassword">
+                                🔒 Password Required:
+                                <span class="tooltip" data-tooltip="This file is password protected">i</span>
+                            </label>
+                            <div class="password-wrapper">
+                                <input type="password" id="downloadPassword" name="download-password" placeholder="Enter password" maxlength="128" autocomplete="current-password">
+                                <button type="button" class="password-toggle" data-password-toggle="downloadPassword" aria-label="Toggle password visibility">
+                                    <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                    <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
-                    </div>
+                    </form>
 
                     <button id="downloadButton" class="btn-primary btn-large">
                         ⬇️ Download File

@@ -34,6 +34,14 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 			storageUsed = 0
 		}
 
+		// Include partial uploads in storage calculation
+		partialUploadsSize, err := utils.GetPartialUploadsSize(cfg.UploadDir)
+		if err != nil {
+			slog.Error("failed to get partial uploads size", "error", err)
+			partialUploadsSize = 0
+		}
+		totalStorageUsed := storageUsed + partialUploadsSize
+
 		// Get disk space information
 		diskInfo, err := utils.GetDiskSpace(cfg.UploadDir)
 		if err != nil {
@@ -46,7 +54,7 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 			Status:           "healthy",
 			UptimeSeconds:    int64(uptime.Seconds()),
 			TotalFiles:       totalFiles,
-			StorageUsedBytes: storageUsed,
+			StorageUsedBytes: totalStorageUsed,
 		}
 
 		// Add disk space info if available
@@ -61,7 +69,7 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 		if cfg.GetQuotaLimitGB() > 0 {
 			response.QuotaLimitBytes = cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 			if response.QuotaLimitBytes > 0 {
-				response.QuotaUsedPercent = (float64(storageUsed) / float64(response.QuotaLimitBytes)) * 100
+				response.QuotaUsedPercent = (float64(totalStorageUsed) / float64(response.QuotaLimitBytes)) * 100
 			}
 		}
 

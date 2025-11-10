@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // StartCleanupWorker starts a background goroutine that periodically
@@ -74,31 +75,30 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 	}
 }
 
-// runPartialUploadCleanup performs the actual partial upload cleanup operation
-func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
-	start := time.Now()
+// CleanupResult contains statistics about a cleanup operation
+type CleanupResult struct {
+	DeletedCount  int
+	BytesReclaimed int64
+}
+
+// CleanupAbandonedUploads removes abandoned partial uploads and returns statistics
+// This function is reusable by both the background worker and API endpoints
+func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*CleanupResult, error) {
+	result := &CleanupResult{
+		DeletedCount:  0,
+		BytesReclaimed: 0,
+	}
 
 	// Get abandoned partial uploads (incomplete uploads that are old)
 	abandoned, err := database.GetAbandonedPartialUploads(db, expiryHours)
 	if err != nil {
-		slog.Error("failed to get abandoned partial uploads", "error", err)
-		return
+		return nil, err
 	}
 
-	// Get completed uploads older than 1 hour (for idempotency cleanup)
-	completed, err := database.GetOldCompletedUploads(db, 1) // 1 hour retention for idempotency
-	if err != nil {
-		slog.Error("failed to get old completed uploads", "error", err)
-		// Continue with abandoned cleanup even if this fails
+	// Calculate bytes that will be reclaimed
+	for _, upload := range abandoned {
+		result.BytesReclaimed += upload.ReceivedBytes
 	}
-
-	totalToClean := len(abandoned) + len(completed)
-	if totalToClean == 0 {
-		slog.Debug("partial upload cleanup completed", "deleted", 0, "duration", time.Since(start))
-		return
-	}
-
-	deleted := 0
 
 	// Clean up abandoned (incomplete) uploads
 	for _, upload := range abandoned {
@@ -128,10 +128,38 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 			"last_activity", upload.LastActivity,
 		)
 
-		deleted++
+		result.DeletedCount++
+	}
+
+	// Clean up empty partial upload directories
+	if err := CleanupPartialUploadsDir(uploadDir); err != nil {
+		slog.Error("failed to cleanup partial uploads directory", "error", err)
+	}
+
+	return result, nil
+}
+
+// runPartialUploadCleanup performs the actual partial upload cleanup operation
+func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
+	start := time.Now()
+
+	// Clean up abandoned uploads using reusable function
+	result, err := CleanupAbandonedUploads(db, uploadDir, expiryHours)
+	if err != nil {
+		slog.Error("failed to cleanup abandoned uploads", "error", err)
+		return
+	}
+
+	// Get completed uploads older than 1 hour (for idempotency cleanup)
+	completed, err := database.GetOldCompletedUploads(db, 1) // 1 hour retention for idempotency
+	if err != nil {
+		slog.Error("failed to get old completed uploads", "error", err)
+		// Continue even if this fails
+		completed = []models.PartialUpload{}
 	}
 
 	// Clean up completed uploads (older than 1 hour, kept for idempotency)
+	completedCount := 0
 	for _, upload := range completed {
 		// Chunks should already be deleted, but check anyway
 		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
@@ -154,25 +182,23 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 			"claim_code", upload.ClaimCode,
 		)
 
-		deleted++
-	}
-
-	// Clean up empty partial upload directories
-	if err := CleanupPartialUploadsDir(uploadDir); err != nil {
-		slog.Error("failed to cleanup partial uploads directory", "error", err)
+		completedCount++
 	}
 
 	duration := time.Since(start)
-	if deleted > 0 {
+	totalDeleted := result.DeletedCount + completedCount
+
+	if totalDeleted > 0 {
 		slog.Info("partial upload cleanup completed",
-			"deleted", deleted,
-			"abandoned", len(abandoned),
-			"completed", len(completed),
+			"deleted", totalDeleted,
+			"abandoned", result.DeletedCount,
+			"completed", completedCount,
+			"bytes_reclaimed", result.BytesReclaimed,
 			"duration", duration,
 		)
 	} else {
 		slog.Debug("partial upload cleanup completed",
-			"deleted", deleted,
+			"deleted", 0,
 			"duration", duration,
 		)
 	}

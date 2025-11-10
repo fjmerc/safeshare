@@ -290,6 +290,10 @@ func main() {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminChangePasswordHandler(cfg)))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/partial-uploads/cleanup", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCleanupPartialUploadsHandler(db, cfg)))).ServeHTTP(w, r)
+		})
+
 		mux.HandleFunc("/admin/api/config", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(handlers.AdminGetConfigHandler(cfg))).ServeHTTP(w, r)
 		})
@@ -379,8 +383,8 @@ func main() {
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout: time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -392,6 +396,9 @@ func main() {
 
 	// Start partial upload cleanup worker (runs every 6 hours)
 	go utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+
+	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)
+	go utils.StartAssemblyRecoveryWorker(ctx, db, cfg, handlers.AssembleUploadAsync)
 
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
 	go func() {

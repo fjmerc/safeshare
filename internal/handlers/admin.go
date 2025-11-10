@@ -330,14 +330,28 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			blockedIPs = []database.BlockedIP{}
 		}
 
-		// Calculate quota usage
+		// Get partial uploads metrics
+		partialUploadsSize, err := utils.GetPartialUploadsSize(cfg.UploadDir)
+		if err != nil {
+			slog.Error("failed to get partial uploads size", "error", err)
+			partialUploadsSize = 0
+		}
+
+		// Calculate quota usage (includes both completed files and partial uploads)
 		var quotaLimitBytes int64
 		var quotaUsedPercent float64
+		totalStorageUsed := storageUsed + partialUploadsSize
 		if cfg.GetQuotaLimitGB() > 0 {
 			quotaLimitBytes = cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 			if quotaLimitBytes > 0 {
-				quotaUsedPercent = (float64(storageUsed) / float64(quotaLimitBytes)) * 100
+				quotaUsedPercent = (float64(totalStorageUsed) / float64(quotaLimitBytes)) * 100
 			}
+		}
+
+		partialUploadsCount, err := database.GetIncompletePartialUploadsCount(db)
+		if err != nil {
+			slog.Error("failed to get partial uploads count", "error", err)
+			partialUploadsCount = 0
 		}
 
 		// Prepare response with file details
@@ -383,12 +397,19 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 				"total_pages": (total + pageSize - 1) / pageSize,
 			},
 			"stats": map[string]interface{}{
-				"total_files":        totalFiles,
-				"storage_used_bytes": storageUsed,
-				"quota_limit_bytes":  quotaLimitBytes,
-				"quota_used_percent": quotaUsedPercent,
+				"total_files":           totalFiles,
+				"storage_used_bytes":    storageUsed,
+				"quota_limit_bytes":     quotaLimitBytes,
+				"quota_used_percent":    quotaUsedPercent,
+				"partial_uploads_bytes": partialUploadsSize,
+				"partial_uploads_count": partialUploadsCount,
 			},
 			"blocked_ips": blockedIPs,
+			"system_info": map[string]interface{}{
+				"db_path":     cfg.DBPath,
+				"upload_dir":  cfg.UploadDir,
+				"partial_dir": filepath.Join(cfg.UploadDir, ".partial"),
+			},
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1058,6 +1079,57 @@ func AdminGetConfigHandler(cfg *config.Config) http.HandlerFunc {
 			"rate_limit_download":       cfg.GetRateLimitDownload(),
 			"blocked_extensions":        cfg.GetBlockedExtensions(),
 			"quota_limit_gb":            cfg.GetQuotaLimitGB(),
+		})
+	}
+}
+
+// AdminCleanupPartialUploadsHandler cleans up abandoned partial uploads
+func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		clientIP := getClientIP(r)
+
+		// Use the configured expiry hours for abandoned uploads
+		expiryHours := cfg.PartialUploadExpiryHours
+
+		slog.Info("admin initiated partial uploads cleanup",
+			"admin_ip", clientIP,
+			"expiry_hours", expiryHours,
+		)
+
+		// Clean up abandoned uploads
+		result, err := utils.CleanupAbandonedUploads(db, cfg.UploadDir, expiryHours)
+		if err != nil {
+			slog.Error("failed to cleanup partial uploads",
+				"error", err,
+				"admin_ip", clientIP,
+			)
+			http.Error(w, "Failed to cleanup partial uploads", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("admin completed partial uploads cleanup",
+			"deleted_count", result.DeletedCount,
+			"bytes_reclaimed", result.BytesReclaimed,
+			"admin_ip", clientIP,
+		)
+
+		// Format the success message
+		message := fmt.Sprintf("Cleaned up %d abandoned upload(s), reclaimed %s",
+			result.DeletedCount,
+			utils.FormatBytes(uint64(result.BytesReclaimed)),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":         true,
+			"deleted_count":   result.DeletedCount,
+			"bytes_reclaimed": result.BytesReclaimed,
+			"message":         message,
 		})
 	}
 }

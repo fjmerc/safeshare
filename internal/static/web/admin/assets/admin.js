@@ -333,6 +333,10 @@ async function loadDashboardData(page = 1, search = '') {
         document.getElementById('statTotalFiles').textContent = data.stats.total_files || 0;
         document.getElementById('statStorageUsed').textContent = formatBytes(data.stats.storage_used_bytes || 0);
 
+        // Display partial upload disk space usage
+        const partialSize = formatBytes(data.stats.partial_uploads_bytes || 0);
+        document.getElementById('statPartialUploads').textContent = partialSize;
+
         if (data.stats.quota_limit_bytes > 0) {
             const percent = data.stats.quota_used_percent.toFixed(1);
             document.getElementById('statQuotaUsage').textContent = percent + '%';
@@ -341,6 +345,13 @@ async function loadDashboardData(page = 1, search = '') {
         }
 
         document.getElementById('statBlockedIPs').textContent = data.blocked_ips?.length || 0;
+
+        // Update system info
+        if (data.system_info) {
+            document.getElementById('db-path').textContent = data.system_info.db_path || './safeshare.db';
+            document.getElementById('upload-dir').textContent = data.system_info.upload_dir || './uploads';
+            document.getElementById('partial-dir').textContent = data.system_info.partial_dir || './uploads/.partial';
+        }
 
         // Update files table
         updateFilesTable(data.files || []);
@@ -1262,6 +1273,46 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load initial data
     loadDashboardData();
     loadConfigValues(); // Load config values for settings tab
+
+    // Cleanup partial uploads button handler
+    document.getElementById('cleanupPartialUploadsBtn')?.addEventListener('click', async () => {
+        const confirmed = await confirm(
+            'This will delete partial uploads that were STARTED more than 24 hours ago.\n\n⚠️ WARNING: Large files being uploaded over slow connections may be affected if the upload session has been running for more than 24 hours.\n\nContinue?'
+        );
+
+        if (!confirmed) return;
+
+        const btn = document.getElementById('cleanupPartialUploadsBtn');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Cleaning...';
+
+        try {
+            const response = await fetch('/admin/api/partial-uploads/cleanup', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-Token': getCSRFToken()
+                }
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to cleanup partial uploads');
+            }
+
+            showToast(data.message, 'success');
+
+            // Refresh dashboard data to update stats
+            loadDashboardData();
+        } catch (error) {
+            console.error('Cleanup error:', error);
+            showToast(error.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    });
 });
 
 // ============ User Management Functions ============

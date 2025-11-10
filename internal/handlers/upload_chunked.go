@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -89,15 +87,10 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Validate chunk_size (must be between 1MB and 50MB)
-		if req.ChunkSize < 1048576 || req.ChunkSize > 52428800 {
-			sendError(w, "Chunk size must be between 1MB and 50MB", "INVALID_CHUNK_SIZE", http.StatusBadRequest)
-			return
-		}
-
-		// Calculate total chunks
-		totalChunks := int(req.TotalSize / req.ChunkSize)
-		if req.TotalSize%req.ChunkSize != 0 {
+		// Calculate total chunks using server-configured chunk size
+		// (client's chunk_size in request is ignored)
+		totalChunks := int(req.TotalSize / cfg.ChunkSize)
+		if req.TotalSize%cfg.ChunkSize != 0 {
 			totalChunks++
 		}
 
@@ -151,22 +144,14 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check quota if configured (0 = unlimited)
 		if quotaConfigured {
-			// Get current usage from both completed files and partial uploads
-			completedUsage, err := database.GetTotalUsage(db)
+			// Get current usage (includes both completed files and partial uploads)
+			currentUsage, err := database.GetTotalUsage(db)
 			if err != nil {
-				slog.Error("failed to get completed storage usage", "error", err)
+				slog.Error("failed to get storage usage", "error", err)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
-			partialUsage, err := database.GetTotalPartialUploadUsage(db)
-			if err != nil {
-				slog.Error("failed to get partial upload usage", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			currentUsage := completedUsage + partialUsage
 			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 
 			if currentUsage+req.TotalSize > quotaBytes {
@@ -213,7 +198,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			UserID:         userID,
 			Filename:       req.Filename,
 			TotalSize:      req.TotalSize,
-			ChunkSize:      req.ChunkSize,
+			ChunkSize:      cfg.ChunkSize,
 			TotalChunks:    totalChunks,
 			ChunksReceived: 0,
 			ReceivedBytes:  0,
@@ -238,7 +223,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Send response
 		response := models.UploadInitResponse{
 			UploadID:    uploadID,
-			ChunkSize:   req.ChunkSize,
+			ChunkSize:   cfg.ChunkSize,
 			TotalChunks: totalChunks,
 			ExpiresAt:   expiresAt,
 		}
@@ -251,7 +236,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"upload_id", uploadID,
 			"filename", req.Filename,
 			"total_size", req.TotalSize,
-			"chunk_size", req.ChunkSize,
+			"chunk_size", cfg.ChunkSize,
 			"total_chunks", totalChunks,
 			"expires_in_hours", req.ExpiresInHours,
 			"password_protected", passwordHash != "",
@@ -542,16 +527,15 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check if already completed
-		if partialUpload.Completed {
-		}
+		// Check if already completed or processing
+		if partialUpload.Status == "completed" {
 			// Already completed - return existing claim code with full file info
 			if partialUpload.ClaimCode != nil {
 				downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
-				
+
 				// Calculate expiration time
 				expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
-				
+
 				response := models.UploadCompleteResponse{
 					ClaimCode:        *partialUpload.ClaimCode,
 					DownloadURL:      downloadURL,
@@ -566,6 +550,21 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				json.NewEncoder(w).Encode(response)
 				return
 			}
+		}
+
+		// If already processing, return status (idempotent completion request)
+		if partialUpload.Status == "processing" {
+			response := map[string]interface{}{
+				"status":    "processing",
+				"upload_id": uploadID,
+				"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted) // 202 Accepted
+			json.NewEncoder(w).Encode(response)
+			return
+		}
 
 		// Check if upload has expired
 		expiryTime := partialUpload.LastActivity.Add(time.Duration(cfg.PartialUploadExpiryHours) * time.Hour)
@@ -628,212 +627,55 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Generate unique claim code
-		var claimCode string
-		maxRetries := 5
-		for i := 0; i < maxRetries; i++ {
-			claimCode, err = utils.GenerateClaimCode()
-			if err != nil {
-				slog.Error("failed to generate claim code", "error", err)
-				sendError(w, "Failed to generate claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Check if code already exists
-			existing, err := database.GetFileByClaimCode(db, claimCode)
-			if err != nil {
-				slog.Error("failed to check claim code", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			if existing == nil {
-				break // Code is unique
-			}
-
-			if i == maxRetries-1 {
-				sendError(w, "Failed to generate unique claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-		}
-
-		// Generate unique filename for storage
-		storedFilename := uuid.New().String() + filepath.Ext(partialUpload.Filename)
-		finalPath := filepath.Join(cfg.UploadDir, storedFilename)
-
-		// Assemble chunks into final file
-		slog.Info("assembling chunks into final file",
-			"upload_id", uploadID,
-			"total_chunks", partialUpload.TotalChunks,
-			"filename", partialUpload.Filename,
-		)
-
-		totalBytesWritten, err := utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
+		// Try to atomically lock the upload for processing (prevents race conditions)
+		locked, err := database.TryLockUploadForProcessing(db, uploadID)
 		if err != nil {
-			slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
-			// Clean up partial final file if it exists
-			os.Remove(finalPath)
-			sendError(w, "Failed to assemble file", "ASSEMBLY_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// Verify assembled file size matches expected
-		if totalBytesWritten != partialUpload.TotalSize {
-			slog.Error("assembled file size mismatch",
-				"upload_id", uploadID,
-				"expected", partialUpload.TotalSize,
-				"actual", totalBytesWritten,
-			)
-			os.Remove(finalPath)
-			sendError(w, "Assembled file size mismatch", "SIZE_MISMATCH", http.StatusInternalServerError)
-			return
-		}
-
-		// Encrypt if encryption is enabled
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			slog.Debug("encrypting assembled file using streaming encryption", "upload_id", uploadID)
-
-			// Use streaming encryption to avoid loading entire file into memory
-			// Encrypt to temporary file, then replace original
-			tempEncryptedPath := finalPath + ".encrypted.tmp"
-
-			if err := utils.EncryptFileStreaming(finalPath, tempEncryptedPath, cfg.EncryptionKey); err != nil {
-				slog.Error("failed to encrypt file", "error", err)
-				os.Remove(finalPath)
-				os.Remove(tempEncryptedPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Get file sizes for logging
-			originalInfo, _ := os.Stat(finalPath)
-			encryptedInfo, _ := os.Stat(tempEncryptedPath)
-
-			// Replace original with encrypted version
-			if err := os.Remove(finalPath); err != nil {
-				slog.Error("failed to remove original file", "error", err)
-				os.Remove(tempEncryptedPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
-				slog.Error("failed to rename encrypted file", "error", err)
-				os.Remove(tempEncryptedPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			slog.Debug("file encrypted with streaming encryption",
-				"upload_id", uploadID,
-				"original_size", originalInfo.Size(),
-				"encrypted_size", encryptedInfo.Size())
-		}
-
-		// Detect MIME type from assembled file (only read first 512 bytes for magic number detection)
-		mimeType := "application/octet-stream"
-		if !utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			file, err := os.Open(finalPath)
-			if err != nil {
-				slog.Error("failed to open file for MIME detection", "error", err)
-				os.Remove(finalPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Only read first 512 bytes for MIME detection (sufficient for magic number detection)
-			buffer := make([]byte, 512)
-			n, err := file.Read(buffer)
-			file.Close()
-
-			if err != nil && err != io.EOF {
-				slog.Error("failed to read file for MIME detection", "error", err)
-				os.Remove(finalPath)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			detected := utils.DetectMimeType(buffer[:n])
-			if detected != "" {
-				mimeType = detected
-			}
-		}
-
-		// Get client IP
-		clientIP := getClientIP(r)
-
-		// Calculate expiration time
-		expiresAt := time.Now().Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
-
-		// Create file record in database
-		var maxDownloads *int
-		if partialUpload.MaxDownloads > 0 {
-			maxDownloads = &partialUpload.MaxDownloads
-		}
-
-		fileRecord := &models.File{
-			ClaimCode:        claimCode,
-			OriginalFilename: partialUpload.Filename,
-			StoredFilename:   storedFilename,
-			FileSize:         partialUpload.TotalSize,
-			MimeType:         mimeType,
-			ExpiresAt:        expiresAt,
-			MaxDownloads:     maxDownloads,
-			UploaderIP:       clientIP,
-			PasswordHash:     partialUpload.PasswordHash,
-			UserID:           partialUpload.UserID,
-		}
-
-		if err := database.CreateFile(db, fileRecord); err != nil {
-			os.Remove(finalPath) // Clean up on error
-			slog.Error("failed to create file record", "error", err)
+			slog.Error("failed to lock upload for processing", "error", err, "upload_id", uploadID)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
-		// Mark partial upload as completed
-		if err := database.MarkPartialUploadCompleted(db, uploadID, claimCode); err != nil {
-			slog.Error("failed to mark partial upload as completed", "error", err)
-			// Don't fail the request - file is already created
+		if !locked {
+			// Another request is already processing this upload
+			slog.Debug("upload already locked for processing", "upload_id", uploadID)
+			response := map[string]interface{}{
+				"status":    "processing",
+				"upload_id": uploadID,
+				"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted) // 202 Accepted
+			json.NewEncoder(w).Encode(response)
+			return
 		}
 
-		// Delete chunks (cleanup)
-		if err := utils.DeleteChunks(cfg.UploadDir, uploadID); err != nil {
-			slog.Error("failed to delete chunks", "error", err, "upload_id", uploadID)
-			// Don't fail the request - chunks will be cleaned up later
-		}
+		// Get client IP for logging
+		clientIP := getClientIP(r)
 
-		// Don't delete partial upload record immediately - keep it for idempotency
-		// Duplicate completion requests can retrieve the claim_code from the completed record
-		// The cleanup worker will delete completed uploads after 1 hour
-		// Note: Lines 540-554 already handle the idempotency check
+		// Spawn goroutine to assemble file asynchronously
+		// Copy partialUpload to avoid data races (partialUpload is a pointer)
+		partialUploadCopy := *partialUpload
+		go AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
 
-		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, claimCode)
-
-	// Send response with complete file information
-	response := models.UploadCompleteResponse{
-		 ClaimCode:        claimCode,
-		 DownloadURL:      downloadURL,
-		 OriginalFilename: partialUpload.Filename,
-		 FileSize:         partialUpload.TotalSize,
-		 ExpiresAt:        expiresAt,
-		 MaxDownloads:     partialUpload.MaxDownloads,
-	}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-
-		slog.Info("chunked upload completed",
+		// Return immediately with status "processing"
+		slog.Info("chunked upload accepted for async assembly",
 			"upload_id", uploadID,
-			"claim_code", redactClaimCode(claimCode),
 			"filename", partialUpload.Filename,
 			"size", partialUpload.TotalSize,
 			"total_chunks", partialUpload.TotalChunks,
-			"expires_at", expiresAt,
-			"password_protected", partialUpload.PasswordHash != "",
 			"client_ip", clientIP,
 		)
+
+		response := map[string]interface{}{
+			"status":    "processing",
+			"upload_id": uploadID,
+			"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted) // 202 Accepted
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -892,6 +734,13 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	// Count actual chunks from disk
 	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
 
+		// Build download URL if completed
+		var downloadURL *string
+		if partialUpload.Status == "completed" && partialUpload.ClaimCode != nil {
+			url := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+			downloadURL = &url
+		}
+
 		// Build response
 		response := models.UploadStatusResponse{
 			UploadID:       uploadID,
@@ -902,6 +751,9 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			Complete:       partialUpload.Completed,
 			ExpiresAt:      expiresAt,
 			ClaimCode:      partialUpload.ClaimCode,
+			Status:         partialUpload.Status,
+			ErrorMessage:   partialUpload.ErrorMessage,
+			DownloadURL:    downloadURL,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
