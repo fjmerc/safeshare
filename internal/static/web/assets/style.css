@@ -561,6 +561,15 @@ header h1 {
     margin-left: 0.5rem;
 }
 
+.settings.collapsed {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.settings.collapsed .settings-toggle {
+    margin-bottom: 0;
+}
+
 .settings.collapsed .chevron-icon {
     transform: rotate(-90deg);
 }

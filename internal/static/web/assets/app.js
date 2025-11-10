@@ -382,6 +382,16 @@
                 uploadSettingsSection.classList.toggle('collapsed');
                 uploadSettingsToggle.setAttribute('aria-expanded', newState.toString());
                 localStorage.setItem('uploadSettingsExpanded', newState.toString());
+
+                // Scroll into view when expanding
+                if (newState) {
+                    setTimeout(() => {
+                        uploadSettingsSection.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'nearest'
+                        });
+                    }, 50);
+                }
             };
 
             // Click event
