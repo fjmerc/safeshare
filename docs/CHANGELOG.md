@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **HTTP Range Request Support (RFC 7233)**: Resumable downloads for large files
+  - Browser download resume: Interrupted downloads can be resumed from where they stopped
+  - Partial content delivery: Request specific byte ranges for efficient streaming
+  - Optimized encrypted file handling: Only decrypts chunks needed for requested range
+  - All RFC 7233 range formats supported: `bytes=0-1023`, `bytes=1024-`, `bytes=-500`
+  - HTTP 206 Partial Content for valid ranges, HTTP 416 for invalid ranges
+  - Always advertises support via `Accept-Ranges: bytes` header
+  - Performance: For 1MB range in 10GB encrypted file, processes ~64-128MB instead of 10GB
+  - Solves timeout issues with reverse proxies (Traefik, Cloudflare) for large files
+  - 100% backward compatible: No Range header returns full file (HTTP 200 OK)
+  - Note: Each range request counts as one download (affects download limits)
+  - See `docs/HTTP_RANGE_SUPPORT.md` for complete documentation
+
 - **CLI Import Tool**: Command-line utility for bulk file migrations (`cmd/import-file`)
   - Import existing files into SafeShare without network upload
   - Single file and batch directory import with recursive scanning

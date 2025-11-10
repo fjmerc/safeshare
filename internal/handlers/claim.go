@@ -4,10 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -92,108 +90,16 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Read file from disk
 		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 
-		// Check if file is stream-encrypted (SFSE1 format)
-		isStreamEnc, err := utils.IsStreamEncrypted(filePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(claimCode))
-				sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
-				return
-			}
-			slog.Error("failed to check file encryption format", "path", filePath, "error", err)
-			sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
 		// Increment download count before serving (important for tracking)
 		if err := database.IncrementDownloadCount(db, file.ID); err != nil {
 			slog.Error("failed to increment download count", "file_id", file.ID, "error", err)
 			// Continue anyway - don't fail the download
 		}
 
-		// Set response headers
-		w.Header().Set("Content-Type", file.MimeType)
-		// Sanitize filename to prevent header injection attacks
-		safeFilename := utils.SanitizeForContentDisposition(file.OriginalFilename)
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeFilename))
+		// Serve file with Range support (handles both full and partial downloads)
+		serveFileWithRangeSupport(w, r, file, filePath, cfg)
 
-		// Handle streaming encrypted files (avoid loading into memory)
-		var written int
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
-			// Stream decrypt to temporary file, then serve
-			tempDecryptedPath := filepath.Join(cfg.UploadDir, ".temp_decrypt_"+file.StoredFilename)
-			defer os.Remove(tempDecryptedPath) // Clean up temp file after serving
-
-			if err := utils.DecryptFileStreaming(filePath, tempDecryptedPath, cfg.EncryptionKey); err != nil {
-				slog.Error("failed to decrypt streaming file", "claim_code", redactClaimCode(claimCode), "error", err)
-				sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Open decrypted file for streaming
-			decryptedFile, err := os.Open(tempDecryptedPath)
-			if err != nil {
-				slog.Error("failed to open decrypted file", "path", tempDecryptedPath, "error", err)
-				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the decrypted file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			defer decryptedFile.Close()
-
-			// Get file size for Content-Length header
-			fileInfo, err := decryptedFile.Stat()
-			if err == nil {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
-			}
-
-			// Stream file to response
-			written64, err := io.Copy(w, decryptedFile)
-			written = int(written64)
-			if err != nil {
-				slog.Error("failed to write decrypted file to response", "claim_code", redactClaimCode(claimCode), "error", err)
-				return
-			}
-
-			slog.Debug("file decrypted with streaming decryption and served", "claim_code", redactClaimCode(claimCode), "bytes_written", written)
-		} else {
-			// Handle legacy encrypted format or non-encrypted files
-			fileData, err := os.ReadFile(filePath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(claimCode))
-					sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
-					return
-				}
-				slog.Error("failed to read file", "path", filePath, "error", err)
-				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Decrypt if file appears to be encrypted (legacy format) and encryption is enabled
-			var dataToServe []byte
-			if utils.IsEncryptionEnabled(cfg.EncryptionKey) && utils.IsEncrypted(fileData) {
-				decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
-				if err != nil {
-					slog.Error("failed to decrypt file", "claim_code", redactClaimCode(claimCode), "error", err)
-					sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
-					return
-				}
-				dataToServe = decrypted
-				slog.Debug("file decrypted using legacy format", "encrypted_size", len(fileData), "decrypted_size", len(decrypted))
-			} else {
-				// File is not encrypted or encryption not enabled
-				dataToServe = fileData
-			}
-
-			// Set Content-Length and write to response
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(dataToServe)))
-			written, err = w.Write(dataToServe)
-			if err != nil {
-				slog.Error("failed to write file to response", "claim_code", redactClaimCode(claimCode), "error", err)
-				return
-			}
-		}
-
-		// Calculate remaining downloads
+		// Calculate remaining downloads for logging
 		var remainingDownloads string
 		if file.MaxDownloads != nil {
 			remaining := *file.MaxDownloads - (file.DownloadCount + 1)
@@ -202,14 +108,10 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			remainingDownloads = "unlimited"
 		}
 
-		slog.Info("file downloaded",
+		slog.Debug("download completed",
 			"claim_code", redactClaimCode(claimCode),
-			"filename", file.OriginalFilename,
-			"size", written,
 			"download_count", file.DownloadCount+1,
 			"remaining_downloads", remainingDownloads,
-			"client_ip", getClientIP(r),
-			"user_agent", getUserAgent(r),
 		)
 	}
 }
