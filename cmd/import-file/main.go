@@ -764,7 +764,7 @@ func previewImport(files []string, opts *ImportOptions) *BatchSummary {
 		Results:    []*ImportResult{},
 	}
 
-	fmt.Println("DRY RUN MODE - No changes will be made\n")
+	fmt.Println("DRY RUN MODE - No changes will be made")
 	fmt.Println("Files to be imported:")
 
 	var totalSize int64
