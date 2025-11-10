@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CLI Import Tool**: Command-line utility for bulk file migrations (`cmd/import-file`)
+  - Import existing files into SafeShare without network upload
+  - Single file and batch directory import with recursive scanning
+  - Dry run preview mode with comprehensive validation checks
+  - SHA256 verification (decrypt + hash check) for data integrity
+  - Extension validation (respects BLOCKED_EXTENSIONS setting)
+  - Quota checking (respects QUOTA_LIMIT_GB setting)
+  - Disk space validation before import
+  - Preservation mode (--no-delete flag to keep source files)
+  - User ownership support (--user-id flag for authenticated imports)
+  - JSON output format for scripting and automation
+  - Performance: 50-60 MB/s encryption speed (production tested with 33GB migration)
+  - Ideal for initial migrations, bulk imports, and server-side file additions
+
 ## [2.3.1] - 2025-11-10
 
 ### Fixed
