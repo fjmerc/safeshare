@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
@@ -77,8 +78,11 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 
 // CleanupResult contains statistics about a cleanup operation
 type CleanupResult struct {
-	DeletedCount  int
-	BytesReclaimed int64
+	DeletedCount     int   // Total uploads deleted (database-tracked + orphaned)
+	BytesReclaimed   int64 // Total bytes reclaimed
+	AbandonedCount   int   // Database-tracked abandoned uploads
+	OrphanedCount    int   // Orphaned chunks without database records
+	OrphanedBytes    int64 // Bytes reclaimed from orphaned chunks
 }
 
 // CleanupAbandonedUploads removes abandoned partial uploads and returns statistics
@@ -100,7 +104,7 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 		result.BytesReclaimed += upload.ReceivedBytes
 	}
 
-	// Clean up abandoned (incomplete) uploads
+	// Phase 1: Clean up abandoned (incomplete) uploads tracked in database
 	for _, upload := range abandoned {
 		// Delete chunks from filesystem
 		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
@@ -128,7 +132,70 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 			"last_activity", upload.LastActivity,
 		)
 
+		result.AbandonedCount++
 		result.DeletedCount++
+	}
+
+	// Phase 2: Clean up orphaned chunks (filesystem has chunks but no database record)
+	partialDir := GetPartialUploadDir(uploadDir)
+	if _, err := os.Stat(partialDir); err == nil {
+		entries, err := os.ReadDir(partialDir)
+		if err != nil {
+			slog.Error("failed to read partial uploads directory for orphan cleanup", "error", err)
+		} else {
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue // Skip non-directory entries
+				}
+
+				uploadID := entry.Name()
+
+				// Check if this upload_id exists in the database
+				exists, err := database.PartialUploadExists(db, uploadID)
+				if err != nil {
+					slog.Error("failed to check if partial upload exists",
+						"upload_id", uploadID,
+						"error", err,
+					)
+					continue
+				}
+
+				// If upload exists in database, skip it (handled by Phase 1 or still active)
+				if exists {
+					continue
+				}
+
+				// This is an orphaned upload - no database record
+				// Calculate size before deleting
+				orphanedSize, err := GetUploadChunksSize(uploadDir, uploadID)
+				if err != nil {
+					slog.Error("failed to calculate orphaned upload size",
+						"upload_id", uploadID,
+						"error", err,
+					)
+					orphanedSize = 0 // Continue with deletion even if size calc fails
+				}
+
+				// Delete the orphaned chunks
+				if err := DeleteChunks(uploadDir, uploadID); err != nil {
+					slog.Error("failed to delete orphaned chunks",
+						"upload_id", uploadID,
+						"error", err,
+					)
+					continue
+				}
+
+				slog.Info("cleaned up orphaned partial upload",
+					"upload_id", uploadID,
+					"bytes", orphanedSize,
+				)
+
+				result.OrphanedCount++
+				result.OrphanedBytes += orphanedSize
+				result.BytesReclaimed += orphanedSize
+				result.DeletedCount++
+			}
+		}
 	}
 
 	// Clean up empty partial upload directories
@@ -191,9 +258,11 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 	if totalDeleted > 0 {
 		slog.Info("partial upload cleanup completed",
 			"deleted", totalDeleted,
-			"abandoned", result.DeletedCount,
+			"abandoned", result.AbandonedCount,
+			"orphaned", result.OrphanedCount,
 			"completed", completedCount,
 			"bytes_reclaimed", result.BytesReclaimed,
+			"orphaned_bytes", result.OrphanedBytes,
 			"duration", duration,
 		)
 	} else {

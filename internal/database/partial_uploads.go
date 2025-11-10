@@ -179,7 +179,17 @@ func DeletePartialUpload(db *sql.DB, uploadID string) error {
 // GetAbandonedPartialUploads returns partial uploads that haven't been active for the specified hours
 // and are not completed or currently processing
 func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUpload, error) {
-	query := `
+	// For immediate cleanup (expiryHours=0), use <= to catch all incomplete uploads
+	// For timed cleanup (expiryHours>0), use < to respect the grace period
+	operator := "<"
+	if expiryHours == 0 {
+		operator = "<="
+	}
+
+	// Note: last_activity is stored in RFC3339 format (e.g., "2025-11-07T18:50:20.987933526Z")
+	// which SQLite's datetime() cannot parse. We use direct string comparison since both
+	// last_activity and the calculated cutoff are in lexicographically sortable formats.
+	query := fmt.Sprintf(`
 		SELECT
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
@@ -187,10 +197,10 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 			status, error_message, assembly_started_at, assembly_completed_at
 		FROM partial_uploads
 		WHERE completed = 0
-		AND status != 'processing'
-		AND datetime(last_activity) < datetime('now', '-' || ? || ' hours')
+		AND (status IS NULL OR status != 'processing')
+		AND last_activity %s datetime('now', '-' || ? || ' hours')
 		ORDER BY last_activity ASC
-	`
+	`, operator)
 
 	rows, err := db.Query(query, expiryHours)
 	if err != nil {
@@ -422,6 +432,19 @@ func GetIncompletePartialUploadsCount(db *sql.DB) (int, error) {
 	}
 
 	return count, nil
+}
+
+// PartialUploadExists checks if a partial upload record exists in the database
+func PartialUploadExists(db *sql.DB, uploadID string) (bool, error) {
+	query := `SELECT COUNT(*) FROM partial_uploads WHERE upload_id = ?`
+
+	var count int
+	err := db.QueryRow(query, uploadID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check partial upload existence: %w", err)
+	}
+
+	return count > 0, nil
 }
 
 // UpdatePartialUploadStatus updates the status and error_message (if provided)
