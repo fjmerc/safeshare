@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2025-11-10
+
+### Fixed
+- **UI**: Fixed copy button context-specific toast messages with event delegation pattern
+  - Implemented event delegation on document to prevent lost listeners when DOM is recreated
+  - Added context-specific messages: "Claim code copied!" vs "Download link copied to clipboard"
+  - Fixed recurring TypeError from null reference errors in copy button functionality
+  - Enhanced defensive error handling with empty text validation
+
 ## [2.3.0] - 2025-11-10
 
 ### Added
@@ -432,7 +441,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
