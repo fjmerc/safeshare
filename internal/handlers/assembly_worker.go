@@ -171,10 +171,8 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 	expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
 
 	// Create file record in database
-	var maxDownloads *int
-	if partialUpload.MaxDownloads > 0 {
-		maxDownloads = &partialUpload.MaxDownloads
-	}
+	// Always set maxDownloads (0 = unlimited, not "unset")
+	maxDownloads := &partialUpload.MaxDownloads
 
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
