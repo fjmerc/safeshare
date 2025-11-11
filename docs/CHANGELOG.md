@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Import Tool File Size Bug**: Fixed critical bug where import tool stored encrypted file size instead of original file size in database
+  - Import tool now correctly stores original (decrypted) file size in `files.file_size` column
+  - Prevents full file download timeouts caused by `DecryptFileStreamingRange` trying to decrypt beyond available data
+  - Adds unit tests to verify correct size handling for encrypted and non-encrypted imports
+  - Updates documentation explaining file size handling and SFSE1 encryption overhead
+  - Only affects files imported via `cmd/import-file` tool - web uploads and chunked uploads unaffected
+  - Production impact: Files imported with buggy version will need database migration (decrypt to measure original size, update DB record)
+
 - **Large File Download Timeouts**: Fixed timeout issues for large encrypted files (>5GB) when downloaded without HTTP Range headers
   - Browser downloads now use streaming decryption directly to HTTP response
   - Eliminates temporary file creation that caused 271-second delays on 11.6GB files
