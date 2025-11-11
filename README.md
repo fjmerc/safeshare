@@ -819,35 +819,3 @@ For issues and questions:
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for complete version history.
-
-### v2.0.0 (Unreleased)
-- **Chunked Upload Support**: Resumable uploads for large files (>100MB) with automatic chunking
-  - New API endpoints: `/api/upload/init`, `/api/upload/chunk`, `/api/upload/complete`, `/api/upload/status`
-  - Frontend ChunkedUploader class with retry logic, parallel uploads, pause/resume
-  - Database migration system with `migrations` and `partial_uploads` tables
-  - Background cleanup worker for abandoned uploads
-  - Full documentation in [docs/CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md)
-- **BREAKING**: Database schema updated with migrations system (auto-applied on startup)
-
-### v1.2.0
-- User authentication system with invite-only registration
-- Role-based access control (admin/user roles)
-- User dashboard with file management
-- Admin user management interface
-- Optional authentication requirement for uploads
-
-### v1.1.0
-- **Admin settings persistence**: All 7 admin dashboard settings now persist across server restarts
-- **GitHub URLs fixed**: Corrected repository URLs from placeholder to actual repo (21 files updated)
-- **Improved .gitignore**: More specific patterns for better source control
-- **Dynamic configuration**: Settings changeable via admin dashboard without restart
-- **Database-backed settings**: quota_limit_gb, max_file_size_bytes, default_expiration_hours, max_expiration_hours, rate_limit_upload, rate_limit_download, blocked_extensions
-
-### v1.0.0
-- Initial release
-- File upload with claim codes
-- Automatic expiration
-- Download limits
-- Health check endpoint
-- Docker support
-- Pure Go SQLite driver (no CGO)
