@@ -38,14 +38,25 @@ type ErrorResponse struct {
 
 // HealthResponse is the JSON response for the health check endpoint
 type HealthResponse struct {
-	Status             string  `json:"status"`
-	UptimeSeconds      int64   `json:"uptime_seconds"`
-	TotalFiles         int     `json:"total_files"`
-	StorageUsedBytes   int64   `json:"storage_used_bytes"`
-	DiskTotalBytes     uint64  `json:"disk_total_bytes,omitempty"`
-	DiskFreeBytes      uint64  `json:"disk_free_bytes,omitempty"`
-	DiskUsedPercent    float64 `json:"disk_used_percent,omitempty"`
-	DiskAvailableBytes uint64  `json:"disk_available_bytes,omitempty"`
-	QuotaLimitBytes    int64   `json:"quota_limit_bytes,omitempty"`    // 0 = unlimited
-	QuotaUsedPercent   float64 `json:"quota_used_percent,omitempty"`   // Only present when quota is set
+	Status             string           `json:"status"`
+	UptimeSeconds      int64            `json:"uptime_seconds"`
+	TotalFiles         int              `json:"total_files"`
+	StorageUsedBytes   int64            `json:"storage_used_bytes"`
+	DiskTotalBytes     uint64           `json:"disk_total_bytes,omitempty"`
+	DiskFreeBytes      uint64           `json:"disk_free_bytes,omitempty"`
+	DiskUsedPercent    float64          `json:"disk_used_percent,omitempty"`
+	DiskAvailableBytes uint64           `json:"disk_available_bytes,omitempty"`
+	QuotaLimitBytes    int64            `json:"quota_limit_bytes,omitempty"`    // 0 = unlimited
+	QuotaUsedPercent   float64          `json:"quota_used_percent,omitempty"`   // Only present when quota is set
+	DatabaseMetrics    *DatabaseMetrics `json:"database_metrics,omitempty"`     // Database performance metrics
+}
+
+// DatabaseMetrics contains database performance and health information
+type DatabaseMetrics struct {
+	SizeBytes    int64  `json:"size_bytes"`              // Total database file size
+	SizeMB       float64 `json:"size_mb"`                // Size in megabytes
+	WALSizeBytes int64  `json:"wal_size_bytes,omitempty"` // Write-Ahead Log size
+	PageCount    int64  `json:"page_count"`              // Total number of pages
+	PageSize     int64  `json:"page_size"`               // Size of each page in bytes
+	IndexCount   int    `json:"index_count"`             // Total number of indexes
 }
