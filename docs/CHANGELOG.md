@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Large File Download Timeouts**: Fixed timeout issues for large encrypted files (>5GB) when downloaded without HTTP Range headers
+  - Browser downloads now use streaming decryption directly to HTTP response
+  - Eliminates temporary file creation that caused 271-second delays on 11.6GB files
+  - Time-to-first-byte now <1 second (previously >100 seconds)
+  - Resolves Cloudflare 524 timeout errors for large file downloads
+  - Uses same optimized `DecryptFileStreamingRange` code path as Range requests
+  - Performance: Streams 10MB chunks as they're decrypted instead of buffering entire file
+  - Backward compatible: No changes to API or behavior, only performance improvement
+
 ### Changed
 - **Encryption Performance**: Reduced SFSE1 chunk size from 64MB to 10MB
   - Improves time-to-first-byte for HTTP Range requests by ~6x (65s → ~10s)
