@@ -74,7 +74,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check download limit
-		if file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads {
+		if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
 			slog.Warn("file access denied",
 				"reason", "download_limit_reached",
 				"claim_code", redactClaimCode(claimCode),
@@ -161,7 +161,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check download limit
 		downloadLimitReached := false
-		if file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads {
+		if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
 			downloadLimitReached = true
 		}
 

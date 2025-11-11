@@ -56,18 +56,18 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Build response with download URLs
 		type FileResponse struct {
-			ID               int64  `json:"id"`
-			ClaimCode        string `json:"claim_code"`
-			OriginalFilename string `json:"original_filename"`
-			FileSize         int64  `json:"file_size"`
-			MimeType         string `json:"mime_type"`
-			CreatedAt        string `json:"created_at"`
-			ExpiresAt        string `json:"expires_at"`
-			MaxDownloads     *int   `json:"max_downloads"`
-			DownloadCount    int    `json:"download_count"`
-			DownloadURL      string `json:"download_url"`
-			IsExpired        bool   `json:"is_expired"`
-			IsPasswordProtected bool `json:"is_password_protected"`
+			ID               int64     `json:"id"`
+			ClaimCode        string    `json:"claim_code"`
+			OriginalFilename string    `json:"original_filename"`
+			FileSize         int64     `json:"file_size"`
+			MimeType         string    `json:"mime_type"`
+			CreatedAt        time.Time `json:"created_at"`
+			ExpiresAt        time.Time `json:"expires_at"`
+			MaxDownloads     *int      `json:"max_downloads"`
+			DownloadCount    int       `json:"download_count"`
+			DownloadURL      string    `json:"download_url"`
+			IsExpired        bool      `json:"is_expired"`
+			IsPasswordProtected bool   `json:"is_password_protected"`
 		}
 
 		fileResponses := make([]FileResponse, 0, len(files))
@@ -78,12 +78,12 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				OriginalFilename: file.OriginalFilename,
 				FileSize:         file.FileSize,
 				MimeType:         file.MimeType,
-				CreatedAt:        file.CreatedAt.Format("2006-01-02 15:04:05"),
-				ExpiresAt:        file.ExpiresAt.Format("2006-01-02 15:04:05"),
+				CreatedAt:        file.CreatedAt,
+				ExpiresAt:        file.ExpiresAt,
 				MaxDownloads:     file.MaxDownloads,
 				DownloadCount:    file.DownloadCount,
 				DownloadURL:      buildDownloadURL(r, cfg, file.ClaimCode),
-				IsExpired:        time.Now().After(file.ExpiresAt) || (file.MaxDownloads != nil && file.DownloadCount >= *file.MaxDownloads),
+				IsExpired:        time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",
 			})
 		}
