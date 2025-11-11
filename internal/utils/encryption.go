@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"time"
 )
 
 // EncryptFile encrypts data using AES-256-GCM
@@ -111,8 +113,10 @@ const (
 	StreamEncryptionMagic = "SFSE1"
 	// StreamEncryptionVersion is the version byte
 	StreamEncryptionVersion = 0x01
-	// DefaultChunkSize is the default chunk size for streaming encryption (64MB)
-	DefaultChunkSize = 64 * 1024 * 1024
+	// DefaultChunkSize is the default chunk size for streaming encryption (10MB)
+	// Reduced from 64MB to improve time-to-first-byte for HTTP Range requests
+	// and prevent client timeouts during decryption
+	DefaultChunkSize = 10 * 1024 * 1024
 )
 
 // EncryptFileStreaming encrypts a file using chunked AES-256-GCM without loading entire file into memory.
@@ -345,6 +349,9 @@ func IsStreamEncrypted(path string) (bool, error) {
 //
 // Returns the number of bytes written to the writer.
 func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, startByte, endByte int64) (int64, error) {
+	// Start timing for performance profiling
+	funcStart := time.Now()
+
 	// Validate range
 	if startByte < 0 || endByte < startByte {
 		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
@@ -372,11 +379,13 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 	}
 
 	// Open source file
+	openStart := time.Now()
 	srcFile, err := os.Open(srcPath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open source file: %w", err)
 	}
 	defer srcFile.Close()
+	slog.Debug("DecryptFileStreamingRange: file opened", "duration_ms", time.Since(openStart).Milliseconds())
 
 	// Read and validate header
 	magic := make([]byte, len(StreamEncryptionMagic))
@@ -417,22 +426,37 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 	headerSize := int64(10)
 	firstChunkOffset := headerSize + (startChunk * int64(encryptedChunkSize))
 
+	seekStart := time.Now()
 	if _, err := srcFile.Seek(firstChunkOffset, io.SeekStart); err != nil {
 		return 0, fmt.Errorf("failed to seek to chunk %d: %w", startChunk, err)
 	}
+	slog.Debug("DecryptFileStreamingRange: seeked to first chunk",
+		"chunk", startChunk,
+		"offset_bytes", firstChunkOffset,
+		"duration_ms", time.Since(seekStart).Milliseconds())
 
 	var totalWritten int64
+	var totalReadTime, totalDecryptTime, totalWriteTime time.Duration
 	currentChunk := startChunk // Start from the first chunk we need, not 0
 
 	for currentChunk <= endChunk {
 		// Read encrypted chunk (may be partial on last chunk)
+		readStart := time.Now()
 		n, err := srcFile.Read(buffer)
+		readDuration := time.Since(readStart)
+		totalReadTime += readDuration
+
 		if err != nil && err != io.EOF {
 			return totalWritten, fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}
 		if n == 0 {
 			break
 		}
+
+		slog.Debug("DecryptFileStreamingRange: chunk read",
+			"chunk", currentChunk,
+			"bytes_read", n,
+			"duration_ms", readDuration.Milliseconds())
 
 		// Extract nonce
 		if n < gcm.NonceSize() {
@@ -442,10 +466,19 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 		ciphertext := buffer[gcm.NonceSize():n]
 
 		// Decrypt chunk
+		decryptStart := time.Now()
 		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+		decryptDuration := time.Since(decryptStart)
+		totalDecryptTime += decryptDuration
+
 		if err != nil {
 			return totalWritten, fmt.Errorf("failed to decrypt chunk %d: %w", currentChunk, err)
 		}
+
+		slog.Debug("DecryptFileStreamingRange: chunk decrypted",
+			"chunk", currentChunk,
+			"plaintext_bytes", len(plaintext),
+			"duration_ms", decryptDuration.Milliseconds())
 
 		// Determine what portion of this chunk to write
 		var chunkStart, chunkEnd int64
@@ -467,11 +500,20 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 
 		// Write the relevant portion
 		if chunkStart < chunkEnd {
+			writeStart := time.Now()
 			written, err := writer.Write(plaintext[chunkStart:chunkEnd])
+			writeDuration := time.Since(writeStart)
+			totalWriteTime += writeDuration
+
 			if err != nil {
 				return totalWritten, fmt.Errorf("failed to write decrypted data: %w", err)
 			}
 			totalWritten += int64(written)
+
+			slog.Debug("DecryptFileStreamingRange: chunk written",
+				"chunk", currentChunk,
+				"bytes_written", written,
+				"duration_ms", writeDuration.Milliseconds())
 		}
 
 		currentChunk++
@@ -480,6 +522,22 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 			break
 		}
 	}
+
+	// Log overall performance summary
+	totalDuration := time.Since(funcStart)
+	chunksProcessed := (endChunk - startChunk) + 1
+
+	slog.Info("DecryptFileStreamingRange: completed",
+		"total_duration_ms", totalDuration.Milliseconds(),
+		"read_time_ms", totalReadTime.Milliseconds(),
+		"decrypt_time_ms", totalDecryptTime.Milliseconds(),
+		"write_time_ms", totalWriteTime.Milliseconds(),
+		"chunks_processed", chunksProcessed,
+		"bytes_written", totalWritten,
+		"chunk_size_mb", chunkSize/(1024*1024),
+		"avg_read_ms_per_chunk", totalReadTime.Milliseconds()/chunksProcessed,
+		"avg_decrypt_ms_per_chunk", totalDecryptTime.Milliseconds()/chunksProcessed,
+		"throughput_mbps", float64(totalWritten)/(1024*1024)/totalDuration.Seconds())
 
 	return totalWritten, nil
 }

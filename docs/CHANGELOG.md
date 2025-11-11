@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Encryption Performance**: Reduced SFSE1 chunk size from 64MB to 10MB
+  - Improves time-to-first-byte for HTTP Range requests by ~6x (65s → ~10s)
+  - Prevents client timeout issues during decryption of large encrypted files
+  - Better streaming performance for partial content delivery
+  - Migration tool provided in `cmd/migrate-chunks` to re-encrypt existing files
+  - See `cmd/migrate-chunks/README.md` for migration guide
+
+- **Performance Profiling**: Added comprehensive timing logs to DecryptFileStreamingRange
+  - Structured logging (slog) tracks disk I/O, decryption, and write times per chunk
+  - Helps identify bottlenecks: disk I/O vs CPU vs network
+  - Per-chunk profiling: read time, decrypt time, write time
+  - Overall summary: total duration, throughput (MB/s), average times per chunk
+  - Enable with debug log level to see detailed per-chunk timings
+  - Info level logs show summary statistics for each range request
+
 ### Added
+- **CLI Migration Tool**: Re-encrypt SFSE1 files with new chunk size (`cmd/migrate-chunks`)
+  - Migrates existing 64MB chunk files to 10MB chunks
+  - Dry-run mode to preview what would be migrated
+  - Safe atomic process: decrypt → re-encrypt → backup → replace
+  - Automatic cleanup of temporary files
+  - Progress tracking and detailed statistics
+  - Comprehensive error handling and rollback on failure
+
 - **HTTP Range Request Support (RFC 7233)**: Resumable downloads for large files
   - Browser download resume: Interrupted downloads can be resumed from where they stopped
   - Partial content delivery: Request specific byte ranges for efficient streaming
