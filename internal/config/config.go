@@ -18,6 +18,7 @@ type Config struct {
 	UploadDir                string
 	CleanupIntervalMinutes   int
 	PublicURL                string
+	DownloadURL              string // Optional: Separate URL for downloads (bypasses CDN timeouts)
 	EncryptionKey            string
 	AdminUsername            string
 	SessionExpiryHours       int
@@ -53,6 +54,7 @@ func Load() (*Config, error) {
 		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
 		CleanupIntervalMinutes:   getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
 		PublicURL:                getEnv("PUBLIC_URL", ""),
+		DownloadURL:              getEnv("DOWNLOAD_URL", ""), // Optional: bypasses CDN for large downloads
 		EncryptionKey:            getEnv("ENCRYPTION_KEY", ""),
 		AdminUsername:            getEnv("ADMIN_USERNAME", ""),
 		SessionExpiryHours:       getEnvInt("SESSION_EXPIRY_HOURS", 24),
