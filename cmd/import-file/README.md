@@ -439,6 +439,34 @@ The tool respects SafeShare's `BLOCKED_EXTENSIONS` setting from the database. Fi
 
 If `QUOTA_LIMIT_GB` is set in SafeShare, the tool will validate quota before importing. Files that would exceed the quota are **skipped** in batch mode.
 
+## File Size Handling
+
+**IMPORTANT**: The import tool correctly stores the **original (decrypted) file size** in the database, NOT the encrypted file size on disk. This is critical for proper HTTP Range request handling and download functionality.
+
+### How It Works
+
+- **Database `file_size` field**: Stores the original file size before encryption
+- **Physical file on disk**: Larger due to SFSE1 encryption overhead (~0.1-1% for large files)
+- **Why this matters**: `DecryptFileStreamingRange()` uses the database size to calculate byte ranges during downloads
+
+### Example
+
+```
+Original file: 10.0 GB
+Database file_size: 10,737,418,240 bytes (10.0 GB) ✓
+Encrypted file on disk: 10,748,903,168 bytes (10.01 GB)
+Overhead: ~11 MB (0.1%)
+```
+
+### Technical Details
+
+The SFSE1 encryption format adds:
+- Header metadata (version, chunk size, chunk count): ~10 bytes
+- Nonce per chunk (12 bytes × number of chunks): ~8 KB for 10 GB file
+- Authentication tag per chunk (16 bytes × number of chunks): ~11 KB for 10 GB file
+
+This overhead is automatically handled by the import tool and does not affect users - they see and download the original file size.
+
 ## Performance
 
 ### Encryption Speed

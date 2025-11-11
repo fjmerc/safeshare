@@ -591,7 +591,7 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		ClaimCode:        claimCode,
 		OriginalFilename: displayName,
 		StoredFilename:   storedFilename,
-		FileSize:         encryptedInfo.Size(),
+		FileSize:         originalSize, // Use original size, not encrypted size
 		MimeType:         mimeType,
 		ExpiresAt:        expiresAt,
 		UploaderIP:       opts.UploaderIP,
