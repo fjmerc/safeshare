@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **DOWNLOAD_URL Configuration**: New optional environment variable `DOWNLOAD_URL` for bypassing CDN timeouts
+  - Separate download domain to avoid Cloudflare's 100-second timeout on large files
+  - Priority: DOWNLOAD_URL > PUBLIC_URL > auto-detect
+  - Automatically applies to all download URLs (upload responses, info endpoint, user dashboard)
+  - Backward compatible: existing deployments work without changes
+  - Example: `DOWNLOAD_URL=https://downloads.example.com` for direct VPS connection
+  - Use case: Set DNS-only subdomain (grey cloud) to bypass CDN proxy for large file downloads
+
 ## [2.4.0] - 2025-11-11
 
 ### Performance
