@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2025-11-11
+
 ### Performance
 - **Database Optimization**: Added 4 composite indexes for 5-80x performance improvement
   - Partial upload cleanup: 40x faster (400ms → 10ms for 1000 uploads)
@@ -539,7 +541,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.2...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
 [2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
