@@ -351,10 +351,10 @@ class ChunkedUploader {
     /**
      * Poll status endpoint until file assembly is complete
      * @param {number} pollInterval - Polling interval in milliseconds (default: 2000ms / 2 seconds)
-     * @param {number} maxAttempts - Maximum number of polling attempts (default: 600 = 20 minutes)
+     * @param {number} maxAttempts - Maximum number of polling attempts (default: 150 = 5 minutes)
      * @returns {Promise<Object>} - Final upload result with claim_code and download_url
      */
-    async pollStatus(pollInterval = 2000, maxAttempts = 600) {
+    async pollStatus(pollInterval = 2000, maxAttempts = 150) {
         let attempts = 0;
 
         while (attempts < maxAttempts) {
