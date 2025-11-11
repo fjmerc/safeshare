@@ -491,6 +491,7 @@ func SetAssemblyCompleted(db *sql.DB, uploadID, claimCode string) error {
 }
 
 // SetAssemblyFailed marks assembly as failed with error message
+// Retries with exponential backoff to handle SQLITE_BUSY errors
 func SetAssemblyFailed(db *sql.DB, uploadID, errorMessage string) error {
 	now := time.Now()
 	query := `
@@ -499,12 +500,28 @@ func SetAssemblyFailed(db *sql.DB, uploadID, errorMessage string) error {
 		WHERE upload_id = ?
 	`
 
-	_, err := db.Exec(query, errorMessage, now, uploadID)
-	if err != nil {
-		return fmt.Errorf("failed to set assembly failed: %w", err)
+	// Retry with exponential backoff to handle SQLITE_BUSY errors
+	maxRetries := 5
+	baseDelay := 100 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		_, err := db.Exec(query, errorMessage, now, uploadID)
+		if err == nil {
+			return nil // Success
+		}
+
+		lastErr = err
+
+		// Check if this is a SQLITE_BUSY error (or any temporary error)
+		// If it's the last attempt, don't wait
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt)) // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+			time.Sleep(delay)
+		}
 	}
 
-	return nil
+	return fmt.Errorf("failed to set assembly failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // GetProcessingUploads returns all uploads currently in "processing" status
