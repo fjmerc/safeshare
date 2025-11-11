@@ -217,6 +217,7 @@ func migrateFile(path string, encKey string) error {
 
 	// Step 2: Encrypt with new chunk size to another temp file
 	tempEncrypted := path + ".encrypted.tmp"
+	defer os.Remove(tempEncrypted) // Clean up temp file on error
 	encryptStart := time.Now()
 	slog.Debug("Encrypting with new chunk size", "src", tempDecrypted, "dst", tempEncrypted)
 
@@ -231,7 +232,7 @@ func migrateFile(path string, encKey string) error {
 	// First, create backup of original
 	backupPath := path + ".backup"
 	if err := os.Rename(path, backupPath); err != nil {
-		os.Remove(tempEncrypted) // Clean up
+		// tempEncrypted will be cleaned up by defer
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
 
