@@ -2,11 +2,9 @@ package handlers
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -85,35 +83,20 @@ func serveEntireFile(
 	isStreamEnc bool,
 	fileSize int64,
 ) {
-	var written int
+	var written int64
 
 	// Handle streaming encrypted files
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
-		// Stream decrypt to temporary file, then serve
-		tempDecryptedPath := filepath.Join(cfg.UploadDir, ".temp_decrypt_"+file.StoredFilename)
-		defer os.Remove(tempDecryptedPath)
-
-		if err := utils.DecryptFileStreaming(filePath, tempDecryptedPath, cfg.EncryptionKey); err != nil {
-			slog.Error("failed to decrypt streaming file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-			sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// Open decrypted file for streaming
-		decryptedFile, err := os.Open(tempDecryptedPath)
-		if err != nil {
-			slog.Error("failed to open decrypted file", "path", tempDecryptedPath, "error", err)
-			sendErrorResponse(w, r, "Server Error", "An error occurred while reading the decrypted file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-		defer decryptedFile.Close()
-
-		// Set Content-Length and stream
+		// Stream decrypt directly to response (no temp file)
+		// Use optimized range decryption for the full file (0 to fileSize-1)
+		// This enables immediate time-to-first-byte instead of waiting for full decryption
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
-		written64, err := io.Copy(w, decryptedFile)
-		written = int(written64)
+
+		var err error
+		written, err = utils.DecryptFileStreamingRange(filePath, w, cfg.EncryptionKey, 0, fileSize-1)
 		if err != nil {
-			slog.Error("failed to write decrypted file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+			slog.Error("failed to stream decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+			// Can't send error response - headers already sent
 			return
 		}
 	} else {
@@ -146,7 +129,8 @@ func serveEntireFile(
 
 		// Set Content-Length and write to response
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(dataToServe)))
-		written, err = w.Write(dataToServe)
+		writtenInt, err := w.Write(dataToServe)
+		written = int64(writtenInt)
 		if err != nil {
 			slog.Error("failed to write file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 			return
