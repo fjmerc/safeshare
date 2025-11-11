@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2025-11-11
+
+### Performance
+- **Database Optimization**: Added 4 composite indexes for 5-80x performance improvement
+  - Partial upload cleanup: 40x faster (400ms → 10ms for 1000 uploads)
+  - Admin dashboard with user joins: 10x faster (250ms → 25ms for 10K files)
+  - Statistics queries: 5x faster (50ms → 10ms for 10K files)
+  - User file listings: 3x faster (30ms → 10ms for 1000 files)
+- **Query Planner**: Automated ANALYZE runs after bulk deletes (100+ files)
+- **Memory Optimization**: Temp tables now stored in RAM (2-5x faster JOINs)
+- **Write Performance**: Adjusted WAL checkpoint interval for 10-20% improvement
+- **Maintenance**: Added weekly VACUUM script to reclaim disk space
+
+### Added
+- **Database Metrics**: Health endpoint now includes database performance metrics
+  - Database size (bytes and MB)
+  - WAL file size
+  - Page count and page size
+  - Index count (for monitoring optimization impact)
+  - Example: `GET /health` returns `database_metrics` object
+
+### Technical
+- Migration 003: Performance indexes for partial uploads, user-file joins, and stats
+- Removed redundant index on `partial_uploads.upload_id` (PRIMARY KEY)
+- Added `PRAGMA temp_store = MEMORY` for faster complex queries
+- Added `PRAGMA wal_autocheckpoint = 4000` for better write throughput
+- Extended HealthResponse model with DatabaseMetrics struct
+
+## [2.3.2] - 2025-11-11
+
+### Fixed
+- **Import Tool File Size Bug**: Fixed critical bug where import tool stored encrypted file size instead of original file size in database
+  - Import tool now correctly stores original (decrypted) file size in `files.file_size` column
+  - Prevents full file download timeouts caused by `DecryptFileStreamingRange` trying to decrypt beyond available data
+  - Adds unit tests to verify correct size handling for encrypted and non-encrypted imports
+  - Updates documentation explaining file size handling and SFSE1 encryption overhead
+  - Only affects files imported via `cmd/import-file` tool - web uploads and chunked uploads unaffected
+  - Production impact: Files imported with buggy version will need database migration (decrypt to measure original size, update DB record)
+
+- **Large File Download Timeouts**: Fixed timeout issues for large encrypted files (>5GB) when downloaded without HTTP Range headers
+  - Browser downloads now use streaming decryption directly to HTTP response
+  - Eliminates temporary file creation that caused 271-second delays on 11.6GB files
+  - Time-to-first-byte now <1 second (previously >100 seconds)
+  - Resolves Cloudflare 524 timeout errors for large file downloads
+  - Uses same optimized `DecryptFileStreamingRange` code path as Range requests
+  - Performance: Streams 10MB chunks as they're decrypted instead of buffering entire file
+  - Backward compatible: No changes to API or behavior, only performance improvement
+
+### Changed
+- **Encryption Performance**: Reduced SFSE1 chunk size from 64MB to 10MB
+  - Improves time-to-first-byte for HTTP Range requests by ~6x (65s → ~10s)
+  - Prevents client timeout issues during decryption of large encrypted files
+  - Better streaming performance for partial content delivery
+  - Migration tool provided in `cmd/migrate-chunks` to re-encrypt existing files
+  - See `cmd/migrate-chunks/README.md` for migration guide
+
+- **Performance Profiling**: Added comprehensive timing logs to DecryptFileStreamingRange
+  - Structured logging (slog) tracks disk I/O, decryption, and write times per chunk
+  - Helps identify bottlenecks: disk I/O vs CPU vs network
+  - Per-chunk profiling: read time, decrypt time, write time
+  - Overall summary: total duration, throughput (MB/s), average times per chunk
+  - Enable with debug log level to see detailed per-chunk timings
+  - Info level logs show summary statistics for each range request
+
+### Added
+- **CLI Migration Tool**: Re-encrypt SFSE1 files with new chunk size (`cmd/migrate-chunks`)
+  - Migrates existing 64MB chunk files to 10MB chunks
+  - Dry-run mode to preview what would be migrated
+  - Safe atomic process: decrypt → re-encrypt → backup → replace
+  - Automatic cleanup of temporary files
+  - Progress tracking and detailed statistics
+  - Comprehensive error handling and rollback on failure
+
+- **HTTP Range Request Support (RFC 7233)**: Resumable downloads for large files
+  - Browser download resume: Interrupted downloads can be resumed from where they stopped
+  - Partial content delivery: Request specific byte ranges for efficient streaming
+  - Optimized encrypted file handling: Only decrypts chunks needed for requested range
+  - All RFC 7233 range formats supported: `bytes=0-1023`, `bytes=1024-`, `bytes=-500`
+  - HTTP 206 Partial Content for valid ranges, HTTP 416 for invalid ranges
+  - Always advertises support via `Accept-Ranges: bytes` header
+  - Performance: For 1MB range in 10GB encrypted file, processes ~64-128MB instead of 10GB
+  - Solves timeout issues with reverse proxies (Traefik, Cloudflare) for large files
+  - 100% backward compatible: No Range header returns full file (HTTP 200 OK)
+  - Note: Each range request counts as one download (affects download limits)
+  - See `docs/HTTP_RANGE_SUPPORT.md` for complete documentation
+
+- **CLI Import Tool**: Command-line utility for bulk file migrations (`cmd/import-file`)
+  - Import existing files into SafeShare without network upload
+  - Single file and batch directory import with recursive scanning
+  - Dry run preview mode with comprehensive validation checks
+  - SHA256 verification (decrypt + hash check) for data integrity
+  - Extension validation (respects BLOCKED_EXTENSIONS setting)
+  - Quota checking (respects QUOTA_LIMIT_GB setting)
+  - Disk space validation before import
+  - Preservation mode (--no-delete flag to keep source files)
+  - User ownership support (--user-id flag for authenticated imports)
+  - JSON output format for scripting and automation
+  - Performance: 50-60 MB/s encryption speed (production tested with 33GB migration)
+  - Ideal for initial migrations, bulk imports, and server-side file additions
+
 ## [2.3.1] - 2025-11-10
 
 ### Fixed
@@ -441,7 +541,9 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
+[2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0

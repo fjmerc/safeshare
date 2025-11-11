@@ -118,9 +118,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Validate max downloads
-		if req.MaxDownloads <= 0 {
-			req.MaxDownloads = 1 // Default to 1 download
+		// Validate max downloads (0 = unlimited, negative = invalid)
+		if req.MaxDownloads < 0 {
+			req.MaxDownloads = 0 // Default to unlimited
 		}
 
 		// Check disk space before accepting upload

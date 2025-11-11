@@ -192,6 +192,17 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 		deletedCount++
 	}
 
+	// Update query planner statistics after bulk deletes
+	if deletedCount >= 100 {
+		slog.Info("updating query planner statistics after bulk file deletion",
+			"deleted_count", deletedCount)
+
+		if _, err := db.Exec("ANALYZE files"); err != nil {
+			// Log but don't fail - ANALYZE is optimization, not critical
+			slog.Warn("failed to analyze files table", "error", err)
+		}
+	}
+
 	return deletedCount, nil
 }
 

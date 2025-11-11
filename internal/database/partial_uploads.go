@@ -179,7 +179,17 @@ func DeletePartialUpload(db *sql.DB, uploadID string) error {
 // GetAbandonedPartialUploads returns partial uploads that haven't been active for the specified hours
 // and are not completed or currently processing
 func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUpload, error) {
-	query := `
+	// For immediate cleanup (expiryHours=0), use <= to catch all incomplete uploads
+	// For timed cleanup (expiryHours>0), use < to respect the grace period
+	operator := "<"
+	if expiryHours == 0 {
+		operator = "<="
+	}
+
+	// Note: last_activity is stored in RFC3339 format (e.g., "2025-11-07T18:50:20.987933526Z")
+	// which SQLite's datetime() cannot parse. We use direct string comparison since both
+	// last_activity and the calculated cutoff are in lexicographically sortable formats.
+	query := fmt.Sprintf(`
 		SELECT
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
@@ -187,10 +197,10 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 			status, error_message, assembly_started_at, assembly_completed_at
 		FROM partial_uploads
 		WHERE completed = 0
-		AND status != 'processing'
-		AND datetime(last_activity) < datetime('now', '-' || ? || ' hours')
+		AND (status IS NULL OR status != 'processing')
+		AND last_activity %s datetime('now', '-' || ? || ' hours')
 		ORDER BY last_activity ASC
-	`
+	`, operator)
 
 	rows, err := db.Query(query, expiryHours)
 	if err != nil {
@@ -424,6 +434,19 @@ func GetIncompletePartialUploadsCount(db *sql.DB) (int, error) {
 	return count, nil
 }
 
+// PartialUploadExists checks if a partial upload record exists in the database
+func PartialUploadExists(db *sql.DB, uploadID string) (bool, error) {
+	query := `SELECT COUNT(*) FROM partial_uploads WHERE upload_id = ?`
+
+	var count int
+	err := db.QueryRow(query, uploadID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check partial upload existence: %w", err)
+	}
+
+	return count > 0, nil
+}
+
 // UpdatePartialUploadStatus updates the status and error_message (if provided)
 func UpdatePartialUploadStatus(db *sql.DB, uploadID, status string, errorMessage *string) error {
 	query := `UPDATE partial_uploads SET status = ?, error_message = ?, last_activity = ? WHERE upload_id = ?`
@@ -468,6 +491,7 @@ func SetAssemblyCompleted(db *sql.DB, uploadID, claimCode string) error {
 }
 
 // SetAssemblyFailed marks assembly as failed with error message
+// Retries with exponential backoff to handle SQLITE_BUSY errors
 func SetAssemblyFailed(db *sql.DB, uploadID, errorMessage string) error {
 	now := time.Now()
 	query := `
@@ -476,12 +500,28 @@ func SetAssemblyFailed(db *sql.DB, uploadID, errorMessage string) error {
 		WHERE upload_id = ?
 	`
 
-	_, err := db.Exec(query, errorMessage, now, uploadID)
-	if err != nil {
-		return fmt.Errorf("failed to set assembly failed: %w", err)
+	// Retry with exponential backoff to handle SQLITE_BUSY errors
+	maxRetries := 5
+	baseDelay := 100 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		_, err := db.Exec(query, errorMessage, now, uploadID)
+		if err == nil {
+			return nil // Success
+		}
+
+		lastErr = err
+
+		// Check if this is a SQLITE_BUSY error (or any temporary error)
+		// If it's the last attempt, don't wait
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt)) // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+			time.Sleep(delay)
+		}
 	}
 
-	return nil
+	return fmt.Errorf("failed to set assembly failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // GetProcessingUploads returns all uploads currently in "processing" status

@@ -104,6 +104,9 @@ SafeShare uses **Git Flow** branching model.
 main              # Production-ready code
 ├── develop       # Integration branch for next release
 ├── feature/*     # New features
+├── bugfix/*      # Bug fixes
+├── perf/*        # Performance optimizations
+├── docs/*        # Documentation updates
 ├── release/*     # Release preparation
 └── hotfix/*      # Emergency production fixes
 ```
@@ -126,6 +129,24 @@ main              # Production-ready code
 **feature/*** (e.g., `feature/user-authentication`):
 - Created from `develop`
 - One feature per branch
+- Merged back to `develop` via PR
+- Deleted after merge
+
+**bugfix/*** (e.g., `bugfix/fix-login-validation`):
+- Created from `develop`
+- Bug fixes for non-critical issues
+- Merged back to `develop` via PR
+- Deleted after merge
+
+**perf/*** (e.g., `perf/optimize-file-streaming`):
+- Created from `develop`
+- Performance improvements and optimizations
+- Merged back to `develop` via PR
+- Deleted after merge
+
+**docs/*** (e.g., `docs/update-api-documentation`):
+- Created from `develop`
+- Documentation updates and improvements
 - Merged back to `develop` via PR
 - Deleted after merge
 

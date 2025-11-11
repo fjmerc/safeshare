@@ -9,7 +9,10 @@
     --bg-tertiary: #f3f4f6;
     --text-primary: #111827;
     --text-secondary: #6b7280;
+    --text-color: #111827;
     --border-color: #e5e7eb;
+    --card-bg: #ffffff;
+    --input-bg: #f9fafb;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
@@ -23,7 +26,10 @@
     --bg-tertiary: #374151;
     --text-primary: #f9fafb;
     --text-secondary: #9ca3af;
+    --text-color: #f9fafb;
     --border-color: #4b5563;
+    --card-bg: #1f2937;
+    --input-bg: #111827;
 }
 
 [data-theme="dark"] .user-menu-trigger {
@@ -50,6 +56,26 @@
 
 [data-theme="dark"] .user-menu-logout:hover {
     background: rgba(239, 68, 68, 0.15);
+}
+
+[data-theme="dark"] .recovery-modal {
+    background: rgba(0, 0, 0, 0.85);
+}
+
+[data-theme="dark"] .recovery-modal-content {
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .recovery-claim-code {
+    background: #0f172a;
+    border-color: #3b82f6;
+    color: #f1f5f9;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+[data-theme="dark"] .recovery-upload {
+    background: #0f172a;
+    border-color: #374151;
 }
 
 /* Reset & Base Styles */
@@ -412,6 +438,12 @@ header h1 {
     transform: scale(1.02);
 }
 
+.drop-zone.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .drop-zone-icon {
     font-size: 4rem;
     margin-bottom: 1rem;
@@ -493,6 +525,63 @@ header h1 {
 .settings h3::before {
     content: "⚙️ ";
     margin-right: 0.5rem;
+}
+
+/* Collapsible Upload Settings */
+.settings-toggle {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    margin: -0.5rem -0.5rem 1.5rem -0.5rem;
+    border-radius: var(--radius);
+    transition: var(--transition);
+}
+
+.settings-toggle:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.settings-toggle:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.settings-toggle.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.settings-toggle .chevron-icon {
+    transition: transform 0.3s ease;
+    flex-shrink: 0;
+    margin-left: 0.5rem;
+}
+
+.settings.collapsed {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.settings.collapsed .settings-toggle {
+    margin-bottom: 0;
+}
+
+.settings.collapsed .chevron-icon {
+    transform: rotate(-90deg);
+}
+
+.settings-content {
+    max-height: 1500px;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.settings.collapsed .settings-content {
+    max-height: 0;
 }
 
 .form-group {
@@ -1367,8 +1456,8 @@ footer .version-info {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1388,8 +1477,9 @@ footer .version-info {
 
 .recovery-modal-content {
     background: var(--card-bg);
-    border-radius: 12px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.1);
     max-width: 600px;
     width: 100%;
     max-height: 90vh;
@@ -1430,8 +1520,9 @@ footer .version-info {
 
 .recovery-header h2 {
     margin: 0 0 0.5rem;
-    color: var(--text-color);
-    font-size: 1.5rem;
+    color: var(--text-primary);
+    font-size: 1.625rem;
+    font-weight: 700;
 }
 
 .recovery-header p {
@@ -1446,10 +1537,11 @@ footer .version-info {
 
 .recovery-upload {
     background: var(--input-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
     padding: 1.5rem;
     margin-bottom: 1rem;
+    box-shadow: var(--shadow-sm);
 }
 
 .recovery-upload:last-child {
@@ -1466,9 +1558,9 @@ footer .version-info {
 }
 
 .recovery-filename {
-    font-weight: 600;
-    color: var(--text-color);
-    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-size: 1.0625rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1502,15 +1594,18 @@ footer .version-info {
 
 .recovery-claim-code {
     flex: 1;
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    font-family: 'Courier New', monospace;
-    font-size: 1rem;
-    color: var(--primary-color);
-    font-weight: 600;
+    background: var(--bg-tertiary);
+    border: 2px solid var(--primary-color);
+    padding: 0.875rem 1.125rem;
+    border-radius: 8px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 1.0625rem;
+    color: var(--text-primary);
+    font-weight: 700;
+    letter-spacing: 0.025em;
     word-break: break-all;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    transition: all 0.2s ease;
 }
 
 .btn-copy-recovery {
@@ -1567,9 +1662,9 @@ footer .version-info {
 }
 
 .btn-recovery-copy-url {
-    background: var(--input-bg);
-    color: var(--text-color);
-    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 2px solid var(--border-color);
 }
 
 .btn-recovery-copy-url:hover {

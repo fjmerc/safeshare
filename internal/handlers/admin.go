@@ -1093,10 +1093,11 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 
 		clientIP := getClientIP(r)
 
-		// Use the configured expiry hours for abandoned uploads
-		expiryHours := cfg.PartialUploadExpiryHours
+		// Admin-initiated cleanup should be immediate (0 hours = clean up ALL incomplete uploads)
+		// Background worker uses cfg.PartialUploadExpiryHours for automatic cleanup
+		expiryHours := 0
 
-		slog.Info("admin initiated partial uploads cleanup",
+		slog.Info("admin initiated partial uploads cleanup (immediate)",
 			"admin_ip", clientIP,
 			"expiry_hours", expiryHours,
 		)
@@ -1114,21 +1115,37 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 
 		slog.Info("admin completed partial uploads cleanup",
 			"deleted_count", result.DeletedCount,
+			"abandoned_count", result.AbandonedCount,
+			"orphaned_count", result.OrphanedCount,
 			"bytes_reclaimed", result.BytesReclaimed,
+			"orphaned_bytes", result.OrphanedBytes,
 			"admin_ip", clientIP,
 		)
 
-		// Format the success message
-		message := fmt.Sprintf("Cleaned up %d abandoned upload(s), reclaimed %s",
-			result.DeletedCount,
-			utils.FormatBytes(uint64(result.BytesReclaimed)),
-		)
+		// Format the success message with breakdown
+		var message string
+		if result.OrphanedCount > 0 {
+			message = fmt.Sprintf("Cleaned up %d upload(s) (%d abandoned, %d orphaned), reclaimed %s",
+				result.DeletedCount,
+				result.AbandonedCount,
+				result.OrphanedCount,
+				utils.FormatBytes(uint64(result.BytesReclaimed)),
+			)
+		} else {
+			message = fmt.Sprintf("Cleaned up %d abandoned upload(s), reclaimed %s",
+				result.DeletedCount,
+				utils.FormatBytes(uint64(result.BytesReclaimed)),
+			)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":         true,
 			"deleted_count":   result.DeletedCount,
+			"abandoned_count": result.AbandonedCount,
+			"orphaned_count":  result.OrphanedCount,
 			"bytes_reclaimed": result.BytesReclaimed,
+			"orphaned_bytes":  result.OrphanedBytes,
 			"message":         message,
 		})
 	}
