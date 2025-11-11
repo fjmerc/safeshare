@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -73,8 +74,47 @@ func HealthHandler(db *sql.DB, cfg *config.Config, startTime time.Time) http.Han
 			}
 		}
 
+		// Add database metrics
+		dbMetrics, err := getDatabaseMetrics(db, cfg.DBPath)
+		if err != nil {
+			slog.Warn("failed to get database metrics", "error", err)
+			// Don't fail health check if metrics unavailable
+		} else {
+			response.DatabaseMetrics = dbMetrics
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
 	}
+}
+
+// getDatabaseMetrics retrieves database performance metrics
+func getDatabaseMetrics(db *sql.DB, dbPath string) (*models.DatabaseMetrics, error) {
+	metrics := &models.DatabaseMetrics{}
+
+	// Get page count and page size from SQLite
+	if err := db.QueryRow("PRAGMA page_count").Scan(&metrics.PageCount); err != nil {
+		return nil, err
+	}
+	if err := db.QueryRow("PRAGMA page_size").Scan(&metrics.PageSize); err != nil {
+		return nil, err
+	}
+
+	// Calculate database size
+	metrics.SizeBytes = metrics.PageCount * metrics.PageSize
+	metrics.SizeMB = float64(metrics.SizeBytes) / 1024 / 1024
+
+	// Count indexes
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index'").Scan(&metrics.IndexCount); err != nil {
+		return nil, err
+	}
+
+	// Get WAL file size if it exists
+	walPath := dbPath + "-wal"
+	if info, err := os.Stat(walPath); err == nil {
+		metrics.WALSizeBytes = info.Size()
+	}
+
+	return metrics, nil
 }

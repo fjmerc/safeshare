@@ -255,6 +255,17 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 	duration := time.Since(start)
 	totalDeleted := result.DeletedCount + completedCount
 
+	// Update query planner statistics after bulk deletes
+	if totalDeleted >= 50 {
+		slog.Info("updating query planner statistics after partial upload cleanup",
+			"deleted_count", totalDeleted)
+
+		if _, err := db.Exec("ANALYZE partial_uploads"); err != nil {
+			// Log but don't fail - ANALYZE is optimization, not critical
+			slog.Warn("failed to analyze partial_uploads table", "error", err)
+		}
+	}
+
 	if totalDeleted > 0 {
 		slog.Info("partial upload cleanup completed",
 			"deleted", totalDeleted,
