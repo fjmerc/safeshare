@@ -13,15 +13,25 @@ import (
 )
 
 // buildDownloadURL constructs the full download URL for a claim code
-// Respects PUBLIC_URL config and reverse proxy headers
+// Priority order: DOWNLOAD_URL > PUBLIC_URL > auto-detect from request headers
+//
+// DOWNLOAD_URL: Optional dedicated domain for downloads (bypasses CDN timeouts)
+// PUBLIC_URL: General base URL for the application
+// Auto-detect: Falls back to request headers (X-Forwarded-Host, X-Forwarded-Proto)
 func buildDownloadURL(r *http.Request, cfg *config.Config, claimCode string) string {
-	// If PUBLIC_URL is configured, use it
+	// Priority 1: Use DOWNLOAD_URL if configured (for CDN bypass)
+	if cfg.DownloadURL != "" {
+		baseURL := strings.TrimSuffix(cfg.DownloadURL, "/")
+		return baseURL + "/api/claim/" + claimCode
+	}
+
+	// Priority 2: Use PUBLIC_URL if configured
 	if cfg.PublicURL != "" {
 		baseURL := strings.TrimSuffix(cfg.PublicURL, "/")
 		return baseURL + "/api/claim/" + claimCode
 	}
 
-	// Otherwise, auto-detect from request headers
+	// Priority 3: Auto-detect from request headers (reverse proxy support)
 	scheme := getScheme(r)
 	host := getHost(r)
 	return scheme + "://" + host + "/api/claim/" + claimCode

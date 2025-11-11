@@ -441,7 +441,9 @@ Environment variables:
 | `DEFAULT_EXPIRATION_HOURS` | `24` | Default expiration time in hours |
 | `CLEANUP_INTERVAL_MINUTES` | `60` | Cleanup job frequency in minutes |
 | `PUBLIC_URL` | (empty) | Public URL for download links (e.g., `https://share.domain.com`) - **Required for reverse proxies** |
+| `DOWNLOAD_URL` | (empty) | Optional separate URL for download links to bypass CDN timeouts (e.g., `https://downloads.domain.com`) - **Takes priority over PUBLIC_URL if set** |
 | `ENCRYPTION_KEY` | (empty) | AES-256 encryption key (64 hex chars) - **Optional, enables encryption at rest** |
+| `HTTPS_ENABLED` | `false` | Enable HTTPS mode (affects auto-detection of scheme in reverse proxy scenarios) |
 | `BLOCKED_EXTENSIONS` | `.exe,.bat,...` | Comma-separated list of blocked file extensions |
 | `MAX_EXPIRATION_HOURS` | `168` | Maximum allowed expiration time in hours (default: 7 days) |
 | `RATE_LIMIT_UPLOAD` | `10` | Maximum upload requests per hour per IP |
@@ -449,8 +451,10 @@ Environment variables:
 | `QUOTA_LIMIT_GB` | `0` | Maximum total storage quota in GB (0 = unlimited) |
 | `CHUNKED_UPLOAD_ENABLED` | `true` | Enable/disable chunked upload support |
 | `CHUNKED_UPLOAD_THRESHOLD` | `104857600` | Files >= this size use chunked upload (default: 100MB) |
-| `CHUNK_SIZE` | `5242880` | Size of each chunk in bytes (default: 5MB) |
+| `CHUNK_SIZE` | `10485760` | Size of each chunk in bytes (default: 10MB) |
 | `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
+| `READ_TIMEOUT` | `120` | HTTP read timeout in seconds (default: 2 minutes) |
+| `WRITE_TIMEOUT` | `120` | HTTP write timeout in seconds (default: 2 minutes) |
 | `REQUIRE_AUTH_FOR_UPLOAD` | `false` | Require user authentication for uploads - **Set to `true` for invite-only mode** |
 | `ADMIN_USERNAME` | (empty) | Admin username for dashboard access - **Optional, enables admin dashboard** |
 | `ADMIN_PASSWORD` | (empty) | Admin password (minimum 8 characters) - **Optional, requires ADMIN_USERNAME** |
@@ -502,6 +506,8 @@ docker run -d \
 ```
 
 **Auto-detection:** If `PUBLIC_URL` is not set, SafeShare auto-detects from `X-Forwarded-Proto` and `X-Forwarded-Host` headers.
+
+**CDN Bypass for Large Files:** If using Cloudflare or similar CDN with timeout limits, set `DOWNLOAD_URL` to a separate DNS-only subdomain to bypass the CDN for downloads while keeping uploads and UI protected.
 
 **Full documentation:** See [REVERSE_PROXY.md](docs/REVERSE_PROXY.md) for complete configuration examples with Traefik, nginx, Caddy, and Apache.
 
