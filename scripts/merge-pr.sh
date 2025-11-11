@@ -25,9 +25,9 @@ fi
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 echo -e "Current branch: ${YELLOW}${CURRENT_BRANCH}${NC}"
 
-# Check if we're on a feature/bugfix/docs/hotfix branch
-if [[ ! $CURRENT_BRANCH =~ ^(feature|bugfix|docs|hotfix)/ ]]; then
-    echo -e "${YELLOW}Warning: Not on a feature/bugfix/docs/hotfix branch${NC}"
+# Check if we're on a feature/bugfix/perf/docs/hotfix branch
+if [[ ! $CURRENT_BRANCH =~ ^(feature|bugfix|perf|docs|hotfix)/ ]]; then
+    echo -e "${YELLOW}Warning: Not on a feature/bugfix/perf/docs/hotfix branch${NC}"
     read -p "Enter PR number manually: " PR_NUMBER
 else
     # Try to find PR for current branch
