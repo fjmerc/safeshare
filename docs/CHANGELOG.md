@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2025-11-11
+
 ### Changed
 - **Admin Dashboard UI Improvements**: Enhanced responsive design and layout optimization
   - Increased max container width from 1400px to 1800px for better use of widescreen displays
@@ -576,7 +578,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/fjmerc/safeshare/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
 [2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
