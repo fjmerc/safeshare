@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2025-11-11
+
 ### Fixed
 - **Import Tool File Size Bug**: Fixed critical bug where import tool stored encrypted file size instead of original file size in database
   - Import tool now correctly stores original (decrypted) file size in `files.file_size` column
@@ -511,7 +513,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
