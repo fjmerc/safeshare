@@ -7,11 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Admin Dashboard UI Improvements**: Enhanced responsive design and layout optimization
+  - Increased max container width from 1400px to 1800px for better use of widescreen displays
+  - Added informational tooltip to "Partial Upload Size" stat card explaining temporary chunked upload storage
+  - Files table optimized with fixed layout and explicit column widths to prevent horizontal scrolling
+  - Progressive responsive breakpoints: hide less critical columns at 1400px, 1024px, 768px, and 480px
+  - Improved table spacing with reduced padding for more efficient use of screen space
+  - Better mobile experience with appropriate column hiding strategy
+
+- **User Dashboard UI Improvements**: Enhanced mobile responsiveness
+  - Header action buttons now intelligently wrap at 600px and 768px breakpoints
+  - Files table uses fixed layout with explicit column widths
+  - Progressive column hiding for tablet (1024px) and mobile (768px, 480px) viewports
+  - Full-width stacked buttons on very small screens (<600px) for better touch targets
+  - Improved table readability with centered columns (except filename)
+
 ### Fixed
 - **Admin Dashboard**: Fixed checkbox and delete button state not resetting after deleting all files
   - Select-all checkbox now properly unchecks when no files remain
   - "Delete Selected" button now properly hides when no files remain
   - Affects bulk file deletion workflow when deleting last remaining files
+
+- **Documentation**: Removed duplicate version history from README.md (kept only in CHANGELOG.md)
 
 ## [2.5.0] - 2025-11-11
 

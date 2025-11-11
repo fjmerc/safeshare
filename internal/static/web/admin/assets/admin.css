@@ -622,7 +622,7 @@ button:disabled {
 }
 
 .header-content {
-    max-width: 1400px;
+    max-width: 1800px;
     margin: 0 auto;
     padding: 0 24px;
     display: flex;
@@ -662,7 +662,7 @@ button:disabled {
 }
 
 .dashboard-container {
-    max-width: 1400px;
+    max-width: 1800px;
     margin: 0 auto;
     padding: 32px 24px;
 }
@@ -701,6 +701,11 @@ button:disabled {
     transform: translateY(-2px);
 }
 
+/* Allow tooltips to overflow stat cards */
+.stat-card:has(.tooltip-wrapper) {
+    overflow: visible;
+}
+
 .stat-card h3 {
     font-size: 12px;
     color: var(--text-secondary);
@@ -714,6 +719,98 @@ button:disabled {
     font-size: 32px;
     font-weight: 700;
     color: var(--text-primary);
+}
+
+/* Stat Card Tooltip */
+.stat-header-with-tooltip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.stat-header-with-tooltip h3 {
+    margin: 0;
+}
+
+.tooltip-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: help;
+    transition: var(--transition);
+    opacity: 0.6;
+}
+
+.info-icon:hover,
+.info-icon:focus {
+    color: var(--primary-color);
+    opacity: 1;
+    outline: none;
+}
+
+.info-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tooltip-content {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--text-primary);
+    color: white;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: normal;
+    width: 220px;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 1000;
+}
+
+.tooltip-content::after {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-bottom-color: var(--text-primary);
+}
+
+.info-icon:hover + .tooltip-content,
+.info-icon:focus + .tooltip-content,
+.tooltip-wrapper:hover .tooltip-content {
+    opacity: 1;
+    transform: translateX(-50%) translateY(12px);
+    pointer-events: auto;
+}
+
+/* Dark mode tooltip adjustments */
+[data-theme="dark"] .tooltip-content {
+    background: #374151;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .tooltip-content::after {
+    border-bottom-color: #374151;
 }
 
 /* Tabs */
@@ -831,14 +928,71 @@ button:disabled {
     border-collapse: collapse;
 }
 
-/* Files tab table - force min-width for many columns */
+/* Files tab table - optimized column widths to prevent horizontal scroll */
 #filesTab .data-table {
-    min-width: 1700px; /* Force horizontal scroll to prevent column squeezing */
+    table-layout: fixed;
+    width: 100%;
+}
+
+/* Files tab - explicit column widths for optimal space usage */
+#filesTab .data-table th:nth-child(1),
+#filesTab .data-table td:nth-child(1) {
+    width: 3%;
+}
+
+#filesTab .data-table th:nth-child(2),
+#filesTab .data-table td:nth-child(2) {
+    width: 13%;
+}
+
+#filesTab .data-table th:nth-child(3),
+#filesTab .data-table td:nth-child(3) {
+    width: 20%;
+}
+
+#filesTab .data-table th:nth-child(4),
+#filesTab .data-table td:nth-child(4) {
+    width: 7%;
+}
+
+#filesTab .data-table th:nth-child(5),
+#filesTab .data-table td:nth-child(5) {
+    width: 8%;
+}
+
+#filesTab .data-table th:nth-child(6),
+#filesTab .data-table td:nth-child(6) {
+    width: 11%;
+}
+
+#filesTab .data-table th:nth-child(7),
+#filesTab .data-table td:nth-child(7) {
+    width: 12%;
+}
+
+#filesTab .data-table th:nth-child(8),
+#filesTab .data-table td:nth-child(8) {
+    width: 12%;
+}
+
+#filesTab .data-table th:nth-child(9),
+#filesTab .data-table td:nth-child(9) {
+    width: 6%;
+}
+
+#filesTab .data-table th:nth-child(10),
+#filesTab .data-table td:nth-child(10) {
+    width: 6%;
+}
+
+#filesTab .data-table th:nth-child(11),
+#filesTab .data-table td:nth-child(11) {
+    width: 9%;
 }
 
 .data-table th {
     background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
-    padding: 16px;
+    padding: 12px 10px;
     text-align: left;
     font-weight: 600;
     font-size: 12px;
@@ -850,7 +1004,7 @@ button:disabled {
 }
 
 .data-table td {
-    padding: 16px;
+    padding: 12px 10px;
     border-bottom: 1px solid var(--border-color);
     font-size: 14px;
     transition: var(--transition);
@@ -859,7 +1013,6 @@ button:disabled {
 /* Filename column - truncate with ellipsis */
 .data-table td:nth-child(3),
 .data-table td.filename-cell {
-    max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -867,35 +1020,31 @@ button:disabled {
 
 /* Uploader IP column - truncate long IPv6 addresses */
 .data-table td.ip-cell {
-    max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* Date columns (Created, Expires) - prevent wrapping */
-.data-table td:nth-child(7),
-.data-table td:nth-child(8) {
-    white-space: nowrap;
-}
-
-/* Downloads column - center align */
-.data-table td:nth-child(9),
-.data-table th:nth-child(9) {
+/* Center all columns except Claim Code and Filename */
+#filesTab .data-table th:nth-child(1),
+#filesTab .data-table td:nth-child(1),
+#filesTab .data-table th:nth-child(4),
+#filesTab .data-table td:nth-child(4),
+#filesTab .data-table th:nth-child(5),
+#filesTab .data-table td:nth-child(5),
+#filesTab .data-table th:nth-child(6),
+#filesTab .data-table td:nth-child(6),
+#filesTab .data-table th:nth-child(7),
+#filesTab .data-table td:nth-child(7),
+#filesTab .data-table th:nth-child(8),
+#filesTab .data-table td:nth-child(8),
+#filesTab .data-table th:nth-child(9),
+#filesTab .data-table td:nth-child(9),
+#filesTab .data-table th:nth-child(10),
+#filesTab .data-table td:nth-child(10),
+#filesTab .data-table th:nth-child(11),
+#filesTab .data-table td:nth-child(11) {
     text-align: center;
-}
-
-/* Protected column - center align */
-.data-table td:nth-child(10),
-.data-table th:nth-child(10) {
-    text-align: center;
-}
-
-/* Actions column - ensure enough width for buttons */
-.data-table td:nth-child(11),
-.data-table th:nth-child(11) {
-    width: 120px;
-    min-width: 120px;
 }
 
 /* Users table - center all columns except Username and Email */
@@ -1204,6 +1353,165 @@ input[type="checkbox"] {
 /* Refresh button animation */
 .btn-refreshing svg {
     animation: spin 0.6s linear;
+}
+
+/* ===== RESPONSIVE TABLE BREAKPOINTS ===== */
+
+/* Large Desktop: Show all columns (>1400px) - no changes needed */
+
+/* Medium Desktop: Hide less critical columns (1024px - 1400px) */
+@media (max-width: 1400px) {
+    #filesTab .data-table th:nth-child(4),
+    #filesTab .data-table td:nth-child(4),
+    #filesTab .data-table th:nth-child(9),
+    #filesTab .data-table td:nth-child(9),
+    #filesTab .data-table th:nth-child(10),
+    #filesTab .data-table td:nth-child(10) {
+        display: none;
+    }
+
+    /* Adjust remaining column widths */
+    #filesTab .data-table th:nth-child(2),
+    #filesTab .data-table td:nth-child(2) {
+        width: 15%;
+    }
+
+    #filesTab .data-table th:nth-child(3),
+    #filesTab .data-table td:nth-child(3) {
+        width: 25%;
+    }
+
+    #filesTab .data-table th:nth-child(5),
+    #filesTab .data-table td:nth-child(5) {
+        width: 10%;
+    }
+
+    #filesTab .data-table th:nth-child(11),
+    #filesTab .data-table td:nth-child(11) {
+        width: 12%;
+    }
+}
+
+/* Tablet: Essential columns only (768px - 1024px) */
+@media (max-width: 1024px) {
+    #filesTab .data-table th:nth-child(4),
+    #filesTab .data-table td:nth-child(4),
+    #filesTab .data-table th:nth-child(5),
+    #filesTab .data-table td:nth-child(5),
+    #filesTab .data-table th:nth-child(6),
+    #filesTab .data-table td:nth-child(6),
+    #filesTab .data-table th:nth-child(9),
+    #filesTab .data-table td:nth-child(9),
+    #filesTab .data-table th:nth-child(10),
+    #filesTab .data-table td:nth-child(10) {
+        display: none;
+    }
+
+    /* Adjust remaining column widths */
+    #filesTab .data-table th:nth-child(1),
+    #filesTab .data-table td:nth-child(1) {
+        width: 4%;
+    }
+
+    #filesTab .data-table th:nth-child(2),
+    #filesTab .data-table td:nth-child(2) {
+        width: 18%;
+    }
+
+    #filesTab .data-table th:nth-child(3),
+    #filesTab .data-table td:nth-child(3) {
+        width: 30%;
+    }
+
+    #filesTab .data-table th:nth-child(7),
+    #filesTab .data-table td:nth-child(7) {
+        width: 18%;
+    }
+
+    #filesTab .data-table th:nth-child(8),
+    #filesTab .data-table td:nth-child(8) {
+        width: 18%;
+    }
+
+    #filesTab .data-table th:nth-child(11),
+    #filesTab .data-table td:nth-child(11) {
+        width: 14%;
+    }
+}
+
+/* Mobile: Minimal columns (< 768px) */
+@media (max-width: 768px) {
+    #filesTab .data-table th:nth-child(2),
+    #filesTab .data-table td:nth-child(2),
+    #filesTab .data-table th:nth-child(4),
+    #filesTab .data-table td:nth-child(4),
+    #filesTab .data-table th:nth-child(5),
+    #filesTab .data-table td:nth-child(5),
+    #filesTab .data-table th:nth-child(6),
+    #filesTab .data-table td:nth-child(6),
+    #filesTab .data-table th:nth-child(7),
+    #filesTab .data-table td:nth-child(7),
+    #filesTab .data-table th:nth-child(9),
+    #filesTab .data-table td:nth-child(9),
+    #filesTab .data-table th:nth-child(10),
+    #filesTab .data-table td:nth-child(10) {
+        display: none;
+    }
+
+    /* Show only: Checkbox, Filename, Expires, Actions */
+    #filesTab .data-table th:nth-child(1),
+    #filesTab .data-table td:nth-child(1) {
+        width: 8%;
+    }
+
+    #filesTab .data-table th:nth-child(3),
+    #filesTab .data-table td:nth-child(3) {
+        width: 45%;
+    }
+
+    #filesTab .data-table th:nth-child(8),
+    #filesTab .data-table td:nth-child(8) {
+        width: 28%;
+    }
+
+    #filesTab .data-table th:nth-child(11),
+    #filesTab .data-table td:nth-child(11) {
+        width: 19%;
+    }
+
+    /* Reduce padding further on mobile */
+    #filesTab .data-table th,
+    #filesTab .data-table td {
+        padding: 10px 6px;
+        font-size: 13px;
+    }
+}
+
+/* Very Small Mobile: Ultra minimal (< 480px) */
+@media (max-width: 480px) {
+    #filesTab .data-table th:nth-child(1),
+    #filesTab .data-table td:nth-child(1),
+    #filesTab .data-table th:nth-child(8),
+    #filesTab .data-table td:nth-child(8) {
+        display: none;
+    }
+
+    /* Show only: Filename, Actions */
+    #filesTab .data-table th:nth-child(3),
+    #filesTab .data-table td:nth-child(3) {
+        width: 65%;
+    }
+
+    #filesTab .data-table th:nth-child(11),
+    #filesTab .data-table td:nth-child(11) {
+        width: 35%;
+    }
+
+    #filesTab .data-table th,
+    #filesTab .data-table td {
+        padding: 8px 4px;
+        font-size: 12px;
+    }
 }
 
 /* Responsive */

@@ -105,9 +105,9 @@
 
         .header-actions {
             display: flex;
-            gap: 8px;
+            gap: 10px;
             align-items: center;
-            flex-wrap: nowrap;
+            flex-wrap: wrap;
             flex-shrink: 0;
         }
 
@@ -135,6 +135,52 @@
             height: 15px;
             flex-shrink: 0;
             vertical-align: middle;
+        }
+
+        /* ===== RESPONSIVE HEADER BUTTONS ===== */
+
+        /* Tablet: Comfortable 2-column layout (600px - 768px) */
+        @media (max-width: 768px) and (min-width: 600px) {
+            .header-actions {
+                gap: 8px;
+            }
+
+            .header-actions .btn-primary,
+            .header-actions .btn-secondary,
+            .header-actions .btn-success,
+            .header-actions .btn-danger {
+                flex: 1 1 calc(50% - 4px);
+                min-width: 140px;
+                padding: 10px 12px;
+                font-size: 12px;
+            }
+        }
+
+        /* Mobile: Full-width stacked buttons (<600px) */
+        @media (max-width: 600px) {
+            .header-actions {
+                width: 100%;
+                gap: 8px;
+            }
+
+            .header-actions .btn-primary,
+            .header-actions .btn-secondary,
+            .header-actions .btn-success,
+            .header-actions .btn-danger {
+                width: 100%;
+                justify-content: center;
+                padding: 12px 16px;
+                font-size: 14px;
+                min-height: 44px;
+            }
+
+            .header-actions .btn-primary svg,
+            .header-actions .btn-secondary svg,
+            .header-actions .btn-success svg,
+            .header-actions .btn-danger svg {
+                width: 16px;
+                height: 16px;
+            }
         }
 
         /* Theme Toggle Fixed Position */
@@ -333,6 +379,48 @@
         .files-table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        /* Desktop column widths (>1024px) - 8 columns */
+        .files-table th:nth-child(1),
+        .files-table td:nth-child(1) {
+            width: 25%;
+        }
+
+        .files-table th:nth-child(2),
+        .files-table td:nth-child(2) {
+            width: 10%;
+        }
+
+        .files-table th:nth-child(3),
+        .files-table td:nth-child(3) {
+            width: 15%;
+        }
+
+        .files-table th:nth-child(4),
+        .files-table td:nth-child(4) {
+            width: 12%;
+        }
+
+        .files-table th:nth-child(5),
+        .files-table td:nth-child(5) {
+            width: 12%;
+        }
+
+        .files-table th:nth-child(6),
+        .files-table td:nth-child(6) {
+            width: 8%;
+        }
+
+        .files-table th:nth-child(7),
+        .files-table td:nth-child(7) {
+            width: 10%;
+        }
+
+        .files-table th:nth-child(8),
+        .files-table td:nth-child(8) {
+            width: 8%;
         }
 
         /* Table scroll shadow on mobile */
@@ -373,6 +461,12 @@
 
         .files-table tbody tr:hover {
             background: #dbeafe;
+        }
+
+        /* Center all columns except File Name (first column) */
+        .files-table th:not(:first-child),
+        .files-table td:not(:first-child) {
+            text-align: center;
         }
 
         .file-name {
@@ -696,6 +790,129 @@
             background: linear-gradient(to left, rgba(0,0,0,0.3), transparent);
         }
 
+        /* ===== RESPONSIVE TABLE COLUMN HIDING ===== */
+
+        /* Tablet: Hide less critical columns (768px - 1024px) */
+        @media (max-width: 1024px) {
+            .files-table th:nth-child(2),
+            .files-table td:nth-child(2),
+            .files-table th:nth-child(6),
+            .files-table td:nth-child(6) {
+                display: none;
+            }
+            /* Remaining: File Name, Claim Code, Uploaded, Expires, Status, Actions */
+
+            /* Adjust column widths for 6 columns */
+            .files-table th:nth-child(1),
+            .files-table td:nth-child(1) {
+                width: 30%;
+            }
+
+            .files-table th:nth-child(3),
+            .files-table td:nth-child(3) {
+                width: 18%;
+            }
+
+            .files-table th:nth-child(4),
+            .files-table td:nth-child(4) {
+                width: 15%;
+            }
+
+            .files-table th:nth-child(5),
+            .files-table td:nth-child(5) {
+                width: 15%;
+            }
+
+            .files-table th:nth-child(7),
+            .files-table td:nth-child(7) {
+                width: 12%;
+            }
+
+            .files-table th:nth-child(8),
+            .files-table td:nth-child(8) {
+                width: 10%;
+            }
+        }
+
+        /* Mobile: Essential columns only (480px - 768px) */
+        @media (max-width: 768px) {
+            .files-table th:nth-child(2),
+            .files-table td:nth-child(2),
+            .files-table th:nth-child(3),
+            .files-table td:nth-child(3),
+            .files-table th:nth-child(4),
+            .files-table td:nth-child(4),
+            .files-table th:nth-child(6),
+            .files-table td:nth-child(6) {
+                display: none;
+            }
+            /* Remaining: File Name, Expires, Status, Actions */
+
+            /* Adjust column widths for 4 columns */
+            .files-table th:nth-child(1),
+            .files-table td:nth-child(1) {
+                width: 45%;
+            }
+
+            .files-table th:nth-child(5),
+            .files-table td:nth-child(5) {
+                width: 20%;
+            }
+
+            .files-table th:nth-child(7),
+            .files-table td:nth-child(7) {
+                width: 18%;
+            }
+
+            .files-table th:nth-child(8),
+            .files-table td:nth-child(8) {
+                width: 17%;
+            }
+        }
+
+        /* Very Small Mobile: Minimal columns (<480px) */
+        @media (max-width: 480px) {
+            .files-table th:nth-child(2),
+            .files-table td:nth-child(2),
+            .files-table th:nth-child(3),
+            .files-table td:nth-child(3),
+            .files-table th:nth-child(4),
+            .files-table td:nth-child(4),
+            .files-table th:nth-child(6),
+            .files-table td:nth-child(6),
+            .files-table th:nth-child(7),
+            .files-table td:nth-child(7) {
+                display: none;
+            }
+            /* Remaining: File Name, Expires, Actions */
+
+            /* Adjust column widths for 3 columns */
+            .files-table th:nth-child(1),
+            .files-table td:nth-child(1) {
+                width: 50%;
+            }
+
+            .files-table th:nth-child(5),
+            .files-table td:nth-child(5) {
+                width: 28%;
+            }
+
+            .files-table th:nth-child(8),
+            .files-table td:nth-child(8) {
+                width: 22%;
+            }
+
+            .files-table th,
+            .files-table td {
+                padding: 8px 4px;
+                font-size: 11px;
+            }
+
+            .file-name {
+                max-width: none;
+            }
+        }
+
         /* Medium Desktop - Allow button wrapping */
         @media (max-width: 1200px) {
             .header-actions {
@@ -817,16 +1034,13 @@
                 height: 44px;
             }
 
-            /* Make table scrollable on mobile */
+            /* Table wrapper - no horizontal scroll needed */
             .files-table-wrapper {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
                 border-radius: 8px;
             }
 
             .files-table {
                 font-size: 12px;
-                min-width: 800px;
             }
 
             .files-table th,
@@ -908,23 +1122,6 @@
                 font-size: 11px;
             }
 
-            .header-actions {
-                width: 100%;
-                justify-content: flex-start;
-            }
-
-            .btn {
-                font-size: 11px;
-                padding: 5px 10px;
-                flex: 1 1 auto;
-                min-width: fit-content;
-            }
-
-            .btn svg {
-                width: 14px;
-                height: 14px;
-            }
-
             .content-section {
                 padding: 12px;
             }
@@ -977,16 +1174,6 @@
             .alert {
                 padding: 10px;
                 font-size: 13px;
-            }
-
-            /* Improve button readability */
-            .header-actions .btn-primary,
-            .header-actions .btn-secondary,
-            .header-actions .btn-success,
-            .header-actions .btn-danger {
-                padding: 6px 10px;
-                font-size: 11px;
-                min-height: 32px;
             }
         }
 
