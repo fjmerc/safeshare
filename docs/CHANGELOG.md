@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Admin Dashboard**: Fixed checkbox and delete button state not resetting after deleting all files
+  - Select-all checkbox now properly unchecks when no files remain
+  - "Delete Selected" button now properly hides when no files remain
+  - Affects bulk file deletion workflow when deleting last remaining files
+
 ## [2.5.0] - 2025-11-11
 
 ### Added

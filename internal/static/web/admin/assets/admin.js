@@ -374,6 +374,15 @@ function updateFilesTable(files) {
 
     if (files.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" class="loading">No files found</td></tr>';
+
+        // Reset select all checkbox even when no files
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = false;
+        }
+
+        // Update delete selected button visibility (should hide it)
+        updateDeleteSelectedButton();
         return;
     }
 
