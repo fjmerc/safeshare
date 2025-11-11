@@ -78,7 +78,21 @@
                 <p class="stat-value" id="statStorageUsed">-</p>
             </div>
             <div class="stat-card">
-                <h3>Partial Upload Size</h3>
+                <div class="stat-header-with-tooltip">
+                    <h3>Partial Upload Size</h3>
+                    <div class="tooltip-wrapper">
+                        <button class="info-icon" tabindex="0" aria-label="Information about partial upload size">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                        </button>
+                        <div class="tooltip-content">
+                            Temporary storage used by in-progress chunked uploads. Files are automatically cleaned up after 24 hours of inactivity.
+                        </div>
+                    </div>
+                </div>
                 <p class="stat-value" id="statPartialUploads">-</p>
             </div>
             <div class="stat-card">
