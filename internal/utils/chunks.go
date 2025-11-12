@@ -14,11 +14,32 @@ import (
 )
 
 const (
-	// chunkBufferSize is the buffer size for chunk assembly (8MB)
-	// Optimized for large file performance - reduces syscall overhead
-	// Increased from 2MB to 8MB for better alignment with chunk sizes
-	chunkBufferSize = 8 * 1024 * 1024
+	// chunkBufferSize is the buffer size for chunk assembly (20MB)
+	// Set to match maximum possible chunk size from CalculateOptimalChunkSize
+	// Ensures buffer is always large enough for any chunk
+	chunkBufferSize = 20 * 1024 * 1024
 )
+
+// CalculateOptimalChunkSize determines the best chunk size based on file size
+// Optimizes for both network efficiency and failure recovery
+func CalculateOptimalChunkSize(fileSize int64) int64 {
+	const minChunk = 5 * 1024 * 1024      // 5MB
+	const defaultChunk = 10 * 1024 * 1024 // 10MB
+	const maxChunk = 20 * 1024 * 1024     // 20MB
+
+	// Files < 100MB: 5MB chunks (faster retry on failure)
+	if fileSize < 100*1024*1024 {
+		return minChunk
+	}
+
+	// Files 100MB-1GB: 10MB chunks (balanced)
+	if fileSize < 1*1024*1024*1024 {
+		return defaultChunk
+	}
+
+	// Files > 1GB: 20MB chunks (reduce HTTP overhead)
+	return maxChunk
+}
 
 // GetPartialUploadDir returns the directory path for partial uploads
 func GetPartialUploadDir(uploadDir string) string {

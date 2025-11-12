@@ -87,12 +87,21 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Calculate total chunks using server-configured chunk size
-		// (client's chunk_size in request is ignored)
-		totalChunks := int(req.TotalSize / cfg.ChunkSize)
-		if req.TotalSize%cfg.ChunkSize != 0 {
+		// Calculate optimal chunk size based on file size
+		// Falls back to configured chunk size if dynamic sizing is disabled
+		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
+
+		// Calculate total chunks using optimal chunk size
+		totalChunks := int(req.TotalSize / chunkSize)
+		if req.TotalSize%chunkSize != 0 {
 			totalChunks++
 		}
+
+		slog.Debug("calculated chunk parameters",
+			"file_size", req.TotalSize,
+			"chunk_size", chunkSize,
+			"total_chunks", totalChunks,
+		)
 
 		// Validate total chunks (prevent DoS with too many small chunks)
 		if totalChunks > 10000 {
@@ -198,7 +207,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			UserID:         userID,
 			Filename:       req.Filename,
 			TotalSize:      req.TotalSize,
-			ChunkSize:      cfg.ChunkSize,
+			ChunkSize:      chunkSize, // Use calculated chunk size, not config default
 			TotalChunks:    totalChunks,
 			ChunksReceived: 0,
 			ReceivedBytes:  0,
@@ -223,7 +232,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Send response
 		response := models.UploadInitResponse{
 			UploadID:    uploadID,
-			ChunkSize:   cfg.ChunkSize,
+			ChunkSize:   chunkSize, // Return actual chunk size to client
 			TotalChunks: totalChunks,
 			ExpiresAt:   expiresAt,
 		}
