@@ -363,11 +363,8 @@ func main() {
 		http.ServeContent(w, r, "index.html", stat.ModTime(), file.(io.ReadSeeker))
 	})
 
-	// Create rate limiter
-	rateLimiter := middleware.NewRateLimiter(middleware.RateLimitConfig{
-		UploadLimit:   cfg.GetRateLimitUpload(),
-		DownloadLimit: cfg.GetRateLimitDownload(),
-	})
+	// Create rate limiter (pass config pointer for runtime updates)
+	rateLimiter := middleware.NewRateLimiter(cfg)
 	defer rateLimiter.Stop()
 
 	// Wrap with middleware (order: Recovery -> Logging -> Security -> RateLimit -> handlers)
