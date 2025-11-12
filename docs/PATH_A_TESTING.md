@@ -3,7 +3,7 @@
 ## Branch Information
 - **Branch:** `claude/path-a-optimizations-011CV4epmVjP5hWhMuJjj1Tp`
 - **Base:** `claude/analysis-only-011CV4epmVjP5hWhMuJjj1Tp`
-- **Commits:** 10 commits - All 8 phases completed (Phases 1-8)
+- **Commits:** 12 commits - 7 of 8 phases (Phase 5B removed due to critical bug)
 
 ## What's Been Implemented
 
@@ -84,22 +84,26 @@
 
 ---
 
-### ✅ Phase 5B: End-to-End File Hash Verification
-**Files Changed:**
-- `internal/models/partial_upload.go`
-- `internal/handlers/upload_chunked.go`
-- `internal/handlers/assembly_worker.go`
-- `internal/static/web/assets/chunked-uploader.js`
+### ❌ Phase 5B: End-to-End File Hash Verification (REMOVED)
 
-**Changes:**
-- Client calculates SHA256 hash of entire file before upload
-- Server stores client-provided hash in database
-- Server recalculates hash after assembly and verifies match
-- Fail assembly if hash mismatch detected
-- Incremental hashing for large files (>100MB) to avoid memory issues
-- Hash progress feedback for large files
+**Status:** Removed due to critical memory management bug
 
-**Expected Impact:** Cryptographic proof of file integrity, detect corruption beyond chunk-level
+**Issue:** For files ≥100MB, the implementation attempted to:
+1. Read entire file in 10MB chunks
+2. Concatenate ALL chunks into single massive Uint8Array in browser memory
+3. This caused memory exhaustion and silent browser failures
+4. No chunks reached server despite successful initialization
+
+**Root Cause:** Web Crypto API `crypto.subtle.digest()` requires entire input at once - cannot stream hash calculation with native Web Crypto.
+
+**Why Phase 5A (Chunk Checksums) is Sufficient:**
+- ✅ Detects corruption during transfer (per-chunk SHA256)
+- ✅ Automatic retry on checksum mismatch
+- ✅ Idempotent chunk uploads with verification
+- ✅ No memory issues - each chunk verified independently
+- ✅ Better error granularity - know which specific chunk failed
+
+**Decision:** Phase 5B removed to unblock all upload testing. Phase 5A provides sufficient integrity checking for production use.
 
 ---
 
@@ -443,18 +447,21 @@ After testing, please record your results:
 
 ## Implementation Status
 
-✅ **All 8 Phases Completed!**
+✅ **7 of 8 Phases Completed** (Phase 5B removed due to critical bug)
 
-All planned optimizations for Path A have been successfully implemented:
+Path A optimizations successfully implemented:
 - ✅ Phase 1: Server-Side I/O Optimizations
 - ✅ Phase 2: HTTP/2 + TCP Tuning
 - ✅ Phase 3: Dynamic Chunk Sizing
 - ✅ Phase 4: Client-Side Concurrency Optimization
 - ✅ Phase 5A: Chunk-Level Checksums
-- ✅ Phase 5B: End-to-End File Hash Verification
+- ❌ **Phase 5B: End-to-End File Hash Verification (REMOVED - critical memory bug)**
 - ✅ Phase 6: Better Error Recovery with Smart Retry Logic
 - ✅ Phase 7: Adaptive Concurrency + Network Detection
 - ✅ Phase 8: UI Polish and Progress Throttling
+
+**Why Phase 5B Was Removed:**
+Phase 5B caused memory exhaustion for files ≥100MB by concatenating entire file in browser memory. Phase 5A (chunk-level checksums) provides sufficient integrity checking without memory issues.
 
 **Total Expected Performance Improvement:** 50-70% faster uploads with better reliability
 
@@ -512,6 +519,6 @@ All 8 phases of Path A optimizations have been successfully implemented and comm
 4. **Deployment:** Merge to main after successful testing
 
 **Branch:** `claude/path-a-optimizations-011CV4epmVjP5hWhMuJjj1Tp`
-**Total Commits:** 10 (1 initial setup + 1 per phase + final documentation)
+**Total Commits:** 12 (includes critical fix removing Phase 5B)
 **Files Modified:** 8 files across backend and frontend
-**Lines Changed:** ~600 additions, ~100 modifications
+**Lines Changed:** ~500 additions, ~200 modifications (Phase 5B removal: -103 lines)
