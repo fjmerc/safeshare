@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -206,49 +207,100 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Read file content into memory (safe for configured max file size)
-		fileContent, err := io.ReadAll(file)
-		if err != nil {
-			slog.Error("failed to read uploaded file", "error", err)
+		// MIME type detection: Read first 512 bytes to detect file type without loading entire file into memory.
+		// This buffer will be prepended back to the stream for processing.
+		mimeBuffer := make([]byte, 512)
+		n, err := io.ReadFull(file, mimeBuffer)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			slog.Error("failed to read file for MIME detection", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
+		// Handle files smaller than 512 bytes (n will be less than 512, err will be EOF or ErrUnexpectedEOF)
+		mimeBuffer = mimeBuffer[:n]
 
 		// Detect MIME type from file content (don't trust user-provided Content-Type)
 		// This prevents attackers from uploading malicious files with fake MIME types
-		mtype := mimetype.Detect(fileContent)
+		mtype := mimetype.Detect(mimeBuffer)
 		detectedMimeType := mtype.String()
 		slog.Debug("MIME type detected",
 			"filename", header.Filename,
 			"detected", detectedMimeType,
 			"user_provided", header.Header.Get("Content-Type"),
+			"bytes_analyzed", n,
 		)
 
-		// Encrypt if encryption is enabled
-		var dataToWrite []byte
-		var written int64
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			encrypted, err := utils.EncryptFile(fileContent, cfg.EncryptionKey)
-			if err != nil {
-				slog.Error("failed to encrypt file", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			dataToWrite = encrypted
-			written = int64(len(fileContent)) // Use original size for storage accounting
-			slog.Debug("file encrypted", "original_size", len(fileContent), "encrypted_size", len(encrypted))
-		} else {
-			dataToWrite = fileContent
-			written = int64(len(fileContent))
-		}
+		// Reconstruct full file stream by combining MIME buffer with remaining content
+		fullReader := io.MultiReader(bytes.NewReader(mimeBuffer), file)
 
-		// Save file to disk
+		// Atomic write pattern: Write to temp file, then rename to final path
+		// This prevents partial files on disk if upload/encryption fails mid-stream
 		filePath := filepath.Join(cfg.UploadDir, storedFilename)
-		if err := os.WriteFile(filePath, dataToWrite, 0644); err != nil {
-			slog.Error("failed to write file", "path", filePath, "error", err)
+		tempPath := filePath + ".tmp"
+
+		// Create temp file for atomic write
+		tempFile, err := os.Create(tempPath)
+		if err != nil {
+			slog.Error("failed to create temp file", "path", tempPath, "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
+
+		// Track success for cleanup
+		var succeeded bool
+		defer func() {
+			tempFile.Close()
+			if !succeeded {
+				// Clean up temp file if anything failed
+				os.Remove(tempPath)
+			}
+		}()
+
+		// Stream file to disk with optional encryption
+		// This approach uses constant memory (~10MB) regardless of file size
+		var written int64
+		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+			// Stream encrypt: Read chunks from upload → encrypt → write to temp file
+			// Uses SFSE1 format (compatible with existing decryption)
+			err = utils.EncryptFileStreamingFromReader(tempFile, fullReader, cfg.EncryptionKey)
+			if err != nil {
+				slog.Error("failed to encrypt file stream", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			written = header.Size // Use original size for storage accounting (not encrypted size)
+			slog.Debug("file encrypted with streaming encryption",
+				"original_size", header.Size,
+				"filename", header.Filename,
+			)
+		} else {
+			// Direct stream copy: Read from upload → write to temp file
+			written, err = io.Copy(tempFile, fullReader)
+			if err != nil {
+				slog.Error("failed to write file stream", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			slog.Debug("file written without encryption", "size", written)
+		}
+
+		// Close temp file before rename (required on Windows)
+		if err := tempFile.Close(); err != nil {
+			slog.Error("failed to close temp file", "path", tempPath, "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+
+		// Atomic rename: Move temp file to final path
+		// This is atomic on most filesystems (POSIX guarantees this)
+		if err := os.Rename(tempPath, filePath); err != nil {
+			slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+
+		// Mark success so defer doesn't delete temp file
+		succeeded = true
 
 		// Get client IP
 		clientIP := getClientIP(r)
