@@ -180,52 +180,38 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 	// Process file in chunks
 	buffer := make([]byte, DefaultChunkSize)
 	for {
-		// Read chunk
-		n, err := srcFile.Read(buffer)
+		// Use io.ReadFull to ensure we read full chunks (or final short chunk)
+		// This is consistent with EncryptFileStreamingFromReader behavior
+		n, err := io.ReadFull(srcFile, buffer)
 
-		// Handle EOF first - if we got EOF with data, process it and exit
-		if err == io.EOF {
-			if n > 0 {
-				// Generate nonce for this final chunk
-				nonce := make([]byte, gcm.NonceSize())
-				if _, readErr := io.ReadFull(rand.Reader, nonce); readErr != nil {
-					return fmt.Errorf("failed to generate nonce: %w", readErr)
-				}
-
-				// Encrypt final chunk
-				encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
-
-				// Write encrypted chunk (nonce + ciphertext + tag)
-				if _, writeErr := dstFile.Write(encrypted); writeErr != nil {
-					return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
-				}
-			}
-			// Exit immediately after EOF, whether we had data or not
-			break
-		}
-
-		// Handle other errors
-		if err != nil {
+		// ReadFull returns ErrUnexpectedEOF if it read some data but hit EOF before filling buffer
+		// This is expected and correct for the last chunk
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
-		// If no data and no error, something's wrong - exit
+		// If no data was read, we're done
 		if n == 0 {
 			break
 		}
 
 		// Generate nonce for this chunk
 		nonce := make([]byte, gcm.NonceSize())
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			return fmt.Errorf("failed to generate nonce: %w", err)
+		if _, nonceErr := io.ReadFull(rand.Reader, nonce); nonceErr != nil {
+			return fmt.Errorf("failed to generate nonce: %w", nonceErr)
 		}
 
-		// Encrypt chunk
+		// Encrypt chunk (use buffer[:n] to handle partial final chunk)
 		encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
 
 		// Write encrypted chunk (nonce + ciphertext + tag)
-		if _, err := dstFile.Write(encrypted); err != nil {
-			return fmt.Errorf("failed to write encrypted chunk: %w", err)
+		if _, writeErr := dstFile.Write(encrypted); writeErr != nil {
+			return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
+		}
+
+		// If we hit EOF or unexpected EOF, we're done
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
 		}
 	}
 
@@ -279,52 +265,39 @@ func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string)
 	// Process stream in chunks
 	buffer := make([]byte, DefaultChunkSize)
 	for {
-		// Read chunk
-		n, err := src.Read(buffer)
+		// Use io.ReadFull to ensure we read full chunks (or final short chunk)
+		// This prevents io.MultiReader from creating artificial chunk boundaries
+		// when combining multiple readers (e.g., MIME buffer + file upload)
+		n, err := io.ReadFull(src, buffer)
 
-		// Handle EOF first - if we got EOF with data, process it and exit
-		if err == io.EOF {
-			if n > 0 {
-				// Generate nonce for this final chunk
-				nonce := make([]byte, gcm.NonceSize())
-				if _, readErr := io.ReadFull(rand.Reader, nonce); readErr != nil {
-					return fmt.Errorf("failed to generate nonce: %w", readErr)
-				}
-
-				// Encrypt final chunk
-				encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
-
-				// Write encrypted chunk (nonce + ciphertext + tag)
-				if _, writeErr := dst.Write(encrypted); writeErr != nil {
-					return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
-				}
-			}
-			// Exit immediately after EOF, whether we had data or not
-			break
-		}
-
-		// Handle other errors
-		if err != nil {
+		// ReadFull returns ErrUnexpectedEOF if it read some data but hit EOF before filling buffer
+		// This is expected and correct for the last chunk
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
-		// If no data and no error, something's wrong - exit
+		// If no data was read, we're done
 		if n == 0 {
 			break
 		}
 
 		// Generate nonce for this chunk
 		nonce := make([]byte, gcm.NonceSize())
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			return fmt.Errorf("failed to generate nonce: %w", err)
+		if _, nonceErr := io.ReadFull(rand.Reader, nonce); nonceErr != nil {
+			return fmt.Errorf("failed to generate nonce: %w", nonceErr)
 		}
 
-		// Encrypt chunk
+		// Encrypt chunk (use buffer[:n] to handle partial final chunk)
 		encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
 
 		// Write encrypted chunk (nonce + ciphertext + tag)
-		if _, err := dst.Write(encrypted); err != nil {
-			return fmt.Errorf("failed to write encrypted chunk: %w", err)
+		if _, writeErr := dst.Write(encrypted); writeErr != nil {
+			return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
+		}
+
+		// If we hit EOF or unexpected EOF, we're done
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
 		}
 	}
 
