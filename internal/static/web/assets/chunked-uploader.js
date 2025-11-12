@@ -180,6 +180,9 @@ class ChunkedUploader {
                 const end = Math.min(start + this.chunkSize, this.file.size);
                 const chunkBlob = this.file.slice(start, end);
 
+                // Calculate client-side SHA256 checksum
+                const clientChecksum = await this._calculateChecksum(chunkBlob);
+
                 // Create form data
                 const formData = new FormData();
                 formData.append('chunk', chunkBlob, `chunk_${chunkNumber}`);
@@ -198,6 +201,11 @@ class ChunkedUploader {
 
                 const data = await response.json();
 
+                // Verify checksum matches server
+                if (data.checksum && data.checksum !== clientChecksum) {
+                    throw new Error(`Checksum mismatch for chunk ${chunkNumber}: client=${clientChecksum.substring(0, 8)}... server=${data.checksum.substring(0, 8)}...`);
+                }
+
                 // Mark chunk as uploaded
                 this.uploadedChunks.add(chunkNumber);
                 this.uploadedBytes += (end - start);
@@ -211,7 +219,8 @@ class ChunkedUploader {
                 this.emit('chunk_uploaded', {
                     chunkNumber,
                     chunksUploaded: this.uploadedChunks.size,
-                    totalChunks: this.totalChunks
+                    totalChunks: this.totalChunks,
+                    checksum: data.checksum
                 });
 
                 return; // Success
@@ -656,6 +665,19 @@ class ChunkedUploader {
         }
 
         return uploads;
+    }
+
+    /**
+     * Calculate SHA256 checksum of a Blob using Web Crypto API
+     * @param {Blob} blob - The blob to hash
+     * @returns {Promise<string>} - Hex-encoded SHA256 hash
+     */
+    async _calculateChecksum(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
     }
 
     /**

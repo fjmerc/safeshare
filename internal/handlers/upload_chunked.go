@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -361,6 +364,10 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Calculate SHA256 checksum of chunk
+		hash := sha256.Sum256(chunkData)
+		checksum := hex.EncodeToString(hash[:])
+
 		chunkSize := int64(len(chunkData))
 
 		// Validate chunk size
@@ -393,11 +400,20 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// If chunk exists, verify it matches (idempotency check)
 		if exists {
 			if existingSize == chunkSize {
+				// Read existing chunk to calculate checksum
+				existingData, err := os.ReadFile(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
+				var existingChecksum string
+				if err == nil {
+					hash := sha256.Sum256(existingData)
+					existingChecksum = hex.EncodeToString(hash[:])
+				}
+
 				// Chunk already exists with same size - treat as success (idempotent)
 				slog.Debug("chunk already exists (idempotent)",
 					"upload_id", uploadID,
 					"chunk_number", chunkNumber,
 					"size", chunkSize,
+					"checksum", existingChecksum,
 				)
 
 				// Update activity time
@@ -415,6 +431,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					ChunksReceived: chunksReceived,
 					TotalChunks:    partialUpload.TotalChunks,
 					Complete:       chunksReceived == partialUpload.TotalChunks,
+					Checksum:       existingChecksum,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -474,6 +491,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
 			Complete:       chunksReceived >= partialUpload.TotalChunks,
+			Checksum:       checksum,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

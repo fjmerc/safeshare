@@ -50,6 +50,7 @@ type UploadChunkResponse struct {
 	ChunksReceived int    `json:"chunks_received"`
 	TotalChunks    int    `json:"total_chunks"`
 	Complete       bool   `json:"complete"`
+	Checksum       string `json:"checksum,omitempty"` // SHA256 of uploaded chunk
 }
 
 // UploadStatusResponse represents the response for upload status requests
