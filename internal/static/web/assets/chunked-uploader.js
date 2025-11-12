@@ -66,6 +66,14 @@ class ChunkedUploader {
             adjustmentThreshold: 5    // Adjust after 5 consecutive successes/failures
         };
 
+        // Progress throttling for better UI performance
+        this.progressThrottle = {
+            lastEmit: 0,
+            minInterval: 250,         // Minimum 250ms between progress events
+            chunksSinceLastEmit: 0,
+            chunkThreshold: 5         // Or emit every 5 chunks, whichever comes first
+        };
+
         // Detect if HTTP/2 is available for optimal concurrency
         this._detectHTTP2Support();
     }
@@ -444,11 +452,15 @@ class ChunkedUploader {
      */
     async pollStatus(pollInterval = 2000, maxAttempts = 150) {
         let attempts = 0;
+        const startTime = Date.now();
 
         while (attempts < maxAttempts) {
             try {
                 // Get current status
                 const status = await this.getStatus();
+
+                // Calculate elapsed time
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
 
                 // Emit progress event for UI updates
                 this.emit('assembling_progress', {
@@ -456,7 +468,9 @@ class ChunkedUploader {
                     uploadId: this.uploadId,
                     filename: status.filename,
                     attempts: attempts + 1,
-                    maxAttempts: maxAttempts
+                    maxAttempts: maxAttempts,
+                    elapsedSeconds: elapsed,
+                    message: `Processing file... (${elapsed}s elapsed)`
                 });
 
                 // Check status field
@@ -573,11 +587,25 @@ class ChunkedUploader {
     }
 
     /**
-     * Emit progress event with calculated metrics
+     * Emit progress event with calculated metrics (throttled for performance)
      */
     emitProgress() {
+        const now = Date.now();
+        this.progressThrottle.chunksSinceLastEmit++;
+
+        // Throttle: emit only if enough time passed OR enough chunks uploaded
+        const timeSinceLastEmit = now - this.progressThrottle.lastEmit;
+        const shouldEmit =
+            timeSinceLastEmit >= this.progressThrottle.minInterval ||
+            this.progressThrottle.chunksSinceLastEmit >= this.progressThrottle.chunkThreshold ||
+            this.uploadedChunks.size === this.totalChunks;  // Always emit at 100%
+
+        if (!shouldEmit) {
+            return;
+        }
+
         const percentage = (this.uploadedChunks.size / this.totalChunks) * 100;
-        const elapsed = Date.now() - this.startTime;
+        const elapsed = now - this.startTime;
         const bytesPerMs = this.uploadedBytes / elapsed;
         const remainingBytes = this.file.size - this.uploadedBytes;
         const estimatedTimeRemaining = remainingBytes / bytesPerMs;
@@ -589,8 +617,14 @@ class ChunkedUploader {
             totalBytes: this.file.size,
             percentage: Math.round(percentage * 100) / 100,
             estimatedTimeRemaining: Math.round(estimatedTimeRemaining / 1000), // in seconds
-            speed: bytesPerMs * 1000 // bytes per second
+            speed: bytesPerMs * 1000, // bytes per second
+            currentConcurrency: this.options.concurrency,  // Show current concurrency
+            avgLatency: Math.round(this.networkMetrics.avgLatency) || 0  // Show network quality
         });
+
+        // Reset throttle counters
+        this.progressThrottle.lastEmit = now;
+        this.progressThrottle.chunksSinceLastEmit = 0;
     }
 
     /**
@@ -743,6 +777,7 @@ class ChunkedUploader {
         const chunkSize = 10 * 1024 * 1024; // 10MB chunks for hashing
         let offset = 0;
         const chunks = [];
+        const totalChunks = Math.ceil(this.file.size / chunkSize);
 
         // Read file in chunks and collect for hashing
         while (offset < this.file.size) {
@@ -751,6 +786,14 @@ class ChunkedUploader {
             const arrayBuffer = await chunk.arrayBuffer();
             chunks.push(new Uint8Array(arrayBuffer));
             offset = end;
+
+            // Emit progress for hashing (for UI feedback)
+            const progress = Math.round((offset / this.file.size) * 100);
+            this.emit('hashing', {
+                stage: 'calculating',
+                progress,
+                message: `Calculating file hash... ${progress}%`
+            });
         }
 
         // Concatenate all chunks
