@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/google/uuid"
 )
 
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
@@ -456,23 +456,15 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Instead, chunk count is calculated on-demand from disk when status is requested.
 		// This eliminates all database writes during upload, allowing higher concurrency.
 
-		// Get updated partial upload data (no longer need to refresh counts from DB)
-		partialUpload, err = database.GetPartialUpload(db, uploadID)
-		if err != nil {
-			slog.Error("failed to refresh partial upload", "error", err)
-			// Don't fail - use old data
-		}
-
-		// Send response
-	// Count actual chunks from disk instead of relying on DB counter
-	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		// Count actual chunks from disk instead of relying on DB counter
+		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
 
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,
 			ChunkNumber:    chunkNumber,
 			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
-			Complete:       partialUpload.ChunksReceived >= partialUpload.TotalChunks,
+			Complete:       chunksReceived >= partialUpload.TotalChunks,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -731,8 +723,8 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-	// Count actual chunks from disk
-	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		// Count actual chunks from disk
+		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
 
 		// Build download URL if completed
 		var downloadURL *string

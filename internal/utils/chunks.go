@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	// chunkBufferSize is the buffer size for chunk assembly (2MB)
+	// chunkBufferSize is the buffer size for chunk assembly (8MB)
 	// Optimized for large file performance - reduces syscall overhead
-	chunkBufferSize = 2 * 1024 * 1024
+	// Increased from 2MB to 8MB for better alignment with chunk sizes
+	chunkBufferSize = 8 * 1024 * 1024
 )
 
 // GetPartialUploadDir returns the directory path for partial uploads
