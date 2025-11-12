@@ -134,11 +134,6 @@ class ChunkedUploader {
      */
     async init() {
         try {
-            // Calculate file hash for end-to-end verification
-            this.emit('hashing', { stage: 'calculating', message: 'Calculating file hash...' });
-            const fileHash = await this._calculateFileHash();
-            this.emit('hashing', { stage: 'complete', hash: fileHash });
-
             const response = await fetch('/api/upload/init', {
                 method: 'POST',
                 headers: {
@@ -150,8 +145,7 @@ class ChunkedUploader {
                     chunk_size: this.chunkSize || 5242880, // Will be overridden by server
                     expires_in_hours: this.options.expiresInHours,
                     max_downloads: this.options.maxDownloads,
-                    password: this.options.password,
-                    file_hash: fileHash // Send SHA256 hash for end-to-end verification
+                    password: this.options.password
                 })
             });
 
@@ -175,8 +169,7 @@ class ChunkedUploader {
             this.emit('init', {
                 uploadId: this.uploadId,
                 totalChunks: this.totalChunks,
-                chunkSize: this.chunkSize,
-                fileHash: fileHash
+                chunkSize: this.chunkSize
             });
 
         } catch (error) {
@@ -767,50 +760,6 @@ class ChunkedUploader {
      * For large files, this uses chunked reading to avoid memory issues
      * @returns {Promise<string>} - Hex-encoded SHA256 hash
      */
-    async _calculateFileHash() {
-        // For smaller files (<100MB), use direct calculation
-        if (this.file.size < 100 * 1024 * 1024) {
-            return await this._calculateChecksum(this.file);
-        }
-
-        // For large files, use incremental hashing to avoid memory issues
-        const chunkSize = 10 * 1024 * 1024; // 10MB chunks for hashing
-        let offset = 0;
-        const chunks = [];
-        const totalChunks = Math.ceil(this.file.size / chunkSize);
-
-        // Read file in chunks and collect for hashing
-        while (offset < this.file.size) {
-            const end = Math.min(offset + chunkSize, this.file.size);
-            const chunk = this.file.slice(offset, end);
-            const arrayBuffer = await chunk.arrayBuffer();
-            chunks.push(new Uint8Array(arrayBuffer));
-            offset = end;
-
-            // Emit progress for hashing (for UI feedback)
-            const progress = Math.round((offset / this.file.size) * 100);
-            this.emit('hashing', {
-                stage: 'calculating',
-                progress,
-                message: `Calculating file hash... ${progress}%`
-            });
-        }
-
-        // Concatenate all chunks
-        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-        const combined = new Uint8Array(totalLength);
-        let position = 0;
-        for (const chunk of chunks) {
-            combined.set(chunk, position);
-            position += chunk.length;
-        }
-
-        // Calculate hash of combined data
-        const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        return hashHex;
-    }
 
     /**
      * Custom error class that includes retry recommendations

@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,49 +97,6 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		"upload_id", uploadID,
 		"total_bytes", totalBytesWritten,
 	)
-
-	// Verify file hash if provided by client
-	if partialUpload.FileHash != "" {
-		slog.Debug("verifying file hash", "upload_id", uploadID)
-
-		// Calculate SHA256 of assembled file
-		file, err := os.Open(finalPath)
-		if err != nil {
-			slog.Error("failed to open file for hash verification", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to verify file hash: %v", err))
-			return
-		}
-
-		hasher := sha256.New()
-		if _, err := io.Copy(hasher, file); err != nil {
-			file.Close()
-			slog.Error("failed to calculate file hash", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to calculate file hash: %v", err))
-			return
-		}
-		file.Close()
-
-		calculatedHash := hex.EncodeToString(hasher.Sum(nil))
-
-		// Compare hashes
-		if calculatedHash != partialUpload.FileHash {
-			slog.Error("file hash mismatch",
-				"upload_id", uploadID,
-				"expected", partialUpload.FileHash[:16]+"...",
-				"calculated", calculatedHash[:16]+"...",
-			)
-			os.Remove(finalPath)
-			database.SetAssemblyFailed(db, uploadID, "File hash verification failed: assembled file does not match expected hash")
-			return
-		}
-
-		slog.Info("file hash verification successful",
-			"upload_id", uploadID,
-			"hash", calculatedHash[:16]+"...",
-		)
-	}
 
 	// Encrypt if encryption is enabled
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
