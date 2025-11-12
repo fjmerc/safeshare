@@ -211,6 +211,84 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 	return nil
 }
 
+// EncryptFileStreamingFromReader encrypts data from an io.Reader using chunked AES-256-GCM without loading entire stream into memory.
+// This is used for HTTP file uploads where the source is a request body stream.
+//
+// File format (SFSE1): [magic(5)][version(1)][chunk_size(4)][chunks...]
+// Each chunk: [nonce(12)][encrypted_data][tag(16)]
+//
+// dst: destination writer (typically a file)
+// src: source reader (typically HTTP request body)
+// keyHex: 64-character hex string (32 bytes for AES-256)
+func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string) error {
+	// Validate and decode key
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return fmt.Errorf("invalid hex key: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Write header: magic + version + chunk_size
+	if _, err := dst.Write([]byte(StreamEncryptionMagic)); err != nil {
+		return fmt.Errorf("failed to write magic: %w", err)
+	}
+	if _, err := dst.Write([]byte{StreamEncryptionVersion}); err != nil {
+		return fmt.Errorf("failed to write version: %w", err)
+	}
+	chunkSizeBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(chunkSizeBytes, DefaultChunkSize)
+	if _, err := dst.Write(chunkSizeBytes); err != nil {
+		return fmt.Errorf("failed to write chunk size: %w", err)
+	}
+
+	// Process stream in chunks
+	buffer := make([]byte, DefaultChunkSize)
+	for {
+		// Read chunk
+		n, err := src.Read(buffer)
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("failed to read chunk: %w", err)
+		}
+		if n == 0 {
+			break
+		}
+
+		// Generate nonce for this chunk
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			return fmt.Errorf("failed to generate nonce: %w", err)
+		}
+
+		// Encrypt chunk
+		encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
+
+		// Write encrypted chunk (nonce + ciphertext + tag)
+		if _, err := dst.Write(encrypted); err != nil {
+			return fmt.Errorf("failed to write encrypted chunk: %w", err)
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return nil
+}
+
 // DecryptFileStreaming decrypts a streaming encrypted file without loading entire file into memory.
 //
 // srcPath: path to encrypted file (must have SFSE1 header)

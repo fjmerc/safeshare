@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **Streaming Upload Encryption**: Refactored file upload handler to use streaming encryption instead of loading entire file into memory
+  - Reduces memory usage from ~100MB to ~10MB for maximum file size uploads
+  - Implements atomic write pattern (temp file + rename) to prevent partial file corruption on crashes
+  - Maintains accurate MIME type detection by buffering only first 512 bytes
+  - Uses new `EncryptFileStreamingFromReader()` function with SFSE1 format (backward compatible)
+  - Improved reliability: failed uploads are automatically cleaned up via defer pattern
+  - No changes required for unencrypted uploads (uses `io.Copy` for direct streaming)
+  - Compatible with existing decryption code (same SFSE1 chunked format)
+
 ## [2.5.1] - 2025-11-11
 
 ### Changed
