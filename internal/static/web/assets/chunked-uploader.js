@@ -55,6 +55,17 @@ class ChunkedUploader {
         // Storage key for resume capability
         this.storageKey = null;
 
+        // Network metrics for adaptive concurrency
+        this.networkMetrics = {
+            consecutiveSuccesses: 0,
+            consecutiveFailures: 0,
+            recentLatencies: [],      // Keep last 10 latencies
+            avgLatency: 0,
+            minConcurrency: 2,
+            maxConcurrency: 20,
+            adjustmentThreshold: 5    // Adjust after 5 consecutive successes/failures
+        };
+
         // Detect if HTTP/2 is available for optimal concurrency
         this._detectHTTP2Support();
     }
@@ -194,6 +205,9 @@ class ChunkedUploader {
                 const formData = new FormData();
                 formData.append('chunk', chunkBlob, `chunk_${chunkNumber}`);
 
+                // Track upload latency for adaptive concurrency
+                const uploadStartTime = Date.now();
+
                 // Upload chunk with keep-alive for connection reuse
                 const response = await fetch(`/api/upload/chunk/${this.uploadId}/${chunkNumber}`, {
                     method: 'POST',
@@ -208,10 +222,16 @@ class ChunkedUploader {
 
                 const data = await response.json();
 
+                // Calculate upload latency
+                const uploadLatency = Date.now() - uploadStartTime;
+
                 // Verify checksum matches server
                 if (data.checksum && data.checksum !== clientChecksum) {
                     throw new Error(`Checksum mismatch for chunk ${chunkNumber}: client=${clientChecksum.substring(0, 8)}... server=${data.checksum.substring(0, 8)}...`);
                 }
+
+                // Track success for adaptive concurrency
+                this._trackUploadSuccess(uploadLatency);
 
                 // Mark chunk as uploaded
                 this.uploadedChunks.add(chunkNumber);
@@ -234,6 +254,11 @@ class ChunkedUploader {
 
             } catch (error) {
                 attempt++;
+
+                // Track failure for adaptive concurrency (before retrying)
+                if (attempt === 1) {  // Only track on first failure to avoid double-counting
+                    this._trackUploadFailure();
+                }
 
                 // Check if retry is recommended by server
                 if (error.retryRecommended === false) {
@@ -758,6 +783,79 @@ class ChunkedUploader {
     /**
      * Parse error response and extract retry information
      */
+
+    /**
+     * Track successful chunk upload and adjust concurrency
+     */
+    _trackUploadSuccess(latency) {
+        this.networkMetrics.consecutiveSuccesses++;
+        this.networkMetrics.consecutiveFailures = 0;
+
+        // Track latency (keep last 10)
+        this.networkMetrics.recentLatencies.push(latency);
+        if (this.networkMetrics.recentLatencies.length > 10) {
+            this.networkMetrics.recentLatencies.shift();
+        }
+
+        // Calculate average latency
+        this.networkMetrics.avgLatency =
+            this.networkMetrics.recentLatencies.reduce((a, b) => a + b, 0) /
+            this.networkMetrics.recentLatencies.length;
+
+        // Increase concurrency after N consecutive successes
+        if (this.networkMetrics.consecutiveSuccesses >= this.networkMetrics.adjustmentThreshold) {
+            this._adjustConcurrency('increase');
+            this.networkMetrics.consecutiveSuccesses = 0;
+        }
+    }
+
+    /**
+     * Track failed chunk upload and adjust concurrency
+     */
+    _trackUploadFailure() {
+        this.networkMetrics.consecutiveFailures++;
+        this.networkMetrics.consecutiveSuccesses = 0;
+
+        // Decrease concurrency after N consecutive failures
+        if (this.networkMetrics.consecutiveFailures >= this.networkMetrics.adjustmentThreshold) {
+            this._adjustConcurrency('decrease');
+            this.networkMetrics.consecutiveFailures = 0;
+        }
+    }
+
+    /**
+     * Adjust upload concurrency based on network performance
+     */
+    _adjustConcurrency(direction) {
+        const oldConcurrency = this.options.concurrency;
+
+        if (direction === 'increase') {
+            // Good network - increase concurrency by 20%
+            this.options.concurrency = Math.min(
+                Math.ceil(this.options.concurrency * 1.2),
+                this.networkMetrics.maxConcurrency
+            );
+        } else if (direction === 'decrease') {
+            // Poor network - decrease concurrency by 30%
+            this.options.concurrency = Math.max(
+                Math.floor(this.options.concurrency * 0.7),
+                this.networkMetrics.minConcurrency
+            );
+        }
+
+        if (oldConcurrency !== this.options.concurrency) {
+            console.log(`Adaptive concurrency: ${oldConcurrency} → ${this.options.concurrency} (${direction}, avg latency: ${Math.round(this.networkMetrics.avgLatency)}ms)`);
+
+            this.emit('concurrency_adjusted', {
+                oldConcurrency,
+                newConcurrency: this.options.concurrency,
+                direction,
+                avgLatency: Math.round(this.networkMetrics.avgLatency),
+                consecutiveSuccesses: this.networkMetrics.consecutiveSuccesses,
+                consecutiveFailures: this.networkMetrics.consecutiveFailures
+            });
+        }
+    }
     async parseErrorResponse(response) {
         try {
             const error = await response.json();
