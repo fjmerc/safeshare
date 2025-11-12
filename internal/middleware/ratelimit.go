@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// RateLimitConfig holds rate limiting configuration
-type RateLimitConfig struct {
-	UploadLimit   int // requests per hour
-	DownloadLimit int // requests per hour
+// ConfigProvider interface allows RateLimiter to read current rate limit values
+type ConfigProvider interface {
+	GetRateLimitUpload() int
+	GetRateLimitDownload() int
 }
 
 // requestRecord tracks requests for an IP
@@ -22,13 +22,13 @@ type requestRecord struct {
 
 // RateLimiter manages rate limiting per IP address
 type RateLimiter struct {
-	config  RateLimitConfig
+	config  ConfigProvider
 	records sync.Map // map[string]*requestRecord
 	cleanup *time.Ticker
 }
 
-// NewRateLimiter creates a new rate limiter with the given configuration
-func NewRateLimiter(config RateLimitConfig) *RateLimiter {
+// NewRateLimiter creates a new rate limiter with the given configuration provider
+func NewRateLimiter(config ConfigProvider) *RateLimiter {
 	rl := &RateLimiter{
 		config:  config,
 		cleanup: time.NewTicker(1 * time.Hour),
@@ -49,15 +49,22 @@ func (rl *RateLimiter) cleanupOldEntries() {
 			record.mu.Lock()
 			defer record.mu.Unlock()
 
-			// Remove timestamps older than 1 hour
+			// Remove timestamps older than 1 hour (optimized to reuse backing array)
 			cutoff := now.Add(-1 * time.Hour)
-			filtered := make([]time.Time, 0)
+			oldCount := len(record.timestamps)
+			newTimestamps := record.timestamps[:0] // Reuse backing array
 			for _, ts := range record.timestamps {
 				if ts.After(cutoff) {
-					filtered = append(filtered, ts)
+					newTimestamps = append(newTimestamps, ts)
 				}
 			}
-			record.timestamps = filtered
+
+			// Only allocate new slice if we removed many items (>50%) and can reclaim significant memory (>100 items)
+			if len(newTimestamps) < oldCount/2 && oldCount > 100 {
+				record.timestamps = append([]time.Time(nil), newTimestamps...)
+			} else {
+				record.timestamps = newTimestamps
+			}
 
 			// Remove empty records
 			if len(record.timestamps) == 0 {
@@ -88,14 +95,21 @@ func (rl *RateLimiter) checkLimit(ip string, limit int) bool {
 	record.mu.Lock()
 	defer record.mu.Unlock()
 
-	// Remove timestamps older than 1 hour
-	filtered := make([]time.Time, 0)
+	// Remove timestamps older than 1 hour (optimized to reuse backing array)
+	oldCount := len(record.timestamps)
+	newTimestamps := record.timestamps[:0] // Reuse backing array
 	for _, ts := range record.timestamps {
 		if ts.After(oneHourAgo) {
-			filtered = append(filtered, ts)
+			newTimestamps = append(newTimestamps, ts)
 		}
 	}
-	record.timestamps = filtered
+
+	// Only allocate new slice if we removed many items (>50%) and can reclaim significant memory (>100 items)
+	if len(newTimestamps) < oldCount/2 && oldCount > 100 {
+		record.timestamps = append([]time.Time(nil), newTimestamps...)
+	} else {
+		record.timestamps = newTimestamps
+	}
 
 	// Check if limit exceeded
 	if len(record.timestamps) >= limit {
@@ -114,14 +128,15 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			ip := getClientIP(r)
 
 			// Determine which limit to apply based on path
+			// Read current limit values from config (allows runtime updates)
 			var limit int
 			var limitType string
 
 			if r.URL.Path == "/api/upload" {
-				limit = rl.config.UploadLimit
+				limit = rl.config.GetRateLimitUpload()
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
-				limit = rl.config.DownloadLimit
+				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
 			} else {
 				// No rate limit for other endpoints (health, info, static files)
