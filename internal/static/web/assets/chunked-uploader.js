@@ -32,7 +32,7 @@ class ChunkedUploader {
             expiresInHours: options.expiresInHours || 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
-            concurrency: options.concurrency || 6, // Number of parallel chunk uploads (restored to 6 after removing DB writes during upload)
+            concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
             retryAttempts: options.retryAttempts || 3,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
         };
@@ -54,6 +54,9 @@ class ChunkedUploader {
 
         // Storage key for resume capability
         this.storageKey = null;
+
+        // Detect if HTTP/2 is available for optimal concurrency
+        this._detectHTTP2Support();
     }
 
     /**
@@ -76,6 +79,33 @@ class ChunkedUploader {
     emit(event, data) {
         if (this.eventListeners[event]) {
             this.eventListeners[event].forEach(callback => callback(data));
+        }
+    }
+
+    /**
+     * Detect HTTP/2 support and adjust concurrency
+     * HTTP/2 allows higher concurrency without connection limits
+     */
+    _detectHTTP2Support() {
+        // Check Performance API for HTTP/2
+        if (window.performance && window.performance.getEntriesByType) {
+            const navEntry = performance.getEntriesByType('navigation')[0];
+            if (navEntry && navEntry.nextHopProtocol) {
+                const protocol = navEntry.nextHopProtocol;
+                if (protocol === 'h2' || protocol === 'h2c') {
+                    // HTTP/2 detected - can safely use higher concurrency
+                    if (!this.options.concurrency || this.options.concurrency === 6) {
+                        this.options.concurrency = 12;
+                    }
+                    console.log('HTTP/2 detected, using concurrency:', this.options.concurrency);
+                } else {
+                    // HTTP/1.1 - use conservative concurrency
+                    if (this.options.concurrency > 6) {
+                        this.options.concurrency = 6;
+                        console.log('HTTP/1.1 detected, limiting concurrency to 6');
+                    }
+                }
+            }
         }
     }
 
@@ -154,10 +184,11 @@ class ChunkedUploader {
                 const formData = new FormData();
                 formData.append('chunk', chunkBlob, `chunk_${chunkNumber}`);
 
-                // Upload chunk
+                // Upload chunk with keep-alive for connection reuse
                 const response = await fetch(`/api/upload/chunk/${this.uploadId}/${chunkNumber}`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    keepalive: true  // Explicitly request connection reuse
                 });
 
                 if (!response.ok) {
