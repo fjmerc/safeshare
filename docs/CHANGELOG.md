@@ -8,12 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **SFSE1 Encryption EOF Handling**: Fixed bug where empty 28-byte chunks were written to encrypted files
-  - Root cause: EOF handling allowed loop continuation after final data chunk, writing nonce+tag with 0 bytes
-  - Impact: Files were 28 bytes larger than expected, decryption failed with "cipher: message authentication failed"
-  - Fix: Restructured EOF handling to exit immediately after processing final chunk, preventing empty chunks
+- **SFSE1 Encryption Chunk Splitting**: Fixed critical bug causing all encrypted file downloads to fail with authentication errors
+  - Root cause: `io.Read()` allows partial reads, causing `io.MultiReader` (used for MIME detection) to split data across artificial chunk boundaries
+  - Impact: Files had extra 28-31 byte chunks, decryption failed with "cipher: message authentication failed"
+  - Solution: Replaced `io.Read()` with `io.ReadFull()` to ensure complete chunks without splitting
   - Applied to both `EncryptFileStreaming()` and `EncryptFileStreamingFromReader()` functions
-  - All newly uploaded files will now decrypt successfully
+  - Added comprehensive test suite (`encryption_test.go`) with MultiReader scenario coverage
+  - All newly uploaded files will now encrypt and decrypt successfully
 
 ### Performance
 - **Streaming Upload Encryption**: Refactored file upload handler to use streaming encryption instead of loading entire file into memory
