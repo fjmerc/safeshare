@@ -182,9 +182,34 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 	for {
 		// Read chunk
 		n, err := srcFile.Read(buffer)
-		if err != nil && err != io.EOF {
+
+		// Handle EOF first - if we got EOF with data, process it and exit
+		if err == io.EOF {
+			if n > 0 {
+				// Generate nonce for this final chunk
+				nonce := make([]byte, gcm.NonceSize())
+				if _, readErr := io.ReadFull(rand.Reader, nonce); readErr != nil {
+					return fmt.Errorf("failed to generate nonce: %w", readErr)
+				}
+
+				// Encrypt final chunk
+				encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
+
+				// Write encrypted chunk (nonce + ciphertext + tag)
+				if _, writeErr := dstFile.Write(encrypted); writeErr != nil {
+					return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
+				}
+			}
+			// Exit immediately after EOF, whether we had data or not
+			break
+		}
+
+		// Handle other errors
+		if err != nil {
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
+
+		// If no data and no error, something's wrong - exit
 		if n == 0 {
 			break
 		}
@@ -201,10 +226,6 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 		// Write encrypted chunk (nonce + ciphertext + tag)
 		if _, err := dstFile.Write(encrypted); err != nil {
 			return fmt.Errorf("failed to write encrypted chunk: %w", err)
-		}
-
-		if err == io.EOF {
-			break
 		}
 	}
 
@@ -260,9 +281,34 @@ func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string)
 	for {
 		// Read chunk
 		n, err := src.Read(buffer)
-		if err != nil && err != io.EOF {
+
+		// Handle EOF first - if we got EOF with data, process it and exit
+		if err == io.EOF {
+			if n > 0 {
+				// Generate nonce for this final chunk
+				nonce := make([]byte, gcm.NonceSize())
+				if _, readErr := io.ReadFull(rand.Reader, nonce); readErr != nil {
+					return fmt.Errorf("failed to generate nonce: %w", readErr)
+				}
+
+				// Encrypt final chunk
+				encrypted := gcm.Seal(nonce, nonce, buffer[:n], nil)
+
+				// Write encrypted chunk (nonce + ciphertext + tag)
+				if _, writeErr := dst.Write(encrypted); writeErr != nil {
+					return fmt.Errorf("failed to write encrypted chunk: %w", writeErr)
+				}
+			}
+			// Exit immediately after EOF, whether we had data or not
+			break
+		}
+
+		// Handle other errors
+		if err != nil {
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
+
+		// If no data and no error, something's wrong - exit
 		if n == 0 {
 			break
 		}
@@ -279,10 +325,6 @@ func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string)
 		// Write encrypted chunk (nonce + ciphertext + tag)
 		if _, err := dst.Write(encrypted); err != nil {
 			return fmt.Errorf("failed to write encrypted chunk: %w", err)
-		}
-
-		if err == io.EOF {
-			break
 		}
 	}
 

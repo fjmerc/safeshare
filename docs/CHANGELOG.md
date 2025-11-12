@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **SFSE1 Encryption EOF Handling**: Fixed bug where empty 28-byte chunks were written to encrypted files
+  - Root cause: EOF handling allowed loop continuation after final data chunk, writing nonce+tag with 0 bytes
+  - Impact: Files were 28 bytes larger than expected, decryption failed with "cipher: message authentication failed"
+  - Fix: Restructured EOF handling to exit immediately after processing final chunk, preventing empty chunks
+  - Applied to both `EncryptFileStreaming()` and `EncryptFileStreamingFromReader()` functions
+  - All newly uploaded files will now decrypt successfully
+
 ### Performance
 - **Streaming Upload Encryption**: Refactored file upload handler to use streaming encryption instead of loading entire file into memory
   - Reduces memory usage from ~100MB to ~10MB for maximum file size uploads
