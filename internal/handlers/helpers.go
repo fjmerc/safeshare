@@ -120,11 +120,19 @@ func isHTMLRequest(r *http.Request) bool {
 // sendError sends a JSON error response
 // This is used for API clients
 func sendError(w http.ResponseWriter, message, code string, statusCode int) {
+	sendErrorWithRetry(w, message, code, statusCode, nil, nil)
+}
+
+// sendErrorWithRetry sends a JSON error response with retry recommendations
+// This is used for API clients with retry guidance
+func sendErrorWithRetry(w http.ResponseWriter, message, code string, statusCode int, retryRecommended *bool, retryAfter *int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(models.ErrorResponse{
-		Error: message,
-		Code:  code,
+		Error:            message,
+		Code:             code,
+		RetryRecommended: retryRecommended,
+		RetryAfter:       retryAfter,
 	})
 }
 
@@ -174,4 +182,64 @@ func sendErrorResponse(w http.ResponseWriter, r *http.Request, title, message, c
 	} else {
 		sendError(w, message, code, statusCode)
 	}
+}
+
+// shouldRetryError determines if an error code should recommend retry to client
+// Returns (shouldRetry, retryAfterSeconds)
+func shouldRetryError(code string) (bool, int) {
+	retryableErrors := map[string]int{
+		"INTERNAL_ERROR":       5,  // Internal errors - retry after 5s
+		"DATABASE_ERROR":       3,  // Database errors - retry after 3s
+		"INSUFFICIENT_STORAGE": 30, // Storage issues - retry after 30s
+		"RATE_LIMITED":         60, // Rate limiting - retry after 60s
+		"QUOTA_EXCEEDED":       0,  // Quota exceeded - retry won't help
+		"NETWORK_ERROR":        2,  // Network issues - retry after 2s
+		"TIMEOUT":              5,  // Timeout - retry after 5s
+	}
+
+	nonRetryableErrors := map[string]bool{
+		"INVALID_JSON":        true,
+		"MISSING_FILENAME":    true,
+		"INVALID_FILENAME":    true,
+		"BLOCKED_EXTENSION":   true,
+		"INVALID_TOTAL_SIZE":  true,
+		"FILE_TOO_LARGE":      true,
+		"TOO_MANY_CHUNKS":     true,
+		"EXPIRATION_TOO_LONG": true,
+		"METHOD_NOT_ALLOWED":  true,
+		"FEATURE_DISABLED":    true,
+		"UNAUTHORIZED":        true,
+		"FORBIDDEN":           true,
+		"INVALID_CHUNK":       true,
+		"CHECKSUM_MISMATCH":   true, // Retry won't help - data corruption
+	}
+
+	// Check if explicitly non-retryable
+	if nonRetryableErrors[code] {
+		return false, 0
+	}
+
+	// Check if explicitly retryable
+	if retryAfter, ok := retryableErrors[code]; ok {
+		return true, retryAfter
+	}
+
+	// Default: unknown errors are retryable after 5s
+	return true, 5
+}
+
+// sendSmartError sends an error with automatic retry recommendation
+// based on the error code
+func sendSmartError(w http.ResponseWriter, message, code string, statusCode int) {
+	shouldRetry, retryAfter := shouldRetryError(code)
+
+	var retryRecommended *bool
+	var retryAfterPtr *int
+
+	retryRecommended = &shouldRetry
+	if shouldRetry && retryAfter > 0 {
+		retryAfterPtr = &retryAfter
+	}
+
+	sendErrorWithRetry(w, message, code, statusCode, retryRecommended, retryAfterPtr)
 }

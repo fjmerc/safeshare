@@ -137,8 +137,8 @@ class ChunkedUploader {
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to initialize upload');
+                const error = await this.parseErrorResponse(response);
+                throw error;
             }
 
             const data = await response.json();
@@ -202,8 +202,8 @@ class ChunkedUploader {
                 });
 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Chunk upload failed');
+                    const error = await this.parseErrorResponse(response);
+                    throw error;
                 }
 
                 const data = await response.json();
@@ -235,19 +235,35 @@ class ChunkedUploader {
             } catch (error) {
                 attempt++;
 
+                // Check if retry is recommended by server
+                if (error.retryRecommended === false) {
+                    this.emit('error', {
+                        stage: 'chunk_upload',
+                        chunkNumber,
+                        error: error.message,
+                        code: error.code,
+                        retryRecommended: false
+                    });
+                    throw new Error(`Chunk ${chunkNumber} upload failed (non-retryable error: ${error.code}): ${error.message}`);
+                }
+
                 if (attempt >= maxAttempts) {
                     this.emit('error', {
                         stage: 'chunk_upload',
                         chunkNumber,
                         error: error.message,
+                        code: error.code,
                         attempts: attempt
                     });
                     throw new Error(`Failed to upload chunk ${chunkNumber} after ${maxAttempts} attempts: ${error.message}`);
                 }
 
-                // Exponential backoff
-                const delay = this.options.retryDelay * Math.pow(2, attempt - 1);
-                console.warn(`Chunk ${chunkNumber} upload failed (attempt ${attempt}/${maxAttempts}), retrying in ${delay}ms...`);
+                // Use server-provided retry_after if available, otherwise exponential backoff
+                const delay = error.retryAfter
+                    ? error.retryAfter * 1000  // Convert seconds to milliseconds
+                    : this.options.retryDelay * Math.pow(2, attempt - 1);
+
+                console.warn(`Chunk ${chunkNumber} upload failed (attempt ${attempt}/${maxAttempts}, code: ${error.code || 'UNKNOWN'}), retrying in ${delay}ms...`);
                 await this.sleep(delay);
             }
         }
@@ -726,6 +742,40 @@ class ChunkedUploader {
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
         return hashHex;
+    }
+
+    /**
+     * Custom error class that includes retry recommendations
+     */
+    createRetryableError(message, code, retryRecommended, retryAfter) {
+        const error = new Error(message);
+        error.code = code;
+        error.retryRecommended = retryRecommended;
+        error.retryAfter = retryAfter;
+        return error;
+    }
+
+    /**
+     * Parse error response and extract retry information
+     */
+    async parseErrorResponse(response) {
+        try {
+            const error = await response.json();
+            return this.createRetryableError(
+                error.error || 'Unknown error',
+                error.code || 'UNKNOWN',
+                error.retry_recommended !== undefined ? error.retry_recommended : true,
+                error.retry_after || 5
+            );
+        } catch {
+            // If JSON parsing fails, return generic error
+            return this.createRetryableError(
+                'Request failed',
+                'NETWORK_ERROR',
+                true,
+                5
+            );
+        }
     }
 
     /**
