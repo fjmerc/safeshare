@@ -217,6 +217,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ExpiresInHours: req.ExpiresInHours,
 			MaxDownloads:   req.MaxDownloads,
 			PasswordHash:   passwordHash,
+			FileHash:       req.FileHash, // Store client-provided SHA256 hash for verification
 			CreatedAt:      time.Now(),
 			LastActivity:   time.Now(),
 			Completed:      false,

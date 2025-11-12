@@ -15,6 +15,7 @@ type PartialUpload struct {
 	ExpiresInHours       int        `json:"expires_in_hours"`
 	MaxDownloads         int        `json:"max_downloads"`
 	PasswordHash         string     `json:"-"` // Never expose hash in JSON
+	FileHash             string     `json:"file_hash,omitempty"` // Expected SHA256 of assembled file
 	CreatedAt            time.Time  `json:"created_at"`
 	LastActivity         time.Time  `json:"last_activity"`
 	Completed            bool       `json:"completed"`
@@ -33,6 +34,7 @@ type UploadInitRequest struct {
 	ExpiresInHours  int     `json:"expires_in_hours"`
 	MaxDownloads    int     `json:"max_downloads"`
 	Password        string  `json:"password,omitempty"`
+	FileHash        string  `json:"file_hash,omitempty"` // SHA256 of entire file (optional)
 }
 
 // UploadInitResponse represents the response after initializing a chunked upload
