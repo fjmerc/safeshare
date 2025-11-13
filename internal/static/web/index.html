@@ -341,6 +341,30 @@
                         ⬇️ Download File
                     </button>
 
+                    <!-- Download Progress (hidden by default) -->
+                    <div id="downloadProgress" class="progress-container hidden">
+                        <div class="progress-header">
+                            <span id="downloadProgressText">Downloading...</span>
+                            <button id="pauseDownloadButton" class="btn-small btn-secondary">⏸ Pause</button>
+                        </div>
+                        <div class="progress-bar">
+                            <div id="downloadProgressFill" class="progress-fill"></div>
+                        </div>
+                        <div class="progress-stats">
+                            <span id="downloadSpeed">0 MB/s</span>
+                            <span id="downloadETA">Calculating...</span>
+                        </div>
+                    </div>
+
+                    <!-- Resume Prompt (hidden by default) -->
+                    <div id="resumePrompt" class="info-box warning hidden">
+                        <p>📥 A previous download was interrupted. Would you like to resume where you left off?</p>
+                        <div class="button-group">
+                            <button id="resumeDownloadButton" class="btn-primary">Resume Download</button>
+                            <button id="startFreshButton" class="btn-secondary">Start Fresh</button>
+                        </div>
+                    </div>
+
                     <button id="newPickupButton" class="btn-secondary">Check Another File</button>
                 </div>
             </div>
@@ -365,6 +389,8 @@
     <script src="/assets/toast.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
+    <!-- Resumable Download Handler -->
+    <script src="/assets/resumable-downloader.js"></script>
     <script src="/assets/app.js"></script>
 </body>
 </html>
