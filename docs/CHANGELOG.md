@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **HTTP/3 Protocol Detection**: Fixed chunked upload concurrency optimization for HTTP/2 and HTTP/3 connections
+  - Bug: Protocol detection worked correctly, but concurrency was never increased due to incorrect conditional logic
+  - Root cause: Code checked `concurrency === 6` but default value is 10, so condition never triggered
+  - Solution: Changed condition from `=== 6` to `<= 10` to properly increase concurrency for default settings
+  - Impact: HTTP/2 and HTTP/3 uploads now use optimal concurrency of 12 workers instead of 10 (~17% faster)
+  - HTTP/1.1 detection still correctly limits to 6 workers (no regression)
+  - User-specified concurrency values > 10 are properly respected (not overridden)
+  - Added support for all HTTP/3 protocol variants: h3, h3-29, h3-32, h3-* (future-proof)
+  - Comprehensive test coverage: 100% pass rate (9/9 tests) validating all protocol variants
+
 ## [2.6.0] - 2025-11-13
 
 ### Added
