@@ -557,7 +557,53 @@
                         <span id="recommendationSummary">Based on your environment, here are the optimal settings.</span>
                     </div>
 
-                    <!-- Comparison Table -->
+                    <!-- Immediate Settings Section -->
+                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
+                        <span style="background: var(--success-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">IMMEDIATE</span>
+                        Settings (Apply Now - No Restart Required)
+                    </h4>
+                    <div class="table-container" style="margin-bottom: 32px;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="text-align: left;">Setting</th>
+                                    <th>Current Value</th>
+                                    <th>Recommended Value</th>
+                                    <th>Impact</th>
+                                </tr>
+                            </thead>
+                            <tbody id="immediateSettingsTableBody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Performance Settings Section -->
+                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
+                        <span style="background: var(--warning-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">RESTART REQUIRED</span>
+                        Performance Settings
+                    </h4>
+                    <div class="table-container" style="margin-bottom: 32px;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="text-align: left;">Setting</th>
+                                    <th>Current Value</th>
+                                    <th>Recommended Value</th>
+                                    <th>Impact</th>
+                                </tr>
+                            </thead>
+                            <tbody id="performanceSettingsTableBody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Operational Settings Section -->
+                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
+                        <span style="background: var(--warning-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">RESTART REQUIRED</span>
+                        Operational Settings
+                    </h4>
                     <div class="table-container" style="margin-bottom: 24px;">
                         <table class="data-table">
                             <thead>
@@ -568,10 +614,29 @@
                                     <th>Impact</th>
                                 </tr>
                             </thead>
-                            <tbody id="recommendationsTableBody">
+                            <tbody id="operationalSettingsTableBody">
                                 <!-- Populated by JavaScript -->
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- .env File Generation -->
+                    <div id="envFileSection" style="margin-bottom: 24px; padding: 16px; background: var(--card-background); border: 1px solid var(--border-color); border-radius: 8px;">
+                        <h4 style="margin-bottom: 12px; color: var(--text-primary);">
+                            <span style="background: var(--primary-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">DOCKER</span>
+                            Environment Variables for Restart-Required Settings
+                        </h4>
+                        <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 12px;">
+                            Add these to your <code>.env</code> file or <code>docker-compose.yml</code> and restart SafeShare to apply performance and operational settings:
+                        </p>
+                        <pre id="envFileContent" style="background: var(--background-color); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; font-family: 'Courier New', monospace; color: var(--text-primary);"></pre>
+                        <button id="copyEnvBtn" class="btn-secondary" style="margin-top: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy to Clipboard
+                        </button>
                     </div>
 
                     <!-- Additional Recommendations -->
@@ -582,12 +647,16 @@
                         </div>
                     </div>
 
+                    <div style="background: var(--info-light); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; color: var(--text-primary);">
+                        <strong>Note:</strong> "Apply Immediate Settings" will update settings that don't require restart. For performance and operational settings, use the .env file snippet above and restart SafeShare.
+                    </div>
+
                     <div class="button-group">
                         <button id="applyRecommendationsBtn" class="btn-success">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
-                            Apply Recommended Settings
+                            Apply Immediate Settings
                         </button>
                         <button id="backToQuestionnaireBtn" class="btn-secondary">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1441,11 +1441,8 @@ function displayRecommendations(data) {
     // Update summary text
     document.getElementById('recommendationSummary').textContent = analysis.summary;
 
-    // Build comparison table
-    const tbody = document.getElementById('recommendationsTableBody');
-    tbody.innerHTML = '';
-
-    const comparisons = [
+    // Immediate Settings
+    const immediateComparisons = [
         {
             setting: 'Max File Size',
             current: formatBytes(current_config.max_file_size),
@@ -1490,19 +1487,101 @@ function displayRecommendations(data) {
         }
     ];
 
-    comparisons.forEach(item => {
-        const row = document.createElement('tr');
-        if (item.changed) {
-            row.style.backgroundColor = 'var(--warning-light)';
+    // Performance Settings (require restart)
+    const performanceComparisons = [
+        {
+            setting: 'Chunk Size',
+            current: formatBytes(current_config.chunk_size),
+            recommended: formatBytes(recommendations.chunk_size),
+            impact: analysis.impacts.chunk_size || 'Optimized for network speed',
+            changed: current_config.chunk_size !== recommendations.chunk_size
+        },
+        {
+            setting: 'Read Timeout',
+            current: current_config.read_timeout + ' seconds',
+            recommended: recommendations.read_timeout + ' seconds',
+            impact: analysis.impacts.read_timeout || 'Based on chunk size and upload speed',
+            changed: current_config.read_timeout !== recommendations.read_timeout
+        },
+        {
+            setting: 'Write Timeout',
+            current: current_config.write_timeout + ' seconds',
+            recommended: recommendations.write_timeout + ' seconds',
+            impact: analysis.impacts.write_timeout || 'Matched to read timeout',
+            changed: current_config.write_timeout !== recommendations.write_timeout
+        },
+        {
+            setting: 'Chunked Upload Threshold',
+            current: formatBytes(current_config.chunked_upload_threshold),
+            recommended: formatBytes(recommendations.chunked_upload_threshold),
+            impact: analysis.impacts.chunked_upload_threshold || 'When to start chunking',
+            changed: current_config.chunked_upload_threshold !== recommendations.chunked_upload_threshold
+        },
+        {
+            setting: 'Partial Upload Expiry',
+            current: current_config.partial_upload_expiry_hours + ' hours',
+            recommended: recommendations.partial_upload_expiry_hours + ' hours',
+            impact: analysis.impacts.partial_upload_expiry_hours || 'Cleanup interval for abandoned uploads',
+            changed: current_config.partial_upload_expiry_hours !== recommendations.partial_upload_expiry_hours
         }
-        row.innerHTML = `
-            <td style="text-align: left; font-weight: 600;">${escapeHtml(item.setting)}</td>
-            <td style="text-align: center;">${escapeHtml(item.current)}</td>
-            <td style="text-align: center; font-weight: 600; color: var(--primary-color);">${escapeHtml(item.recommended)}</td>
-            <td style="text-align: left; font-size: 13px;">${escapeHtml(item.impact)}</td>
-        `;
-        tbody.appendChild(row);
-    });
+    ];
+
+    // Operational Settings (require restart)
+    const operationalComparisons = [
+        {
+            setting: 'Session Expiry',
+            current: current_config.session_expiry_hours + ' hours',
+            recommended: recommendations.session_expiry_hours + ' hours',
+            impact: analysis.impacts.session_expiry_hours || 'User session lifetime',
+            changed: current_config.session_expiry_hours !== recommendations.session_expiry_hours
+        },
+        {
+            setting: 'Cleanup Interval',
+            current: current_config.cleanup_interval_minutes + ' minutes',
+            recommended: recommendations.cleanup_interval_minutes + ' minutes',
+            impact: analysis.impacts.cleanup_interval_minutes || 'How often to cleanup expired files',
+            changed: current_config.cleanup_interval_minutes !== recommendations.cleanup_interval_minutes
+        },
+        {
+            setting: 'Require Auth for Upload',
+            current: current_config.require_auth_for_upload ? 'Enabled' : 'Disabled',
+            recommended: recommendations.require_auth_for_upload ? 'Enabled' : 'Disabled',
+            impact: analysis.impacts.require_auth_for_upload || 'Prevent anonymous uploads',
+            changed: current_config.require_auth_for_upload !== recommendations.require_auth_for_upload
+        },
+        {
+            setting: 'HTTPS Enabled',
+            current: current_config.https_enabled ? 'Yes' : 'No',
+            recommended: recommendations.https_enabled ? 'Yes' : 'No',
+            impact: analysis.impacts.https_enabled || 'Secure cookie flag',
+            changed: current_config.https_enabled !== recommendations.https_enabled
+        },
+        {
+            setting: 'Chunked Upload Enabled',
+            current: current_config.chunked_upload_enabled ? 'Yes' : 'No',
+            recommended: recommendations.chunked_upload_enabled ? 'Yes' : 'No',
+            impact: 'Enable large file upload support',
+            changed: current_config.chunked_upload_enabled !== recommendations.chunked_upload_enabled
+        }
+    ];
+
+    // Populate immediate settings table
+    const immediateTbody = document.getElementById('immediateSettingsTableBody');
+    immediateTbody.innerHTML = '';
+    populateTable(immediateTbody, immediateComparisons);
+
+    // Populate performance settings table
+    const performanceTbody = document.getElementById('performanceSettingsTableBody');
+    performanceTbody.innerHTML = '';
+    populateTable(performanceTbody, performanceComparisons);
+
+    // Populate operational settings table
+    const operationalTbody = document.getElementById('operationalSettingsTableBody');
+    operationalTbody.innerHTML = '';
+    populateTable(operationalTbody, operationalComparisons);
+
+    // Generate .env file content
+    generateEnvFileContent(recommendations);
 
     // Show additional recommendations if available
     if (analysis.additional_recommendations && analysis.additional_recommendations.length > 0) {
@@ -1516,6 +1595,75 @@ function displayRecommendations(data) {
     } else {
         document.getElementById('additionalRecommendations').style.display = 'none';
     }
+}
+
+// Helper function to populate comparison tables
+function populateTable(tbody, comparisons) {
+    comparisons.forEach(item => {
+        const row = document.createElement('tr');
+        if (item.changed) {
+            row.style.backgroundColor = 'var(--warning-light)';
+        }
+        row.innerHTML = `
+            <td style="text-align: left; font-weight: 600;">${escapeHtml(item.setting)}</td>
+            <td style="text-align: center;">${escapeHtml(item.current)}</td>
+            <td style="text-align: center; font-weight: 600; color: var(--primary-color);">${escapeHtml(item.recommended)}</td>
+            <td style="text-align: left; font-size: 13px;">${escapeHtml(item.impact)}</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// Generate .env file content for restart-required settings
+function generateEnvFileContent(recommendations) {
+    const envLines = [];
+
+    envLines.push('# ========================================');
+    envLines.push('# SafeShare Performance Settings');
+    envLines.push('# ========================================');
+    envLines.push('');
+    envLines.push('# Chunk Size for Uploads');
+    envLines.push(`CHUNK_SIZE=${recommendations.chunk_size}`);
+    envLines.push('');
+    envLines.push('# HTTP Timeouts (seconds)');
+    envLines.push(`READ_TIMEOUT=${recommendations.read_timeout}`);
+    envLines.push(`WRITE_TIMEOUT=${recommendations.write_timeout}`);
+    envLines.push('');
+    envLines.push('# Chunked Upload Configuration');
+    envLines.push(`CHUNKED_UPLOAD_THRESHOLD=${recommendations.chunked_upload_threshold}`);
+    envLines.push(`CHUNKED_UPLOAD_ENABLED=${recommendations.chunked_upload_enabled}`);
+    envLines.push(`PARTIAL_UPLOAD_EXPIRY_HOURS=${recommendations.partial_upload_expiry_hours}`);
+    envLines.push('');
+    envLines.push('# ========================================');
+    envLines.push('# SafeShare Operational Settings');
+    envLines.push('# ========================================');
+    envLines.push('');
+    envLines.push('# Session and Cleanup');
+    envLines.push(`SESSION_EXPIRY_HOURS=${recommendations.session_expiry_hours}`);
+    envLines.push(`CLEANUP_INTERVAL_MINUTES=${recommendations.cleanup_interval_minutes}`);
+    envLines.push('');
+    envLines.push('# Security Settings');
+    envLines.push(`REQUIRE_AUTH_FOR_UPLOAD=${recommendations.require_auth_for_upload}`);
+    envLines.push(`HTTPS_ENABLED=${recommendations.https_enabled}`);
+
+    if (recommendations.public_url) {
+        envLines.push('');
+        envLines.push('# Public URL (set this to your domain)');
+        envLines.push(`PUBLIC_URL=${recommendations.public_url}`);
+    }
+
+    const envContent = envLines.join('\n');
+    document.getElementById('envFileContent').textContent = envContent;
+
+    // Set up copy button handler
+    const copyBtn = document.getElementById('copyEnvBtn');
+    copyBtn.onclick = () => {
+        navigator.clipboard.writeText(envContent).then(() => {
+            showSuccess('.env content copied to clipboard!');
+        }).catch(() => {
+            showError('Failed to copy to clipboard');
+        });
+    };
 }
 
 // ============ User Management Functions ============
