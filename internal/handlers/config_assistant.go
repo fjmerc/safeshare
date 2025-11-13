@@ -196,8 +196,6 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	}
 
 	// 4. Calculate Rate Limits based on user load and network capacity
-	uploadCapacityMBps := req.UploadSpeed / 8 // Convert Mbps to MBps
-
 	switch req.UserLoad {
 	case "light":
 		// 1-10 users: generous limits
@@ -221,13 +219,13 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	}
 
 	// Adjust rate limits based on bandwidth
-	if uploadCapacityMBps < 5 {
+	if uploadSpeedMBps < 5 {
 		// Low bandwidth: reduce limits further
 		rec.RateLimitUpload = rec.RateLimitUpload / 2
 		if rec.RateLimitUpload < 3 {
 			rec.RateLimitUpload = 3 // minimum
 		}
-	} else if uploadCapacityMBps > 50 {
+	} else if uploadSpeedMBps > 50 {
 		// High bandwidth: can afford higher limits for light/moderate loads
 		if req.UserLoad == "light" || req.UserLoad == "moderate" {
 			rec.RateLimitUpload = int(float64(rec.RateLimitUpload) * 1.5)
@@ -235,27 +233,26 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	}
 
 	// Adjust download limits similarly
-	downloadCapacityMBps := req.DownloadSpeed / 8
-	if downloadCapacityMBps < 10 {
+	if downloadSpeedMBps < 10 {
 		rec.RateLimitDownload = rec.RateLimitDownload / 2
 		if rec.RateLimitDownload < 20 {
 			rec.RateLimitDownload = 20 // minimum
 		}
-	} else if downloadCapacityMBps > 100 {
+	} else if downloadSpeedMBps > 100 {
 		if req.UserLoad == "light" || req.UserLoad == "moderate" {
 			rec.RateLimitDownload = int(float64(rec.RateLimitDownload) * 1.5)
 		}
 	}
 
 	// 5. Calculate CHUNK_SIZE based on bandwidth and latency
-	// Formula: Optimize for ~10-30 second upload time per chunk
-	// Range: 1MB - 50MB
-	targetUploadTimeSeconds := 15.0 // target 15 seconds per chunk
+	// Formula: Optimize for reliability and progress tracking
+	// Smaller chunks (5-10MB) for slow/unreliable connections provide better resume capability
+	// Larger chunks (20-30MB) for fast connections reduce overhead
+	// Range: 5MB - 30MB (always within documented 1-50MB limit)
 
 	if req.NetworkLatency == "high" || uploadSpeedMBps < 2 {
 		// High latency or slow connection: smaller chunks for reliability
 		rec.ChunkSize = 5 * 1024 * 1024 // 5MB
-		targetUploadTimeSeconds = 20.0   // allow more time
 	} else if uploadSpeedMBps < 5 {
 		// Medium-slow connection
 		rec.ChunkSize = 8 * 1024 * 1024 // 8MB
@@ -317,12 +314,14 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 
 	// 7. Set CHUNKED_UPLOAD_THRESHOLD
 	// Start chunking earlier for large files or slow connections
+	// Lower threshold = more files use chunked upload = better reliability and progress tracking
+	// Higher threshold = fewer files use chunking = less overhead for small/medium files
 	if req.TypicalFileSize == "huge" || uploadSpeedMBps < 5 {
-		rec.ChunkedUploadThreshold = 50 * 1024 * 1024 // 50MB
+		rec.ChunkedUploadThreshold = 50 * 1024 * 1024 // 50MB - start chunking early for reliability
 	} else if req.TypicalFileSize == "large" {
-		rec.ChunkedUploadThreshold = 75 * 1024 * 1024 // 75MB
+		rec.ChunkedUploadThreshold = 75 * 1024 * 1024 // 75MB - balanced threshold
 	} else {
-		rec.ChunkedUploadThreshold = 100 * 1024 * 1024 // 100MB (default)
+		rec.ChunkedUploadThreshold = 100 * 1024 * 1024 // 100MB - default, minimal overhead
 	}
 
 	// 8. Set PARTIAL_UPLOAD_EXPIRY_HOURS
@@ -515,10 +514,10 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		}
 	}
 
-	uploadCapacityMBps := req.UploadSpeed / 8
-	if uploadCapacityMBps < 5 {
+	uploadSpeedMBps := req.UploadSpeed / 8
+	if uploadSpeedMBps < 5 {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("Low upload bandwidth detected (%.1f MB/s). Consider CHUNK_SIZE=5MB for better reliability on slow connections.", uploadCapacityMBps),
+			fmt.Sprintf("Low upload bandwidth detected (%.1f MB/s). Consider CHUNK_SIZE=5MB for better reliability on slow connections.", uploadSpeedMBps),
 		)
 	}
 
