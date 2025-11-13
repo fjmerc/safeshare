@@ -61,9 +61,12 @@ class ChunkedUploader {
             consecutiveFailures: 0,
             recentLatencies: [],      // Keep last 10 latencies
             avgLatency: 0,
+            baselineLatency: null,    // First successful upload latency as baseline
             minConcurrency: 2,
             maxConcurrency: 20,
-            adjustmentThreshold: 5    // Adjust after 5 consecutive successes/failures
+            adjustmentThreshold: 5,   // Adjust after 5 consecutive successes/failures
+            latencyThreshold: 8000,   // Initial value, recalculated in init() based on chunk size
+            latencyDegradationLimit: 0.5  // Don't increase if latency >50% worse than baseline
         };
 
         // Progress throttling for better UI performance
@@ -160,6 +163,14 @@ class ChunkedUploader {
             this.chunkSize = data.chunk_size;
             this.totalChunks = data.total_chunks;
             this.startTime = Date.now();
+
+            // Calculate adaptive latency threshold based on actual chunk size
+            // Formula: (chunkSize / 1.25MB/s) * 2x overhead
+            // Assumes minimum 10 Mbps connection (1.25 MB/s) with 2x safety margin
+            const chunkSizeMB = this.chunkSize / (1024 * 1024);
+            this.networkMetrics.latencyThreshold = Math.round((chunkSizeMB / 1.25) * 1000 * 2);
+
+            console.log(`Adaptive latency threshold: ${this.networkMetrics.latencyThreshold}ms for ${chunkSizeMB.toFixed(1)}MB chunks (${(this.networkMetrics.latencyThreshold / 1000).toFixed(1)}s)`);
 
             // Set storage key for resume capability
             this.storageKey = `chunked_upload_${this.uploadId}`;
@@ -789,6 +800,12 @@ class ChunkedUploader {
         this.networkMetrics.consecutiveSuccesses++;
         this.networkMetrics.consecutiveFailures = 0;
 
+        // Set baseline latency from first successful upload
+        if (this.networkMetrics.baselineLatency === null) {
+            this.networkMetrics.baselineLatency = latency;
+            console.log('Baseline latency established:', latency + 'ms');
+        }
+
         // Track latency (keep last 10)
         this.networkMetrics.recentLatencies.push(latency);
         if (this.networkMetrics.recentLatencies.length > 10) {
@@ -800,10 +817,48 @@ class ChunkedUploader {
             this.networkMetrics.recentLatencies.reduce((a, b) => a + b, 0) /
             this.networkMetrics.recentLatencies.length;
 
-        // Increase concurrency after N consecutive successes
+        // Check if we should adjust concurrency after N consecutive successes
         if (this.networkMetrics.consecutiveSuccesses >= this.networkMetrics.adjustmentThreshold) {
+            // ✅ LATENCY-AWARE DECISION MAKING
+
+            // Guard 1: Don't increase if average latency exceeds threshold
+            if (this.networkMetrics.avgLatency > this.networkMetrics.latencyThreshold) {
+                console.log(`Skipping concurrency increase: avgLatency (${Math.round(this.networkMetrics.avgLatency)}ms) exceeds threshold (${this.networkMetrics.latencyThreshold}ms)`);
+                this.networkMetrics.consecutiveSuccesses = 0;
+                return;
+            }
+
+            // Guard 2: Don't increase if latency has degraded significantly from baseline
+            const latencyIncrease = (this.networkMetrics.avgLatency - this.networkMetrics.baselineLatency) / this.networkMetrics.baselineLatency;
+            if (latencyIncrease > this.networkMetrics.latencyDegradationLimit) {
+                console.log(`Skipping concurrency increase: latency degraded ${Math.round(latencyIncrease * 100)}% from baseline (limit: ${this.networkMetrics.latencyDegradationLimit * 100}%)`);
+                this.networkMetrics.consecutiveSuccesses = 0;
+                return;
+            }
+
+            // Guard 3: Don't increase if latency is trending worse
+            const latencyTrend = this._calculateLatencyTrend();
+            if (latencyTrend > 0.15) {  // More than 15% increase trend
+                console.log(`Skipping concurrency increase: latency trending worse (+${Math.round(latencyTrend * 100)}%)`);
+                this.networkMetrics.consecutiveSuccesses = 0;
+                return;
+            }
+
+            // All guards passed - safe to increase concurrency
             this._adjustConcurrency('increase');
             this.networkMetrics.consecutiveSuccesses = 0;
+        }
+
+        // ✅ PROACTIVE DECREASE: Check if latency is degrading even without failures
+        if (this.networkMetrics.recentLatencies.length >= 5) {
+            const latencyTrend = this._calculateLatencyTrend();
+
+            // If latency is rapidly increasing (>30% trend), proactively decrease
+            if (latencyTrend > 0.3) {
+                console.log(`Proactive concurrency decrease: latency rapidly increasing (+${Math.round(latencyTrend * 100)}%)`);
+                this._adjustConcurrency('decrease');
+                this.networkMetrics.consecutiveSuccesses = 0;
+            }
         }
     }
 
@@ -819,6 +874,30 @@ class ChunkedUploader {
             this._adjustConcurrency('decrease');
             this.networkMetrics.consecutiveFailures = 0;
         }
+    }
+
+    /**
+     * Calculate latency trend (positive = getting slower, negative = getting faster)
+     * Uses linear regression on recent latencies to detect trends
+     * @returns {number} - Percentage change (-1.0 = improving 100%, +1.0 = degrading 100%)
+     */
+    _calculateLatencyTrend() {
+        const latencies = this.networkMetrics.recentLatencies;
+        if (latencies.length < 3) {
+            return 0; // Not enough data
+        }
+
+        // Simple linear regression to detect trend
+        // Compare average of first half vs second half
+        const midpoint = Math.floor(latencies.length / 2);
+        const firstHalf = latencies.slice(0, midpoint);
+        const secondHalf = latencies.slice(midpoint);
+
+        const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+        const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+
+        // Return percentage change (positive = getting worse, negative = getting better)
+        return (secondAvg - firstAvg) / firstAvg;
     }
 
     /**

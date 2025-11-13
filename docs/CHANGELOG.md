@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Configuration Assistant**: New admin dashboard tool for intelligent SafeShare optimization
+  - Interactive questionnaire analyzes deployment environment (network, storage, usage patterns)
+  - Real-time recommendation engine calculates optimal settings for 13 configuration parameters
+  - **CDN-Aware Calculations**: Detects Cloudflare/CDN usage and constrains timeouts to 80% of CDN limits
+  - **Encryption-Aware**: Adds 20% overhead to timeout calculations when ENCRYPTION_KEY is set
+  - Formula-driven chunk size optimization (5MB-30MB) based on upload speed and latency
+  - Intelligent timeout calculations: `READ_TIMEOUT = (ChunkSize / UploadSpeed) × 3x safety factor`
+  - Side-by-side comparison of current vs. recommended settings with impact analysis
+  - One-click application of immediate settings (no restart required)
+  - .env file generation for Docker deployments with copy-to-clipboard
+  - Categorized settings: Immediate (green), Restart Required (orange), Docker-only
+  - Additional recommendations for TCP tuning, reverse proxy optimization, and monitoring
+  - Calculates max safe chunk size: `UploadSpeed × CDNTimeout × 0.6` for CDN deployments
+  - Recommends DOWNLOAD_URL configuration to bypass CDN timeouts on large file downloads
+
+- **Infrastructure Planning Guide**: Comprehensive documentation for deployment planning
+  - Real-world timeout constraints across CDN, reverse proxy, and application layers
+  - Upload speed testing methodology and calculation formulas
+  - Configuration examples for common deployment scenarios (Cloudflare, self-hosted, LAN)
+  - Decision matrix for determining practical file size limits
+  - Helps operators set realistic expectations before deployment
+
+### Performance
+- **Adaptive Concurrency Algorithm**: Intelligent latency-aware concurrency management for chunked uploads
+  - **Dynamic Latency Threshold**: Threshold now adapts to actual server chunk size
+  - Formula: `(ChunkSize / 1.25MB/s) × 2x overhead` assumes 10 Mbps minimum connection
+  - 1MB chunks → 1.6s threshold, 5MB → 8.0s, 10MB → 16.0s, 50MB → 80.0s
+  - Replaces hardcoded 8000ms with server-configuration-aware calculation
+  - **Latency-Aware Decision Making**: Three guard mechanisms prevent premature concurrency increases
+    - Guard 1: Absolute threshold (blocks increase if avgLatency > threshold)
+    - Guard 2: Baseline comparison (blocks if degraded >50% from first upload)
+    - Guard 3: Trend detection (blocks if latency trending worse >15%)
+  - **Proactive Performance Management**: Decreases concurrency when latency spikes >30% (before failures occur)
+  - **Baseline Tracking**: First successful upload establishes performance baseline for comparisons
+  - **Trend Analysis**: Compares recent latency averages (first half vs second half) to detect degradation
+  - Console logging provides visibility: baseline establishment, guard blocks, concurrency adjustments
+  - Addresses critical flaw where algorithm only tracked success/failure counts and ignored latency data
+  - Algorithm now finds optimal concurrency for network conditions instead of scaling until failure
+
 ### Fixed
 - **HTTP/3 Protocol Detection**: Fixed chunked upload concurrency optimization for HTTP/2 and HTTP/3 connections
   - Bug: Protocol detection worked correctly, but concurrency was never increased due to incorrect conditional logic
