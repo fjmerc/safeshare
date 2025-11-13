@@ -209,11 +209,10 @@ class ChunkedUploader {
                 // Track upload latency for adaptive concurrency
                 const uploadStartTime = Date.now();
 
-                // Upload chunk with keep-alive for connection reuse
+                // Upload chunk (HTTP/2 handles connection reuse automatically)
                 const response = await fetch(`/api/upload/chunk/${this.uploadId}/${chunkNumber}`, {
                     method: 'POST',
-                    body: formData,
-                    keepalive: true  // Explicitly request connection reuse
+                    body: formData
                 });
 
                 if (!response.ok) {
@@ -226,8 +225,8 @@ class ChunkedUploader {
                 // Calculate upload latency
                 const uploadLatency = Date.now() - uploadStartTime;
 
-                // Verify checksum matches server
-                if (data.checksum && data.checksum !== clientChecksum) {
+                // Verify checksum matches server (only if client-side checksum was calculated)
+                if (clientChecksum && data.checksum && data.checksum !== clientChecksum) {
                     throw new Error(`Checksum mismatch for chunk ${chunkNumber}: client=${clientChecksum.substring(0, 8)}... server=${data.checksum.substring(0, 8)}...`);
                 }
 
@@ -748,6 +747,12 @@ class ChunkedUploader {
      * @returns {Promise<string>} - Hex-encoded SHA256 hash
      */
     async _calculateChecksum(blob) {
+        // Check if crypto.subtle is available (requires secure context: HTTPS or localhost)
+        if (!crypto || !crypto.subtle || !crypto.subtle.digest) {
+            console.warn('Web Crypto API not available (requires HTTPS or localhost). Skipping client-side checksum.');
+            return null; // Return null to indicate checksum unavailable
+        }
+
         const arrayBuffer = await blob.arrayBuffer();
         const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
