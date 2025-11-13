@@ -111,6 +111,7 @@
             <button class="tab-btn" data-tab="users">Users</button>
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
 
         <!-- Files Tab -->
@@ -457,6 +458,146 @@
                     </button>
                 </div>
             </div>
+            </div>
+        </div>
+
+        <!-- Configuration Assistant Tab -->
+        <div id="configAssistantTab" class="tab-content">
+            <div class="settings-section" style="max-width: 900px; margin: 0 auto;">
+                <h2>Configuration Assistant</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 24px;">
+                    This tool analyzes your environment and recommends optimal settings for SafeShare based on your network conditions, file sizes, and deployment scenario.
+                </p>
+
+                <!-- Questionnaire Form -->
+                <div id="questionnaireSection">
+                    <form id="configAssistantForm" class="settings-form">
+                        <div class="form-group">
+                            <label for="uploadSpeed">Average Upload Speed (Mbps)</label>
+                            <input type="number" id="uploadSpeed" name="upload_speed" min="0.1" step="0.1" required>
+                            <small>Enter your typical upload bandwidth in Mbps (e.g., 10, 50, 100)</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="downloadSpeed">Average Download Speed (Mbps)</label>
+                            <input type="number" id="downloadSpeed" name="download_speed" min="0.1" step="0.1" required>
+                            <small>Enter your typical download bandwidth in Mbps (e.g., 50, 100, 500)</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="networkLatency">Network Latency</label>
+                            <select id="networkLatency" name="network_latency" required>
+                                <option value="local">Local Network (< 10ms)</option>
+                                <option value="low">Low Latency (10-50ms)</option>
+                                <option value="medium">Medium Latency (50-100ms)</option>
+                                <option value="high">High Latency (> 100ms)</option>
+                            </select>
+                            <small>Select the typical round-trip time for your users</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="typicalFileSize">Typical File Sizes</label>
+                            <select id="typicalFileSize" name="typical_file_size" required>
+                                <option value="small">Small (< 100MB)</option>
+                                <option value="medium">Medium (100MB - 1GB)</option>
+                                <option value="large">Large (1GB - 5GB)</option>
+                                <option value="huge">Huge (> 5GB)</option>
+                            </select>
+                            <small>Select the most common file size range users will upload</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="deploymentType">Deployment Type</label>
+                            <select id="deploymentType" name="deployment_type" required>
+                                <option value="lan">Local Area Network (LAN)</option>
+                                <option value="wan">Wide Area Network (WAN)</option>
+                                <option value="internet">Public Internet</option>
+                            </select>
+                            <small>Where is SafeShare deployed?</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="userLoad">Expected User Load</label>
+                            <select id="userLoad" name="user_load" required>
+                                <option value="light">Light (1-10 users)</option>
+                                <option value="moderate">Moderate (10-50 users)</option>
+                                <option value="heavy">Heavy (50-200 users)</option>
+                                <option value="very_heavy">Very Heavy (> 200 users)</option>
+                            </select>
+                            <small>How many concurrent users do you expect?</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="storageCapacity">Available Storage Capacity (GB)</label>
+                            <input type="number" id="storageCapacity" name="storage_capacity" min="0" step="1" value="0">
+                            <small>Total storage available for file uploads (0 for unlimited)</small>
+                        </div>
+
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                </svg>
+                                Analyze & Get Recommendations
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Results Section (hidden initially) -->
+                <div id="recommendationsSection" style="display: none; margin-top: 32px;">
+                    <h3 style="margin-bottom: 16px; color: var(--text-primary);">Recommended Configuration</h3>
+
+                    <div class="alert-info" style="margin-bottom: 24px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span id="recommendationSummary">Based on your environment, here are the optimal settings.</span>
+                    </div>
+
+                    <!-- Comparison Table -->
+                    <div class="table-container" style="margin-bottom: 24px;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th style="text-align: left;">Setting</th>
+                                    <th>Current Value</th>
+                                    <th>Recommended Value</th>
+                                    <th>Impact</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recommendationsTableBody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Additional Recommendations -->
+                    <div id="additionalRecommendations" style="display: none; margin-bottom: 24px;">
+                        <h4 style="margin-bottom: 12px; color: var(--text-primary);">Additional Recommendations</h4>
+                        <div id="additionalRecommendationsContent" style="color: var(--text-secondary); font-size: 14px; line-height: 1.6;">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        <button id="applyRecommendationsBtn" class="btn-success">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            Apply Recommended Settings
+                        </button>
+                        <button id="backToQuestionnaireBtn" class="btn-secondary">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="19" y1="12" x2="5" y2="12"></line>
+                                <polyline points="12 19 5 12 12 5"></polyline>
+                            </svg>
+                            Back to Questionnaire
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

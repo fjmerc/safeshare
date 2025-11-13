@@ -1322,7 +1322,201 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = originalText;
         }
     });
+
+    // ============ Configuration Assistant Event Listeners ============
+
+    // Global variable to store recommendations
+    let currentRecommendations = null;
+
+    // Configuration Assistant form submission
+    document.getElementById('configAssistantForm')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const formData = new FormData(e.target);
+        const requestData = {
+            upload_speed: parseFloat(formData.get('upload_speed')),
+            download_speed: parseFloat(formData.get('download_speed')),
+            network_latency: formData.get('network_latency'),
+            typical_file_size: formData.get('typical_file_size'),
+            deployment_type: formData.get('deployment_type'),
+            user_load: formData.get('user_load'),
+            storage_capacity: parseInt(formData.get('storage_capacity')) || 0
+        };
+
+        try {
+            const response = await fetch('/admin/api/config-assistant/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(requestData)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to get recommendations');
+            }
+
+            // Store recommendations globally
+            currentRecommendations = data;
+
+            // Display recommendations
+            displayRecommendations(data);
+
+            // Show recommendations section, hide questionnaire
+            document.getElementById('questionnaireSection').style.display = 'none';
+            document.getElementById('recommendationsSection').style.display = 'block';
+
+        } catch (error) {
+            console.error('Configuration assistant error:', error);
+            showError(error.message || 'Failed to analyze configuration');
+        }
+    });
+
+    // Back to questionnaire button
+    document.getElementById('backToQuestionnaireBtn')?.addEventListener('click', () => {
+        document.getElementById('questionnaireSection').style.display = 'block';
+        document.getElementById('recommendationsSection').style.display = 'none';
+    });
+
+    // Apply recommendations button
+    document.getElementById('applyRecommendationsBtn')?.addEventListener('click', async () => {
+        if (!currentRecommendations) {
+            showError('No recommendations available');
+            return;
+        }
+
+        const confirmed = await confirm(
+            'This will update your SafeShare settings with the recommended values. Do you want to continue?'
+        );
+
+        if (!confirmed) return;
+
+        try {
+            // Apply recommendations via existing settings endpoints
+            const recommendations = currentRecommendations.recommendations;
+
+            // Prepare storage settings update
+            const storageFormData = new FormData();
+            storageFormData.append('quota_gb', recommendations.quota_limit_gb);
+            storageFormData.append('max_file_size_mb', recommendations.max_file_size / (1024 * 1024));
+            storageFormData.append('default_expiration_hours', recommendations.default_expiration_hours);
+            storageFormData.append('max_expiration_hours', recommendations.max_expiration_hours);
+
+            // Update storage settings
+            await updateStorageSettings(storageFormData);
+
+            // Prepare security settings update
+            const securityFormData = new FormData();
+            securityFormData.append('rate_limit_upload', recommendations.rate_limit_upload);
+            securityFormData.append('rate_limit_download', recommendations.rate_limit_download);
+            securityFormData.append('blocked_extensions', recommendations.blocked_extensions.join(','));
+
+            // Update security settings
+            await updateSecuritySettings(securityFormData);
+
+            showSuccess('Recommended settings applied successfully!');
+
+            // Reload config values to reflect changes
+            await loadConfigValues();
+
+            // Go back to questionnaire for next analysis
+            document.getElementById('questionnaireSection').style.display = 'block';
+            document.getElementById('recommendationsSection').style.display = 'none';
+
+        } catch (error) {
+            console.error('Failed to apply recommendations:', error);
+            showError('Failed to apply some recommendations. Please check the logs.');
+        }
+    });
 });
+
+// ============ Configuration Assistant Helper Functions ============
+
+function displayRecommendations(data) {
+    const { recommendations, current_config, analysis } = data;
+
+    // Update summary text
+    document.getElementById('recommendationSummary').textContent = analysis.summary;
+
+    // Build comparison table
+    const tbody = document.getElementById('recommendationsTableBody');
+    tbody.innerHTML = '';
+
+    const comparisons = [
+        {
+            setting: 'Max File Size',
+            current: formatBytes(current_config.max_file_size),
+            recommended: formatBytes(recommendations.max_file_size),
+            impact: analysis.impacts.max_file_size || 'Optimized for your file sizes',
+            changed: current_config.max_file_size !== recommendations.max_file_size
+        },
+        {
+            setting: 'Storage Quota',
+            current: current_config.quota_limit_gb === 0 ? 'Unlimited' : current_config.quota_limit_gb + ' GB',
+            recommended: recommendations.quota_limit_gb === 0 ? 'Unlimited' : recommendations.quota_limit_gb + ' GB',
+            impact: analysis.impacts.quota_limit_gb || 'Based on available storage',
+            changed: current_config.quota_limit_gb !== recommendations.quota_limit_gb
+        },
+        {
+            setting: 'Default Expiration',
+            current: current_config.default_expiration_hours + ' hours',
+            recommended: recommendations.default_expiration_hours + ' hours',
+            impact: analysis.impacts.default_expiration_hours || 'Standard retention period',
+            changed: current_config.default_expiration_hours !== recommendations.default_expiration_hours
+        },
+        {
+            setting: 'Max Expiration',
+            current: current_config.max_expiration_hours + ' hours',
+            recommended: recommendations.max_expiration_hours + ' hours',
+            impact: analysis.impacts.max_expiration_hours || 'Maximum retention limit',
+            changed: current_config.max_expiration_hours !== recommendations.max_expiration_hours
+        },
+        {
+            setting: 'Upload Rate Limit',
+            current: current_config.rate_limit_upload + ' per hour',
+            recommended: recommendations.rate_limit_upload + ' per hour',
+            impact: analysis.impacts.rate_limit_upload || 'Balanced for your user load',
+            changed: current_config.rate_limit_upload !== recommendations.rate_limit_upload
+        },
+        {
+            setting: 'Download Rate Limit',
+            current: current_config.rate_limit_download + ' per hour',
+            recommended: recommendations.rate_limit_download + ' per hour',
+            impact: analysis.impacts.rate_limit_download || 'Optimized for download traffic',
+            changed: current_config.rate_limit_download !== recommendations.rate_limit_download
+        }
+    ];
+
+    comparisons.forEach(item => {
+        const row = document.createElement('tr');
+        if (item.changed) {
+            row.style.backgroundColor = 'var(--warning-light)';
+        }
+        row.innerHTML = `
+            <td style="text-align: left; font-weight: 600;">${escapeHtml(item.setting)}</td>
+            <td style="text-align: center;">${escapeHtml(item.current)}</td>
+            <td style="text-align: center; font-weight: 600; color: var(--primary-color);">${escapeHtml(item.recommended)}</td>
+            <td style="text-align: left; font-size: 13px;">${escapeHtml(item.impact)}</td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    // Show additional recommendations if available
+    if (analysis.additional_recommendations && analysis.additional_recommendations.length > 0) {
+        document.getElementById('additionalRecommendations').style.display = 'block';
+        const content = document.getElementById('additionalRecommendationsContent');
+        content.innerHTML = '<ul style="list-style: disc; margin-left: 20px;">' +
+            analysis.additional_recommendations.map(rec =>
+                `<li style="margin-bottom: 8px;">${escapeHtml(rec)}</li>`
+            ).join('') +
+            '</ul>';
+    } else {
+        document.getElementById('additionalRecommendations').style.display = 'none';
+    }
+}
 
 // ============ User Management Functions ============
 
