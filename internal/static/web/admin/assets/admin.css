@@ -1025,9 +1025,11 @@ button:disabled {
     white-space: nowrap;
 }
 
-/* Center all columns except Claim Code and Filename */
+/* Center all column headers and most data cells (Claim Code and Filename data cells remain left-aligned) */
 #filesTab .data-table th:nth-child(1),
 #filesTab .data-table td:nth-child(1),
+#filesTab .data-table th:nth-child(2),
+#filesTab .data-table th:nth-child(3),
 #filesTab .data-table th:nth-child(4),
 #filesTab .data-table td:nth-child(4),
 #filesTab .data-table th:nth-child(5),
@@ -1188,6 +1190,7 @@ input[type="checkbox"] {
     padding: 10px 16px;
     border: 2px solid var(--border-color);
     background: var(--bg-white);
+    color: var(--text-primary);
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 14px;
@@ -1212,6 +1215,25 @@ input[type="checkbox"] {
     color: white;
     border-color: var(--primary-color);
     box-shadow: var(--shadow-sm);
+}
+
+/* Dark mode pagination fixes */
+[data-theme="dark"] .pagination button {
+    color: var(--text-primary);
+    background: #1f2937;
+    border-color: #4b5563;
+}
+
+[data-theme="dark"] .pagination button:hover:not(:disabled) {
+    background: #1e3a5f;
+    border-color: #3b82f6;
+    color: #60a5fa;
+}
+
+[data-theme="dark"] .pagination .active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
 }
 
 /* Settings */

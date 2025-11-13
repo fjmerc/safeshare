@@ -12,7 +12,7 @@ type File struct {
 	MimeType         string
 	CreatedAt        time.Time
 	ExpiresAt        time.Time
-	MaxDownloads     *int    // nullable - nil means unlimited
+	MaxDownloads     *int // nullable - nil means unlimited
 	DownloadCount    int
 	UploaderIP       string
 	PasswordHash     string  // bcrypt hash - empty string means no password
@@ -32,8 +32,10 @@ type UploadResponse struct {
 
 // ErrorResponse is the JSON error response
 type ErrorResponse struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
+	Error            string `json:"error"`
+	Code             string `json:"code"`
+	RetryRecommended *bool  `json:"retry_recommended,omitempty"` // Whether client should retry
+	RetryAfter       *int   `json:"retry_after,omitempty"`       // Seconds to wait before retry
 }
 
 // HealthResponse is the JSON response for the health check endpoint
@@ -46,17 +48,17 @@ type HealthResponse struct {
 	DiskFreeBytes      uint64           `json:"disk_free_bytes,omitempty"`
 	DiskUsedPercent    float64          `json:"disk_used_percent,omitempty"`
 	DiskAvailableBytes uint64           `json:"disk_available_bytes,omitempty"`
-	QuotaLimitBytes    int64            `json:"quota_limit_bytes,omitempty"`    // 0 = unlimited
-	QuotaUsedPercent   float64          `json:"quota_used_percent,omitempty"`   // Only present when quota is set
-	DatabaseMetrics    *DatabaseMetrics `json:"database_metrics,omitempty"`     // Database performance metrics
+	QuotaLimitBytes    int64            `json:"quota_limit_bytes,omitempty"`  // 0 = unlimited
+	QuotaUsedPercent   float64          `json:"quota_used_percent,omitempty"` // Only present when quota is set
+	DatabaseMetrics    *DatabaseMetrics `json:"database_metrics,omitempty"`   // Database performance metrics
 }
 
 // DatabaseMetrics contains database performance and health information
 type DatabaseMetrics struct {
-	SizeBytes    int64  `json:"size_bytes"`              // Total database file size
-	SizeMB       float64 `json:"size_mb"`                // Size in megabytes
-	WALSizeBytes int64  `json:"wal_size_bytes,omitempty"` // Write-Ahead Log size
-	PageCount    int64  `json:"page_count"`              // Total number of pages
-	PageSize     int64  `json:"page_size"`               // Size of each page in bytes
-	IndexCount   int    `json:"index_count"`             // Total number of indexes
+	SizeBytes    int64   `json:"size_bytes"`               // Total database file size
+	SizeMB       float64 `json:"size_mb"`                  // Size in megabytes
+	WALSizeBytes int64   `json:"wal_size_bytes,omitempty"` // Write-Ahead Log size
+	PageCount    int64   `json:"page_count"`               // Total number of pages
+	PageSize     int64   `json:"page_size"`                // Size of each page in bytes
+	IndexCount   int     `json:"index_count"`              // Total number of indexes
 }

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2025-11-13
+
+### Added
+- **Resumable Download Support**: Client-side download resume capability with progress tracking
+  - ResumableDownloader JavaScript class with HTTP Range request support
+  - Progress bar with download speed and ETA (estimated time remaining)
+  - Pause/Resume controls during active downloads
+  - localStorage persistence allows resume after browser refresh, crashes, or network interruptions
+  - Automatic resume prompt when interrupted download detected (7-day expiration)
+  - "Start Fresh" option to ignore saved progress and restart download
+  - Efficient streaming with minimal memory usage
+  - Works seamlessly with encrypted files (leverages existing HTTP Range support)
+  - Event-based architecture for UI updates
+
+### Fixed
+- **SFSE1 Encryption Chunk Splitting**: Fixed critical bug causing all encrypted file downloads to fail with authentication errors
+  - Root cause: `io.Read()` allows partial reads, causing `io.MultiReader` (used for MIME detection) to split data across artificial chunk boundaries
+  - Impact: Files had extra 28-31 byte chunks, decryption failed with "cipher: message authentication failed"
+  - Solution: Replaced `io.Read()` with `io.ReadFull()` to ensure complete chunks without splitting
+  - Applied to both `EncryptFileStreaming()` and `EncryptFileStreamingFromReader()` functions
+  - Added comprehensive test suite (`encryption_test.go`) with MultiReader scenario coverage
+  - All newly uploaded files will now encrypt and decrypt successfully
+
+### Performance
+- **Streaming Upload Encryption**: Refactored file upload handler to use streaming encryption instead of loading entire file into memory
+  - Reduces memory usage from ~100MB to ~10MB for maximum file size uploads
+  - Implements atomic write pattern (temp file + rename) to prevent partial file corruption on crashes
+  - Maintains accurate MIME type detection by buffering only first 512 bytes
+  - Uses new `EncryptFileStreamingFromReader()` function with SFSE1 format (backward compatible)
+  - Improved reliability: failed uploads are automatically cleaned up via defer pattern
+  - No changes required for unencrypted uploads (uses `io.Copy` for direct streaming)
+  - Compatible with existing decryption code (same SFSE1 chunked format)
+
 ## [2.5.1] - 2025-11-11
 
 ### Changed
@@ -578,7 +611,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/fjmerc/safeshare/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
