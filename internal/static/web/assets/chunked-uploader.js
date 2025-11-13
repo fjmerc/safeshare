@@ -102,21 +102,22 @@ class ChunkedUploader {
     }
 
     /**
-     * Detect HTTP/2 support and adjust concurrency
-     * HTTP/2 allows higher concurrency without connection limits
+     * Detect HTTP/2 or HTTP/3 support and adjust concurrency
+     * HTTP/2 and HTTP/3 allow higher concurrency without connection limits
      */
     _detectHTTP2Support() {
-        // Check Performance API for HTTP/2
+        // Check Performance API for HTTP/2 or HTTP/3
         if (window.performance && window.performance.getEntriesByType) {
             const navEntry = performance.getEntriesByType('navigation')[0];
             if (navEntry && navEntry.nextHopProtocol) {
                 const protocol = navEntry.nextHopProtocol;
-                if (protocol === 'h2' || protocol === 'h2c') {
-                    // HTTP/2 detected - can safely use higher concurrency
-                    if (!this.options.concurrency || this.options.concurrency === 6) {
+                // HTTP/2 (h2, h2c) or HTTP/3 (h3, h3-29, h3-*) support multiplexing
+                if (protocol === 'h2' || protocol === 'h2c' || protocol === 'h3' || protocol.startsWith('h3-')) {
+                    // HTTP/2 or HTTP/3 detected - can safely use higher concurrency
+                    if (this.options.concurrency <= 10) {
                         this.options.concurrency = 12;
                     }
-                    console.log('HTTP/2 detected, using concurrency:', this.options.concurrency);
+                    console.log(`${protocol.toUpperCase()} detected, using concurrency:`, this.options.concurrency);
                 } else {
                     // HTTP/1.1 - use conservative concurrency
                     if (this.options.concurrency > 6) {
