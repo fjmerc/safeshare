@@ -300,6 +300,10 @@ func main() {
 			adminAuth(http.HandlerFunc(handlers.AdminGetConfigHandler(cfg))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/config-assistant/analyze", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminConfigAssistantHandler(cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin user management routes
 		mux.HandleFunc("/admin/api/users/create", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(db)))).ServeHTTP(w, r)
