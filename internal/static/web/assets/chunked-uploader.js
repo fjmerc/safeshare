@@ -32,7 +32,7 @@ class ChunkedUploader {
             expiresInHours: options.expiresInHours || 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
-            concurrency: options.concurrency || 6, // Number of parallel chunk uploads (restored to 6 after removing DB writes during upload)
+            concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
             retryAttempts: options.retryAttempts || 3,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
         };
@@ -54,6 +54,28 @@ class ChunkedUploader {
 
         // Storage key for resume capability
         this.storageKey = null;
+
+        // Network metrics for adaptive concurrency
+        this.networkMetrics = {
+            consecutiveSuccesses: 0,
+            consecutiveFailures: 0,
+            recentLatencies: [],      // Keep last 10 latencies
+            avgLatency: 0,
+            minConcurrency: 2,
+            maxConcurrency: 20,
+            adjustmentThreshold: 5    // Adjust after 5 consecutive successes/failures
+        };
+
+        // Progress throttling for better UI performance
+        this.progressThrottle = {
+            lastEmit: 0,
+            minInterval: 250,         // Minimum 250ms between progress events
+            chunksSinceLastEmit: 0,
+            chunkThreshold: 5         // Or emit every 5 chunks, whichever comes first
+        };
+
+        // Detect if HTTP/2 is available for optimal concurrency
+        this._detectHTTP2Support();
     }
 
     /**
@@ -80,6 +102,33 @@ class ChunkedUploader {
     }
 
     /**
+     * Detect HTTP/2 support and adjust concurrency
+     * HTTP/2 allows higher concurrency without connection limits
+     */
+    _detectHTTP2Support() {
+        // Check Performance API for HTTP/2
+        if (window.performance && window.performance.getEntriesByType) {
+            const navEntry = performance.getEntriesByType('navigation')[0];
+            if (navEntry && navEntry.nextHopProtocol) {
+                const protocol = navEntry.nextHopProtocol;
+                if (protocol === 'h2' || protocol === 'h2c') {
+                    // HTTP/2 detected - can safely use higher concurrency
+                    if (!this.options.concurrency || this.options.concurrency === 6) {
+                        this.options.concurrency = 12;
+                    }
+                    console.log('HTTP/2 detected, using concurrency:', this.options.concurrency);
+                } else {
+                    // HTTP/1.1 - use conservative concurrency
+                    if (this.options.concurrency > 6) {
+                        this.options.concurrency = 6;
+                        console.log('HTTP/1.1 detected, limiting concurrency to 6');
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Initialize chunked upload session
      * @returns {Promise<void>}
      */
@@ -101,8 +150,8 @@ class ChunkedUploader {
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to initialize upload');
+                const error = await this.parseErrorResponse(response);
+                throw error;
             }
 
             const data = await response.json();
@@ -150,22 +199,39 @@ class ChunkedUploader {
                 const end = Math.min(start + this.chunkSize, this.file.size);
                 const chunkBlob = this.file.slice(start, end);
 
+                // Calculate client-side SHA256 checksum
+                const clientChecksum = await this._calculateChecksum(chunkBlob);
+
                 // Create form data
                 const formData = new FormData();
                 formData.append('chunk', chunkBlob, `chunk_${chunkNumber}`);
 
-                // Upload chunk
+                // Track upload latency for adaptive concurrency
+                const uploadStartTime = Date.now();
+
+                // Upload chunk (HTTP/2 handles connection reuse automatically)
                 const response = await fetch(`/api/upload/chunk/${this.uploadId}/${chunkNumber}`, {
                     method: 'POST',
                     body: formData
                 });
 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Chunk upload failed');
+                    const error = await this.parseErrorResponse(response);
+                    throw error;
                 }
 
                 const data = await response.json();
+
+                // Calculate upload latency
+                const uploadLatency = Date.now() - uploadStartTime;
+
+                // Verify checksum matches server (only if client-side checksum was calculated)
+                if (clientChecksum && data.checksum && data.checksum !== clientChecksum) {
+                    throw new Error(`Checksum mismatch for chunk ${chunkNumber}: client=${clientChecksum.substring(0, 8)}... server=${data.checksum.substring(0, 8)}...`);
+                }
+
+                // Track success for adaptive concurrency
+                this._trackUploadSuccess(uploadLatency);
 
                 // Mark chunk as uploaded
                 this.uploadedChunks.add(chunkNumber);
@@ -180,7 +246,8 @@ class ChunkedUploader {
                 this.emit('chunk_uploaded', {
                     chunkNumber,
                     chunksUploaded: this.uploadedChunks.size,
-                    totalChunks: this.totalChunks
+                    totalChunks: this.totalChunks,
+                    checksum: data.checksum
                 });
 
                 return; // Success
@@ -188,19 +255,40 @@ class ChunkedUploader {
             } catch (error) {
                 attempt++;
 
+                // Track failure for adaptive concurrency (before retrying)
+                if (attempt === 1) {  // Only track on first failure to avoid double-counting
+                    this._trackUploadFailure();
+                }
+
+                // Check if retry is recommended by server
+                if (error.retryRecommended === false) {
+                    this.emit('error', {
+                        stage: 'chunk_upload',
+                        chunkNumber,
+                        error: error.message,
+                        code: error.code,
+                        retryRecommended: false
+                    });
+                    throw new Error(`Chunk ${chunkNumber} upload failed (non-retryable error: ${error.code}): ${error.message}`);
+                }
+
                 if (attempt >= maxAttempts) {
                     this.emit('error', {
                         stage: 'chunk_upload',
                         chunkNumber,
                         error: error.message,
+                        code: error.code,
                         attempts: attempt
                     });
                     throw new Error(`Failed to upload chunk ${chunkNumber} after ${maxAttempts} attempts: ${error.message}`);
                 }
 
-                // Exponential backoff
-                const delay = this.options.retryDelay * Math.pow(2, attempt - 1);
-                console.warn(`Chunk ${chunkNumber} upload failed (attempt ${attempt}/${maxAttempts}), retrying in ${delay}ms...`);
+                // Use server-provided retry_after if available, otherwise exponential backoff
+                const delay = error.retryAfter
+                    ? error.retryAfter * 1000  // Convert seconds to milliseconds
+                    : this.options.retryDelay * Math.pow(2, attempt - 1);
+
+                console.warn(`Chunk ${chunkNumber} upload failed (attempt ${attempt}/${maxAttempts}, code: ${error.code || 'UNKNOWN'}), retrying in ${delay}ms...`);
                 await this.sleep(delay);
             }
         }
@@ -356,11 +444,15 @@ class ChunkedUploader {
      */
     async pollStatus(pollInterval = 2000, maxAttempts = 150) {
         let attempts = 0;
+        const startTime = Date.now();
 
         while (attempts < maxAttempts) {
             try {
                 // Get current status
                 const status = await this.getStatus();
+
+                // Calculate elapsed time
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
 
                 // Emit progress event for UI updates
                 this.emit('assembling_progress', {
@@ -368,7 +460,9 @@ class ChunkedUploader {
                     uploadId: this.uploadId,
                     filename: status.filename,
                     attempts: attempts + 1,
-                    maxAttempts: maxAttempts
+                    maxAttempts: maxAttempts,
+                    elapsedSeconds: elapsed,
+                    message: `Processing file... (${elapsed}s elapsed)`
                 });
 
                 // Check status field
@@ -485,11 +579,25 @@ class ChunkedUploader {
     }
 
     /**
-     * Emit progress event with calculated metrics
+     * Emit progress event with calculated metrics (throttled for performance)
      */
     emitProgress() {
+        const now = Date.now();
+        this.progressThrottle.chunksSinceLastEmit++;
+
+        // Throttle: emit only if enough time passed OR enough chunks uploaded
+        const timeSinceLastEmit = now - this.progressThrottle.lastEmit;
+        const shouldEmit =
+            timeSinceLastEmit >= this.progressThrottle.minInterval ||
+            this.progressThrottle.chunksSinceLastEmit >= this.progressThrottle.chunkThreshold ||
+            this.uploadedChunks.size === this.totalChunks;  // Always emit at 100%
+
+        if (!shouldEmit) {
+            return;
+        }
+
         const percentage = (this.uploadedChunks.size / this.totalChunks) * 100;
-        const elapsed = Date.now() - this.startTime;
+        const elapsed = now - this.startTime;
         const bytesPerMs = this.uploadedBytes / elapsed;
         const remainingBytes = this.file.size - this.uploadedBytes;
         const estimatedTimeRemaining = remainingBytes / bytesPerMs;
@@ -501,8 +609,14 @@ class ChunkedUploader {
             totalBytes: this.file.size,
             percentage: Math.round(percentage * 100) / 100,
             estimatedTimeRemaining: Math.round(estimatedTimeRemaining / 1000), // in seconds
-            speed: bytesPerMs * 1000 // bytes per second
+            speed: bytesPerMs * 1000, // bytes per second
+            currentConcurrency: this.options.concurrency,  // Show current concurrency
+            avgLatency: Math.round(this.networkMetrics.avgLatency) || 0  // Show network quality
         });
+
+        // Reset throttle counters
+        this.progressThrottle.lastEmit = now;
+        this.progressThrottle.chunksSinceLastEmit = 0;
     }
 
     /**
@@ -625,6 +739,138 @@ class ChunkedUploader {
         }
 
         return uploads;
+    }
+
+    /**
+     * Calculate SHA256 checksum of a Blob using Web Crypto API
+     * @param {Blob} blob - The blob to hash
+     * @returns {Promise<string>} - Hex-encoded SHA256 hash
+     */
+    async _calculateChecksum(blob) {
+        // Check if crypto.subtle is available (requires secure context: HTTPS or localhost)
+        if (!crypto || !crypto.subtle || !crypto.subtle.digest) {
+            console.warn('Web Crypto API not available (requires HTTPS or localhost). Skipping client-side checksum.');
+            return null; // Return null to indicate checksum unavailable
+        }
+
+        const arrayBuffer = await blob.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
+    }
+
+    /**
+     * Calculate SHA256 hash of entire file for end-to-end verification
+     * For large files, this uses chunked reading to avoid memory issues
+     * @returns {Promise<string>} - Hex-encoded SHA256 hash
+     */
+
+    /**
+     * Custom error class that includes retry recommendations
+     */
+    createRetryableError(message, code, retryRecommended, retryAfter) {
+        const error = new Error(message);
+        error.code = code;
+        error.retryRecommended = retryRecommended;
+        error.retryAfter = retryAfter;
+        return error;
+    }
+
+    /**
+     * Parse error response and extract retry information
+     */
+
+    /**
+     * Track successful chunk upload and adjust concurrency
+     */
+    _trackUploadSuccess(latency) {
+        this.networkMetrics.consecutiveSuccesses++;
+        this.networkMetrics.consecutiveFailures = 0;
+
+        // Track latency (keep last 10)
+        this.networkMetrics.recentLatencies.push(latency);
+        if (this.networkMetrics.recentLatencies.length > 10) {
+            this.networkMetrics.recentLatencies.shift();
+        }
+
+        // Calculate average latency
+        this.networkMetrics.avgLatency =
+            this.networkMetrics.recentLatencies.reduce((a, b) => a + b, 0) /
+            this.networkMetrics.recentLatencies.length;
+
+        // Increase concurrency after N consecutive successes
+        if (this.networkMetrics.consecutiveSuccesses >= this.networkMetrics.adjustmentThreshold) {
+            this._adjustConcurrency('increase');
+            this.networkMetrics.consecutiveSuccesses = 0;
+        }
+    }
+
+    /**
+     * Track failed chunk upload and adjust concurrency
+     */
+    _trackUploadFailure() {
+        this.networkMetrics.consecutiveFailures++;
+        this.networkMetrics.consecutiveSuccesses = 0;
+
+        // Decrease concurrency after N consecutive failures
+        if (this.networkMetrics.consecutiveFailures >= this.networkMetrics.adjustmentThreshold) {
+            this._adjustConcurrency('decrease');
+            this.networkMetrics.consecutiveFailures = 0;
+        }
+    }
+
+    /**
+     * Adjust upload concurrency based on network performance
+     */
+    _adjustConcurrency(direction) {
+        const oldConcurrency = this.options.concurrency;
+
+        if (direction === 'increase') {
+            // Good network - increase concurrency by 20%
+            this.options.concurrency = Math.min(
+                Math.ceil(this.options.concurrency * 1.2),
+                this.networkMetrics.maxConcurrency
+            );
+        } else if (direction === 'decrease') {
+            // Poor network - decrease concurrency by 30%
+            this.options.concurrency = Math.max(
+                Math.floor(this.options.concurrency * 0.7),
+                this.networkMetrics.minConcurrency
+            );
+        }
+
+        if (oldConcurrency !== this.options.concurrency) {
+            console.log(`Adaptive concurrency: ${oldConcurrency} → ${this.options.concurrency} (${direction}, avg latency: ${Math.round(this.networkMetrics.avgLatency)}ms)`);
+
+            this.emit('concurrency_adjusted', {
+                oldConcurrency,
+                newConcurrency: this.options.concurrency,
+                direction,
+                avgLatency: Math.round(this.networkMetrics.avgLatency),
+                consecutiveSuccesses: this.networkMetrics.consecutiveSuccesses,
+                consecutiveFailures: this.networkMetrics.consecutiveFailures
+            });
+        }
+    }
+    async parseErrorResponse(response) {
+        try {
+            const error = await response.json();
+            return this.createRetryableError(
+                error.error || 'Unknown error',
+                error.code || 'UNKNOWN',
+                error.retry_recommended !== undefined ? error.retry_recommended : true,
+                error.retry_after || 5
+            );
+        } catch {
+            // If JSON parsing fails, return generic error
+            return this.createRetryableError(
+                'Request failed',
+                'NETWORK_ERROR',
+                true,
+                5
+            );
+        }
     }
 
     /**

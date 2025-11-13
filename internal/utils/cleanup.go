@@ -99,13 +99,20 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 		return nil, err
 	}
 
-	// Calculate bytes that will be reclaimed
-	for _, upload := range abandoned {
-		result.BytesReclaimed += upload.ReceivedBytes
-	}
-
 	// Phase 1: Clean up abandoned (incomplete) uploads tracked in database
 	for _, upload := range abandoned {
+		// Calculate actual bytes from chunks on disk (ReceivedBytes in DB is not updated during upload for performance)
+		chunkSize, err := GetUploadChunksSize(uploadDir, upload.UploadID)
+		if err != nil {
+			slog.Warn("failed to calculate chunk directory size",
+				"upload_id", upload.UploadID,
+				"error", err,
+			)
+			// Continue with cleanup even if we can't calculate size
+		} else {
+			result.BytesReclaimed += chunkSize
+		}
+
 		// Delete chunks from filesystem
 		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
 			slog.Error("failed to delete chunks",

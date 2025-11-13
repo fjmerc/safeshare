@@ -1,21 +1,24 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/google/uuid"
 )
 
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
@@ -63,7 +66,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"extension", blockedExt,
 				"client_ip", clientIP,
 			)
-			sendError(w,
+			sendSmartError(w,
 				fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
 				"BLOCKED_EXTENSION",
 				http.StatusBadRequest,
@@ -79,7 +82,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Check against MAX_FILE_SIZE
 		if req.TotalSize > cfg.GetMaxFileSize() {
-			sendError(w,
+			sendSmartError(w,
 				fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.GetMaxFileSize()),
 				"FILE_TOO_LARGE",
 				http.StatusRequestEntityTooLarge,
@@ -87,16 +90,25 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Calculate total chunks using server-configured chunk size
-		// (client's chunk_size in request is ignored)
-		totalChunks := int(req.TotalSize / cfg.ChunkSize)
-		if req.TotalSize%cfg.ChunkSize != 0 {
+		// Calculate optimal chunk size based on file size
+		// Falls back to configured chunk size if dynamic sizing is disabled
+		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
+
+		// Calculate total chunks using optimal chunk size
+		totalChunks := int(req.TotalSize / chunkSize)
+		if req.TotalSize%chunkSize != 0 {
 			totalChunks++
 		}
 
+		slog.Debug("calculated chunk parameters",
+			"file_size", req.TotalSize,
+			"chunk_size", chunkSize,
+			"total_chunks", totalChunks,
+		)
+
 		// Validate total chunks (prevent DoS with too many small chunks)
 		if totalChunks > 10000 {
-			sendError(w,
+			sendSmartError(w,
 				"File requires too many chunks (maximum 10,000). Try increasing chunk size.",
 				"TOO_MANY_CHUNKS",
 				http.StatusBadRequest,
@@ -110,7 +122,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		if req.ExpiresInHours > cfg.GetMaxExpirationHours() {
-			sendError(w,
+			sendSmartError(w,
 				fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours)", cfg.GetMaxExpirationHours()),
 				"EXPIRATION_TOO_LONG",
 				http.StatusBadRequest,
@@ -129,7 +141,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, req.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 		if !hasSpace {
@@ -138,7 +150,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"client_ip", getClientIP(r),
 				"reason", errMsg,
 			)
-			sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 			return
 		}
 
@@ -148,7 +160,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			currentUsage, err := database.GetTotalUsage(db)
 			if err != nil {
 				slog.Error("failed to get storage usage", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 
@@ -162,7 +174,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					"quota_limit_gb", cfg.GetQuotaLimitGB(),
 					"client_ip", getClientIP(r),
 				)
-				sendError(w,
+				sendSmartError(w,
 					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
 					"QUOTA_EXCEEDED",
 					http.StatusInsufficientStorage,
@@ -177,7 +189,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			hash, err := utils.HashPassword(req.Password)
 			if err != nil {
 				slog.Error("failed to hash password", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
 			passwordHash = hash
@@ -198,7 +210,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			UserID:         userID,
 			Filename:       req.Filename,
 			TotalSize:      req.TotalSize,
-			ChunkSize:      cfg.ChunkSize,
+			ChunkSize:      chunkSize, // Use calculated chunk size, not config default
 			TotalChunks:    totalChunks,
 			ChunksReceived: 0,
 			ReceivedBytes:  0,
@@ -213,7 +225,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		if err := database.CreatePartialUpload(db, partialUpload); err != nil {
 			slog.Error("failed to create partial upload", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -223,7 +235,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Send response
 		response := models.UploadInitResponse{
 			UploadID:    uploadID,
-			ChunkSize:   cfg.ChunkSize,
+			ChunkSize:   chunkSize, // Return actual chunk size to client
 			TotalChunks: totalChunks,
 			ExpiresAt:   expiresAt,
 		}
@@ -288,7 +300,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		partialUpload, err := database.GetPartialUpload(db, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -312,7 +324,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Validate chunk_number is within range
 		if chunkNumber >= partialUpload.TotalChunks {
-			sendError(w,
+			sendSmartError(w,
 				fmt.Sprintf("Chunk number %d exceeds total chunks %d", chunkNumber, partialUpload.TotalChunks),
 				"CHUNK_NUMBER_OUT_OF_RANGE",
 				http.StatusBadRequest,
@@ -324,7 +336,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		exists, existingSize, err := utils.ChunkExists(cfg.UploadDir, uploadID, chunkNumber)
 		if err != nil {
 			slog.Error("failed to check chunk existence", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -348,9 +360,13 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		chunkData, err := io.ReadAll(chunkFile)
 		if err != nil {
 			slog.Error("failed to read chunk data", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
+
+		// Calculate SHA256 checksum of chunk
+		hash := sha256.Sum256(chunkData)
+		checksum := hex.EncodeToString(hash[:])
 
 		chunkSize := int64(len(chunkData))
 
@@ -361,7 +377,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if !isLastChunk {
 			// Not the last chunk - must match expected size exactly
 			if chunkSize != expectedChunkSize {
-				sendError(w,
+				sendSmartError(w,
 					fmt.Sprintf("Chunk size mismatch: expected %d, got %d", expectedChunkSize, chunkSize),
 					"CHUNK_SIZE_MISMATCH",
 					http.StatusBadRequest,
@@ -372,7 +388,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// Last chunk - calculate expected size
 			lastChunkSize := partialUpload.TotalSize - (int64(partialUpload.TotalChunks-1) * expectedChunkSize)
 			if chunkSize != lastChunkSize {
-				sendError(w,
+				sendSmartError(w,
 					fmt.Sprintf("Last chunk size mismatch: expected %d, got %d", lastChunkSize, chunkSize),
 					"CHUNK_SIZE_MISMATCH",
 					http.StatusBadRequest,
@@ -384,11 +400,20 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// If chunk exists, verify it matches (idempotency check)
 		if exists {
 			if existingSize == chunkSize {
+				// Read existing chunk to calculate checksum
+				existingData, err := os.ReadFile(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
+				var existingChecksum string
+				if err == nil {
+					hash := sha256.Sum256(existingData)
+					existingChecksum = hex.EncodeToString(hash[:])
+				}
+
 				// Chunk already exists with same size - treat as success (idempotent)
 				slog.Debug("chunk already exists (idempotent)",
 					"upload_id", uploadID,
 					"chunk_number", chunkNumber,
 					"size", chunkSize,
+					"checksum", existingChecksum,
 				)
 
 				// Update activity time
@@ -406,6 +431,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					ChunksReceived: chunksReceived,
 					TotalChunks:    partialUpload.TotalChunks,
 					Complete:       chunksReceived == partialUpload.TotalChunks,
+					Checksum:       existingChecksum,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
@@ -414,7 +440,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				return
 			} else {
 				// Chunk exists but with different size - corruption
-				sendError(w,
+				sendSmartError(w,
 					fmt.Sprintf("Chunk %d already exists with different size (expected %d, got %d). Possible corruption.",
 						chunkNumber, existingSize, chunkSize),
 					"CHUNK_CORRUPTION",
@@ -430,7 +456,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 		if !hasSpace {
@@ -440,14 +466,14 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"chunk_size", chunkSize,
 				"reason", errMsg,
 			)
-			sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 			return
 		}
 
 		// Save chunk to disk
 		if err := utils.SaveChunk(cfg.UploadDir, uploadID, chunkNumber, chunkData); err != nil {
 			slog.Error("failed to save chunk", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -456,23 +482,16 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Instead, chunk count is calculated on-demand from disk when status is requested.
 		// This eliminates all database writes during upload, allowing higher concurrency.
 
-		// Get updated partial upload data (no longer need to refresh counts from DB)
-		partialUpload, err = database.GetPartialUpload(db, uploadID)
-		if err != nil {
-			slog.Error("failed to refresh partial upload", "error", err)
-			// Don't fail - use old data
-		}
-
-		// Send response
-	// Count actual chunks from disk instead of relying on DB counter
-	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		// Count actual chunks from disk instead of relying on DB counter
+		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
 
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,
 			ChunkNumber:    chunkNumber,
 			ChunksReceived: chunksReceived,
 			TotalChunks:    partialUpload.TotalChunks,
-			Complete:       partialUpload.ChunksReceived >= partialUpload.TotalChunks,
+			Complete:       chunksReceived >= partialUpload.TotalChunks,
+			Checksum:       checksum,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -518,7 +537,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		partialUpload, err := database.GetPartialUpload(db, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -577,7 +596,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		missingChunks, err := utils.GetMissingChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks)
 		if err != nil {
 			slog.Error("failed to check for missing chunks", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -614,7 +633,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, partialUpload.TotalSize, quotaConfigured)
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 		if !hasSpace {
@@ -623,7 +642,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"file_size", partialUpload.TotalSize,
 				"reason", errMsg,
 			)
-			sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 			return
 		}
 
@@ -631,7 +650,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		locked, err := database.TryLockUploadForProcessing(db, uploadID)
 		if err != nil {
 			slog.Error("failed to lock upload for processing", "error", err, "upload_id", uploadID)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -707,7 +726,7 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		partialUpload, err := database.GetPartialUpload(db, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
 
@@ -731,8 +750,8 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-	// Count actual chunks from disk
-	chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		// Count actual chunks from disk
+		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
 
 		// Build download URL if completed
 		var downloadURL *string

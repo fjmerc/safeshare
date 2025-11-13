@@ -17,6 +17,8 @@ import (
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
@@ -376,13 +378,23 @@ func main() {
 		),
 	)
 
+	// Enable HTTP/2 support (with h2c for non-TLS environments)
+	h2Server := &http2.Server{
+		MaxConcurrentStreams: 250, // Allow many parallel chunk uploads
+	}
+
+	// Wrap handler with h2c for HTTP/2 over cleartext (dev/testing)
+	// If HTTPS is enabled, Go automatically uses HTTP/2 via TLS ALPN
+	handlerWithH2C := h2c.NewHandler(handler, h2Server)
+
 	// Setup HTTP server
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      handler,
-		ReadTimeout:  time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
-		WriteTimeout: time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           ":" + cfg.Port,
+		Handler:        handlerWithH2C,
+		ReadTimeout:    time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:   time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:    120 * time.Second, // Increased from 60s for HTTP/2 connection reuse
+		MaxHeaderBytes: 1 << 20,           // 1MB header limit
 	}
 
 	// Start cleanup workers
