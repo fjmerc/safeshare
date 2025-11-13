@@ -35,6 +35,17 @@
     const limitWarning = document.getElementById('limitWarning');
     const passwordPrompt = document.getElementById('passwordPrompt');
 
+    // DOM Elements - Download Progress
+    const downloadProgress = document.getElementById('downloadProgress');
+    const downloadProgressFill = document.getElementById('downloadProgressFill');
+    const downloadProgressText = document.getElementById('downloadProgressText');
+    const downloadSpeed = document.getElementById('downloadSpeed');
+    const downloadETA = document.getElementById('downloadETA');
+    const pauseDownloadButton = document.getElementById('pauseDownloadButton');
+    const resumePrompt = document.getElementById('resumePrompt');
+    const resumeDownloadButton = document.getElementById('resumeDownloadButton');
+    const startFreshButton = document.getElementById('startFreshButton');
+
     // DOM Elements - User Menu
     const userMenu = document.getElementById('userMenu');
     const userMenuTrigger = document.getElementById('userMenuTrigger');
@@ -44,6 +55,7 @@
 
     // State - Pickup
     let currentFileInfo = null;
+    let currentDownloader = null; // Current ResumableDownloader instance
 
     // State - User
     let currentUser = null;
@@ -421,6 +433,33 @@
 
         // Pickup Tab - Download button
         downloadButton.addEventListener('click', handleDownload);
+
+        // Pickup Tab - Pause download button
+        if (pauseDownloadButton) {
+            pauseDownloadButton.addEventListener('click', () => {
+                if (currentDownloader) {
+                    currentDownloader.pause();
+                    pauseDownloadButton.textContent = '▶️ Resume';
+                    showToast('Download paused', 'info', 2000);
+                }
+            });
+        }
+
+        // Pickup Tab - Resume download button
+        if (resumeDownloadButton) {
+            resumeDownloadButton.addEventListener('click', () => {
+                resumePrompt.classList.add('hidden');
+                handleDownload(false); // Resume from saved progress
+            });
+        }
+
+        // Pickup Tab - Start fresh button
+        if (startFreshButton) {
+            startFreshButton.addEventListener('click', () => {
+                resumePrompt.classList.add('hidden');
+                handleDownload(true); // Force new download
+            });
+        }
 
         // Pickup Tab - New pickup button
         newPickupButton.addEventListener('click', resetPickupForm);
@@ -1293,14 +1332,41 @@
             passwordPrompt.classList.add('hidden');
         }
 
+        // Check for resumable download
+        checkForResumableDownload(data);
+
         // Show file info section
         fileInfoSection.classList.remove('hidden');
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
     }
 
+    // Check if there's a saved download progress for this file
+    function checkForResumableDownload(fileInfo) {
+        // Create temporary downloader to check for saved progress
+        const tempDownloader = new ResumableDownloader(
+            fileInfo.download_url,
+            fileInfo.filename,
+            fileInfo.file_size
+        );
+
+        const savedProgress = tempDownloader.checkForResume();
+
+        if (savedProgress && savedProgress.downloadedBytes > 0) {
+            const percentage = Math.round((savedProgress.downloadedBytes / savedProgress.fileSize) * 100);
+            console.log(`Found resumable download: ${percentage}% complete`);
+
+            // Show resume prompt
+            resumePrompt.classList.remove('hidden');
+            resumePrompt.querySelector('p').textContent =
+                `📥 A previous download was interrupted at ${percentage}%. Would you like to resume where you left off?`;
+        } else {
+            resumePrompt.classList.add('hidden');
+        }
+    }
+
     // Handle download
-    function handleDownload() {
+    async function handleDownload(forceNew = false) {
         if (!currentFileInfo) return;
 
         // Build download URL with password if required
@@ -1315,13 +1381,82 @@
             downloadUrl += `?password=${encodeURIComponent(password)}`;
         }
 
-        // Open in new tab - browser will prompt for download location
-        window.open(downloadUrl, '_blank');
+        // Hide download button, show progress
+        downloadButton.classList.add('hidden');
+        downloadProgress.classList.remove('hidden');
+        pauseDownloadButton.textContent = '⏸ Pause';
 
-        // Show info message
-        setTimeout(() => {
-            showToast('Download started', 'info', 2000);
-        }, 500);
+        try {
+            // Create downloader instance
+            currentDownloader = new ResumableDownloader(
+                downloadUrl,
+                currentFileInfo.filename,
+                currentFileInfo.file_size
+            );
+
+            // Set up event listeners
+            currentDownloader.on('resume', (data) => {
+                console.log('Resuming download from', formatFileSize(data.downloadedBytes));
+                showToast(`Resuming from ${Math.round(data.percentage)}%`, 'info', 2000);
+            });
+
+            currentDownloader.on('progress', (progress) => {
+                // Update progress bar
+                downloadProgressFill.style.width = `${progress.percentage}%`;
+                downloadProgressText.textContent = `${Math.round(progress.percentage)}% complete`;
+
+                // Update speed and ETA
+                downloadSpeed.textContent = formatFileSize(progress.speed) + '/s';
+
+                if (progress.estimatedTimeRemaining && progress.estimatedTimeRemaining > 0) {
+                    downloadETA.textContent = `ETA: ${formatTimeRemaining(progress.estimatedTimeRemaining)}`;
+                } else {
+                    downloadETA.textContent = 'Calculating...';
+                }
+            });
+
+            currentDownloader.on('complete', (data) => {
+                // Trigger browser download
+                currentDownloader.triggerBrowserDownload(data.blob);
+
+                // Reset UI
+                downloadProgress.classList.add('hidden');
+                downloadButton.classList.remove('hidden');
+
+                showToast('Download complete!', 'success', 3000);
+
+                // Reset downloader
+                currentDownloader = null;
+            });
+
+            currentDownloader.on('error', (error) => {
+                console.error('Download error:', error);
+                showToast(`Download failed: ${error.error}`, 'error', 5000);
+
+                // Reset UI
+                downloadProgress.classList.add('hidden');
+                downloadButton.classList.remove('hidden');
+
+                currentDownloader = null;
+            });
+
+            currentDownloader.on('paused', () => {
+                showToast('Download paused - progress saved', 'info', 2000);
+            });
+
+            // Start download
+            await currentDownloader.downloadWithProgress(forceNew);
+
+        } catch (error) {
+            console.error('Download failed:', error);
+            showToast('Download failed. Please try again.', 'error', 5000);
+
+            // Reset UI
+            downloadProgress.classList.add('hidden');
+            downloadButton.classList.remove('hidden');
+
+            currentDownloader = null;
+        }
     }
 
     // Reset pickup form

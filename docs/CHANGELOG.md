@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Resumable Download Support**: Client-side download resume capability with progress tracking
+  - ResumableDownloader JavaScript class with HTTP Range request support
+  - Progress bar with download speed and ETA (estimated time remaining)
+  - Pause/Resume controls during active downloads
+  - localStorage persistence allows resume after browser refresh, crashes, or network interruptions
+  - Automatic resume prompt when interrupted download detected (7-day expiration)
+  - "Start Fresh" option to ignore saved progress and restart download
+  - Efficient streaming with minimal memory usage
+  - Works seamlessly with encrypted files (leverages existing HTTP Range support)
+  - Event-based architecture for UI updates
+
 ### Fixed
 - **SFSE1 Encryption Chunk Splitting**: Fixed critical bug causing all encrypted file downloads to fail with authentication errors
   - Root cause: `io.Read()` allows partial reads, causing `io.MultiReader` (used for MIME detection) to split data across artificial chunk boundaries
