@@ -1328,6 +1328,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Global variable to store recommendations
     let currentRecommendations = null;
 
+    // Show/hide CDN timeout field based on checkbox
+    document.getElementById('usingCDN')?.addEventListener('change', (e) => {
+        const cdnTimeoutGroup = document.getElementById('cdnTimeoutGroup');
+        if (e.target.checked) {
+            cdnTimeoutGroup.style.display = 'block';
+        } else {
+            cdnTimeoutGroup.style.display = 'none';
+            document.getElementById('cdnTimeout').value = '0';
+        }
+    });
+
     // Configuration Assistant form submission
     document.getElementById('configAssistantForm')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1340,7 +1351,10 @@ document.addEventListener('DOMContentLoaded', () => {
             typical_file_size: formData.get('typical_file_size'),
             deployment_type: formData.get('deployment_type'),
             user_load: formData.get('user_load'),
-            storage_capacity: parseInt(formData.get('storage_capacity')) || 0
+            storage_capacity: parseInt(formData.get('storage_capacity')) || 0,
+            using_cdn: document.getElementById('usingCDN').checked,
+            cdn_timeout: parseInt(formData.get('cdn_timeout')) || 0,
+            encryption_enabled: document.getElementById('encryptionEnabled').checked
         };
 
         try {
@@ -1602,13 +1616,18 @@ function populateTable(tbody, comparisons) {
     comparisons.forEach(item => {
         const row = document.createElement('tr');
         if (item.changed) {
-            row.style.backgroundColor = 'var(--warning-light)';
+            // Subtle left border indicator for changed values
+            row.style.borderLeft = '4px solid var(--primary-color)';
+            row.style.backgroundColor = 'rgba(59, 130, 246, 0.05)'; // Very subtle blue tint
         }
         row.innerHTML = `
-            <td style="text-align: left; font-weight: 600;">${escapeHtml(item.setting)}</td>
-            <td style="text-align: center;">${escapeHtml(item.current)}</td>
-            <td style="text-align: center; font-weight: 600; color: var(--primary-color);">${escapeHtml(item.recommended)}</td>
-            <td style="text-align: left; font-size: 13px;">${escapeHtml(item.impact)}</td>
+            <td style="text-align: left; font-weight: 600;">
+                ${item.changed ? '<span style="display: inline-block; width: 8px; height: 8px; background: var(--primary-color); border-radius: 50%; margin-right: 8px;"></span>' : ''}
+                ${escapeHtml(item.setting)}
+            </td>
+            <td style="text-align: center; ${item.changed ? 'opacity: 0.6;' : ''}">${escapeHtml(item.current)}</td>
+            <td style="text-align: center; font-weight: 600; color: ${item.changed ? 'var(--primary-color)' : 'inherit'};">${escapeHtml(item.recommended)}</td>
+            <td style="text-align: left; font-size: 13px; ${item.changed ? 'font-style: italic;' : ''}">${escapeHtml(item.impact)}</td>
         `;
         tbody.appendChild(row);
     });
@@ -1642,9 +1661,12 @@ function generateEnvFileContent(recommendations) {
     envLines.push(`SESSION_EXPIRY_HOURS=${recommendations.session_expiry_hours}`);
     envLines.push(`CLEANUP_INTERVAL_MINUTES=${recommendations.cleanup_interval_minutes}`);
     envLines.push('');
-    envLines.push('# Security Settings');
-    envLines.push(`REQUIRE_AUTH_FOR_UPLOAD=${recommendations.require_auth_for_upload}`);
+    envLines.push('# Security Settings (OPTIONAL - uncomment if needed)');
+    envLines.push(`# REQUIRE_AUTH_FOR_UPLOAD=${recommendations.require_auth_for_upload}  # Recommended: ${recommendations.require_auth_for_upload}`);
     envLines.push(`HTTPS_ENABLED=${recommendations.https_enabled}`);
+    envLines.push('');
+    envLines.push('# Encryption at Rest (OPTIONAL - generate with: openssl rand -hex 32)');
+    envLines.push('# ENCRYPTION_KEY=your-64-character-hex-key-here');
 
     if (recommendations.public_url) {
         envLines.push('');

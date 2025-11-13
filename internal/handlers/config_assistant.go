@@ -11,13 +11,16 @@ import (
 
 // ConfigAssistantRequest represents the user's environment input
 type ConfigAssistantRequest struct {
-	UploadSpeed     float64 `json:"upload_speed"`      // Mbps
-	DownloadSpeed   float64 `json:"download_speed"`    // Mbps
-	NetworkLatency  string  `json:"network_latency"`   // local, low, medium, high
-	TypicalFileSize string  `json:"typical_file_size"` // small, medium, large, huge
-	DeploymentType  string  `json:"deployment_type"`   // lan, wan, internet
-	UserLoad        string  `json:"user_load"`         // light, moderate, heavy, very_heavy
-	StorageCapacity int64   `json:"storage_capacity"`  // GB (0 = unlimited)
+	UploadSpeed        float64 `json:"upload_speed"`        // Mbps
+	DownloadSpeed      float64 `json:"download_speed"`      // Mbps
+	NetworkLatency     string  `json:"network_latency"`     // local, low, medium, high
+	TypicalFileSize    string  `json:"typical_file_size"`   // small, medium, large, huge
+	DeploymentType     string  `json:"deployment_type"`     // LAN, WAN, Internet
+	UserLoad           string  `json:"user_load"`           // light, moderate, heavy, very_heavy
+	StorageCapacity    int64   `json:"storage_capacity"`    // GB (0 = unlimited)
+	UsingCDN           bool    `json:"using_cdn"`           // Behind a CDN?
+	CDNTimeout         int     `json:"cdn_timeout"`         // CDN timeout in seconds (0 = unknown)
+	EncryptionEnabled  bool    `json:"encryption_enabled"`  // AES-256-GCM encryption active?
 }
 
 // ConfigRecommendations represents the recommended configuration
@@ -178,15 +181,15 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 
 	// 3. Set Expiration times based on deployment type
 	switch req.DeploymentType {
-	case "lan":
+	case "LAN":
 		// LAN deployments typically have shorter retention needs
 		rec.DefaultExpirationHours = 24  // 1 day
 		rec.MaxExpirationHours = 168     // 7 days
-	case "wan":
+	case "WAN":
 		// WAN deployments need moderate retention
 		rec.DefaultExpirationHours = 72  // 3 days
 		rec.MaxExpirationHours = 336     // 14 days
-	case "internet":
+	case "Internet":
 		// Internet deployments benefit from longer retention
 		rec.DefaultExpirationHours = 168 // 7 days
 		rec.MaxExpirationHours = 720     // 30 days
@@ -312,6 +315,43 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 		rec.WriteTimeout = 60
 	}
 
+	// Apply CDN timeout constraints if behind a CDN
+	if req.UsingCDN && req.CDNTimeout > 0 {
+		// Timeouts must be less than CDN timeout (use 80% for safety margin)
+		maxAllowedTimeout := int(float64(req.CDNTimeout) * 0.8)
+		if rec.ReadTimeout > maxAllowedTimeout {
+			rec.ReadTimeout = maxAllowedTimeout
+		}
+		if rec.WriteTimeout > maxAllowedTimeout {
+			rec.WriteTimeout = maxAllowedTimeout
+		}
+
+		// Adjust chunk size to fit within CDN timeout
+		// Formula: ChunkSize <= (UploadSpeed * CDNTimeout * 0.6) to ensure completion
+		maxSafeChunkSize := int64(uploadSpeedMBps * float64(req.CDNTimeout) * 0.6 * 1024 * 1024)
+		if maxSafeChunkSize < 5*1024*1024 {
+			maxSafeChunkSize = 5 * 1024 * 1024 // minimum 5MB
+		}
+		if rec.ChunkSize > maxSafeChunkSize {
+			rec.ChunkSize = maxSafeChunkSize
+		}
+	}
+
+	// Apply encryption overhead if encryption is enabled
+	if req.EncryptionEnabled {
+		// Add 20% overhead for encryption/decryption processing
+		rec.ReadTimeout = int(float64(rec.ReadTimeout) * 1.2)
+		rec.WriteTimeout = int(float64(rec.WriteTimeout) * 1.2)
+
+		// Re-apply maximum cap after encryption adjustment
+		if rec.ReadTimeout > 600 {
+			rec.ReadTimeout = 600
+		}
+		if rec.WriteTimeout > 600 {
+			rec.WriteTimeout = 600
+		}
+	}
+
 	// 7. Set CHUNKED_UPLOAD_THRESHOLD
 	// Start chunking earlier for large files or slow connections
 	// Lower threshold = more files use chunked upload = better reliability and progress tracking
@@ -336,11 +376,11 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 
 	// 9. Set SESSION_EXPIRY_HOURS based on deployment type
 	switch req.DeploymentType {
-	case "lan":
+	case "LAN":
 		rec.SessionExpiryHours = 12 // shorter for internal networks
-	case "wan":
+	case "WAN":
 		rec.SessionExpiryHours = 24 // standard
-	case "internet":
+	case "Internet":
 		rec.SessionExpiryHours = 48 // longer for external users
 	default:
 		rec.SessionExpiryHours = 24
@@ -358,25 +398,25 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	}
 
 	// 11. Set REQUIRE_AUTH_FOR_UPLOAD based on deployment and user load
-	if req.DeploymentType == "internet" && (req.UserLoad == "heavy" || req.UserLoad == "very_heavy") {
+	if req.DeploymentType == "Internet" && (req.UserLoad == "heavy" || req.UserLoad == "very_heavy") {
 		rec.RequireAuthForUpload = true // prevent abuse on public internet
-	} else if req.DeploymentType == "internet" && req.UserLoad == "moderate" {
+	} else if req.DeploymentType == "Internet" && req.UserLoad == "moderate" {
 		rec.RequireAuthForUpload = true // recommended for public internet
 	} else {
 		rec.RequireAuthForUpload = false // allow anonymous for internal/light use
 	}
 
 	// 12. Set HTTPS_ENABLED recommendation
-	if req.DeploymentType == "internet" {
+	if req.DeploymentType == "Internet" {
 		rec.HTTPSEnabled = true // always for public internet
-	} else if req.DeploymentType == "wan" {
+	} else if req.DeploymentType == "WAN" {
 		rec.HTTPSEnabled = true // recommended for WAN
 	} else {
 		rec.HTTPSEnabled = false // optional for LAN
 	}
 
 	// 13. Set PUBLIC_URL recommendation (empty means detect from request)
-	if req.DeploymentType == "internet" || req.DeploymentType == "wan" {
+	if req.DeploymentType == "Internet" || req.DeploymentType == "WAN" {
 		rec.PublicURL = "" // Should be set manually by admin
 	} else {
 		rec.PublicURL = "" // Auto-detect is fine for LAN
@@ -503,7 +543,7 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		)
 	}
 
-	if req.DeploymentType == "internet" {
+	if req.DeploymentType == "Internet" {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			fmt.Sprintf("For public internet: Configure reverse proxy timeouts to at least %d seconds to match READ_TIMEOUT.", recommended.ReadTimeout),
 		)
@@ -512,6 +552,31 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 				"Enable HTTPS_ENABLED=true and set PUBLIC_URL to your public domain for correct link generation.",
 			)
 		}
+	}
+
+	// CDN-specific recommendations
+	if req.UsingCDN {
+		if req.CDNTimeout > 0 {
+			chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
+			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+				fmt.Sprintf("CDN detected (%ds timeout): Chunk size optimized to %.0fMB to ensure uploads complete within timeout limits.", req.CDNTimeout, chunkSizeMB),
+			)
+		}
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+			"CDN detected: Set DOWNLOAD_URL to a DNS-only subdomain (bypassing CDN) for large file downloads. Example: downloads.yourdomain.com",
+		)
+		if req.CDNTimeout < 60 {
+			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+				fmt.Sprintf("⚠️ CDN timeout is only %ds. Consider upgrading CDN tier or bypassing CDN for upload endpoints to support larger files.", req.CDNTimeout),
+			)
+		}
+	}
+
+	// Encryption-specific recommendations
+	if req.EncryptionEnabled {
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+			"Encryption enabled: Timeouts increased by 20%% to account for AES-256-GCM encryption/decryption overhead.",
+		)
 	}
 
 	uploadSpeedMBps := req.UploadSpeed / 8

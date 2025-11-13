@@ -509,9 +509,9 @@
                         <div class="form-group">
                             <label for="deploymentType">Deployment Type</label>
                             <select id="deploymentType" name="deployment_type" required>
-                                <option value="lan">Local Area Network (LAN)</option>
-                                <option value="wan">Wide Area Network (WAN)</option>
-                                <option value="internet">Public Internet</option>
+                                <option value="LAN">Local Area Network (LAN)</option>
+                                <option value="WAN">Wide Area Network (WAN)</option>
+                                <option value="Internet">Public Internet</option>
                             </select>
                             <small>Where is SafeShare deployed?</small>
                         </div>
@@ -531,6 +531,28 @@
                             <label for="storageCapacity">Available Storage Capacity (GB)</label>
                             <input type="number" id="storageCapacity" name="storage_capacity" min="0" step="1" value="0">
                             <small>Total storage available for file uploads (0 for unlimited)</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="usingCDN">
+                                <input type="checkbox" id="usingCDN" name="using_cdn" style="width: auto; margin-right: 8px;">
+                                Behind a CDN (Cloudflare, CloudFront, etc.)
+                            </label>
+                            <small>Check if SafeShare is behind a Content Delivery Network</small>
+                        </div>
+
+                        <div class="form-group" id="cdnTimeoutGroup" style="display: none;">
+                            <label for="cdnTimeout">CDN Timeout Limit (seconds)</label>
+                            <input type="number" id="cdnTimeout" name="cdn_timeout" min="0" step="1" value="0">
+                            <small>Enter CDN timeout in seconds (e.g., 30, 60, 100). Leave 0 if unknown. Common values: Cloudflare Free=100s, Most CDNs=30-60s</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="encryptionEnabled">
+                                <input type="checkbox" id="encryptionEnabled" name="encryption_enabled" style="width: auto; margin-right: 8px;">
+                                Encryption at Rest Enabled (ENCRYPTION_KEY set)
+                            </label>
+                            <small>Check if you have AES-256-GCM encryption enabled with ENCRYPTION_KEY environment variable</small>
                         </div>
 
                         <div class="button-group">
