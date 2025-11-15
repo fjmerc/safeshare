@@ -13,5 +13,5 @@ CLAUDE.md
 scripts/purge-cloudflare-cache.sh
 scripts/*.local.sh
 
-coverage.out
+*.out
 *.test
