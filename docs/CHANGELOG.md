@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Test Coverage Improvements (Phase 5)**: Admin handler test coverage - **53.1% COVERAGE ACHIEVED**
+  - Overall coverage increased from 35.8% to 53.1% (+17.3 percentage points, **exceeded 40% target by 13.1%**)
+  - **Handler package**: Comprehensive admin settings and configuration handler tests
+    - AdminChangePasswordHandler: Password change validation, current password verification, confirmation matching, minimum length enforcement (5 tests)
+    - AdminUpdateStorageSettingsHandler: Storage quota updates, max file size limits, expiration time settings, database persistence validation (5 tests)
+    - AdminUpdateSecuritySettingsHandler: Rate limit configuration, blocked extensions management, database persistence validation (5 tests)
+    - AdminBlockIPHandler & AdminUnblockIPHandler: IP blocking/unblocking with default reason handling, missing parameter validation (2 tests)
+    - Test file: admin_test.go (1404 lines total, 17 new test cases added)
+  - All tests validate both success paths and error conditions (invalid inputs, missing fields, boundary conditions)
+  - Database persistence verified for all settings updates (ensures settings survive restarts)
+  - All tests pass with race detection enabled (no data races detected)
+  - **Target exceeded**: 53.1% > 40% target (next milestone: 60% coverage)
+
 - **Test Coverage Improvements (Phase 4)**: Authentication and authorization test coverage
   - Overall coverage increased from 31.3% to 35.8% (+4.5 percentage points)
   - **Middleware package**: Authentication middleware test coverage
@@ -23,7 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - IP blocking: Block/unblock IPs, blocked IP retrieval, access denial validation
     - Test file: admin_test.go (~470 lines, 18 test cases)
   - All tests pass with race detection enabled (no data races detected)
-  - Next phase: Admin handler tests (settings, password change) to reach 40% coverage target
 
 - **Test Coverage Improvements (Phase 3)**: Middleware and handler test expansion
   - Middleware package: 18.5% → 31.5% (+13%, exceeded 30% target)

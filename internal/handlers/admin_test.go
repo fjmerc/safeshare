@@ -910,3 +910,494 @@ func TestAdminUpdateUserHandler_InvalidRole(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 }
+
+// AdminChangePasswordHandler tests
+
+func TestAdminChangePasswordHandler_Success(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	// Set initial admin password
+	cfg.SetAdminPassword("currentpassword123")
+
+	handler := AdminChangePasswordHandler(cfg)
+
+	formData := url.Values{}
+	formData.Set("current_password", "currentpassword123")
+	formData.Set("new_password", "newpassword456")
+	formData.Set("confirm_password", "newpassword456")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/password", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify password is updated in config
+	if cfg.GetAdminPassword() != "newpassword456" {
+		t.Error("admin password should be updated in config")
+	}
+
+	var response map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if success, ok := response["success"].(bool); !ok || !success {
+		t.Error("response should contain success: true")
+	}
+}
+
+func TestAdminChangePasswordHandler_IncorrectCurrentPassword(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	cfg.SetAdminPassword("correctpassword")
+
+	handler := AdminChangePasswordHandler(cfg)
+
+	formData := url.Values{}
+	formData.Set("current_password", "wrongpassword")
+	formData.Set("new_password", "newpassword456")
+	formData.Set("confirm_password", "newpassword456")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/password", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 401 Unauthorized
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminChangePasswordHandler_PasswordMismatch(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	cfg.SetAdminPassword("currentpassword123")
+
+	handler := AdminChangePasswordHandler(cfg)
+
+	formData := url.Values{}
+	formData.Set("current_password", "currentpassword123")
+	formData.Set("new_password", "newpassword456")
+	formData.Set("confirm_password", "differentpassword789")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/password", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminChangePasswordHandler_PasswordTooShort(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	cfg.SetAdminPassword("currentpassword123")
+
+	handler := AdminChangePasswordHandler(cfg)
+
+	formData := url.Values{}
+	formData.Set("current_password", "currentpassword123")
+	formData.Set("new_password", "short")
+	formData.Set("confirm_password", "short")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/password", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request (password must be >= 8 characters)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminChangePasswordHandler_MissingFields(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	cfg.SetAdminPassword("currentpassword123")
+
+	handler := AdminChangePasswordHandler(cfg)
+
+	formData := url.Values{}
+	formData.Set("current_password", "currentpassword123")
+	// Missing new_password and confirm_password
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/password", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+// AdminUpdateStorageSettingsHandler tests
+
+func TestAdminUpdateStorageSettingsHandler_QuotaOnly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("quota_gb", "50")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/storage", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify quota is updated
+	if cfg.GetQuotaLimitGB() != 50 {
+		t.Errorf("quota = %d GB, want 50 GB", cfg.GetQuotaLimitGB())
+	}
+
+	// Verify database persistence
+	settings, _ := database.GetSettings(db)
+	if settings != nil && settings.QuotaLimitGB != 50 {
+		t.Errorf("database quota = %d GB, want 50 GB", settings.QuotaLimitGB)
+	}
+}
+
+func TestAdminUpdateStorageSettingsHandler_AllSettings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("quota_gb", "100")
+	formData.Set("max_file_size_mb", "200")
+	formData.Set("default_expiration_hours", "48")
+	formData.Set("max_expiration_hours", "336")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/storage", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify all settings are updated
+	if cfg.GetQuotaLimitGB() != 100 {
+		t.Errorf("quota = %d GB, want 100 GB", cfg.GetQuotaLimitGB())
+	}
+
+	expectedMaxFileSize := int64(200 * 1024 * 1024)
+	if cfg.GetMaxFileSize() != expectedMaxFileSize {
+		t.Errorf("max_file_size = %d bytes, want %d bytes", cfg.GetMaxFileSize(), expectedMaxFileSize)
+	}
+
+	if cfg.GetDefaultExpirationHours() != 48 {
+		t.Errorf("default_expiration = %d hours, want 48 hours", cfg.GetDefaultExpirationHours())
+	}
+
+	if cfg.GetMaxExpirationHours() != 336 {
+		t.Errorf("max_expiration = %d hours, want 336 hours", cfg.GetMaxExpirationHours())
+	}
+}
+
+func TestAdminUpdateStorageSettingsHandler_InvalidQuota(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("quota_gb", "-50")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/storage", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request for negative quota
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminUpdateStorageSettingsHandler_InvalidMaxFileSize(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("max_file_size_mb", "0")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/storage", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request for zero/negative file size
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminUpdateStorageSettingsHandler_NoSettings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	// No settings provided
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/storage", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request when no settings provided
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+// AdminUpdateSecuritySettingsHandler tests
+
+func TestAdminUpdateSecuritySettingsHandler_RateLimitsOnly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("rate_limit_upload", "20")
+	formData.Set("rate_limit_download", "200")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/security", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify rate limits are updated
+	if cfg.GetRateLimitUpload() != 20 {
+		t.Errorf("upload_rate_limit = %d, want 20", cfg.GetRateLimitUpload())
+	}
+
+	if cfg.GetRateLimitDownload() != 200 {
+		t.Errorf("download_rate_limit = %d, want 200", cfg.GetRateLimitDownload())
+	}
+
+	// Verify database persistence
+	settings, _ := database.GetSettings(db)
+	if settings != nil && settings.RateLimitUpload != 20 {
+		t.Errorf("database upload_rate_limit = %d, want 20", settings.RateLimitUpload)
+	}
+	if settings != nil && settings.RateLimitDownload != 200 {
+		t.Errorf("database download_rate_limit = %d, want 200", settings.RateLimitDownload)
+	}
+}
+
+func TestAdminUpdateSecuritySettingsHandler_BlockedExtensions(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("blocked_extensions", ".exe,.bat,.sh,.dll")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/security", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify blocked extensions are updated
+	blockedExts := cfg.GetBlockedExtensions()
+	if len(blockedExts) != 4 {
+		t.Errorf("blocked_extensions count = %d, want 4", len(blockedExts))
+	}
+
+	// Verify extensions are normalized (lowercase, with leading dot)
+	expectedExts := []string{".exe", ".bat", ".sh", ".dll"}
+	for i, ext := range expectedExts {
+		if blockedExts[i] != ext {
+			t.Errorf("blocked_extensions[%d] = %s, want %s", i, blockedExts[i], ext)
+		}
+	}
+}
+
+func TestAdminUpdateSecuritySettingsHandler_AllSettings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("rate_limit_upload", "15")
+	formData.Set("rate_limit_download", "150")
+	formData.Set("blocked_extensions", ".exe,.dll,.so")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/security", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify all settings are updated
+	if cfg.GetRateLimitUpload() != 15 {
+		t.Errorf("upload_rate_limit = %d, want 15", cfg.GetRateLimitUpload())
+	}
+
+	if cfg.GetRateLimitDownload() != 150 {
+		t.Errorf("download_rate_limit = %d, want 150", cfg.GetRateLimitDownload())
+	}
+
+	blockedExts := cfg.GetBlockedExtensions()
+	if len(blockedExts) != 3 {
+		t.Errorf("blocked_extensions count = %d, want 3", len(blockedExts))
+	}
+}
+
+func TestAdminUpdateSecuritySettingsHandler_InvalidRateLimit(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	formData.Set("rate_limit_upload", "0")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/security", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request for zero/negative rate limit
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminUpdateSecuritySettingsHandler_NoSettings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+
+	formData := url.Values{}
+	// No settings provided
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings/security", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request when no settings provided
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+// Additional IP blocking handler tests
+
+func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := AdminBlockIPHandler(db)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "10.0.0.1")
+	// No reason provided
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify IP is blocked with default reason
+	blocked, _ := database.IsIPBlocked(db, "10.0.0.1")
+	if !blocked {
+		t.Error("IP should be blocked with default reason")
+	}
+}
+
+func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := AdminBlockIPHandler(db)
+
+	formData := url.Values{}
+	// No IP address provided
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := AdminUnblockIPHandler(db)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "10.0.0.99")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/unblock", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 404 Not Found for IP not in blocklist
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
