@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// setupTestDB creates an in-memory SQLite database for testing
+// setupSettingsTestDB creates an in-memory SQLite database for testing
 // Note: We can't use testutil.SetupTestDB here because it would create an import cycle
-func setupTestDB(t *testing.T) *sql.DB {
+func setupSettingsTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -72,7 +72,7 @@ func setupTestDBWithFile(t *testing.T) (*sql.DB, string) {
 
 // TestSettingsPersistence tests that settings persist to database and override environment variables
 func TestSettingsPersistence(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Initially, no settings should exist
 	settings, err := GetSettings(db)
@@ -87,7 +87,7 @@ func TestSettingsPersistence(t *testing.T) {
 
 // TestUpdateQuotaSetting tests updating quota_limit_gb setting
 func TestUpdateQuotaSetting(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update quota setting
 	err := UpdateQuotaSetting(db, int64(100)) // 100 GB
@@ -112,7 +112,7 @@ func TestUpdateQuotaSetting(t *testing.T) {
 
 // TestUpdateMaxFileSizeSetting tests updating max_file_size_bytes setting
 func TestUpdateMaxFileSizeSetting(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update max file size
 	maxSize := int64(50 * 1024 * 1024) // 50 MB
@@ -134,7 +134,7 @@ func TestUpdateMaxFileSizeSetting(t *testing.T) {
 
 // TestUpdateExpirationSettings tests updating default and max expiration hours
 func TestUpdateExpirationSettings(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update expiration settings
 	err := UpdateDefaultExpirationSetting(db, 48) // 48 hours default
@@ -164,7 +164,7 @@ func TestUpdateExpirationSettings(t *testing.T) {
 
 // TestUpdateRateLimitSettings tests updating rate limit settings
 func TestUpdateRateLimitSettings(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update rate limits
 	err := UpdateRateLimitUploadSetting(db, 20)
@@ -194,7 +194,7 @@ func TestUpdateRateLimitSettings(t *testing.T) {
 
 // TestUpdateBlockedExtensionsSetting tests updating blocked extensions
 func TestUpdateBlockedExtensionsSetting(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update blocked extensions
 	extensions := []string{".exe", ".bat", ".cmd", ".sh", ".ps1", ".dll"}
@@ -223,7 +223,7 @@ func TestUpdateBlockedExtensionsSetting(t *testing.T) {
 
 // TestSettingsConcurrentUpdates tests concurrent settings updates
 func TestSettingsConcurrentUpdates(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Ensure settings row exists before concurrent updates to avoid race condition
 	if err := ensureSettingsRow(db); err != nil {
@@ -314,7 +314,7 @@ func TestSettingsPersistAcrossRestarts(t *testing.T) {
 
 // TestUpdateSettingIdempotency tests that repeated updates work correctly
 func TestUpdateSettingIdempotency(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Update same setting multiple times
 	for i := 1; i <= 5; i++ {
@@ -337,7 +337,7 @@ func TestUpdateSettingIdempotency(t *testing.T) {
 
 // TestSettingsDefaultValues tests that settings have correct defaults when not set
 func TestSettingsDefaultValues(t *testing.T) {
-	db := setupTestDB(t)
+	db := setupSettingsTestDB(t)
 
 	// Don't set any settings, just retrieve
 	settings, err := GetSettings(db)
