@@ -247,8 +247,8 @@ func TestUpdateSessionActivity(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 
-	// Wait a moment and update activity (longer wait to ensure timestamp difference)
-	time.Sleep(500 * time.Millisecond)
+	// Wait to ensure timestamp difference (SQLite DATETIME has 1-second precision)
+	time.Sleep(1100 * time.Millisecond)
 
 	err = UpdateSessionActivity(db, token)
 	if err != nil {
