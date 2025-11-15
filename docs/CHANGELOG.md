@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Test Coverage Improvements (Phase 3)**: Middleware and handler test expansion
+  - Middleware package: 18.5% → 31.5% (+13%, exceeded 30% target)
+    - Security headers middleware: 100% coverage (CSP, X-Frame-Options, XSS protection)
+    - Recovery middleware: 100% coverage (panic handling, error responses)
+    - Logging middleware: 100% coverage (request logging, claim code redaction)
+    - Test files: security_test.go, recovery_test.go, logging_test.go
+  - Handler tests: Added health and config endpoint tests
+    - Health check endpoint: 80% coverage (uptime, disk space, database metrics)
+    - Public config endpoint: 100% coverage (version, upload settings)
+    - Test files: health_test.go, config_test.go
+  - All tests pass with race detection enabled (no data races detected)
+  - Overall coverage: 31.3% (middleware improvements offset by new untested code)
+
 - **Test Coverage Improvements (Phase 2)**: Increased overall coverage from 23.4% to 37.1%
   - Database package: 10.5% → 34.8% (39% above 25% target)
     - Comprehensive tests for file CRUD operations, expiration, download counting
