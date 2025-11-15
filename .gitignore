@@ -12,3 +12,6 @@ CLAUDE.md
 # Deployment-specific scripts (local only)
 scripts/purge-cloudflare-cache.sh
 scripts/*.local.sh
+
+coverage.out
+*.test
