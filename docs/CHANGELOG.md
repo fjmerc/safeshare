@@ -8,15 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Test Coverage Improvements (Phase 2)**: Increased overall coverage from 23.4% to 37.1%
+  - Database package: 10.5% → 34.8% (39% above 25% target)
+    - Comprehensive tests for file CRUD operations, expiration, download counting
+    - User management tests covering authentication, sessions, password changes
+    - File ownership and user-file relationship validation
+  - Utils package: 14.7% → 25.8% (3% above 25% target)
+    - Claim code generation and uniqueness validation
+    - File extension blocking and sanitization
+    - Password hashing, verification, and temporary password generation
+    - Admin session and CSRF token generation with uniqueness checks
+  - All tests pass with race detection enabled (no data races detected)
+  - Test files: files_test.go, users_test.go, utils_test.go, password_test.go, admin_test.go
+
 - **CI/CD Integration**: Automated test suite with coverage enforcement and quality gates
   - Full test suite runs automatically on every push and pull request
-  - Coverage baseline set at 20% threshold (current coverage: 23.4%)
+  - Coverage threshold increased to 35% (current coverage: 37.1%)
   - Race condition detection on critical packages (handlers, middleware, database, utils)
   - Codecov integration for coverage visualization and PR comments
   - GitHub Actions workflow enhancements with comprehensive testing
   - Build deployment blocked if tests fail or coverage drops below threshold
   - Test status and coverage badges visible in README
-  - Future roadmap: gradual coverage improvements to 35% → 50% → 80%
+  - Future roadmap: gradual coverage improvements to 50% → 80%
 
 - **Configuration Assistant**: New admin dashboard tool for intelligent SafeShare optimization
   - Interactive questionnaire analyzes deployment environment (network, storage, usage patterns)

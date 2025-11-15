@@ -37,7 +37,7 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           echo "Total coverage: ${COVERAGE}%"
-          THRESHOLD=20
+          THRESHOLD=35
           # Use awk for floating-point comparison (no bc dependency)
           PASS=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "1" : "0" }')
           if [ "$PASS" = "0" ]; then
