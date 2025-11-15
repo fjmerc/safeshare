@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CI/CD Integration**: Automated test suite with coverage enforcement and quality gates
+  - Full test suite runs automatically on every push and pull request
+  - Coverage baseline set at 20% threshold (current coverage: 23.4%)
+  - Race condition detection on critical packages (handlers, middleware, database, utils)
+  - Codecov integration for coverage visualization and PR comments
+  - GitHub Actions workflow enhancements with comprehensive testing
+  - Build deployment blocked if tests fail or coverage drops below threshold
+  - Test status and coverage badges visible in README
+  - Future roadmap: gradual coverage improvements to 35% → 50% → 80%
+
 - **Configuration Assistant**: New admin dashboard tool for intelligent SafeShare optimization
   - Interactive questionnaire analyzes deployment environment (network, storage, usage patterns)
   - Real-time recommendation engine calculates optimal settings for 13 configuration parameters

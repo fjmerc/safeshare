@@ -1,0 +1,50 @@
+# Codecov Configuration
+# SafeShare - Phase 1 CI/CD Integration
+# Current baseline coverage: 23.4%
+# Threshold set to 20% for safety margin
+# Future improvements planned: 35% → 50% → 80%
+
+coverage:
+  status:
+    project:
+      default:
+        target: 20%              # Baseline coverage target
+        threshold: 1%            # Allow 1% drop without failing
+        informational: false     # Fail CI if below threshold
+    patch:
+      default:
+        informational: true      # Don't require coverage on new code yet (Phase 1)
+
+  precision: 2                   # Display 2 decimal places
+  round: down                    # Round down for conservative estimates
+  range: "70...100"             # Green coverage range
+
+# Comment configuration for PRs
+comment:
+  layout: "diff, files, footer"
+  behavior: default              # Update existing comments
+  require_changes: false         # Always comment
+  require_base: false            # Comment even on first PR
+  require_head: true             # Require head coverage
+
+# Ignore patterns
+ignore:
+  - "**/*_test.go"              # Ignore test files
+  - "**/testdata/**"            # Ignore test data
+  - "cmd/migrate-chunks/**"     # Ignore migration tools
+  - "cmd/import-file/**"        # Ignore import tools
+
+# Component flags (for detailed coverage tracking)
+flags:
+  handlers:
+    paths:
+      - internal/handlers/
+  middleware:
+    paths:
+      - internal/middleware/
+  database:
+    paths:
+      - internal/database/
+  utils:
+    paths:
+      - internal/utils/
