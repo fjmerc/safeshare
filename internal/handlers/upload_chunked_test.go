@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -910,5 +911,311 @@ func TestUploadChunkHandler_LastChunkValidation(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestUploadCompleteHandler_ChunkIntegrityFailure(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Initialize upload
+	uploadID := "550e8400-e29b-41d4-a716-446655440009"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "integrity_test.txt",
+		TotalSize:      2048,
+		ChunkSize:      1024,
+		TotalChunks:    2,
+		ExpiresInHours: 24,
+		MaxDownloads:   0,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	database.CreatePartialUpload(db, partialUpload)
+
+	// Create chunks with WRONG sizes (integrity check should fail)
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	os.MkdirAll(partialDir, 0755)
+
+	// Chunk 0: correct size (1024 bytes)
+	chunk0Path := filepath.Join(partialDir, "chunk_0")
+	os.WriteFile(chunk0Path, bytes.Repeat([]byte("A"), 1024), 0644)
+
+	// Chunk 1: WRONG size (512 bytes instead of 1024) - integrity check should fail
+	chunk1Path := filepath.Join(partialDir, "chunk_1")
+	os.WriteFile(chunk1Path, bytes.Repeat([]byte("B"), 512), 0644)
+
+	handler := UploadCompleteHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 400 Bad Request due to integrity failure
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d\nBody: %s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+}
+
+func TestUploadCompleteHandler_WithEncryption(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Enable encryption (64 hex characters = 32 bytes for AES-256)
+	cfg.EncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	// Initialize upload
+	uploadID := "550e8400-e29b-41d4-a716-446655440010"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "encrypted_chunked.txt",
+		TotalSize:      2048,
+		ChunkSize:      1024,
+		TotalChunks:    2,
+		ExpiresInHours: 24,
+		MaxDownloads:   0,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	database.CreatePartialUpload(db, partialUpload)
+
+	// Create all chunks
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	os.MkdirAll(partialDir, 0755)
+
+	for i := 0; i < 2; i++ {
+		chunkPath := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		chunkData := bytes.Repeat([]byte("A"), 1024)
+		os.WriteFile(chunkPath, chunkData, 0644)
+	}
+
+	handler := UploadCompleteHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 202 Accepted (async assembly)
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusAccepted)
+	}
+
+	// Wait for async assembly to complete
+	time.Sleep(500 * time.Millisecond)
+
+	// Check that file was created and encrypted
+	partialUpload, _ = database.GetPartialUpload(db, uploadID)
+	if partialUpload.Status != "completed" {
+		t.Errorf("status = %s, want completed", partialUpload.Status)
+	}
+
+	// Verify encrypted file exists on disk
+	if partialUpload.ClaimCode != nil {
+		file, _ := database.GetFileByClaimCode(db, *partialUpload.ClaimCode)
+		if file != nil {
+			storedPath := filepath.Join(cfg.UploadDir, file.StoredFilename)
+			encryptedData, err := os.ReadFile(storedPath)
+			if err != nil {
+				t.Fatalf("failed to read stored file: %v", err)
+			}
+
+			// File should be encrypted (should NOT contain plaintext)
+			if bytes.Contains(encryptedData, []byte("AAAA")) {
+				t.Error("file appears to be stored in plaintext, not encrypted")
+			}
+		}
+	}
+}
+
+func TestUploadCompleteHandler_Expired(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+	cfg.PartialUploadExpiryHours = 1 // 1 hour expiry
+
+	// Initialize upload with old last_activity (expired)
+	uploadID := "550e8400-e29b-41d4-a716-446655440011"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "expired.txt",
+		TotalSize:      1024,
+		ChunkSize:      1024,
+		TotalChunks:    1,
+		ExpiresInHours: 24,
+		CreatedAt:      time.Now().Add(-25 * time.Hour), // Created 25 hours ago
+		LastActivity:   time.Now().Add(-25 * time.Hour), // Last activity 25 hours ago (expired!)
+	}
+	database.CreatePartialUpload(db, partialUpload)
+
+	// Create chunk
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	os.MkdirAll(partialDir, 0755)
+	chunkPath := filepath.Join(partialDir, "chunk_0")
+	os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644)
+
+	handler := UploadCompleteHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 410 Gone (expired)
+	if rr.Code != http.StatusGone {
+		t.Errorf("status = %d, want %d (Gone)", rr.Code, http.StatusGone)
+	}
+}
+
+func TestUploadCompleteHandler_AlreadyProcessing(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Initialize upload
+	uploadID := "550e8400-e29b-41d4-a716-446655440012"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "processing.txt",
+		TotalSize:      1024,
+		ChunkSize:      1024,
+		TotalChunks:    1,
+		ExpiresInHours: 24,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	database.CreatePartialUpload(db, partialUpload)
+
+	// Update status to "processing" (Status field not saved by CreatePartialUpload)
+	database.UpdatePartialUploadStatus(db, uploadID, "processing", nil)
+
+	// Create chunk
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	os.MkdirAll(partialDir, 0755)
+	chunkPath := filepath.Join(partialDir, "chunk_0")
+	os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644)
+
+	handler := UploadCompleteHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 202 Accepted with processing status (idempotent)
+	if rr.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusAccepted)
+	}
+
+	var response map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if status, ok := response["status"].(string); !ok || status != "processing" {
+		t.Errorf("status = %v, want processing", response["status"])
+	}
+}
+
+func TestUploadInitHandler_WithUserContext(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Create test user
+	testUser := &models.User{
+		ID:       456,
+		Username: "chunkuser",
+		Email:    "chunk@example.com",
+		Role:     "user",
+	}
+
+	handler := UploadInitHandler(db, cfg)
+
+	initReq := models.UploadInitRequest{
+		Filename:       "user_chunked.txt",
+		TotalSize:      1024 * 1024,
+		ExpiresInHours: 48,
+		MaxDownloads:   10,
+	}
+	body, _ := json.Marshal(initReq)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/init", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add user to context
+	ctx := context.WithValue(req.Context(), "user", testUser)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var response models.UploadInitResponse
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	// Verify user_id was set in partial upload
+	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	if partialUpload.UserID == nil {
+		t.Error("user_id should be set for authenticated upload")
+	}
+
+	if *partialUpload.UserID != testUser.ID {
+		t.Errorf("user_id = %d, want %d", *partialUpload.UserID, testUser.ID)
+	}
+}
+
+func TestUploadInitHandler_QuotaExceeded(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Set quota to 1GB (SetQuotaLimitGB takes int64, whole GB only)
+	cfg.SetQuotaLimitGB(1) // 1 GB
+
+	// Increase max file size to allow 200MB uploads
+	cfg.SetMaxFileSize(300 * 1024 * 1024) // 300MB
+
+	// Create actual file in upload directory (900MB)
+	existingFileData := bytes.Repeat([]byte("Y"), 900*1024*1024)
+	existingStoredFilename := "existing-chunked-quota-test.dat"
+	existingFilePath := filepath.Join(cfg.UploadDir, existingStoredFilename)
+	if err := os.WriteFile(existingFilePath, existingFileData, 0644); err != nil {
+		t.Fatalf("failed to create existing file: %v", err)
+	}
+
+	// Upload a file that uses most of the quota (900MB)
+	existingFile := &models.File{
+		ClaimCode:        "chunkedquota1",
+		OriginalFilename: "existing.dat",
+		StoredFilename:   existingStoredFilename,
+		FileSize:         900 * 1024 * 1024,
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	}
+	database.CreateFile(db, existingFile)
+
+	handler := UploadInitHandler(db, cfg)
+
+	// Try to initialize upload for 200MB file (would exceed quota)
+	initReq := models.UploadInitRequest{
+		Filename:  "new.dat",
+		TotalSize: 200 * 1024 * 1024,
+	}
+	body, _ := json.Marshal(initReq)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/init", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 507 Insufficient Storage
+	if rr.Code != http.StatusInsufficientStorage {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusInsufficientStorage)
 	}
 }

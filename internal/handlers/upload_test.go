@@ -2,11 +2,15 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -758,6 +762,320 @@ func TestUploadHandler_UnicodeFilenames(t *testing.T) {
 				t.Error("original_filename is empty for unicode file")
 			}
 		})
+	}
+}
+
+func TestUploadHandler_WithEncryption(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Set encryption key (64 hex characters = 32 bytes for AES-256)
+	cfg.EncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	handler := UploadHandler(db, cfg)
+
+	fileContent := []byte("Secret content that should be encrypted")
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "secret.txt", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d\nBody: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var resp models.UploadResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Verify file exists on disk
+	files, _ := os.ReadDir(cfg.UploadDir)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+
+	// Read encrypted file from disk
+	storedPath := filepath.Join(cfg.UploadDir, files[0].Name())
+	encryptedData, err := os.ReadFile(storedPath)
+	if err != nil {
+		t.Fatalf("failed to read stored file: %v", err)
+	}
+
+	// Verify file is actually encrypted (should NOT contain plaintext)
+	if bytes.Contains(encryptedData, []byte("Secret content")) {
+		t.Error("file appears to be stored in plaintext, not encrypted")
+	}
+
+	// Verify file size is larger than original (encryption overhead)
+	if int64(len(encryptedData)) <= int64(len(fileContent)) {
+		t.Error("encrypted file should be larger than original due to encryption overhead")
+	}
+}
+
+func TestUploadHandler_QuotaExceeded(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Set quota to 1GB (SetQuotaLimitGB takes int64, whole GB only)
+	cfg.SetQuotaLimitGB(1) // 1 GB
+
+	// Increase max file size to allow 200MB uploads
+	cfg.SetMaxFileSize(300 * 1024 * 1024) // 300MB
+
+	// Create actual file in upload directory (900MB)
+	existingFileData := bytes.Repeat([]byte("X"), 900*1024*1024)
+	existingStoredFilename := "existing-quota-test.dat"
+	existingFilePath := filepath.Join(cfg.UploadDir, existingStoredFilename)
+	if err := os.WriteFile(existingFilePath, existingFileData, 0644); err != nil {
+		t.Fatalf("failed to create existing file: %v", err)
+	}
+
+	// Upload a file that uses most of the quota (900MB)
+	existingFile := &models.File{
+		ClaimCode:        "existingfile1",
+		OriginalFilename: "existing.dat",
+		StoredFilename:   existingStoredFilename,
+		FileSize:         900 * 1024 * 1024, // 900MB
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	}
+	database.CreateFile(db, existingFile)
+
+	handler := UploadHandler(db, cfg)
+
+	// Try to upload another 200MB file (total would be 1.1GB, exceeds 1GB quota)
+	fileContent := bytes.Repeat([]byte("a"), 200*1024*1024)
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "new.dat", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Should return 507 Insufficient Storage
+	testutil.AssertStatusCode(t, rr, http.StatusInsufficientStorage)
+
+	var errResp models.ErrorResponse
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp.Code != "QUOTA_EXCEEDED" {
+		t.Errorf("error code = %q, want QUOTA_EXCEEDED", errResp.Code)
+	}
+}
+
+func TestUploadHandler_WithUserAuthentication(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	// Create test user
+	testUser := &models.User{
+		ID:       123,
+		Username: "testuser",
+		Email:    "test@example.com",
+		Role:     "user",
+	}
+
+	fileContent := []byte("User uploaded content")
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "userfile.txt", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+
+	// Add user to request context
+	ctx := context.WithValue(req.Context(), "user", testUser)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var resp models.UploadResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Verify file record has user_id set
+	file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+	if file.UserID == nil {
+		t.Error("user_id should be set for authenticated upload")
+	}
+
+	if *file.UserID != testUser.ID {
+		t.Errorf("user_id = %d, want %d", *file.UserID, testUser.ID)
+	}
+}
+
+func TestUploadHandler_AnonymousUser(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	fileContent := []byte("Anonymous upload")
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "anon.txt", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	// No user in context - anonymous upload
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var resp models.UploadResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Verify file record has NULL user_id
+	file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+	if file.UserID != nil {
+		t.Error("user_id should be NULL for anonymous upload")
+	}
+}
+
+func TestUploadHandler_MIMETypeDetection(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	tests := []struct {
+		name         string
+		fileContent  []byte
+		filename     string
+		expectedMime string
+	}{
+		{
+			name:         "PDF file",
+			fileContent:  []byte("%PDF-1.4\n"),
+			filename:     "document.pdf",
+			expectedMime: "application/pdf",
+		},
+		{
+			name:         "PNG image",
+			fileContent:  []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
+			filename:     "image.png",
+			expectedMime: "image/png",
+		},
+		{
+			name:         "ZIP archive",
+			fileContent:  []byte{0x50, 0x4B, 0x03, 0x04},
+			filename:     "archive.zip",
+			expectedMime: "application/zip",
+		},
+		{
+			name:         "plain text",
+			fileContent:  []byte("This is plain text"),
+			filename:     "file.txt",
+			expectedMime: "text/plain",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, contentType := testutil.CreateMultipartForm(t, tt.fileContent, tt.filename, nil)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+			req.Header.Set("Content-Type", contentType)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("upload failed: %s", rr.Body.String())
+			}
+
+			var resp models.UploadResponse
+			json.Unmarshal(rr.Body.Bytes(), &resp)
+
+			// Verify MIME type in database
+			file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+			if !strings.HasPrefix(file.MimeType, tt.expectedMime) {
+				t.Errorf("mime_type = %q, want prefix %q", file.MimeType, tt.expectedMime)
+			}
+		})
+	}
+}
+
+func TestUploadHandler_InsufficientDiskSpace(t *testing.T) {
+	// This test is difficult to implement without mocking disk space checks
+	// The actual implementation checks real disk space via syscall
+	// Skip for now - would require refactoring CheckDiskSpace to be mockable
+	t.Skip("Requires disk space mocking - deferred for Phase 7")
+}
+
+func TestUploadHandler_ClaimCodeCollision(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	// Pre-populate database with many claim codes to increase collision probability
+	// Note: This test may be flaky due to random code generation
+	// In practice, collisions are extremely rare (8 char base62 = 218 trillion combinations)
+
+	for i := 0; i < 100; i++ {
+		fileContent := []byte(fmt.Sprintf("File %d", i))
+		body, contentType := testutil.CreateMultipartForm(t, fileContent, fmt.Sprintf("file%d.txt", i), nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+		req.Header.Set("Content-Type", contentType)
+
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("upload %d failed: %s", i, rr.Body.String())
+		}
+	}
+
+	// All uploads should succeed with unique codes
+	// If collision retry logic is working, this should pass
+
+	// Verify all claim codes are unique
+	rows, err := db.Query("SELECT claim_code FROM files")
+	if err != nil {
+		t.Fatalf("failed to query files: %v", err)
+	}
+	defer rows.Close()
+
+	codes := make(map[string]bool)
+	for rows.Next() {
+		var code string
+		rows.Scan(&code)
+		if codes[code] {
+			t.Errorf("duplicate claim code found: %s", code)
+		}
+		codes[code] = true
+	}
+}
+
+func TestUploadHandler_SmallFile(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	// Test with very small file (less than 512 bytes for MIME detection)
+	fileContent := []byte("Small")
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "small.txt", nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusCreated)
+
+	var resp models.UploadResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp.FileSize != int64(len(fileContent)) {
+		t.Errorf("file_size = %d, want %d", resp.FileSize, len(fileContent))
 	}
 }
 
