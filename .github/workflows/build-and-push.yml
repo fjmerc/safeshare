@@ -8,6 +8,7 @@ on:
       - 'v*.*.*'
   pull_request:
     branches:
+      - develop
       - main
 
 jobs:
@@ -20,11 +21,45 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: true
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run go vet
         run: go vet ./...
+
+      - name: Run tests with coverage
+        run: go test ./... -cover -coverprofile=coverage.out -covermode=atomic
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          THRESHOLD=20
+          # Use awk for floating-point comparison (no bc dependency)
+          PASS=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "1" : "0" }')
+          if [ "$PASS" = "0" ]; then
+            echo "❌ Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+          echo "✅ Coverage check passed: ${COVERAGE}% >= ${THRESHOLD}%"
+
+      - name: Run race detection
+        run: |
+          echo "Running race detection on critical packages..."
+          go test ./internal/handlers ./internal/middleware ./internal/database ./internal/utils -race -timeout=5m || echo "Race detection completed with warnings"
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-safeshare
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   build-and-push:
     needs: test
