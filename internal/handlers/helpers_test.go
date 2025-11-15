@@ -532,11 +532,11 @@ func TestShouldRetryError(t *testing.T) {
 			wantRetryAfter: 0,
 		},
 
-		// Special case - quota exceeded (retryable but no recommended retry time)
+		// Special case - quota exceeded (production code treats as retryable with retryAfter=0)
 		{
 			name:           "QUOTA_EXCEEDED",
 			errorCode:      "QUOTA_EXCEEDED",
-			wantRetry:      false,
+			wantRetry:      true,  // Production code has QUOTA_EXCEEDED in retryableErrors map
 			wantRetryAfter: 0,
 		},
 

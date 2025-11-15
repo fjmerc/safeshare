@@ -30,7 +30,7 @@ func BenchmarkUploadSmallFile(b *testing.B) {
 
 		handler.ServeHTTP(rr, req)
 
-		if rr.Code != 200 {
+		if rr.Code != 201 { // Upload handler returns 201 (Created)
 			b.Fatalf("upload failed: status = %d", rr.Code)
 		}
 	}
@@ -57,7 +57,7 @@ func BenchmarkUploadMediumFile(b *testing.B) {
 
 		handler.ServeHTTP(rr, req)
 
-		if rr.Code != 200 {
+		if rr.Code != 201 { // Upload handler returns 201 (Created)
 			b.Fatalf("upload failed: status = %d", rr.Code)
 		}
 	}
@@ -86,7 +86,7 @@ func BenchmarkUploadWithPassword(b *testing.B) {
 
 		handler.ServeHTTP(rr, req)
 
-		if rr.Code != 200 {
+		if rr.Code != 201 { // Upload handler returns 201 (Created)
 			b.Fatalf("upload failed: status = %d", rr.Code)
 		}
 	}
@@ -114,7 +114,7 @@ func BenchmarkConcurrentUploads(b *testing.B) {
 
 			handler.ServeHTTP(rr, req)
 
-			if rr.Code != 200 {
+			if rr.Code != 201 { // Upload handler returns 201 (Created)
 				b.Fatalf("upload failed: status = %d", rr.Code)
 			}
 		}

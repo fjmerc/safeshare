@@ -268,8 +268,8 @@ func TestRecoveryFromPartialUploadNotFound(t *testing.T) {
 
 	chunkHandler := handlers.UploadChunkHandler(db, cfg)
 
-	// Try to upload chunk to non-existent upload
-	fakeUploadID := "nonexistent-upload-id"
+	// Try to upload chunk to non-existent upload (using valid UUID format)
+	fakeUploadID := "00000000-0000-0000-0000-000000000000" // Valid UUID but doesn't exist
 
 	chunkData := bytes.Repeat([]byte("X"), 1024)
 	var buf bytes.Buffer
@@ -284,7 +284,7 @@ func TestRecoveryFromPartialUploadNotFound(t *testing.T) {
 
 	chunkHandler.ServeHTTP(rr, req)
 
-	// Should return 404 Not Found
+	// Should return 404 Not Found (invalid UUID format returns 400)
 	if rr.Code != 404 {
 		t.Errorf("non-existent upload: status = %d, want 404", rr.Code)
 	}

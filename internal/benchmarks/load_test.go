@@ -47,7 +47,7 @@ func TestLoadUploadBurst(t *testing.T) {
 
 			handler.ServeHTTP(rr, req)
 
-			if rr.Code != 200 {
+			if rr.Code != 201 { // Upload handler returns 201 (Created)
 				errors <- fmt.Errorf("upload %d failed: status = %d", index, rr.Code)
 			}
 		}(i)
@@ -127,7 +127,7 @@ loop:
 
 				handler.ServeHTTP(rr, req)
 
-				if rr.Code != 200 {
+				if rr.Code != 201 { // Upload handler returns 201 (Created)
 					errors <- fmt.Errorf("upload %d failed: status = %d", index, rr.Code)
 				}
 			}(totalRequests)
@@ -210,7 +210,7 @@ func TestLoadMixedOperations(t *testing.T) {
 
 				uploadHandler.ServeHTTP(rr, req)
 
-				if rr.Code != 200 {
+				if rr.Code != 201 { // Upload handler returns 201 (Created)
 					errors <- fmt.Errorf("upload failed")
 				}
 			}(i)

@@ -23,6 +23,11 @@ func SetupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 
+	// IMPORTANT: Force single connection for in-memory databases
+	// Each connection in the pool gets its own separate :memory: database
+	// This ensures migrations and queries see the same database
+	db.SetMaxOpenConns(1)
+
 	// Run migrations to create schema
 	if err := database.RunMigrations(db); err != nil {
 		db.Close()

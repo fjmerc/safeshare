@@ -126,7 +126,13 @@ func TestDatabaseConcurrentDownloadCounter(t *testing.T) {
 	wg.Wait()
 
 	// Verify final count
-	updatedFile, _ := database.GetFileByClaimCode(db, claimCode)
+	updatedFile, err := database.GetFileByClaimCode(db, claimCode)
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+	if updatedFile == nil {
+		t.Fatal("GetFileByClaimCode() returned nil file")
+	}
 	if updatedFile.DownloadCount != numIncrements {
 		t.Errorf("download_count = %d, want %d", updatedFile.DownloadCount, numIncrements)
 	}

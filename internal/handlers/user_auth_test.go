@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,21 +52,21 @@ func TestUserLoginHandler_ValidLogin(t *testing.T) {
 		t.Errorf("username = %q, want testuser", resp.Username)
 	}
 
-	// Check session cookie was set
+	// Check session cookie was set (handler sets "user_session" cookie)
 	cookies := rr.Result().Cookies()
 	found := false
 	for _, cookie := range cookies {
-		if cookie.Name == "session_token" {
+		if cookie.Name == "user_session" {
 			found = true
 			if cookie.Value == "" {
-				t.Error("session_token cookie is empty")
+				t.Error("user_session cookie is empty")
 			}
 			break
 		}
 	}
 
 	if !found {
-		t.Error("session_token cookie not set")
+		t.Error("user_session cookie not set")
 	}
 }
 
@@ -142,17 +143,12 @@ func TestUserLoginHandler_DisabledAccount(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	handler := UserLoginHandler(db, cfg)
 
-	// Create disabled user
+	// Create user then disable them (CreateUser always creates active users)
 	passwordHash, _ := utils.HashPassword("password123")
-	user := &models.User{
-		Username:     "disabled",
-		Email:        "disabled@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     false, // Disabled
-	}
+	user, _ := database.CreateUser(db, "disabled", "disabled@example.com", passwordHash, "user", false)
 
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
+	// Disable the user
+	database.SetUserActive(db, user.ID, false)
 
 	loginReq := models.UserLoginRequest{
 		Username: "disabled",
@@ -231,17 +227,9 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	_ = testutil.SetupTestConfig(t)
 
-	// Create test user
+	// Create test user in database
 	oldPasswordHash, _ := utils.HashPassword("oldpassword123")
-	user := &models.User{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: oldPasswordHash,
-		Role:         "user",
-		IsActive:     true,
-	}
-
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", oldPasswordHash, "user", false)
 
 	handler := UserChangePasswordHandler(db)
 
@@ -355,7 +343,9 @@ func TestGetCurrentUserHandler(t *testing.T) {
 	_ = testutil.SetupTestConfig(t)
 	handler := UserGetCurrentHandler(db)
 
-	user := testutil.SampleUser()
+	// Create user in database (handler reloads from DB)
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/user", nil)
 
@@ -386,14 +376,15 @@ func TestUserDashboardHandler_ListFiles(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	handler := UserDashboardDataHandler(db, cfg)
 
-	// Create test user
-	user := testutil.SampleUser()
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
+	// Create test user in database (use returned user with correct ID)
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
 
-	// Create some files for the user
+	// Create some files for the user (each needs unique claim code)
 	for i := 0; i < 3; i++ {
 		file := testutil.SampleFile()
 		file.UserID = &user.ID
+		file.ClaimCode = fmt.Sprintf("test-claim-code-%d", i) // Unique claim codes
 		database.CreateFile(db, file)
 	}
 

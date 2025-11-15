@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -374,7 +375,8 @@ func TestClaimHandler_ContentDisposition(t *testing.T) {
 			filePath := filepath.Join(cfg.UploadDir, storedFilename)
 			os.WriteFile(filePath, testContent, 0644)
 
-			claimCode := "test-" + tt.name
+			// Replace spaces in test name to create valid URL
+			claimCode := "test-" + strings.ReplaceAll(tt.name, " ", "-")
 			file := &models.File{
 				ClaimCode:        claimCode,
 				OriginalFilename: tt.originalFilename,
@@ -550,6 +552,9 @@ func TestClaimInfoHandler_FileInfo(t *testing.T) {
 	}
 
 	database.CreateFile(db, file)
+
+	// Set download count to 2 (CreateFile doesn't preserve DownloadCount, it defaults to 0)
+	db.Exec("UPDATE files SET download_count = 2 WHERE claim_code = ?", "info123")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/info123/info", nil)
 	rr := httptest.NewRecorder()

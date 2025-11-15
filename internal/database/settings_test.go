@@ -16,6 +16,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to open test db: %v", err)
 	}
 
+	// IMPORTANT: Force single connection for in-memory databases
+	// Each connection in the pool gets its own separate :memory: database
+	// This ensures migrations and queries see the same database
+	db.SetMaxOpenConns(1)
+
 	// Run migrations to create schema
 	if err := RunMigrations(db); err != nil {
 		db.Close()
@@ -219,6 +224,11 @@ func TestUpdateBlockedExtensionsSetting(t *testing.T) {
 // TestSettingsConcurrentUpdates tests concurrent settings updates
 func TestSettingsConcurrentUpdates(t *testing.T) {
 	db := setupTestDB(t)
+
+	// Ensure settings row exists before concurrent updates to avoid race condition
+	if err := ensureSettingsRow(db); err != nil {
+		t.Fatalf("Failed to initialize settings: %v", err)
+	}
 
 	// Concurrent updates to different settings
 	done := make(chan bool, 3)

@@ -1,8 +1,8 @@
 -- Migration 001: Initial baseline schema
 --
 -- Creates all core tables for SafeShare application:
+-- - users: User authentication (created first due to FK dependencies)
 -- - files: File upload tracking
--- - users: User authentication
 -- - user_sessions: User session management
 -- - admin_credentials: Admin authentication
 -- - admin_sessions: Admin session management
@@ -11,6 +11,27 @@
 --
 -- Date: 2025-01-06
 -- Version: v1.2.0
+
+-- ============================================================================
+-- USERS TABLE (created first - files table has FK reference)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    is_approved INTEGER NOT NULL DEFAULT 1,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    require_password_change INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_login DATETIME,
+    UNIQUE(username),
+    UNIQUE(email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_email ON users(email);
 
 -- ============================================================================
 -- FILES TABLE
@@ -36,27 +57,6 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_claim_code ON files(claim_code);
 CREATE INDEX IF NOT EXISTS idx_expires_at ON files(expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_id ON files(user_id);
-
--- ============================================================================
--- USERS TABLE
--- ============================================================================
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user',
-    is_approved INTEGER NOT NULL DEFAULT 1,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    require_password_change INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_login DATETIME,
-    UNIQUE(username),
-    UNIQUE(email)
-);
-
-CREATE INDEX IF NOT EXISTS idx_username ON users(username);
-CREATE INDEX IF NOT EXISTS idx_email ON users(email);
 
 -- ============================================================================
 -- USER SESSIONS TABLE

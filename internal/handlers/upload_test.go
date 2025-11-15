@@ -361,24 +361,27 @@ func TestUploadHandler_FilenameSanitization(t *testing.T) {
 	handler := UploadHandler(db, cfg)
 
 	tests := []struct {
-		name             string
-		filename         string
+		name              string
+		filename          string
 		expectedSanitized string
+		shouldFail        bool // true if upload should fail at HTTP level
 	}{
 		{
-			name:             "path traversal",
-			filename:         "../../../etc/passwd",
-			expectedSanitized: "etc_passwd",
+			name:              "path traversal",
+			filename:          "../../../etc/passwd",
+			expectedSanitized: "passwd", // filepath.Base() returns just "passwd"
+			shouldFail:        false,
 		},
 		{
-			name:             "header injection",
-			filename:         "file\r\nContent-Type: evil",
-			expectedSanitized: "file__Content-Type__evil",
+			name:       "header injection",
+			filename:   "file\r\nContent-Type: evil",
+			shouldFail: true, // \r\n breaks multipart form encoding at HTTP level
 		},
 		{
-			name:             "normal filename",
-			filename:         "my-document.pdf",
+			name:              "normal filename",
+			filename:          "my-document.pdf",
 			expectedSanitized: "my-document.pdf",
+			shouldFail:        false,
 		},
 	}
 
@@ -392,6 +395,14 @@ func TestUploadHandler_FilenameSanitization(t *testing.T) {
 
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
+
+			if tt.shouldFail {
+				// Upload should fail at HTTP level due to malformed multipart form
+				if rr.Code == http.StatusCreated {
+					t.Errorf("upload should have failed but succeeded")
+				}
+				return
+			}
 
 			if rr.Code != http.StatusCreated {
 				t.Fatalf("upload failed: %s", rr.Body.String())

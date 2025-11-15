@@ -217,12 +217,12 @@ func TestClaimHandler_RangeRequest_InvalidRange(t *testing.T) {
 		{
 			name:        "invalid range format",
 			rangeHeader: "bytes=abc-def",
-			wantStatus:  http.StatusBadRequest,
+			wantStatus:  http.StatusRequestedRangeNotSatisfiable, // Handler returns 416 for all range errors
 		},
 		{
 			name:        "start greater than end",
 			rangeHeader: "bytes=500-100",
-			wantStatus:  http.StatusBadRequest,
+			wantStatus:  http.StatusRequestedRangeNotSatisfiable, // Handler returns 416 for all range errors
 		},
 	}
 

@@ -22,9 +22,8 @@ func TestAdminLoginHandler_ValidAdminCredentials(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 
-	// Create admin credentials
-	hashedPassword, _ := utils.HashPassword("adminpassword123")
-	database.InitializeAdminCredentials(db, "admin", hashedPassword)
+	// Create admin credentials (InitializeAdminCredentials hashes internally)
+	database.InitializeAdminCredentials(db, "admin", "adminpassword123")
 
 	handler := AdminLoginHandler(db, cfg)
 
@@ -177,9 +176,8 @@ func TestAdminLoginHandler_FormData(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 
-	// Create admin credentials
-	hashedPassword, _ := utils.HashPassword("adminpassword123")
-	database.InitializeAdminCredentials(db, "admin", hashedPassword)
+	// Create admin credentials (InitializeAdminCredentials hashes internally)
+	database.InitializeAdminCredentials(db, "admin", "adminpassword123")
 
 	handler := AdminLoginHandler(db, cfg)
 
@@ -361,9 +359,12 @@ func TestAdminDeleteFileHandler(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	// Verify file is deleted from database
-	_, err := database.GetFileByClaimCode(db, claimCode)
-	if err == nil {
+	// Verify file is deleted from database (GetFileByClaimCode returns nil, nil when not found)
+	file, err := database.GetFileByClaimCode(db, claimCode)
+	if err != nil {
+		t.Fatalf("unexpected error querying deleted file: %v", err)
+	}
+	if file != nil {
 		t.Error("file should be deleted from database")
 	}
 
@@ -440,10 +441,13 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 		t.Errorf("deleted_count = %d, want 3", deletedCount)
 	}
 
-	// Verify files are deleted from database
+	// Verify files are deleted from database (GetFileByClaimCode returns nil, nil when not found)
 	for _, code := range claimCodes {
-		_, err := database.GetFileByClaimCode(db, code)
-		if err == nil {
+		file, err := database.GetFileByClaimCode(db, code)
+		if err != nil {
+			t.Fatalf("unexpected error querying deleted file %s: %v", code, err)
+		}
+		if file != nil {
 			t.Errorf("file %s should be deleted from database", code)
 		}
 	}
