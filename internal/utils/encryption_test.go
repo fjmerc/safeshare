@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"testing"
 )
 
@@ -111,6 +112,560 @@ func TestEncryptionWithMultiReader(t *testing.T) {
 		t.Errorf("Decrypted data does not match original")
 	} else {
 		t.Logf("SUCCESS: MultiReader data decrypted correctly")
+	}
+}
+
+// TestEncryptFile_Success tests basic encryption functionality
+func TestEncryptFile_Success(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	plaintext := []byte("Hello, World! This is a test message.")
+
+	encrypted, err := EncryptFile(plaintext, testKey)
+	if err != nil {
+		t.Fatalf("EncryptFile failed: %v", err)
+	}
+
+	// Verify encrypted data is longer (nonce + ciphertext + tag)
+	if len(encrypted) <= len(plaintext) {
+		t.Errorf("Encrypted data should be longer than plaintext")
+	}
+
+	// Verify it's not the same as plaintext
+	if bytes.Equal(encrypted, plaintext) {
+		t.Errorf("Encrypted data should not equal plaintext")
+	}
+}
+
+// TestEncryptFile_InvalidKey tests encryption with invalid keys
+func TestEncryptFile_InvalidKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		wantErr string
+	}{
+		{
+			name:    "non-hex key",
+			key:     "invalid-hex-key-with-dashes-and-letters",
+			wantErr: "invalid hex key",
+		},
+		{
+			name:    "wrong length key",
+			key:     "0123456789abcdef", // Only 16 chars (8 bytes)
+			wantErr: "key must be 32 bytes",
+		},
+		{
+			name:    "empty key",
+			key:     "",
+			wantErr: "key must be 32 bytes", // Empty string decodes to 0 bytes
+		},
+	}
+
+	plaintext := []byte("test data")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := EncryptFile(plaintext, tt.key)
+			if err == nil {
+				t.Fatalf("Expected error containing '%s', got nil", tt.wantErr)
+			}
+			if !bytes.Contains([]byte(err.Error()), []byte(tt.wantErr)) {
+				t.Errorf("Expected error containing '%s', got: %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestEncryptFile_EmptyData tests encryption of empty data
+func TestEncryptFile_EmptyData(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	plaintext := []byte{}
+
+	encrypted, err := EncryptFile(plaintext, testKey)
+	if err != nil {
+		t.Fatalf("EncryptFile failed on empty data: %v", err)
+	}
+
+	// Should still have nonce + tag even with no data
+	if len(encrypted) == 0 {
+		t.Errorf("Encrypted empty data should not be empty (needs nonce + tag)")
+	}
+}
+
+// TestDecryptFile_Success tests basic decryption functionality
+func TestDecryptFile_Success(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	originalPlaintext := []byte("Secret message for decryption test")
+
+	// Encrypt first
+	encrypted, err := EncryptFile(originalPlaintext, testKey)
+	if err != nil {
+		t.Fatalf("EncryptFile failed: %v", err)
+	}
+
+	// Decrypt
+	decrypted, err := DecryptFile(encrypted, testKey)
+	if err != nil {
+		t.Fatalf("DecryptFile failed: %v", err)
+	}
+
+	// Verify decryption matches original
+	if !bytes.Equal(decrypted, originalPlaintext) {
+		t.Errorf("Decrypted data does not match original.\nExpected: %s\nGot: %s",
+			string(originalPlaintext), string(decrypted))
+	}
+}
+
+// TestDecryptFile_WrongKey tests decryption with wrong key
+func TestDecryptFile_WrongKey(t *testing.T) {
+	correctKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	wrongKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	plaintext := []byte("Test data")
+
+	// Encrypt with correct key
+	encrypted, err := EncryptFile(plaintext, correctKey)
+	if err != nil {
+		t.Fatalf("EncryptFile failed: %v", err)
+	}
+
+	// Try to decrypt with wrong key
+	_, err = DecryptFile(encrypted, wrongKey)
+	if err == nil {
+		t.Fatal("Expected decryption to fail with wrong key, but it succeeded")
+	}
+
+	if !bytes.Contains([]byte(err.Error()), []byte("decryption failed")) {
+		t.Errorf("Expected 'decryption failed' error, got: %v", err)
+	}
+}
+
+// TestDecryptFile_CorruptedData tests decryption with corrupted ciphertext
+func TestDecryptFile_CorruptedData(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	plaintext := []byte("Original data before corruption")
+
+	// Encrypt
+	encrypted, err := EncryptFile(plaintext, testKey)
+	if err != nil {
+		t.Fatalf("EncryptFile failed: %v", err)
+	}
+
+	// Corrupt a byte in the middle
+	if len(encrypted) > 20 {
+		encrypted[20] ^= 0xFF // Flip all bits
+	}
+
+	// Try to decrypt
+	_, err = DecryptFile(encrypted, testKey)
+	if err == nil {
+		t.Fatal("Expected decryption to fail with corrupted data, but it succeeded")
+	}
+}
+
+// TestDecryptFile_TooShort tests decryption with data too short
+func TestDecryptFile_TooShort(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	// Data shorter than nonce size
+	tooShort := []byte{0x01, 0x02, 0x03}
+
+	_, err := DecryptFile(tooShort, testKey)
+	if err == nil {
+		t.Fatal("Expected error for data too short, got nil")
+	}
+
+	if !bytes.Contains([]byte(err.Error()), []byte("too short")) {
+		t.Errorf("Expected 'too short' error, got: %v", err)
+	}
+}
+
+// TestIsEncrypted tests encrypted data detection
+func TestIsEncrypted(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	tests := []struct {
+		name     string
+		data     []byte
+		expected bool
+	}{
+		{
+			name:     "encrypted data",
+			data:     nil, // Will be set to actual encrypted data
+			expected: true,
+		},
+		{
+			name:     "plaintext data",
+			data:     []byte("This is plaintext"),
+			expected: false,
+		},
+		{
+			name:     "empty data",
+			data:     []byte{},
+			expected: false,
+		},
+		{
+			name:     "very short data",
+			data:     []byte{0x01, 0x02},
+			expected: false,
+		},
+	}
+
+	// Generate actual encrypted data for first test
+	encrypted, err := EncryptFile([]byte("test"), testKey)
+	if err != nil {
+		t.Fatalf("Failed to encrypt test data: %v", err)
+	}
+	tests[0].data = encrypted
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsEncrypted(tt.data)
+			if result != tt.expected {
+				t.Errorf("IsEncrypted() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestEncryptDecryptRoundTrip tests full encryption/decryption cycle
+func TestEncryptDecryptRoundTrip(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	testCases := []struct {
+		name string
+		data []byte
+	}{
+		{"small text", []byte("Hello")},
+		{"medium text", []byte(bytes.Repeat([]byte("A"), 1000))},
+		{"binary data", []byte{0x00, 0xFF, 0x01, 0xFE, 0x02, 0xFD}},
+		{"empty", []byte{}},
+		{"unicode", []byte("Hello 世界 🌍")},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Encrypt
+			encrypted, err := EncryptFile(tc.data, testKey)
+			if err != nil {
+				t.Fatalf("EncryptFile failed: %v", err)
+			}
+
+			// Decrypt
+			decrypted, err := DecryptFile(encrypted, testKey)
+			if err != nil {
+				t.Fatalf("DecryptFile failed: %v", err)
+			}
+
+			// Verify
+			if !bytes.Equal(decrypted, tc.data) {
+				t.Errorf("Round trip failed. Original: %v, Decrypted: %v", tc.data, decrypted)
+			}
+		})
+	}
+}
+
+// TestIsEncryptionEnabled tests encryption enabled detection
+func TestIsEncryptionEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected bool
+	}{
+		{
+			name:     "valid key",
+			key:      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			expected: true,
+		},
+		{
+			name:     "empty key",
+			key:      "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsEncryptionEnabled(tt.key)
+			if result != tt.expected {
+				t.Errorf("IsEncryptionEnabled() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestIsStreamEncrypted tests detection of streaming encrypted files
+func TestIsStreamEncrypted(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T) string // Returns path to test file
+		expected bool
+		wantErr  bool
+	}{
+		{
+			name: "stream encrypted file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				tmpDir := t.TempDir()
+				srcPath := tmpDir + "/plaintext.txt"
+				dstPath := tmpDir + "/encrypted.bin"
+
+				// Create plaintext file
+				if err := os.WriteFile(srcPath, []byte("test data"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				// Encrypt it using streaming encryption
+				if err := EncryptFileStreaming(srcPath, dstPath, testKey); err != nil {
+					t.Fatalf("Failed to encrypt file: %v", err)
+				}
+
+				return dstPath
+			},
+			expected: true,
+			wantErr:  false,
+		},
+		{
+			name: "plaintext file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				tmpDir := t.TempDir()
+				filePath := tmpDir + "/plaintext.txt"
+
+				if err := os.WriteFile(filePath, []byte("plain text content"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				return filePath
+			},
+			expected: false,
+			wantErr:  false,
+		},
+		{
+			name: "empty file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				tmpDir := t.TempDir()
+				filePath := tmpDir + "/empty.txt"
+
+				if err := os.WriteFile(filePath, []byte{}, 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				return filePath
+			},
+			expected: false,
+			wantErr:  false,
+		},
+		{
+			name: "short file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				tmpDir := t.TempDir()
+				filePath := tmpDir + "/short.txt"
+
+				// Only 3 bytes, shorter than magic header
+				if err := os.WriteFile(filePath, []byte("abc"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				return filePath
+			},
+			expected: false,
+			wantErr:  false,
+		},
+		{
+			name: "nonexistent file",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				return "/tmp/this-file-does-not-exist.txt"
+			},
+			expected: false,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := tt.setup(t)
+
+			result, err := IsStreamEncrypted(filePath)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if result != tt.expected {
+				t.Errorf("IsStreamEncrypted() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestDecryptFileStreamingRange tests range decryption for HTTP range requests
+func TestDecryptFileStreamingRange(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	// Create a test file with known content
+	tmpDir := t.TempDir()
+	srcPath := tmpDir + "/plaintext.txt"
+	encPath := tmpDir + "/encrypted.bin"
+
+	// Create plaintext with easily verifiable content (10KB)
+	plaintext := bytes.Repeat([]byte("0123456789"), 1024) // 10KB
+	if err := os.WriteFile(srcPath, plaintext, 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Encrypt the file
+	if err := EncryptFileStreaming(srcPath, encPath, testKey); err != nil {
+		t.Fatalf("Failed to encrypt file: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		startByte int64
+		endByte   int64
+		expected  []byte
+		wantErr   bool
+	}{
+		{
+			name:      "first 10 bytes",
+			startByte: 0,
+			endByte:   9,
+			expected:  []byte("0123456789"),
+			wantErr:   false,
+		},
+		{
+			name:      "middle range",
+			startByte: 100,
+			endByte:   109,
+			expected:  plaintext[100:110],
+			wantErr:   false,
+		},
+		{
+			name:      "last 10 bytes",
+			startByte: int64(len(plaintext) - 10),
+			endByte:   int64(len(plaintext) - 1),
+			expected:  plaintext[len(plaintext)-10:],
+			wantErr:   false,
+		},
+		{
+			name:      "single byte",
+			startByte: 50,
+			endByte:   50,
+			expected:  plaintext[50:51],
+			wantErr:   false,
+		},
+		{
+			name:      "full file",
+			startByte: 0,
+			endByte:   int64(len(plaintext) - 1),
+			expected:  plaintext,
+			wantErr:   false,
+		},
+		{
+			name:      "invalid range - start > end",
+			startByte: 100,
+			endByte:   50,
+			expected:  nil,
+			wantErr:   true,
+		},
+		{
+			name:      "invalid range - negative start",
+			startByte: -1,
+			endByte:   10,
+			expected:  nil,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			n, err := DecryptFileStreamingRange(encPath, &buf, testKey, tt.startByte, tt.endByte)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			// Verify bytes written
+			expectedLen := int64(len(tt.expected))
+			if n != expectedLen {
+				t.Errorf("Expected %d bytes written, got %d", expectedLen, n)
+			}
+
+			// Verify content
+			if !bytes.Equal(buf.Bytes(), tt.expected) {
+				t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", tt.expected, buf.Bytes())
+			}
+		})
+	}
+}
+
+// TestDecryptFileStreamingRange_InvalidKey tests range decryption with wrong key
+func TestDecryptFileStreamingRange_InvalidKey(t *testing.T) {
+	correctKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	wrongKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+
+	tmpDir := t.TempDir()
+	srcPath := tmpDir + "/plaintext.txt"
+	encPath := tmpDir + "/encrypted.bin"
+
+	// Create and encrypt test file
+	plaintext := []byte("test data")
+	if err := os.WriteFile(srcPath, plaintext, 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	if err := EncryptFileStreaming(srcPath, encPath, correctKey); err != nil {
+		t.Fatalf("Failed to encrypt file: %v", err)
+	}
+
+	// Try to decrypt with wrong key
+	var buf bytes.Buffer
+	_, err := DecryptFileStreamingRange(encPath, &buf, wrongKey, 0, int64(len(plaintext)-1))
+	if err == nil {
+		t.Fatal("Expected error with wrong key, got nil")
+	}
+}
+
+// TestDecryptFileStreamingRange_NotEncrypted tests range decryption on plaintext file
+func TestDecryptFileStreamingRange_NotEncrypted(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	tmpDir := t.TempDir()
+	plainPath := tmpDir + "/plaintext.txt"
+
+	// Create plaintext file (not encrypted)
+	if err := os.WriteFile(plainPath, []byte("plain text"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Try to decrypt as if it were encrypted
+	var buf bytes.Buffer
+	_, err := DecryptFileStreamingRange(plainPath, &buf, testKey, 0, 9)
+	if err == nil {
+		t.Fatal("Expected error for non-encrypted file, got nil")
+	}
+
+	if !bytes.Contains([]byte(err.Error()), []byte("invalid magic header")) {
+		t.Errorf("Expected 'invalid magic header' error, got: %v", err)
 	}
 }
 
