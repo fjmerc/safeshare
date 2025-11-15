@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Test Coverage Improvements (Phase 4)**: Authentication and authorization test coverage
+  - Overall coverage increased from 31.3% to 35.8% (+4.5 percentage points)
+  - **Middleware package**: Authentication middleware test coverage
+    - AdminAuth middleware: Comprehensive tests for admin session validation, user session with admin role fallback, HTML vs API request handling
+    - UserAuth middleware: Tests for valid/invalid/expired sessions, inactive user handling, HTML redirects vs API 401/403 responses
+    - OptionalUserAuth middleware: Tests for optional authentication flow (anonymous allowed)
+    - CSRF protection: Token validation, missing token handling, GET request bypass
+    - Rate limiting: Admin and user login rate limit tests (5 attempts per 15 minutes)
+    - Test files: admin_test.go (~420 lines, 20 test cases), user_auth_test.go (~350 lines, 10 test cases)
+  - **Database package**: Admin operations test coverage
+    - Admin credentials: Initialization, validation, updates
+    - Admin sessions: Create, get, update activity, delete, expired session cleanup
+    - IP blocking: Block/unblock IPs, blocked IP retrieval, access denial validation
+    - Test file: admin_test.go (~470 lines, 18 test cases)
+  - All tests pass with race detection enabled (no data races detected)
+  - Next phase: Admin handler tests (settings, password change) to reach 40% coverage target
+
 - **Test Coverage Improvements (Phase 3)**: Middleware and handler test expansion
   - Middleware package: 18.5% → 31.5% (+13%, exceeded 30% target)
     - Security headers middleware: 100% coverage (CSP, X-Frame-Options, XSS protection)
