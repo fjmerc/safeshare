@@ -42,6 +42,7 @@ type ErrorResponse struct {
 // HealthResponse is the JSON response for the health check endpoint
 type HealthResponse struct {
 	Status             string           `json:"status"`
+	StatusDetails      []string         `json:"status_details,omitempty"`     // Details when status is degraded or unhealthy
 	UptimeSeconds      int64            `json:"uptime_seconds"`
 	TotalFiles         int              `json:"total_files"`
 	StorageUsedBytes   int64            `json:"storage_used_bytes"`

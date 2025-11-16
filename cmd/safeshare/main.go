@@ -153,7 +153,10 @@ func run() error {
 		}
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
+	// Health check endpoints (no auth required for monitoring)
 	mux.HandleFunc("/health", handlers.HealthHandler(db, cfg, startTime))
+	mux.HandleFunc("/health/live", handlers.HealthLivenessHandler(db))
+	mux.HandleFunc("/health/ready", handlers.HealthReadinessHandler(db, cfg, startTime))
 
 	// Prometheus metrics endpoint (no auth required for Prometheus scraper)
 	mux.Handle("/metrics", handlers.MetricsHandler(db, cfg))

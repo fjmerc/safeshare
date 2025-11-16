@@ -519,35 +519,178 @@ docker exec safeshare sqlite3 /app/data/safeshare.db "PRAGMA integrity_check;"
 
 ### Health Checks
 
-SafeShare exposes `/health` endpoint:
+SafeShare provides three health check endpoints with intelligent status detection for container orchestration and monitoring.
+
+#### Health Check Endpoints
+
+**1. `/health` - Comprehensive Health Check**
+
+Full health status with detailed metrics:
 
 ```bash
-# Check health
 curl https://share.yourdomain.com/health
+```
 
-# Example response
+Response when healthy:
+```json
 {
   "status": "healthy",
-  "timestamp": "2025-11-06T12:00:00Z",
+  "uptime_seconds": 3600,
+  "total_files": 42,
+  "storage_used_bytes": 5368709120,
   "disk_total_bytes": 107374182400,
   "disk_free_bytes": 53687091200,
   "disk_used_percent": 50.0,
-  "storage_used_bytes": 5368709120,
-  "total_files": 42,
+  "disk_available_bytes": 53687091200,
   "quota_limit_bytes": 53687091200,
-  "quota_used_percent": 10.0
+  "quota_used_percent": 10.0,
+  "database_metrics": {
+    "size_bytes": 102400,
+    "size_mb": 0.1,
+    "page_count": 25,
+    "page_size": 4096,
+    "index_count": 5,
+    "wal_size_bytes": 8192
+  }
 }
 ```
 
-**Docker health check**:
+Response when degraded (HTTP 503):
+```json
+{
+  "status": "degraded",
+  "status_details": [
+    "warning: disk space low (1.5 GB remaining)",
+    "warning: quota usage high (96.5%)"
+  ],
+  "uptime_seconds": 3600,
+  ...
+}
+```
+
+Response when unhealthy (HTTP 503):
+```json
+{
+  "status": "unhealthy",
+  "status_details": [
+    "critical: disk space < 500MB (400 MB remaining)"
+  ],
+  "uptime_seconds": 3600,
+  ...
+}
+```
+
+**2. `/health/live` - Liveness Probe** (fast, < 10ms)
+
+Minimal check: Is the process alive and can it ping the database?
+
+```bash
+curl https://share.yourdomain.com/health/live
+```
+
+Response:
+```json
+{"status": "alive"}  // HTTP 200 OK
+{"status": "unhealthy"}  // HTTP 503 if database unreachable
+```
+
+**3. `/health/ready` - Readiness Probe**
+
+Comprehensive check: Is the instance ready to accept traffic?
+
+```bash
+curl https://share.yourdomain.com/health/ready
+```
+
+Returns same response as `/health` with intelligent status detection.
+
+#### Health Status Conditions
+
+**Unhealthy (HTTP 503) - Critical failure requiring restart:**
+- Database connection fails
+- Database query fails
+- Disk space < 500MB
+- Disk usage > 98%
+- Upload directory not writable
+
+**Degraded (HTTP 503) - Warning, operational but problematic:**
+- Disk space < 2GB
+- Disk usage > 90%
+- Quota usage > 95%
+- Database WAL file > 100MB (needs checkpointing)
+- Stats query takes > 100ms
+
+**Healthy (HTTP 200) - All systems operational:**
+- All checks pass
+- Adequate resources available
+
+#### Docker Health Check
+
+Use the liveness endpoint for fast health checks:
+
 ```bash
 docker run -d \
-  --health-cmd="wget -q --spider http://localhost:8080/health || exit 1" \
+  --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:8080/health/live || exit 1" \
   --health-interval=30s \
-  --health-timeout=10s \
+  --health-timeout=5s \
+  --health-start-period=5s \
   --health-retries=3 \
   safeshare:latest
 ```
+
+#### Kubernetes Probes
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: safeshare
+spec:
+  containers:
+  - name: safeshare
+    image: safeshare:latest
+    ports:
+    - containerPort: 8080
+    livenessProbe:
+      httpGet:
+        path: /health/live
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 2
+```
+
+#### Health Check Troubleshooting
+
+**Status: degraded**
+- Check disk space: `df -h`
+- Check quota usage in `/health` response
+- Monitor database WAL size: `ls -lh /app/data/safeshare.db-wal`
+- Consider running VACUUM or checkpoint
+
+**Status: unhealthy**
+- Check database connectivity: `docker exec safeshare sqlite3 /app/data/safeshare.db "SELECT 1"`
+- Check disk space: `df -h` (must have > 500MB free)
+- Check upload directory permissions: `docker exec safeshare ls -la /app/uploads`
+- Review logs: `docker logs safeshare --tail 100`
+
+**Liveness probe failing**
+- Database is unreachable (restart required)
+- Process is deadlocked (restart required)
+
+**Readiness probe failing**
+- Disk space critically low (free up space)
+- Quota exhausted (increase quota or delete files)
+- Upload directory permission issues (fix permissions)
 
 ### Log Aggregation
 
