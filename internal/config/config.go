@@ -133,6 +133,14 @@ func (c *Config) GetQuotaLimitGB() int64 {
 	return c.quotaLimitGB
 }
 
+// QuotaLimitGB returns the quota limit for public access (no lock needed for metrics)
+// This is used by the metrics collector which needs direct access
+func (c *Config) QuotaLimitGB() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return float64(c.quotaLimitGB)
+}
+
 func (c *Config) GetAdminPassword() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

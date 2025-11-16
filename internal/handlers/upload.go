@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -363,6 +364,10 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(response)
+
+		// Record metrics
+		metrics.UploadsTotal.WithLabelValues("success").Inc()
+		metrics.UploadSizeBytes.Observe(float64(written))
 
 		slog.Info("file uploaded",
 			"claim_code", redactClaimCode(claimCode),

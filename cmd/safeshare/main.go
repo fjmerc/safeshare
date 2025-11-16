@@ -15,6 +15,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -153,6 +154,9 @@ func run() error {
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/health", handlers.HealthHandler(db, cfg, startTime))
+
+	// Prometheus metrics endpoint (no auth required for Prometheus scraper)
+	mux.Handle("/metrics", handlers.MetricsHandler(db, cfg))
 
 	// Public configuration endpoint (no auth required)
 	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
@@ -378,11 +382,13 @@ func run() error {
 	rateLimiter := middleware.NewRateLimiter(cfg)
 	defer rateLimiter.Stop()
 
-	// Wrap with middleware (order: Recovery -> Logging -> Security -> RateLimit -> handlers)
+	// Wrap with middleware (order: Recovery -> Logging -> Metrics -> Security -> RateLimit -> handlers)
 	handler := middleware.RecoveryMiddleware(
 		middleware.LoggingMiddleware(
-			middleware.SecurityHeadersMiddleware(
-				middleware.RateLimitMiddleware(rateLimiter)(mux),
+			metrics.Middleware(
+				middleware.SecurityHeadersMiddleware(
+					middleware.RateLimitMiddleware(rateLimiter)(mux),
+				),
 			),
 		),
 	)

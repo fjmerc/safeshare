@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -137,6 +138,10 @@ func serveEntireFile(
 		}
 	}
 
+	// Record metrics
+	metrics.DownloadsTotal.WithLabelValues("success").Inc()
+	metrics.DownloadSizeBytes.Observe(float64(written))
+
 	slog.Info("file downloaded (full)",
 		"claim_code", redactClaimCode(file.ClaimCode),
 		"filename", file.OriginalFilename,
@@ -206,6 +211,10 @@ func servePartialContent(
 			return
 		}
 	}
+
+	// Record metrics
+	metrics.DownloadsTotal.WithLabelValues("success").Inc()
+	metrics.DownloadSizeBytes.Observe(float64(written))
 
 	slog.Info("file downloaded (partial)",
 		"claim_code", redactClaimCode(file.ClaimCode),
