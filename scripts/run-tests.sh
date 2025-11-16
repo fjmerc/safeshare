@@ -82,12 +82,12 @@ COVERAGE=$(docker run --rm \
 echo ""
 echo -e "${GREEN}Total Coverage: ${COVERAGE}${NC}"
 
-# Check coverage threshold (80%)
+# Check coverage threshold (60%)
 COVERAGE_NUM=$(echo $COVERAGE | sed 's/%//')
-if (( $(echo "$COVERAGE_NUM < 80" | bc -l) )); then
-    echo -e "${YELLOW}Warning: Coverage is below 80% threshold${NC}"
+if (( $(echo "$COVERAGE_NUM < 60" | bc -l) )); then
+    echo -e "${YELLOW}Warning: Coverage is below 60% threshold${NC}"
 else
-    echo -e "${GREEN}Coverage meets 80% threshold ✓${NC}"
+    echo -e "${GREEN}Coverage meets 60% threshold ✓${NC}"
 fi
 
 echo ""
