@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,12 +28,24 @@ type MigrationStats struct {
 }
 
 func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// run is the main entry point that can be tested (returns error instead of calling os.Exit)
+func run(args []string) error {
 	// Parse command-line flags
-	uploadDir := flag.String("upload-dir", "./uploads", "Upload directory path")
-	encKey := flag.String("encryption-key", "", "64-character hex encryption key (required)")
-	dryRun := flag.Bool("dry-run", false, "Preview what would be migrated without making changes")
-	verbose := flag.Bool("verbose", false, "Enable verbose debug logging")
-	flag.Parse()
+	fs := flag.NewFlagSet("migrate-chunks", flag.ContinueOnError)
+	uploadDir := fs.String("upload-dir", "./uploads", "Upload directory path")
+	encKey := fs.String("encryption-key", "", "64-character hex encryption key (required)")
+	dryRun := fs.Bool("dry-run", false, "Preview what would be migrated without making changes")
+	verbose := fs.Bool("verbose", false, "Enable verbose debug logging")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	// Setup logging
 	logLevel := slog.LevelInfo
@@ -46,10 +57,10 @@ func main() {
 
 	// Validate flags
 	if *encKey == "" {
-		log.Fatal("Error: --encryption-key is required")
+		return fmt.Errorf("--encryption-key is required")
 	}
 	if !utils.IsEncryptionEnabled(*encKey) {
-		log.Fatal("Error: encryption key must be 64 hex characters")
+		return fmt.Errorf("encryption key must be 64 hex characters")
 	}
 
 	slog.Info("Starting SFSE1 chunk size migration",
@@ -146,7 +157,7 @@ func main() {
 	})
 
 	if err != nil {
-		log.Fatalf("Error walking upload directory: %v", err)
+		return fmt.Errorf("walking upload directory: %w", err)
 	}
 
 	// Print summary
@@ -172,8 +183,10 @@ func main() {
 	}
 
 	if stats.Failed > 0 {
-		os.Exit(1)
+		return fmt.Errorf("migration had %d failures", stats.Failed)
 	}
+
+	return nil
 }
 
 // readChunkSize reads the chunk size from an SFSE1 file header

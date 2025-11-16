@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+// run is the main application entry point that can be tested
+func run() error {
 	// Setup structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -31,8 +40,7 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	slog.Info("starting safeshare",
@@ -45,8 +53,7 @@ func main() {
 	// Initialize database
 	db, err := database.Initialize(cfg.DBPath)
 	if err != nil {
-		slog.Error("failed to initialize database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer db.Close()
 
@@ -56,8 +63,7 @@ func main() {
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		err = database.InitializeAdminCredentials(db, cfg.AdminUsername, cfg.GetAdminPassword())
 		if err != nil {
-			slog.Error("failed to initialize admin credentials", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to initialize admin credentials: %w", err)
 		}
 		slog.Info("admin credentials initialized", "username", cfg.AdminUsername)
 	}
@@ -87,8 +93,7 @@ func main() {
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
-		slog.Error("failed to create upload directory", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create upload directory: %w", err)
 	}
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
@@ -452,8 +457,7 @@ func main() {
 	// Wait for shutdown signal or server error
 	select {
 	case err := <-serverErrors:
-		slog.Error("server error", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server error: %w", err)
 
 	case sig := <-shutdown:
 		slog.Info("shutdown signal received", "signal", sig)
@@ -468,12 +472,13 @@ func main() {
 		if err := server.Shutdown(ctx); err != nil {
 			slog.Error("graceful shutdown failed", "error", err)
 			if err := server.Close(); err != nil {
-				slog.Error("server close failed", "error", err)
+				return fmt.Errorf("server close failed: %w", err)
 			}
-			os.Exit(1)
+			return fmt.Errorf("graceful shutdown failed: %w", err)
 		}
 
 		slog.Info("server shutdown complete")
+		return nil
 	}
 }
 
