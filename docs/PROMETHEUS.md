@@ -696,13 +696,158 @@ For large deployments (>100K files), consider:
 - Metrics don't expose sensitive data (no filenames, claim codes, or IPs)
 - For production, consider adding authentication via reverse proxy
 
-**Reverse Proxy Example (nginx):**
+**Reverse Proxy Authentication:**
+
+For production deployments, secure the `/metrics` endpoint using your reverse proxy:
+
+#### Traefik BasicAuth (Recommended)
+
+**Step 1: Generate htpasswd credentials**
+
+```bash
+# Install htpasswd (if not already installed)
+sudo apt-get install apache2-utils  # Debian/Ubuntu
+# or
+brew install httpd  # macOS
+
+# Generate credentials (user: prometheus, password: your-secure-password)
+htpasswd -nb prometheus your-secure-password
+# Output: prometheus:$apr1$xyz...
+```
+
+**Step 2: Configure Traefik with Docker Compose labels**
+
+```yaml
+version: '3.8'
+
+services:
+  safeshare:
+    image: safeshare:latest
+    environment:
+      - PUBLIC_URL=https://share.yourdomain.com
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=SecurePassword123
+    volumes:
+      - safeshare-data:/app/data
+      - safeshare-uploads:/app/uploads
+    networks:
+      - traefik-network
+    labels:
+      # Main router (public endpoints)
+      - "traefik.enable=true"
+      - "traefik.http.routers.safeshare.rule=Host(`share.yourdomain.com`)"
+      - "traefik.http.routers.safeshare.entrypoints=websecure"
+      - "traefik.http.routers.safeshare.tls=true"
+      - "traefik.http.routers.safeshare.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.safeshare.priority=1"
+
+      # Metrics router (authenticated, higher priority)
+      - "traefik.http.routers.safeshare-metrics.rule=Host(`share.yourdomain.com`) && PathPrefix(`/metrics`)"
+      - "traefik.http.routers.safeshare-metrics.entrypoints=websecure"
+      - "traefik.http.routers.safeshare-metrics.tls=true"
+      - "traefik.http.routers.safeshare-metrics.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.safeshare-metrics.priority=10"
+      - "traefik.http.routers.safeshare-metrics.middlewares=safeshare-metrics-auth"
+
+      # BasicAuth middleware for metrics
+      - "traefik.http.middlewares.safeshare-metrics-auth.basicauth.users=prometheus:$$apr1$$xyz..."
+
+      # Service definition
+      - "traefik.http.services.safeshare.loadbalancer.server.port=8080"
+
+networks:
+  traefik-network:
+    external: true
+
+volumes:
+  safeshare-data:
+  safeshare-uploads:
+```
+
+**Important notes:**
+- Replace `prometheus:$$apr1$$xyz...` with your htpasswd output
+- Use `$$` (double dollar signs) in Docker Compose to escape the `$` character
+- The metrics router has `priority=10` (higher) vs main router `priority=1` to match first
+- Only `/metrics` endpoint requires authentication; other endpoints remain public
+
+**Step 3: Configure Prometheus to use BasicAuth**
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'safeshare'
+    static_configs:
+      - targets: ['share.yourdomain.com:443']
+    scheme: https
+    metrics_path: '/metrics'
+    basic_auth:
+      username: 'prometheus'
+      password: 'your-secure-password'
+```
+
+**Alternative: Traefik File Configuration**
+
+```yaml
+# traefik/config/safeshare.yml
+http:
+  routers:
+    # Main router (public)
+    safeshare:
+      rule: "Host(`share.yourdomain.com`)"
+      service: safeshare
+      priority: 1
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+
+    # Metrics router (authenticated)
+    safeshare-metrics:
+      rule: "Host(`share.yourdomain.com`) && PathPrefix(`/metrics`)"
+      service: safeshare
+      priority: 10
+      middlewares:
+        - safeshare-metrics-auth
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+
+  middlewares:
+    safeshare-metrics-auth:
+      basicAuth:
+        users:
+          - "prometheus:$apr1$xyz..."  # Single $ in file config
+
+  services:
+    safeshare:
+      loadBalancer:
+        servers:
+          - url: "http://safeshare:8080"
+```
+
+#### nginx BasicAuth
+
 ```nginx
 location /metrics {
     auth_basic "Metrics";
     auth_basic_user_file /etc/nginx/.htpasswd;
     proxy_pass http://safeshare:8080/metrics;
 }
+```
+
+#### Testing Authentication
+
+**Without credentials (should fail):**
+```bash
+curl https://share.yourdomain.com/metrics
+# Expected: 401 Unauthorized
+```
+
+**With credentials (should succeed):**
+```bash
+curl -u prometheus:your-secure-password https://share.yourdomain.com/metrics
+# Expected: Prometheus metrics output
 ```
 
 ### High Availability
