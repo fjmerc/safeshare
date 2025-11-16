@@ -507,3 +507,124 @@ func BenchmarkUserLoginHandler(b *testing.B) {
 		handler.ServeHTTP(rr, req)
 	}
 }
+
+// TestUserLogoutHandler_NoCookie tests logout without session cookie
+func TestUserLogoutHandler_NoCookie(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserLogoutHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	// No cookie added
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp["message"] != "Logged out successfully" {
+		t.Errorf("message = %q, want Logged out successfully", resp["message"])
+	}
+}
+
+// TestUserLogoutHandler_MethodNotAllowed tests HTTP method validation
+func TestUserLogoutHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserLogoutHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/auth/logout", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestUserGetCurrentHandler_MethodNotAllowed tests HTTP method validation
+func TestUserGetCurrentHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	handler := UserGetCurrentHandler(db)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/auth/user", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestUserChangePasswordHandler_MethodNotAllowed tests HTTP method validation
+func TestUserChangePasswordHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	handler := UserChangePasswordHandler(db)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/auth/change-password", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestUserChangePasswordHandler_WeakPassword tests password strength validation
+func TestUserChangePasswordHandler_WeakPassword(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	passwordHash, _ := utils.HashPassword("currentpassword")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	handler := UserChangePasswordHandler(db)
+
+	tests := []struct {
+		name        string
+		newPassword string
+		wantStatus  int
+	}{
+		{"too short", "short", http.StatusBadRequest},
+		{"empty", "", http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changeReq := models.ChangePasswordRequest{
+				CurrentPassword: "currentpassword",
+				NewPassword:     tt.newPassword,
+				ConfirmPassword: tt.newPassword,
+			}
+
+			body, _ := json.Marshal(changeReq)
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			ctx := context.WithValue(req.Context(), "user", user)
+			req = req.WithContext(ctx)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, tt.wantStatus)
+		})
+	}
+}

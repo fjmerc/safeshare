@@ -197,6 +197,43 @@ func TestAdminLoginHandler_FormData(t *testing.T) {
 	}
 }
 
+func TestAdminLoginHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminLoginHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/admin/api/login", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestAdminLoginHandler_MissingCredentials(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminLoginHandler(db, cfg)
+
+	// Empty JSON body
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/login", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestAdminLogoutHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -374,6 +411,22 @@ func TestAdminDeleteFileHandler(t *testing.T) {
 	}
 }
 
+func TestAdminDeleteFileHandler_MissingClaimCode(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminDeleteFileHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/files", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
 func TestAdminDeleteFileHandler_NotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -453,6 +506,154 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 	}
 }
 
+func TestAdminBulkDeleteFilesHandler_EmptyRequest(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminBulkDeleteFilesHandler(db, cfg)
+
+	// Send empty claim_codes
+	formData := url.Values{}
+	formData.Set("claim_codes", "")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/files/bulk-delete", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminBulkDeleteFilesHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminBulkDeleteFilesHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/admin/api/files/bulk-delete", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestAdminBulkDeleteFilesHandler_PartialSuccess(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Create only 2 out of 3 files
+	validCode1, _ := utils.GenerateClaimCode()
+	validCode2, _ := utils.GenerateClaimCode()
+	invalidCode := "INVALIDCODE123"
+
+	database.CreateFile(db, &models.File{
+		ClaimCode:        validCode1,
+		StoredFilename:   "stored_1.dat",
+		OriginalFilename: "file_1.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	})
+
+	database.CreateFile(db, &models.File{
+		ClaimCode:        validCode2,
+		StoredFilename:   "stored_2.dat",
+		OriginalFilename: "file_2.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	})
+
+	// Create physical files
+	os.WriteFile(filepath.Join(cfg.UploadDir, "stored_1.dat"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(cfg.UploadDir, "stored_2.dat"), []byte("test"), 0644)
+
+	handler := AdminBulkDeleteFilesHandler(db, cfg)
+
+	// Send 2 valid + 1 invalid claim code
+	formData := url.Values{}
+	formData.Set("claim_codes", validCode1+","+invalidCode+","+validCode2)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/files/bulk-delete", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var response map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	deletedCount := int(response["deleted_count"].(float64))
+	if deletedCount != 2 {
+		t.Errorf("deleted_count = %d, want 2 (only valid files should be deleted)", deletedCount)
+	}
+}
+
+func TestAdminGetConfigHandler_Success(t *testing.T) {
+	_ = testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Set some config values
+	cfg.SetMaxFileSize(50 * 1024 * 1024) // 50MB
+	cfg.SetDefaultExpirationHours(48)
+	cfg.SetMaxExpirationHours(168)
+
+	handler := AdminGetConfigHandler(cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var response map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if response["max_file_size_bytes"] == nil {
+		t.Error("max_file_size_bytes should be present in response")
+	}
+
+	if response["default_expiration_hours"] == nil {
+		t.Error("default_expiration_hours should be present in response")
+	}
+}
+
+func TestAdminGetConfigHandler_MethodNotAllowed(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+
+	handler := AdminGetConfigHandler(cfg)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/admin/api/config", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 func TestAdminBlockIPHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 
@@ -476,6 +677,45 @@ func TestAdminBlockIPHandler(t *testing.T) {
 	blocked, _ := database.IsIPBlocked(db, "192.168.1.100")
 	if !blocked {
 		t.Error("IP should be blocked")
+	}
+}
+
+func TestAdminBlockIPHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := AdminBlockIPHandler(db)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/admin/api/ip/block", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := AdminBlockIPHandler(db)
+
+	// Empty IP address
+	formData := url.Values{}
+	formData.Set("ip_address", "")
+	formData.Set("reason", "Test")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 }
 
@@ -1362,26 +1602,6 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	}
 }
 
-func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-
-	handler := AdminBlockIPHandler(db)
-
-	formData := url.Values{}
-	// No IP address provided
-
-	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	// Should return 400 Bad Request
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
 func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 
@@ -1399,5 +1619,108 @@ func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 	// Should return 404 Not Found for IP not in blocklist
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// TestAdminDashboardDataHandler_Search tests search functionality
+func TestAdminDashboardDataHandler_Search(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Create test files with searchable terms
+	claimCode1, _ := utils.GenerateClaimCode()
+	database.CreateFile(db, &models.File{
+		ClaimCode:        claimCode1,
+		StoredFilename:   "stored1.dat",
+		OriginalFilename: "searchable.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	})
+
+	claimCode2, _ := utils.GenerateClaimCode()
+	database.CreateFile(db, &models.File{
+		ClaimCode:        claimCode2,
+		StoredFilename:   "stored2.dat",
+		OriginalFilename: "other.txt",
+		FileSize:         2048,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.2",
+	})
+
+	handler := AdminDashboardDataHandler(db, cfg)
+
+	// Search by filename
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/dashboard?search=searchable", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var response map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	files := response["files"].([]interface{})
+	// Search should return only matching files
+	if len(files) < 1 {
+		t.Error("search should return at least one matching file")
+	}
+}
+
+// TestAdminDashboardDataHandler_MethodNotAllowed tests HTTP method validation
+func TestAdminDashboardDataHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminDashboardDataHandler(db, cfg)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/admin/api/dashboard", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestAdminUpdateQuotaHandler_MissingParameter tests missing quota_gb parameter
+func TestAdminUpdateQuotaHandler_MissingParameter(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminUpdateQuotaHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/quota/update", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+}
+
+// TestAdminUpdateQuotaHandler_MethodNotAllowed tests HTTP method validation
+func TestAdminUpdateQuotaHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminUpdateQuotaHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/admin/api/quota/update", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
 	}
 }

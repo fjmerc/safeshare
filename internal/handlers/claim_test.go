@@ -582,6 +582,140 @@ func TestClaimInfoHandler_FileInfo(t *testing.T) {
 	}
 }
 
+// TestClaimInfoHandler_MethodNotAllowed tests HTTP method validation
+func TestClaimInfoHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := ClaimInfoHandler(db, cfg)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/claim/test123/info", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestClaimInfoHandler_InvalidURL tests URL validation
+func TestClaimInfoHandler_InvalidURL(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := ClaimInfoHandler(db, cfg)
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"missing /info suffix", "/api/claim/test123"},
+		{"wrong prefix", "/wrong/test123/info"},
+		{"empty claim code", "/api/claim//info"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+		})
+	}
+}
+
+// TestClaimInfoHandler_FileNotFound tests non-existent file
+func TestClaimInfoHandler_FileNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := ClaimInfoHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/claim/nonexistent/info", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+}
+
+// TestClaimInfoHandler_DownloadLimitReached tests download limit indicator
+func TestClaimInfoHandler_DownloadLimitReached(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := ClaimInfoHandler(db, cfg)
+
+	maxDownloads := 3
+	file := &models.File{
+		ClaimCode:        "limited123",
+		OriginalFilename: "limited.txt",
+		StoredFilename:   "limited-uuid.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     &maxDownloads,
+		DownloadCount:    3, // Limit reached
+		UploaderIP:       "127.0.0.1",
+	}
+
+	database.CreateFile(db, file)
+
+	// Set download count to 3 (limit reached)
+	db.Exec("UPDATE files SET download_count = 3 WHERE claim_code = ?", "limited123")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/claim/limited123/info", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var info map[string]interface{}
+	json.Unmarshal(rr.Body.Bytes(), &info)
+
+	if !info["download_limit_reached"].(bool) {
+		t.Error("download_limit_reached should be true")
+	}
+}
+
+// TestClaimInfoHandler_PasswordProtected tests password_required field
+func TestClaimInfoHandler_PasswordProtected(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := ClaimInfoHandler(db, cfg)
+
+	file := &models.File{
+		ClaimCode:        "protected123",
+		OriginalFilename: "protected.txt",
+		StoredFilename:   "protected-uuid.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		PasswordHash:     "$2a$10$hashedpassword", // Simulated bcrypt hash
+		UploaderIP:       "127.0.0.1",
+	}
+
+	database.CreateFile(db, file)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/claim/protected123/info", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var info map[string]interface{}
+	json.Unmarshal(rr.Body.Bytes(), &info)
+
+	if !info["password_required"].(bool) {
+		t.Error("password_required should be true for password-protected files")
+	}
+}
+
 // Benchmark claim handler
 func BenchmarkClaimHandler(b *testing.B) {
 	db := testutil.SetupTestDB(&testing.T{})
