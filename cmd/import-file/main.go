@@ -587,6 +587,20 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		mimeType = "application/octet-stream"
 	}
 
+	// Compute SHA256 hash of original file (before encryption)
+	if !opts.Quiet && !opts.JSON {
+		fmt.Printf("  ├─ Computing SHA256 hash... ")
+	}
+	sha256Hash, err := hashFile(sourcePath)
+	if err != nil {
+		os.Remove(destPath)
+		result.Error = fmt.Sprintf("failed to compute SHA256 hash: %v", err)
+		return result
+	}
+	if !opts.Quiet && !opts.JSON {
+		fmt.Printf("✓\n")
+	}
+
 	// Generate claim code
 	claimCode, err := utils.GenerateClaimCode()
 	if err != nil {
@@ -608,6 +622,7 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		MimeType:         mimeType,
 		ExpiresAt:        expiresAt,
 		UploaderIP:       opts.UploaderIP,
+		SHA256Hash:       sha256Hash,
 	}
 
 	// Set optional fields

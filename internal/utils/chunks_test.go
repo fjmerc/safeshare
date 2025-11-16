@@ -192,7 +192,7 @@ func TestAssembleChunks(t *testing.T) {
 
 	// Assemble chunks
 	outputPath := filepath.Join(tmpDir, "assembled.dat")
-	totalBytes, err := AssembleChunks(tmpDir, uploadID, totalChunks, outputPath)
+	totalBytes, sha256Hash, err := AssembleChunks(tmpDir, uploadID, totalChunks, outputPath)
 	if err != nil {
 		t.Fatalf("AssembleChunks failed: %v", err)
 	}
@@ -200,6 +200,14 @@ func TestAssembleChunks(t *testing.T) {
 	expectedSize := int64(len(chunk0) + len(chunk1) + len(chunk2))
 	if totalBytes != expectedSize {
 		t.Errorf("totalBytes = %d, want %d", totalBytes, expectedSize)
+	}
+
+	// Verify SHA256 hash is returned and non-empty
+	if sha256Hash == "" {
+		t.Error("sha256Hash should not be empty")
+	}
+	if len(sha256Hash) != 64 { // SHA256 hex string is 64 characters
+		t.Errorf("sha256Hash length = %d, want 64", len(sha256Hash))
 	}
 
 	// Verify assembled file
@@ -230,7 +238,7 @@ func TestAssembleChunks_MissingChunks(t *testing.T) {
 	// Chunk 2 is missing
 
 	outputPath := filepath.Join(tmpDir, "assembled.dat")
-	_, err := AssembleChunks(tmpDir, uploadID, totalChunks, outputPath)
+	_, _, err := AssembleChunks(tmpDir, uploadID, totalChunks, outputPath)
 
 	// Should fail due to missing chunk
 	if err == nil {

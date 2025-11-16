@@ -18,6 +18,7 @@ type File struct {
 	PasswordHash     string  // bcrypt hash - empty string means no password
 	UserID           *int64  // nullable - nil means no associated user (anonymous upload or legacy)
 	Username         *string // optional - populated in admin queries for display purposes
+	SHA256Hash       string  // SHA256 checksum of original file (before encryption) - empty for legacy files
 }
 
 // UploadResponse is the JSON response returned after a successful upload

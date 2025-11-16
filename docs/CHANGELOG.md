@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **File Integrity Verification**: SHA256 checksums for all uploaded files
+  - Automatic hash computation during upload (zero extra I/O overhead using streaming)
+  - Hash exposed in `/api/claim/:code/info` API response for client-side verification
+  - Support for all upload methods: simple upload, chunked upload, and import-file tool
+  - Database column: `sha256_hash TEXT` with index for efficient lookups
+  - Migration 005_file_checksums.sql adds hash support with backward compatibility
+  - Enables corruption detection, backup verification, and deduplication use cases
+
 ### Fixed
 - **migrate-chunks tool**: Now properly validates upload directory path and fails with exit code 1 when directory doesn't exist or path is a file instead of silently succeeding with 0 files processed
-
-### Added
 - **Test Coverage Improvements (Phase 5)**: Admin handler test coverage - **53.1% COVERAGE ACHIEVED**
   - Overall coverage increased from 35.8% to 53.1% (+17.3 percentage points, **exceeded 40% target by 13.1%**)
   - **Handler package**: Comprehensive admin settings and configuration handler tests
