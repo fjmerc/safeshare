@@ -1219,3 +1219,139 @@ func TestUploadInitHandler_QuotaExceeded(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusInsufficientStorage)
 	}
 }
+
+// Method validation tests
+
+func TestUploadInitHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadInitHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/api/upload/init", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestUploadChunkHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadChunkHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/api/upload/chunk/550e8400-e29b-41d4-a716-446655440000/0", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestUploadCompleteHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadCompleteHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/api/upload/complete/550e8400-e29b-41d4-a716-446655440000", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestUploadStatusHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadStatusHandler(db, cfg)
+
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/api/upload/status/550e8400-e29b-41d4-a716-446655440000", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status = %d, want %d", method, rr.Code, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func TestUploadInitHandler_InvalidJSON(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadInitHandler(db, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/init", bytes.NewReader([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUploadChunkHandler_MissingChunkFile(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	// Initialize upload
+	uploadID := "550e8400-e29b-41d4-a716-446655440013"
+	partialUpload := &models.PartialUpload{
+		UploadID:    uploadID,
+		Filename:    "test.txt",
+		TotalSize:   1024,
+		ChunkSize:   1024,
+		TotalChunks: 1,
+		CreatedAt:   time.Now(),
+		LastActivity: time.Now(),
+	}
+	database.CreatePartialUpload(db, partialUpload)
+
+	handler := UploadChunkHandler(db, cfg)
+
+	// Send request without chunk file in multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/chunk/"+uploadID+"/0", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
