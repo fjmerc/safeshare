@@ -2,6 +2,8 @@ package utils
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -124,9 +126,9 @@ func GetMissingChunks(uploadDir, uploadID string, totalChunks int) ([]int, error
 	return missing, nil
 }
 
-// AssembleChunks assembles all chunks into a single file
-// Returns the total bytes written
-func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath string) (int64, error) {
+// AssembleChunks assembles all chunks into a single file and computes SHA256 hash
+// Returns the total bytes written and SHA256 hash (hex-encoded)
+func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath string) (int64, string, error) {
 	startTime := time.Now()
 
 	slog.Info("assembling chunks",
@@ -138,23 +140,27 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 	// Verify all chunks exist before starting assembly
 	missing, err := GetMissingChunks(uploadDir, uploadID, totalChunks)
 	if err != nil {
-		return 0, fmt.Errorf("failed to check for missing chunks: %w", err)
+		return 0, "", fmt.Errorf("failed to check for missing chunks: %w", err)
 	}
 
 	if len(missing) > 0 {
-		return 0, fmt.Errorf("cannot assemble: %d chunks missing (first missing: %d)", len(missing), missing[0])
+		return 0, "", fmt.Errorf("cannot assemble: %d chunks missing (first missing: %d)", len(missing), missing[0])
 	}
 
 	// Create output file
 	outFile, err := os.Create(outputPath)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create output file: %w", err)
+		return 0, "", fmt.Errorf("failed to create output file: %w", err)
 	}
 	defer outFile.Close()
 
 	// Use buffered writer for better performance
-	writer := bufio.NewWriterSize(outFile, chunkBufferSize)
-	defer writer.Flush()
+	bufferedWriter := bufio.NewWriterSize(outFile, chunkBufferSize)
+	defer bufferedWriter.Flush()
+
+	// Compute SHA256 hash as we write (zero extra I/O)
+	hasher := sha256.New()
+	writer := io.MultiWriter(bufferedWriter, hasher)
 
 	var totalBytesWritten int64
 
@@ -165,15 +171,15 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 		// Open chunk file
 		chunkFile, err := os.Open(chunkPath)
 		if err != nil {
-			return 0, fmt.Errorf("failed to open chunk %d: %w", i, err)
+			return 0, "", fmt.Errorf("failed to open chunk %d: %w", i, err)
 		}
 
-		// Copy chunk to output with buffered I/O
+		// Copy chunk to output with buffered I/O (also hashes via MultiWriter)
 		bytesWritten, err := io.Copy(writer, chunkFile)
 		chunkFile.Close()
 
 		if err != nil {
-			return 0, fmt.Errorf("failed to copy chunk %d: %w", i, err)
+			return 0, "", fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 
 		totalBytesWritten += bytesWritten
@@ -190,9 +196,12 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 	}
 
 	// Flush buffered writer
-	if err := writer.Flush(); err != nil {
-		return 0, fmt.Errorf("failed to flush output file: %w", err)
+	if err := bufferedWriter.Flush(); err != nil {
+		return 0, "", fmt.Errorf("failed to flush output file: %w", err)
 	}
+
+	// Finalize SHA256 hash
+	sha256Hash := hex.EncodeToString(hasher.Sum(nil))
 
 	// NOTE: Deliberately NOT calling outFile.Sync() here for performance
 	// Rationale: Assembly can take 60-70s for large files on HDD with fsync()
@@ -210,9 +219,10 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 		"total_bytes", totalBytesWritten,
 		"duration_ms", durationMs,
 		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
+		"sha256_hash", sha256Hash[:16]+"...", // Log first 16 chars for verification
 	)
 
-	return totalBytesWritten, nil
+	return totalBytesWritten, sha256Hash, nil
 }
 
 // DeleteChunks deletes all chunks and the chunks directory for an upload

@@ -181,6 +181,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"download_limit_reached": downloadLimitReached,
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
+			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -233,6 +235,11 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Reconstruct full file stream by combining MIME buffer with remaining content
 		fullReader := io.MultiReader(bytes.NewReader(mimeBuffer), file)
 
+		// Compute SHA256 hash of original file (before encryption) using TeeReader
+		// This allows us to hash the file as we stream it, with zero extra I/O
+		hasher := sha256.New()
+		hashedReader := io.TeeReader(fullReader, hasher)
+
 		// Atomic write pattern: Write to temp file, then rename to final path
 		// This prevents partial files on disk if upload/encryption fails mid-stream
 		filePath := filepath.Join(cfg.UploadDir, storedFilename)
@@ -258,11 +265,12 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Stream file to disk with optional encryption
 		// This approach uses constant memory (~10MB) regardless of file size
+		// The hashedReader computes SHA256 as we stream (zero extra I/O)
 		var written int64
 		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			// Stream encrypt: Read chunks from upload → encrypt → write to temp file
+			// Stream encrypt: Read chunks from upload → hash → encrypt → write to temp file
 			// Uses SFSE1 format (compatible with existing decryption)
-			err = utils.EncryptFileStreamingFromReader(tempFile, fullReader, cfg.EncryptionKey)
+			err = utils.EncryptFileStreamingFromReader(tempFile, hashedReader, cfg.EncryptionKey)
 			if err != nil {
 				slog.Error("failed to encrypt file stream", "error", err)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -274,8 +282,8 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"filename", header.Filename,
 			)
 		} else {
-			// Direct stream copy: Read from upload → write to temp file
-			written, err = io.Copy(tempFile, fullReader)
+			// Direct stream copy: Read from upload → hash → write to temp file
+			written, err = io.Copy(tempFile, hashedReader)
 			if err != nil {
 				slog.Error("failed to write file stream", "error", err)
 				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -283,6 +291,9 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 			slog.Debug("file written without encryption", "size", written)
 		}
+
+		// Finalize SHA256 hash (computed during streaming above)
+		sha256Hash := hex.EncodeToString(hasher.Sum(nil))
 
 		// Close temp file before rename (required on Windows)
 		if err := tempFile.Close(); err != nil {
@@ -326,6 +337,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			UploaderIP:       clientIP,
 		PasswordHash:     passwordHash,
 			UserID:           userID,
+			SHA256Hash:       sha256Hash,
 		}
 
 		if err := database.CreateFile(db, fileRecord); err != nil {
