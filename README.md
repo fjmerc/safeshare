@@ -1,7 +1,6 @@
 # SafeShare - Secure Temporary File Sharing
 
 [![Tests](https://github.com/fjmerc/safeshare/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/fjmerc/safeshare/actions/workflows/build-and-push.yml)
-[![codecov](https://codecov.io/gh/fjmerc/safeshare/branch/develop/graph/badge.svg)](https://codecov.io/gh/fjmerc/safeshare)
 [![Go Report Card](https://goreportcard.com/badge/github.com/fjmerc/safeshare)](https://goreportcard.com/report/github.com/fjmerc/safeshare)
 
 A self-hosted secure file sharing service for temporary transfers with automatic expiration and cryptographically secure claim codes.
