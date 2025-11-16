@@ -120,3 +120,34 @@ var (
 )
 
 // Gauge metrics (current values) are defined in collector.go as they require database queries
+
+// Health check metrics
+var (
+	// HealthStatus is a gauge representing current health status
+	// Values: 0 = unhealthy, 1 = degraded, 2 = healthy
+	HealthStatus = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "safeshare_health_status",
+			Help: "Current health status (0=unhealthy, 1=degraded, 2=healthy)",
+		},
+	)
+
+	// HealthCheckDuration tracks health check execution time by endpoint
+	HealthCheckDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "safeshare_health_check_duration_seconds",
+			Help: "Health check execution time in seconds",
+			Buckets: []float64{.001, .002, .005, .01, .025, .05, .1},
+		},
+		[]string{"endpoint"},
+	)
+
+	// HealthChecksTotal counts total health check calls by endpoint and status
+	HealthChecksTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "safeshare_health_checks_total",
+			Help: "Total number of health checks performed",
+		},
+		[]string{"endpoint", "status"},
+	)
+)

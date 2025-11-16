@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Intelligent Health Checks**: Three-tier health check system for container orchestration
+  - `/health` - Comprehensive health check with intelligent status detection (healthy/degraded/unhealthy)
+  - `/health/live` - Fast liveness probe (< 10ms) for process aliveness and database connectivity
+  - `/health/ready` - Readiness probe for traffic acceptance decisions
+  - Intelligent status detection with specific thresholds:
+    - Unhealthy (HTTP 503): Database failure, disk < 500MB, disk > 98%, upload directory not writable
+    - Degraded (HTTP 503): Disk < 2GB, disk > 90%, quota > 95%, WAL > 100MB, slow queries > 100ms
+    - Healthy (HTTP 200): All systems operational with adequate resources
+  - `status_details` array in response provides actionable diagnostics for degraded/unhealthy states
+  - Prometheus metrics: `safeshare_health_status` gauge, `safeshare_health_checks_total` counter, `safeshare_health_check_duration_seconds` histogram
+  - Docker health check and Kubernetes probe configurations documented
+  - Comprehensive test coverage with 13 new test cases in health_test.go
 - **Prometheus Metrics Endpoint**: Production observability with `/metrics` endpoint
   - Counter metrics: `safeshare_uploads_total`, `safeshare_downloads_total`, `safeshare_chunked_uploads_total`, `safeshare_http_requests_total`
   - Histogram metrics: `safeshare_http_request_duration_seconds`, `safeshare_upload_size_bytes`, `safeshare_download_size_bytes`

@@ -56,6 +56,7 @@ Counters are cumulative values that only increase (reset on restart).
 | `safeshare_chunked_upload_chunks_total` | Counter | - | Total number of chunks uploaded |
 | `safeshare_http_requests_total` | Counter | `method`, `path`, `status` | Total HTTP requests by method, normalized path, and status code |
 | `safeshare_errors_total` | Counter | `type` | Total errors by error type |
+| `safeshare_health_checks_total` | Counter | `endpoint`, `status` | Total health check calls by endpoint and status |
 
 **Label Details:**
 
@@ -79,6 +80,13 @@ Counters are cumulative values that only increase (reset on restart).
 
 - `status` (HTTP requests): HTTP status code (`200`, `201`, `400`, `404`, `500`, etc.)
 
+- `endpoint` (health checks): `health`, `live`, `ready`
+  - `health` - Main health endpoint (`/health`)
+  - `live` - Liveness probe endpoint (`/health/live`)
+  - `ready` - Readiness probe endpoint (`/health/ready`)
+
+- `status` (health checks): `healthy`, `degraded`, `unhealthy`
+
 ### Histogram Metrics
 
 Histograms track distributions and calculate quantiles.
@@ -88,6 +96,7 @@ Histograms track distributions and calculate quantiles.
 | `safeshare_http_request_duration_seconds` | Histogram | `method`, `path` | HTTP request latency in seconds | 0.001, 0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10 |
 | `safeshare_upload_size_bytes` | Histogram | - | Size of uploaded files in bytes | 1KB, 10KB, 100KB, 1MB, 10MB, 100MB, 1GB, 10GB |
 | `safeshare_download_size_bytes` | Histogram | - | Size of downloaded files in bytes | 1KB, 10KB, 100KB, 1MB, 10MB, 100MB, 1GB, 10GB |
+| `safeshare_health_check_duration_seconds` | Histogram | `endpoint` | Health check execution time in seconds | 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1 |
 
 **Histogram Usage:**
 Histograms automatically generate:
@@ -106,8 +115,14 @@ Gauges are point-in-time measurements that can go up or down.
 | `safeshare_active_partial_uploads_count` | Gauge | Number of in-progress chunked uploads |
 | `safeshare_storage_quota_bytes` | Gauge | Storage quota limit in bytes (0 = unlimited) |
 | `safeshare_storage_quota_used_percent` | Gauge | Percentage of quota used (0-100, or 0 if unlimited) |
+| `safeshare_health_status` | Gauge | Current health status: 0=unhealthy, 1=degraded, 2=healthy |
 
 **Note:** Gauge metrics are collected dynamically from the database on each scrape.
+
+**Health Status Values:**
+- `2` - Healthy: All systems operational
+- `1` - Degraded: Operational but has warnings (low disk space, high quota usage, etc.)
+- `0` - Unhealthy: Critical failure (database down, no disk space, upload directory not writable)
 
 ## Prometheus Setup
 
@@ -370,6 +385,54 @@ rate(safeshare_storage_used_bytes[1h]) * 3600
 (safeshare_storage_quota_bytes - safeshare_storage_used_bytes)
 /
 rate(safeshare_storage_used_bytes[1h])
+```
+
+### Health Check Metrics
+
+**Current health status:**
+```promql
+safeshare_health_status
+```
+
+**Health check rate by endpoint:**
+```promql
+rate(safeshare_health_checks_total[5m])
+```
+
+**Health check failures (degraded + unhealthy):**
+```promql
+rate(safeshare_health_checks_total{status=~"degraded|unhealthy"}[5m])
+```
+
+**Health check success rate:**
+```promql
+100 * (
+  rate(safeshare_health_checks_total{status="healthy"}[5m])
+  /
+  rate(safeshare_health_checks_total[5m])
+)
+```
+
+**Liveness probe latency (p50, p95, p99):**
+```promql
+histogram_quantile(0.50, rate(safeshare_health_check_duration_seconds_bucket{endpoint="live"}[5m]))
+histogram_quantile(0.95, rate(safeshare_health_check_duration_seconds_bucket{endpoint="live"}[5m]))
+histogram_quantile(0.99, rate(safeshare_health_check_duration_seconds_bucket{endpoint="live"}[5m]))
+```
+
+**Health check duration by endpoint:**
+```promql
+avg(rate(safeshare_health_check_duration_seconds_sum[5m]) / rate(safeshare_health_check_duration_seconds_count[5m])) by (endpoint)
+```
+
+**Alert on unhealthy status:**
+```promql
+safeshare_health_status < 2
+```
+
+**Alert on degraded for extended period:**
+```promql
+avg_over_time(safeshare_health_status[5m]) < 2
 ```
 
 ## Grafana Dashboard

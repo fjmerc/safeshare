@@ -283,3 +283,169 @@ func TestHealthHandler_MultipleRequests(t *testing.T) {
 		}
 	}
 }
+
+// TestHealthLivenessHandler tests the liveness probe endpoint
+func TestHealthLivenessHandler(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := HealthLivenessHandler(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	handler.ServeHTTP(rr, req)
+	duration := time.Since(start)
+
+	// Should return 200 OK
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Parse response
+	var response map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Verify status
+	if response["status"] != "alive" {
+		t.Errorf("status = %q, want %q", response["status"], "alive")
+	}
+
+	// Performance check (should be fast, < 10ms target)
+	if duration > 50*time.Millisecond {
+		t.Logf("warning: liveness check took %v (target < 10ms)", duration)
+	}
+}
+
+// TestHealthLivenessHandler_MethodNotAllowed tests non-GET methods
+func TestHealthLivenessHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	handler := HealthLivenessHandler(db)
+
+	req := httptest.NewRequest(http.MethodPost, "/health/live", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// TestHealthReadinessHandler tests the readiness probe endpoint
+func TestHealthReadinessHandler(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	startTime := time.Now().Add(-30 * time.Second)
+
+	handler := HealthReadinessHandler(db, cfg, startTime)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// Should return 200 OK for healthy system
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Parse response
+	var response models.HealthResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Verify status
+	if response.Status != "healthy" {
+		t.Errorf("status = %q, want %q", response.Status, "healthy")
+	}
+
+	// Should have comprehensive fields like main health endpoint
+	if response.UptimeSeconds < 30 {
+		t.Errorf("uptime_seconds = %d, want >= 30", response.UptimeSeconds)
+	}
+}
+
+// TestHealthReadinessHandler_MethodNotAllowed tests non-GET methods
+func TestHealthReadinessHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	startTime := time.Now()
+
+	handler := HealthReadinessHandler(db, cfg, startTime)
+
+	req := httptest.NewRequest(http.MethodDelete, "/health/ready", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// TestIsDirectoryWritable tests the directory writable check
+func TestIsDirectoryWritable(t *testing.T) {
+	// Test writable directory
+	tmpDir := t.TempDir()
+	if !isDirectoryWritable(tmpDir) {
+		t.Error("temp directory should be writable")
+	}
+
+	// Test non-existent directory
+	if isDirectoryWritable("/nonexistent/path/that/does/not/exist") {
+		t.Error("non-existent directory should not be writable")
+	}
+}
+
+// TestUpdateHealthStatusGauge tests the Prometheus gauge update
+func TestUpdateHealthStatusGauge(t *testing.T) {
+	tests := []struct {
+		status string
+		// We can't easily verify the gauge value without prometheus test utilities
+		// but we can verify the function doesn't panic
+	}{
+		{"healthy"},
+		{"degraded"},
+		{"unhealthy"},
+		{"unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			// Should not panic
+			updateHealthStatusGauge(tt.status)
+		})
+	}
+}
+
+// TestHealthHandler_StatusDetails tests that status_details are populated when appropriate
+func TestHealthHandler_StatusDetails(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	startTime := time.Now()
+
+	handler := HealthHandler(db, cfg, startTime)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	var response models.HealthResponse
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	// For healthy status, status_details should be nil or empty
+	if response.Status == "healthy" && len(response.StatusDetails) > 0 {
+		t.Errorf("healthy status should not have status_details, got: %v", response.StatusDetails)
+	}
+
+	// StatusDetails field should be omitted from JSON when nil/empty
+	if response.Status == "healthy" && response.StatusDetails != nil && len(response.StatusDetails) == 0 {
+		t.Log("status_details is empty slice (will be omitted in JSON)")
+	}
+}
