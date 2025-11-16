@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **migrate-chunks tool**: Now properly validates upload directory path and fails with exit code 1 when directory doesn't exist or path is a file instead of silently succeeding with 0 files processed
+
 ### Added
 - **Test Coverage Improvements (Phase 5)**: Admin handler test coverage - **53.1% COVERAGE ACHIEVED**
   - Overall coverage increased from 35.8% to 53.1% (+17.3 percentage points, **exceeded 40% target by 13.1%**)
