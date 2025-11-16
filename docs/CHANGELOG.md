@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Prometheus Metrics Endpoint**: Production observability with `/metrics` endpoint
+  - Counter metrics: `safeshare_uploads_total`, `safeshare_downloads_total`, `safeshare_chunked_uploads_total`, `safeshare_http_requests_total`
+  - Histogram metrics: `safeshare_http_request_duration_seconds`, `safeshare_upload_size_bytes`, `safeshare_download_size_bytes`
+  - Gauge metrics: `safeshare_storage_used_bytes`, `safeshare_active_files_count`, `safeshare_storage_quota_used_percent`
+  - Database metrics collector for real-time storage and quota tracking
+  - HTTP request instrumentation middleware for automatic request/response tracking
+  - Path normalization to prevent cardinality explosion in metrics labels
+  - Comprehensive test coverage (58.1% for metrics package, 62.2% overall)
 - **File Integrity Verification**: SHA256 checksums for all uploaded files
   - Automatic hash computation during upload (zero extra I/O overhead using streaming)
   - Hash exposed in `/api/claim/:code/info` API response for client-side verification

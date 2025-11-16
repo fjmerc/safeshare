@@ -16,6 +16,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/google/uuid"
@@ -243,6 +244,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(response)
+
+		// Record metrics
+		metrics.ChunkedUploadsTotal.Inc()
 
 		slog.Info("chunked upload initialized",
 			"upload_id", uploadID,
@@ -498,6 +502,9 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
 
+		// Record metrics
+		metrics.ChunkedUploadChunksTotal.Inc()
+
 		slog.Debug("chunk uploaded",
 			"upload_id", uploadID,
 			"chunk_number", chunkNumber,
@@ -676,6 +683,10 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
 		go AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+
+		// Record metrics
+		metrics.ChunkedUploadsCompletedTotal.Inc()
+		metrics.UploadSizeBytes.Observe(float64(partialUpload.TotalSize))
 
 		// Return immediately with status "processing"
 		slog.Info("chunked upload accepted for async assembly",

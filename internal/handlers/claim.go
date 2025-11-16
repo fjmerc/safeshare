@@ -11,6 +11,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -61,6 +62,9 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if utils.IsPasswordProtected(file.PasswordHash) {
 			providedPassword := r.URL.Query().Get("password")
 			if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
+				// Record metrics
+				metrics.DownloadsTotal.WithLabelValues("password_failed").Inc()
+
 				slog.Warn("file access denied",
 					"reason", "incorrect_password",
 					"claim_code", redactClaimCode(claimCode),
