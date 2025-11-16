@@ -113,11 +113,29 @@ func TestRun_NonexistentDirectory(t *testing.T) {
 		"--encryption-key", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	err := run(args)
-	// Current implementation treats nonexistent directories gracefully (logs warning, continues)
-	// This allows migration to succeed even if some paths are inaccessible
-	// A nonexistent root directory results in 0 files processed, which is not an error
-	if err != nil {
-		t.Errorf("expected no error for nonexistent directory (graceful handling), got: %v", err)
+	if err == nil {
+		t.Error("expected error for nonexistent directory")
+	}
+	if !strings.Contains(err.Error(), "upload directory does not exist") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRun_PathIsFile(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "notadir.txt")
+	os.WriteFile(filePath, []byte("content"), 0644)
+
+	args := []string{
+		"--upload-dir", filePath,
+		"--encryption-key", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	err := run(args)
+	if err == nil {
+		t.Error("expected error when upload-dir is a file, not a directory")
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
 

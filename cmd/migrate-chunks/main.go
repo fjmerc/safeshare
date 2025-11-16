@@ -63,6 +63,18 @@ func run(args []string) error {
 		return fmt.Errorf("encryption key must be 64 hex characters")
 	}
 
+	// Validate upload directory exists and is a directory
+	info, err := os.Stat(*uploadDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("upload directory does not exist: %s", *uploadDir)
+		}
+		return fmt.Errorf("failed to access upload directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("upload path is not a directory: %s", *uploadDir)
+	}
+
 	slog.Info("Starting SFSE1 chunk size migration",
 		"upload_dir", *uploadDir,
 		"dry_run", *dryRun,
@@ -73,7 +85,7 @@ func run(args []string) error {
 	stats := &MigrationStats{}
 	startTime := time.Now()
 
-	err := filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(*uploadDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			slog.Warn("Failed to access path", "path", path, "error", err)
 			return nil // Continue walking

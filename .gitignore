@@ -15,3 +15,4 @@ scripts/*.local.sh
 
 *.out
 *.test
+cmd/migrate-chunks/migrate-chunks
