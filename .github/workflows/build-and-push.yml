@@ -52,15 +52,6 @@ jobs:
           go test ./internal/handlers ./internal/middleware ./internal/database ./internal/utils -race -timeout=5m || echo "Race detection completed with warnings"
         continue-on-error: true
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.out
-          flags: unittests
-          name: codecov-safeshare
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
