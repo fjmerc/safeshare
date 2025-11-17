@@ -6,13 +6,20 @@ import (
 	"net/http"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
+// ProxyConfigProvider interface for getting proxy trust settings
+type ProxyConfigProvider interface {
+	GetTrustProxyHeaders() string
+	GetTrustedProxyIPs() string
+}
+
 // IPBlockCheck middleware checks if the client IP is blocked
-func IPBlockCheck(db *sql.DB) func(http.Handler) http.Handler {
+func IPBlockCheck(db *sql.DB, cfg ProxyConfigProvider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := getClientIP(r)
+			clientIP := utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
 
 			// Check if IP is blocked
 			blocked, err := database.IsIPBlocked(db, clientIP)

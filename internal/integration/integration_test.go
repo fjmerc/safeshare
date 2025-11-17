@@ -407,7 +407,7 @@ func TestIPBlockingIntegration(t *testing.T) {
 	database.BlockIP(db, blockedIP, "Testing", "admin")
 
 	// Wrap handler with IP blocking middleware
-	uploadHandler := middleware.IPBlockCheck(db)(handlers.UploadHandler(db, cfg))
+	uploadHandler := middleware.IPBlockCheck(db, cfg)(handlers.UploadHandler(db, cfg))
 
 	fileContent := []byte("test")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "test.txt", nil)

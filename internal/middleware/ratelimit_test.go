@@ -26,6 +26,14 @@ func (m *mockConfigProvider) GetRateLimitDownload() int {
 	return m.downloadLimit
 }
 
+func (m *mockConfigProvider) GetTrustProxyHeaders() string {
+	return "auto"
+}
+
+func (m *mockConfigProvider) GetTrustedProxyIPs() string {
+	return "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+}
+
 func (m *mockConfigProvider) SetUploadLimit(limit int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

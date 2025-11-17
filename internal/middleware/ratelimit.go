@@ -6,12 +6,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // ConfigProvider interface allows RateLimiter to read current rate limit values
 type ConfigProvider interface {
 	GetRateLimitUpload() int
 	GetRateLimitDownload() int
+	GetTrustProxyHeaders() string
+	GetTrustedProxyIPs() string
 }
 
 // requestRecord tracks requests for an IP
@@ -125,7 +129,7 @@ func (rl *RateLimiter) checkLimit(ip string, limit int) bool {
 func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := getClientIP(r)
+			ip := rl.getClientIP(r)
 
 			// Determine which limit to apply based on path
 			// Read current limit values from config (allows runtime updates)
@@ -165,11 +169,41 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 	}
 }
 
-// getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (for proxies)
+// getClientIP extracts the client IP address from the request with trusted proxy validation
+func (rl *RateLimiter) getClientIP(r *http.Request) string {
+	// Extract IP from RemoteAddr (the immediate connection source)
+	remoteIP := utils.ExtractIP(r.RemoteAddr)
+
+	// Get proxy trust settings
+	trustProxyHeaders := rl.config.GetTrustProxyHeaders()
+	trustedProxyIPs := rl.config.GetTrustedProxyIPs()
+
+	// Determine if we should trust proxy headers
+	shouldTrust := false
+
+	switch trustProxyHeaders {
+	case "true":
+		// Always trust proxy headers
+		shouldTrust = true
+	case "false":
+		// Never trust proxy headers
+		shouldTrust = false
+	case "auto":
+		// Trust only if request comes from a trusted proxy IP
+		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
+	default:
+		// Default to auto mode for safety
+		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
+	}
+
+	// If we shouldn't trust proxy headers, return RemoteAddr directly
+	if !shouldTrust {
+		return remoteIP
+	}
+
+	// Trust proxy headers - check X-Forwarded-For first
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the chain
+		// Take the first IP in the chain (the original client)
 		ips := strings.Split(xff, ",")
 		if len(ips) > 0 {
 			return strings.TrimSpace(ips[0])
@@ -181,10 +215,6 @@ func getClientIP(r *http.Request) string {
 		return xri
 	}
 
-	// Fall back to RemoteAddr (strip port)
-	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx != -1 {
-		return r.RemoteAddr[:idx]
-	}
-
-	return r.RemoteAddr
+	// Fall back to RemoteAddr
+	return remoteIP
 }
