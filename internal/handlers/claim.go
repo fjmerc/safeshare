@@ -91,6 +91,18 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed",
+				"filename", file.StoredFilename,
+				"error", err,
+				"claim_code", redactClaimCode(claimCode),
+				"client_ip", getClientIP(r),
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
 		// Read file from disk
 		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 

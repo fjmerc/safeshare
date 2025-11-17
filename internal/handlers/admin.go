@@ -448,6 +448,18 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed",
+				"filename", file.StoredFilename,
+				"error", err,
+				"claim_code", redactClaimCode(req.ClaimCode),
+				"admin_ip", getClientIP(r),
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
 		// Delete physical file
 		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 		if err := os.Remove(filePath); err != nil {
@@ -516,6 +528,17 @@ func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFun
 		// Delete physical files
 		deletedCount := 0
 		for _, file := range files {
+			// Validate stored filename (defense-in-depth against database corruption/compromise)
+			if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+				slog.Error("stored filename validation failed during bulk deletion",
+					"filename", file.StoredFilename,
+					"error", err,
+					"admin_ip", getClientIP(r),
+				)
+				// Skip this file but continue with others
+				continue
+			}
+
 			filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 			if err := os.Remove(filePath); err != nil {
 				if !os.IsNotExist(err) {

@@ -149,6 +149,22 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed",
+				"filename", file.StoredFilename,
+				"error", err,
+				"user_id", userID,
+				"client_ip", getClientIP(r),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Internal server error",
+			})
+			return
+		}
+
 		// Delete physical file
 		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
