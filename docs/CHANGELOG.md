@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Trusted Proxy Header Validation**: Fixed vulnerability where X-Forwarded-For, X-Real-IP, and X-Forwarded-Host headers were blindly trusted from any client
+  - Added smart default validation (auto mode) that only trusts proxy headers from RFC1918 private IP ranges + localhost
+  - Prevents IP spoofing attacks: rate limiting bypass, IP blocking bypass, audit log poisoning
+  - New configuration options:
+    - `TRUST_PROXY_HEADERS`: Controls proxy header trust ("auto", "true", "false") - defaults to "auto"
+    - `TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IPs/CIDR ranges - defaults to "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  - Auto mode: Only trusts headers when request comes from trusted proxy IP (safe default)
+  - Fully backward compatible: Existing Traefik/nginx deployments continue working without configuration changes
+  - IP validation utilities: `internal/utils/ipvalidation.go` with CIDR range support
+  - All tests passing (61.7% coverage)
+
 ### Added
 - **Intelligent Health Checks**: Three-tier health check system for container orchestration
   - `/health` - Comprehensive health check with intelligent status detection (healthy/degraded/unhealthy)

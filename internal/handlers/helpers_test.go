@@ -262,7 +262,7 @@ func TestGetClientIP(t *testing.T) {
 		{
 			name:       "IPv6 RemoteAddr",
 			remoteAddr: "[2001:db8::1]:12345",
-			want:       "[2001:db8::1]",
+			want:       "2001:db8::1",
 		},
 		{
 			name: "X-Forwarded-For with whitespace",

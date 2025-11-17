@@ -106,7 +106,7 @@ func run() error {
 	mux := http.NewServeMux()
 
 	// Register public API routes (with IP blocking middleware and conditional user auth)
-	ipBlockMw := middleware.IPBlockCheck(db)
+	ipBlockMw := middleware.IPBlockCheck(db, cfg)
 	optionalUserAuth := middleware.OptionalUserAuth(db)
 	userAuth := middleware.UserAuth(db)
 
