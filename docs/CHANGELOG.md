@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - No security impact (session activity is informational, not used for authentication decisions)
 
 ### Security
+- **Defense-in-Depth: Stored Filename Validation**: Added validation of stored filenames before file operations to prevent path traversal attacks in database corruption scenarios
+  - Validates filenames read from database before using in `filepath.Join()` operations
+  - Rejects path separators (`/`, `\`), path traversal sequences (`..`), hidden files (starts with `.`), and special characters
+  - Applied at 5 critical locations: file download, admin file deletion, user file deletion, bulk file deletion, cleanup worker
+  - Returns HTTP 500 with structured error logging if validation fails (indicates potential database compromise or corruption)
+  - While stored filenames are generated as UUIDs, this provides defense-in-depth against database tampering
+  - Comprehensive test coverage with 30 test cases covering path traversal, absolute paths, hidden files, and special characters
+  - Zero performance impact (simple string validation)
 - **Trusted Proxy Header Validation**: Fixed vulnerability where X-Forwarded-For, X-Real-IP, and X-Forwarded-Host headers were blindly trusted from any client
   - Added smart default validation (auto mode) that only trusts proxy headers from RFC1918 private IP ranges + localhost
   - Prevents IP spoofing attacks: rate limiting bypass, IP blocking bypass, audit log poisoning

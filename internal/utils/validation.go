@@ -53,3 +53,55 @@ func IsFileAllowed(filename string, blockedExtensions []string) (bool, string, e
 func GetFileExtension(filename string) string {
 	return strings.ToLower(filepath.Ext(filename))
 }
+
+// ValidateStoredFilename validates that a stored filename is safe to use in file paths.
+// This is a defense-in-depth measure to prevent path traversal attacks in case the
+// database is compromised or corrupted. While stored filenames are generated as UUIDs,
+// we validate them when reading from the database to ensure they cannot be used for
+// directory traversal or access to files outside the upload directory.
+//
+// Returns an error if the filename:
+// - Is empty
+// - Contains path separators (/ or \)
+// - Contains path traversal sequences (..)
+// - Starts with a dot (hidden files)
+// - Contains characters outside the safe set (alphanumeric, dash, underscore, dot)
+//
+// Valid examples: "abc123-def456.bin", "uuid-1234-5678.txt"
+// Invalid examples: "../etc/passwd", "/etc/passwd", ".bashrc", "file/name.txt"
+func ValidateStoredFilename(filename string) error {
+	if filename == "" {
+		return fmt.Errorf("filename cannot be empty")
+	}
+
+	// Reject path separators (both Unix and Windows)
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		return fmt.Errorf("filename contains path separator")
+	}
+
+	// Reject path traversal sequences
+	if strings.Contains(filename, "..") {
+		return fmt.Errorf("filename contains path traversal sequence")
+	}
+
+	// Reject hidden files (starting with dot)
+	if strings.HasPrefix(filename, ".") {
+		return fmt.Errorf("filename starts with dot (hidden file)")
+	}
+
+	// Validate character whitelist: only allow alphanumeric, dash, underscore, and dot
+	// This matches our UUID-based naming scheme: {uuid}.{extension}
+	for _, char := range filename {
+		isValid := (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' ||
+			char == '_' ||
+			char == '.'
+		if !isValid {
+			return fmt.Errorf("filename contains invalid character: %c", char)
+		}
+	}
+
+	return nil
+}

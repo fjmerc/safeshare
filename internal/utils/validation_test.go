@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -137,6 +138,225 @@ func TestIsFileAllowed_EdgeCases(t *testing.T) {
 
 			if matched != tt.expectMatched {
 				t.Errorf("IsFileAllowed() matched = %q, expected %q", matched, tt.expectMatched)
+			}
+		})
+	}
+}
+
+// TestValidateStoredFilename tests defense-in-depth validation of stored filenames
+// to prevent path traversal attacks in case of database compromise or corruption
+func TestValidateStoredFilename(t *testing.T) {
+	tests := []struct {
+		name        string
+		filename    string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid filenames (UUID-based names)
+		{
+			name:        "valid UUID with extension",
+			filename:    "abc123-def456.txt",
+			expectError: false,
+		},
+		{
+			name:        "valid UUID with bin extension",
+			filename:    "uuid-1234-5678-90ab-cdef.bin",
+			expectError: false,
+		},
+		{
+			name:        "valid UUID with multiple dots in extension",
+			filename:    "file-uuid.tar.gz",
+			expectError: false,
+		},
+		{
+			name:        "valid UUID with underscore",
+			filename:    "file_uuid_123.dat",
+			expectError: false,
+		},
+		{
+			name:        "valid UUID no extension",
+			filename:    "uuid-1234-5678",
+			expectError: false,
+		},
+
+		// Path traversal attacks
+		{
+			name:        "path traversal with ../",
+			filename:    "../../etc/passwd",
+			expectError: true,
+			errorMsg:    "path", // Matches both "path separator" and "path traversal"
+		},
+		{
+			name:        "path traversal with single ../",
+			filename:    "../passwd",
+			expectError: true,
+			errorMsg:    "path", // Matches both "path separator" and "path traversal"
+		},
+		{
+			name:        "path traversal in middle",
+			filename:    "uploads/../../../etc/passwd",
+			expectError: true,
+			errorMsg:    "path separator",
+		},
+		{
+			name:        "Windows path traversal",
+			filename:    "..\\..\\windows\\system32",
+			expectError: true,
+			errorMsg:    "path", // Matches both "path separator" and "path traversal"
+		},
+		{
+			name:        "double dot without separator",
+			filename:    "file..txt",
+			expectError: true,
+			errorMsg:    "path traversal",
+		},
+
+		// Absolute paths
+		{
+			name:        "Unix absolute path",
+			filename:    "/etc/passwd",
+			expectError: true,
+			errorMsg:    "path separator",
+		},
+		{
+			name:        "Windows absolute path",
+			filename:    "C:\\windows\\system32",
+			expectError: true,
+			errorMsg:    "path separator",
+		},
+		{
+			name:        "Unix path with slashes",
+			filename:    "etc/passwd",
+			expectError: true,
+			errorMsg:    "path separator",
+		},
+		{
+			name:        "Windows path with backslashes",
+			filename:    "windows\\system32",
+			expectError: true,
+			errorMsg:    "path separator",
+		},
+
+		// Hidden files
+		{
+			name:        "hidden file .bashrc",
+			filename:    ".bashrc",
+			expectError: true,
+			errorMsg:    "hidden file",
+		},
+		{
+			name:        "hidden file .env",
+			filename:    ".env",
+			expectError: true,
+			errorMsg:    "hidden file",
+		},
+		{
+			name:        "hidden file with path",
+			filename:    ".ssh/id_rsa",
+			expectError: true,
+			errorMsg:    "", // Will be rejected by either "hidden file" or "path separator" - both are valid
+		},
+
+		// Special characters
+		{
+			name:        "space in filename",
+			filename:    "file name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "at symbol",
+			filename:    "file@name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "semicolon",
+			filename:    "file;name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "ampersand",
+			filename:    "file&name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "dollar sign",
+			filename:    "file$name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "pipe symbol",
+			filename:    "file|name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+
+		// Edge cases
+		{
+			name:        "empty filename",
+			filename:    "",
+			expectError: true,
+			errorMsg:    "cannot be empty",
+		},
+		{
+			name:        "only dots",
+			filename:    "...",
+			expectError: true,
+			errorMsg:    "path traversal",
+		},
+		{
+			name:        "single dot",
+			filename:    ".",
+			expectError: true,
+			errorMsg:    "hidden file",
+		},
+		{
+			name:        "two dots",
+			filename:    "..",
+			expectError: true,
+			errorMsg:    "", // Will be rejected by either "hidden file" or "path traversal" - both are valid
+		},
+		{
+			name:        "null byte attempt",
+			filename:    "file\x00name.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "newline attempt",
+			filename:    "file\nname.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+		{
+			name:        "carriage return attempt",
+			filename:    "file\rname.txt",
+			expectError: true,
+			errorMsg:    "invalid character",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStoredFilename(tt.filename)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error containing %q, got nil", tt.errorMsg)
+					return
+				}
+				// Only check error message if errorMsg is specified
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
 			}
 		})
 	}

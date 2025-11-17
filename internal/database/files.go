@@ -6,10 +6,41 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
 )
+
+// validateStoredFilename validates that a stored filename is safe to use in file paths.
+// This is a defense-in-depth measure duplicated here to avoid circular imports
+// (utils imports database via assembly_recovery.go).
+func validateStoredFilename(filename string) error {
+	if filename == "" {
+		return fmt.Errorf("filename cannot be empty")
+	}
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		return fmt.Errorf("filename contains path separator")
+	}
+	if strings.Contains(filename, "..") {
+		return fmt.Errorf("filename contains path traversal sequence")
+	}
+	if strings.HasPrefix(filename, ".") {
+		return fmt.Errorf("filename starts with dot (hidden file)")
+	}
+	for _, char := range filename {
+		isValid := (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' ||
+			char == '_' ||
+			char == '.'
+		if !isValid {
+			return fmt.Errorf("filename contains invalid character: %c", char)
+		}
+	}
+	return nil
+}
 
 // CreateFile inserts a new file record into the database
 func CreateFile(db *sql.DB, file *models.File) error {
@@ -183,6 +214,17 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 		deleteQuery := `DELETE FROM files WHERE id = ?`
 		if _, err := db.Exec(deleteQuery, f.ID); err != nil {
 			slog.Error("failed to delete file record", "id", f.ID, "error", err)
+			continue
+		}
+
+		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		if err := validateStoredFilename(f.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed during cleanup",
+				"filename", f.StoredFilename,
+				"error", err,
+				"file_id", f.ID,
+			)
+			// Skip this file but continue cleanup of others
 			continue
 		}
 
