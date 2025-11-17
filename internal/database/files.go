@@ -207,37 +207,52 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 		return 0, fmt.Errorf("error iterating expired files: %w", err)
 	}
 
-	// Delete files
+	// Delete files (file first, then database record)
 	deletedCount := 0
 	for _, f := range expiredFiles {
-		// Delete from database first
-		deleteQuery := `DELETE FROM files WHERE id = ?`
-		if _, err := db.Exec(deleteQuery, f.ID); err != nil {
-			slog.Error("failed to delete file record", "id", f.ID, "error", err)
-			continue
-		}
-
-		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		// Step 1: Validate stored filename first (fail fast)
 		if err := validateStoredFilename(f.StoredFilename); err != nil {
 			slog.Error("stored filename validation failed during cleanup",
 				"filename", f.StoredFilename,
 				"error", err,
 				"file_id", f.ID,
 			)
-			// Skip this file but continue cleanup of others
+			// Keep DB record intact for investigation
 			continue
 		}
 
-		// Delete physical file
+		// Step 2: Delete physical file FIRST
 		filePath := filepath.Join(uploadDir, f.StoredFilename)
 		if err := os.Remove(filePath); err != nil {
 			if !os.IsNotExist(err) {
-				slog.Error("failed to delete physical file", "path", filePath, "error", err)
+				// File exists but couldn't delete - keep DB record for retry
+				slog.Error("failed to delete physical file, keeping DB record for retry",
+					"path", filePath,
+					"file_id", f.ID,
+					"error", err,
+				)
+				continue // IMPORTANT: Skip DB deletion, retry next cleanup
 			}
-			// Continue even if physical file deletion fails
+			// File doesn't exist (already deleted) - OK to delete DB record
+			slog.Warn("physical file already deleted", "path", filePath, "file_id", f.ID)
+		}
+
+		// Step 3: Delete database record ONLY after file is gone
+		deleteQuery := `DELETE FROM files WHERE id = ?`
+		if _, err := db.Exec(deleteQuery, f.ID); err != nil {
+			slog.Error("failed to delete file record after file deletion",
+				"id", f.ID,
+				"error", err,
+			)
+			// File deleted but DB record remains - will retry deletion next cleanup
+			continue
 		}
 
 		deletedCount++
+		slog.Debug("successfully deleted expired file",
+			"file_id", f.ID,
+			"filename", f.StoredFilename,
+		)
 	}
 
 	// Update query planner statistics after bulk deletes

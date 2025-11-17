@@ -266,6 +266,258 @@ func TestDeleteExpiredFiles(t *testing.T) {
 	}
 }
 
+// TestDeleteExpiredFiles_FileAlreadyDeleted tests cleanup when physical file is already gone
+func TestDeleteExpiredFiles_FileAlreadyDeleted(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create temporary upload directory
+	tmpDir, err := os.MkdirTemp("", "test-uploads-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create expired file in DB but NOT on disk
+	expiredFile := &models.File{
+		ClaimCode:        "EXPIRED_NO_FILE",
+		OriginalFilename: "missing.txt",
+		StoredFilename:   "stored-missing.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err = CreateFile(db, expiredFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Don't create physical file - simulating already deleted file
+
+	// Delete expired files
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	if err != nil {
+		t.Fatalf("DeleteExpiredFiles() error: %v", err)
+	}
+
+	// Should still delete DB record even though file is missing
+	if deletedCount != 1 {
+		t.Errorf("DeleteExpiredFiles() deleted %d files, want 1", deletedCount)
+	}
+
+	// Verify DB record is deleted
+	retrieved, err := GetFileByClaimCode(db, "EXPIRED_NO_FILE")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved != nil {
+		t.Error("DB record should be deleted even when physical file is missing")
+	}
+}
+
+// TestDeleteExpiredFiles_FileDeletionFails tests cleanup when file deletion fails
+// This test is skipped when running as root since root can delete files regardless of permissions
+func TestDeleteExpiredFiles_FileDeletionFails(t *testing.T) {
+	// Skip this test if running as root (uid 0)
+	if os.Geteuid() == 0 {
+		t.Skip("Skipping test when running as root - root can bypass file permissions")
+	}
+
+	db := setupTestDB(t)
+
+	// Create temporary upload directory
+	tmpDir, err := os.MkdirTemp("", "test-uploads-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a subdirectory that we'll make read-only
+	readOnlyDir := filepath.Join(tmpDir, "readonly")
+	err = os.Mkdir(readOnlyDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create readonly dir: %v", err)
+	}
+
+	// Create expired file
+	expiredFile := &models.File{
+		ClaimCode:        "EXPIRED_LOCKED",
+		OriginalFilename: "locked.txt",
+		StoredFilename:   "stored-locked.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err = CreateFile(db, expiredFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Create physical file in the readonly subdirectory
+	filePath := filepath.Join(readOnlyDir, expiredFile.StoredFilename)
+	err = os.WriteFile(filePath, []byte("locked content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Make subdirectory read-only to prevent file deletion
+	// Mode 0555 (r-xr-xr-x) allows reading and listing but not modification
+	err = os.Chmod(readOnlyDir, 0555)
+	if err != nil {
+		t.Fatalf("Failed to chmod directory: %v", err)
+	}
+
+	// Restore directory permissions after test (even if test fails)
+	defer func() {
+		os.Chmod(readOnlyDir, 0755)
+	}()
+
+	// Call DeleteExpiredFiles with the readonly directory as upload dir
+	deletedCount, err := DeleteExpiredFiles(db, readOnlyDir)
+	if err != nil {
+		t.Fatalf("DeleteExpiredFiles() error: %v", err)
+	}
+
+	// Should NOT delete anything because file deletion failed due to permission denied
+	if deletedCount != 0 {
+		t.Errorf("DeleteExpiredFiles() deleted %d files, want 0 (file deletion should fail)", deletedCount)
+	}
+
+	// Verify DB record is KEPT for retry
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code = ?", "EXPIRED_LOCKED").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query database: %v", err)
+	}
+
+	if count != 1 {
+		t.Error("DB record should be kept when file deletion fails")
+	}
+
+	// Restore permissions to check file existence
+	os.Chmod(readOnlyDir, 0755)
+
+	// Verify physical file still exists
+	if _, err := os.Stat(filePath); err != nil {
+		t.Errorf("Physical file should still exist when deletion fails: %v", err)
+	}
+}
+
+// TestDeleteExpiredFiles_ValidationFails tests cleanup when filename validation fails
+func TestDeleteExpiredFiles_ValidationFails(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create temporary upload directory
+	tmpDir, err := os.MkdirTemp("", "test-uploads-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create expired file with INVALID stored filename (contains path traversal)
+	// Note: We're bypassing CreateFile validation by inserting directly
+	query := `
+		INSERT INTO files (
+			claim_code, original_filename, stored_filename, file_size,
+			mime_type, expires_at, uploader_ip
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+
+	expiresAt := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	_, err = db.Exec(query, "INVALID_PATH", "test.txt", "../evil.txt", 100, "text/plain", expiresAt, "192.168.1.1")
+	if err != nil {
+		t.Fatalf("Failed to insert invalid file: %v", err)
+	}
+
+	// Delete expired files
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	if err != nil {
+		t.Fatalf("DeleteExpiredFiles() error: %v", err)
+	}
+
+	// Should NOT delete because validation fails
+	if deletedCount != 0 {
+		t.Errorf("DeleteExpiredFiles() deleted %d files, want 0 (validation should fail)", deletedCount)
+	}
+
+	// Verify DB record is KEPT for investigation
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code = ?", "INVALID_PATH").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query database: %v", err)
+	}
+
+	if count != 1 {
+		t.Error("DB record should be kept when validation fails")
+	}
+}
+
+// TestDeleteExpiredFiles_MultipleFiles tests cleanup of multiple expired files
+func TestDeleteExpiredFiles_MultipleFiles(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create temporary upload directory
+	tmpDir, err := os.MkdirTemp("", "test-uploads-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create 3 expired files
+	for i := 1; i <= 3; i++ {
+		claimCode := "MULTI" + string(rune('0'+i))
+		originalFilename := "file" + string(rune('0'+i)) + ".txt"
+		storedFilename := "stored-multi" + string(rune('0'+i)) + ".txt"
+
+		file := &models.File{
+			ClaimCode:        claimCode,
+			OriginalFilename: originalFilename,
+			StoredFilename:   storedFilename,
+			FileSize:         100 * int64(i),
+			MimeType:         "text/plain",
+			ExpiresAt:        time.Now().Add(-1 * time.Hour),
+			UploaderIP:       "192.168.1.1",
+		}
+
+		err = CreateFile(db, file)
+		if err != nil {
+			t.Fatalf("CreateFile() error: %v", err)
+		}
+
+		// Create physical file
+		filePath := filepath.Join(tmpDir, file.StoredFilename)
+		err = os.WriteFile(filePath, []byte("content"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	// Delete expired files
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	if err != nil {
+		t.Fatalf("DeleteExpiredFiles() error: %v", err)
+	}
+
+	if deletedCount != 3 {
+		t.Errorf("DeleteExpiredFiles() deleted %d files, want 3", deletedCount)
+	}
+
+	// Verify all files are deleted from database
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code LIKE 'MULTI%'").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query database: %v", err)
+	}
+
+	if count != 0 {
+		t.Errorf("Found %d files in DB, want 0 (all should be deleted)", count)
+	}
+}
+
 // TestGetTotalUsage tests total storage calculation
 func TestGetTotalUsage(t *testing.T) {
 	db := setupTestDB(t)
