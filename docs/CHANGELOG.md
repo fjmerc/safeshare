@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Cleanup Job Data Integrity**: Fixed orphaned file issue in cleanup worker by reversing deletion order
+  - Changed deletion order: physical file first, then database record (previously: database first, then file)
+  - Previously: Database record deleted before physical file, leading to orphaned files when disk operations failed
+  - Now: Failed file deletions keep database record intact for automatic retry on next cleanup run
+  - Prevents gradual disk space exhaustion from accumulated orphaned files
+  - Validation errors no longer cause orphaned files
+  - Improved error logging with structured context (file_id, path, error details)
+  - Location: `internal/database/files.go:DeleteExpiredFiles()`
+  - Comprehensive test coverage: 4 new test cases covering file already deleted, file deletion failures, validation failures, and bulk deletions
+  - Severity: MEDIUM (5.0/10) - Reliability/Data Integrity
 - **Session Activity Error Logging**: Added error logging for session activity updates in `OptionalUserAuth` middleware
   - Previously ignored errors at `internal/middleware/user_auth.go:143`
   - Now logs errors with `slog.Error()` for consistency with `UserAuth` middleware
