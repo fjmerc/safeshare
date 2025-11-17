@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Session Activity Error Logging**: Added error logging for session activity updates in `OptionalUserAuth` middleware
+  - Previously ignored errors at `internal/middleware/user_auth.go:143`
+  - Now logs errors with `slog.Error()` for consistency with `UserAuth` middleware
+  - Improves observability for database write failures
+  - No security impact (session activity is informational, not used for authentication decisions)
+
 ### Security
 - **Trusted Proxy Header Validation**: Fixed vulnerability where X-Forwarded-For, X-Real-IP, and X-Forwarded-Host headers were blindly trusted from any client
   - Added smart default validation (auto mode) that only trusts proxy headers from RFC1918 private IP ranges + localhost
