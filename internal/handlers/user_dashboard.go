@@ -154,7 +154,7 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			slog.Error("stored filename validation failed",
 				"filename", file.StoredFilename,
 				"error", err,
-				"user_id", userID,
+				"user_id", user.ID,
 				"client_ip", getClientIP(r),
 			)
 			w.Header().Set("Content-Type", "application/json")

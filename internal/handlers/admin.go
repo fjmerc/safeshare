@@ -453,7 +453,7 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			slog.Error("stored filename validation failed",
 				"filename", file.StoredFilename,
 				"error", err,
-				"claim_code", redactClaimCode(req.ClaimCode),
+				"claim_code", redactClaimCode(claimCode),
 				"admin_ip", getClientIP(r),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
