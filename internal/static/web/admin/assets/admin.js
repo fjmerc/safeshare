@@ -302,6 +302,14 @@ function formatBytes(bytes) {
 function formatDate(dateString) {
     const date = new Date(dateString);
     const now = new Date();
+    const diff = date - now;
+
+    // Check if expiration is far in the future (>90 years = "never expire")
+    const ninetyYearsInMs = 90 * 365 * 24 * 60 * 60 * 1000;
+    if (diff > ninetyYearsInMs) {
+        return 'Never';
+    }
+
     const month = date.toLocaleString('en-US', { month: 'short' });
     const day = date.getDate();
     const time = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });

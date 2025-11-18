@@ -124,26 +124,32 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Parse optional parameters
 		expiresInHours := cfg.GetDefaultExpirationHours()
+		neverExpire := false
 		if hoursStr := r.FormValue("expires_in_hours"); hoursStr != "" {
 			hours, err := strconv.ParseFloat(hoursStr, 64)
-			if err != nil || hours <= 0 {
+			if err != nil || hours < 0 {
 				sendError(w, "Invalid expires_in_hours parameter", "INVALID_PARAMETER", http.StatusBadRequest)
 				return
 			}
 
-			// Validate against maximum expiration time (security: prevent disk space abuse)
-			if int(hours) > cfg.GetMaxExpirationHours() {
-				sendError(w,
-					fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Files that never expire waste disk space.", cfg.GetMaxExpirationHours()),
-					"EXPIRATION_TOO_LONG",
-					http.StatusBadRequest,
-				)
-				return
-			}
+			// Special case: 0 means "never expire"
+			if hours == 0 {
+				neverExpire = true
+			} else {
+				// Validate against maximum expiration time (security: prevent disk space abuse)
+				if int(hours) > cfg.GetMaxExpirationHours() {
+					sendError(w,
+						fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Use 0 for files that never expire.", cfg.GetMaxExpirationHours()),
+						"EXPIRATION_TOO_LONG",
+						http.StatusBadRequest,
+					)
+					return
+				}
 
-			expiresInHours = int(hours * 60) // Convert to minutes for precision
-			if expiresInHours < 1 {
-				expiresInHours = 1 // Minimum 1 minute
+				expiresInHours = int(hours * 60) // Convert to minutes for precision
+				if expiresInHours < 1 {
+					expiresInHours = 1 // Minimum 1 minute
+				}
 			}
 		} else {
 			expiresInHours = cfg.GetDefaultExpirationHours() * 60 // Convert to minutes
@@ -326,7 +332,13 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Create database record
 		// Sanitize original filename to prevent log injection and display issues
 		sanitizedFilename := utils.SanitizeFilename(header.Filename)
-		expiresAt := time.Now().Add(time.Duration(expiresInHours) * time.Minute)
+		var expiresAt time.Time
+		if neverExpire {
+			// Set expiration to 100 years in the future (effectively "never")
+			expiresAt = time.Now().Add(time.Duration(100*365*24) * time.Hour)
+		} else {
+			expiresAt = time.Now().Add(time.Duration(expiresInHours) * time.Minute)
+		}
 		fileRecord := &models.File{
 			ClaimCode:        claimCode,
 			OriginalFilename: sanitizedFilename,

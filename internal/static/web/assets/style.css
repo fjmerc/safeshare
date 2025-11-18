@@ -758,7 +758,9 @@ header h1 {
     color: var(--bg-primary);
     border-radius: var(--radius);
     font-size: 0.875rem;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: 200px;
+    text-align: center;
     z-index: 10;
     margin-bottom: 0.5rem;
 }

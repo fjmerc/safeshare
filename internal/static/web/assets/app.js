@@ -16,6 +16,7 @@
     const uploadButton = document.getElementById('uploadButton');
     const removeFileButton = document.getElementById('removeFileButton');
     const expirationHours = document.getElementById('expirationHours');
+    const neverExpireCheckbox = document.getElementById('neverExpire');
     const maxDownloads = document.getElementById('maxDownloads');
     const uploadSection = document.getElementById('uploadSection');
     const resultsSection = document.getElementById('resultsSection');
@@ -333,11 +334,18 @@
         // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                expirationHours.value = e.target.dataset.hours;
+                const hours = e.target.dataset.hours;
+                expirationHours.value = hours;
                 // Remove active class from all hour buttons
                 document.querySelectorAll('.btn-small[data-hours]').forEach(b => b.classList.remove('active'));
                 // Add active class to clicked button
                 e.target.classList.add('active');
+                // Sync checkbox state: check if "never" (0 hours)
+                if (neverExpireCheckbox) {
+                    neverExpireCheckbox.checked = (hours === '0');
+                    // Disable/enable expiration input based on checkbox
+                    expirationHours.disabled = (hours === '0');
+                }
             });
         });
 
@@ -357,6 +365,29 @@
         if (defaultHourBtn) defaultHourBtn.classList.add('active');
         if (unlimitedDownloadBtn) unlimitedDownloadBtn.classList.add('active');
 
+        // Never expire checkbox handler
+        if (neverExpireCheckbox) {
+            neverExpireCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    // Checkbox checked - set to "never" (0 hours)
+                    expirationHours.value = '0';
+                    expirationHours.disabled = true;
+                    // Activate "Never" button
+                    document.querySelectorAll('.btn-small[data-hours]').forEach(b => {
+                        b.classList.toggle('active', b.dataset.hours === '0');
+                    });
+                } else {
+                    // Checkbox unchecked - restore default (24 hours)
+                    expirationHours.disabled = false;
+                    expirationHours.value = '24';
+                    // Activate 24h button
+                    document.querySelectorAll('.btn-small[data-hours]').forEach(b => {
+                        b.classList.toggle('active', b.dataset.hours === '24');
+                    });
+                }
+            });
+        }
+
         // Clear active state when user manually types in input
         expirationHours.addEventListener('input', () => {
             const currentValue = expirationHours.value;
@@ -369,6 +400,11 @@
                     btn.classList.remove('active');
                 }
             });
+            // Update checkbox state based on input value
+            if (neverExpireCheckbox) {
+                neverExpireCheckbox.checked = (currentValue === '0');
+                expirationHours.disabled = (currentValue === '0');
+            }
         });
 
         maxDownloads.addEventListener('input', () => {
@@ -751,7 +787,8 @@
         formData.append('file', selectedFile);
 
         const expiresIn = parseFloat(expirationHours.value);
-        if (expiresIn && expiresIn > 0) {
+        if (expiresIn >= 0) {
+            // Send 0 for "never expire", or positive value for specific expiration
             formData.append('expires_in_hours', expiresIn);
         }
 
@@ -854,7 +891,7 @@
         try {
             // Create uploader instance
             const uploader = new ChunkedUploader(selectedFile, {
-                expiresInHours: expiresIn || 24,
+                expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
                 password: password
             });
@@ -1462,6 +1499,12 @@
         const date = new Date(dateString);
         const now = new Date();
         const diff = date - now;
+
+        // Check if expiration is far in the future (>90 years = "never expire")
+        const ninetyYearsInMs = 90 * 365 * 24 * 60 * 60 * 1000;
+        if (diff > ninetyYearsInMs) {
+            return 'Never';
+        }
 
         // Show relative time if within 7 days
         if (diff > 0 && diff < 7 * 24 * 60 * 60 * 1000) {

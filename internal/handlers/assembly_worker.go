@@ -168,7 +168,13 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 	}
 
 	// Calculate expiration time
-	expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+	var expiresAt time.Time
+	if partialUpload.ExpiresInHours == 0 {
+		// Never expire - set to 100 years in the future
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
+	} else {
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+	}
 
 	// Create file record in database
 	// Always set maxDownloads (0 = unlimited, not "unset")

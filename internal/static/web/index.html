@@ -150,12 +150,22 @@
                                     Expires in (hours):
                                     <span class="tooltip" data-tooltip="File will be automatically deleted after this time">i</span>
                                 </label>
-                                <input type="number" id="expirationHours" name="expiration-hours" min="0.1" max="168" step="0.1" value="24">
+                                <input type="number" id="expirationHours" name="expiration-hours" min="0.1" step="0.1" value="24">
                                 <div class="quick-select">
                                     <button type="button" class="btn-small" data-hours="1">1h</button>
                                     <button type="button" class="btn-small" data-hours="24">24h</button>
                                     <button type="button" class="btn-small" data-hours="48">48h</button>
                                     <button type="button" class="btn-small" data-hours="168">7d</button>
+                                    <button type="button" class="btn-small" data-hours="720">30d</button>
+                                    <button type="button" class="btn-small" data-hours="2160">90d</button>
+                                    <button type="button" class="btn-small" data-hours="4320">180d</button>
+                                    <button type="button" class="btn-small" data-hours="8760">1yr</button>
+                                </div>
+                                <div class="checkbox-group" style="margin-top: 16px;">
+                                    <label for="neverExpire" style="display: flex; align-items: center; cursor: pointer;">
+                                        <input type="checkbox" id="neverExpire" name="never-expire" style="margin-right: 8px;">
+                                        <span>Never expire</span>
+                                    </label>
                                 </div>
                             </div>
 
