@@ -266,12 +266,6 @@ func TestUploadHandler_InvalidExpiration(t *testing.T) {
 			wantStatus:     http.StatusBadRequest,
 			wantErrorCode:  "INVALID_PARAMETER",
 		},
-		{
-			name:           "zero value",
-			expirationHours: "0",
-			wantStatus:     http.StatusBadRequest,
-			wantErrorCode:  "INVALID_PARAMETER",
-		},
 	}
 
 	for _, tt := range tests {
@@ -1076,6 +1070,52 @@ func TestUploadHandler_SmallFile(t *testing.T) {
 
 	if resp.FileSize != int64(len(fileContent)) {
 		t.Errorf("file_size = %d, want %d", resp.FileSize, len(fileContent))
+	}
+}
+
+func TestUploadHandler_NeverExpire(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UploadHandler(db, cfg)
+
+	fileContent := []byte("test content for never-expire")
+	formValues := map[string]string{
+		"expires_in_hours": "0", // Never expire
+	}
+	body, contentType := testutil.CreateMultipartForm(t, fileContent, "test.txt", formValues)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	// Should succeed
+	testutil.AssertStatusCode(t, rr, http.StatusCreated)
+
+	var resp models.UploadResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Verify expiration is set far in the future (100 years)
+	expectedExpiration := time.Now().Add(time.Duration(100*365*24) * time.Hour)
+	diff := resp.ExpiresAt.Sub(expectedExpiration)
+
+	// Allow 1 minute tolerance for test execution time
+	if diff < -time.Minute || diff > time.Minute {
+		t.Errorf("expiration = %v, want ~100 years from now (%v), diff = %v",
+			resp.ExpiresAt, expectedExpiration, diff)
+	}
+
+	// Verify file record in database
+	file, err := database.GetFileByClaimCode(db, resp.ClaimCode)
+	if err != nil {
+		t.Fatalf("failed to get file: %v", err)
+	}
+
+	// Verify expiration is >90 years (threshold for "never")
+	ninetyYears := time.Now().Add(time.Duration(90*365*24) * time.Hour)
+	if file.ExpiresAt.Before(ninetyYears) {
+		t.Errorf("file expires too soon: %v, want >90 years from now", file.ExpiresAt)
 	}
 }
 

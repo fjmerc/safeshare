@@ -845,11 +845,11 @@ func TestUploadInitHandler_DefaultExpiration(t *testing.T) {
 
 	handler := UploadInitHandler(db, cfg)
 
-	// Don't specify expires_in_hours (should use default)
+	// Negative value should use default
 	initReq := models.UploadInitRequest{
 		Filename:       "test.txt",
 		TotalSize:      1024,
-		ExpiresInHours: 0, // Will use default
+		ExpiresInHours: -1, // Negative = use default
 	}
 	body, _ := json.Marshal(initReq)
 
@@ -870,6 +870,41 @@ func TestUploadInitHandler_DefaultExpiration(t *testing.T) {
 	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
 	if partialUpload.ExpiresInHours != 48 {
 		t.Errorf("expires_in_hours = %d, want 48 (default)", partialUpload.ExpiresInHours)
+	}
+}
+
+func TestUploadInitHandler_NeverExpire(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	handler := UploadInitHandler(db, cfg)
+
+	// ExpiresInHours: 0 means "never expire"
+	initReq := models.UploadInitRequest{
+		Filename:       "test.txt",
+		TotalSize:      1024,
+		ExpiresInHours: 0, // Never expire
+	}
+	body, _ := json.Marshal(initReq)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/init", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var response models.UploadInitResponse
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	// Verify never-expire was set
+	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	if partialUpload.ExpiresInHours != 0 {
+		t.Errorf("expires_in_hours = %d, want 0 (never expire)", partialUpload.ExpiresInHours)
 	}
 }
 
