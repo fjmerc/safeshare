@@ -53,12 +53,24 @@
     const userName = document.getElementById('userName');
     const logoutBtn = document.getElementById('logoutBtn');
 
+    // DOM Elements - Share
+    const shareButton = document.getElementById('shareButton');
+    const downloadQRButton = document.getElementById('downloadQRButton');
+    const shareModal = document.getElementById('shareModal');
+    const shareModalClose = document.querySelector('.share-modal-close');
+    const shareViaEmail = document.getElementById('shareViaEmail');
+    const shareCopyLink = document.getElementById('shareCopyLink');
+    const shareCopyDetails = document.getElementById('shareCopyDetails');
+
     // State - Pickup
     let currentFileInfo = null;
     let currentDownloader = null; // Current ResumableDownloader instance
 
     // State - User
     let currentUser = null;
+
+    // State - Share
+    let currentShareData = null; // Stores upload data for sharing
 
     // State - Server config
     let serverConfig = {
@@ -474,6 +486,47 @@
 
         // Close user menu when clicking outside
         document.addEventListener('click', closeUserMenuOnClickOutside);
+
+        // Share functionality
+        if (shareButton) {
+            shareButton.addEventListener('click', handleShareClick);
+        }
+
+        if (downloadQRButton) {
+            downloadQRButton.addEventListener('click', handleDownloadQR);
+        }
+
+        if (shareModalClose) {
+            shareModalClose.addEventListener('click', closeShareModal);
+        }
+
+        if (shareViaEmail) {
+            shareViaEmail.addEventListener('click', handleShareViaEmail);
+        }
+
+        if (shareCopyLink) {
+            shareCopyLink.addEventListener('click', handleShareCopyLink);
+        }
+
+        if (shareCopyDetails) {
+            shareCopyDetails.addEventListener('click', handleShareCopyDetails);
+        }
+
+        // Close share modal on background click
+        if (shareModal) {
+            shareModal.addEventListener('click', (e) => {
+                if (e.target === shareModal) {
+                    closeShareModal();
+                }
+            });
+        }
+
+        // Close share modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && shareModal && !shareModal.classList.contains('hidden')) {
+                closeShareModal();
+            }
+        });
 
         // Logout button
         if (logoutBtn) {
@@ -907,6 +960,9 @@
             // Send browser notification
             sendUploadCompleteNotification(data);
 
+            // Store data for sharing
+            currentShareData = data;
+
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = data.download_url;
@@ -1183,6 +1239,194 @@
             }
         }
     }
+
+    // ========== Share Functions ==========
+
+    // Handle share button click
+    async function handleShareClick() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        // Check if Web Share API is supported
+        if (navigator.share) {
+            try {
+                const shareText = generateShareMessage(currentShareData);
+                await navigator.share({
+                    title: `File shared: ${currentShareData.original_filename}`,
+                    text: shareText,
+                    url: currentShareData.download_url
+                });
+                // User completed share (or cancelled, which is fine)
+                // Don't show toast on cancellation as it's expected behavior
+            } catch (error) {
+                // Only show error if it's not a user cancellation
+                if (error.name !== 'AbortError') {
+                    console.error('Share error:', error);
+                    // Fallback to modal
+                    showShareModal();
+                }
+            }
+        } else {
+            // Web Share API not supported, show modal
+            showShareModal();
+        }
+    }
+
+    // Show share modal
+    function showShareModal() {
+        if (shareModal) {
+            shareModal.classList.remove('hidden');
+        }
+    }
+
+    // Close share modal
+    function closeShareModal() {
+        if (shareModal) {
+            shareModal.classList.add('hidden');
+        }
+    }
+
+    // Handle download QR code
+    function handleDownloadQR() {
+        try {
+            const qrcodeDiv = document.getElementById('qrcode');
+            const canvas = qrcodeDiv.querySelector('canvas');
+
+            if (!canvas) {
+                showToast('QR code not available', 'error', 3000);
+                return;
+            }
+
+            // Convert canvas to blob and download
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const filename = currentShareData
+                    ? `safeshare-${currentShareData.claim_code}.png`
+                    : 'safeshare-qr.png';
+
+                link.download = filename;
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+
+                showToast('QR code downloaded!', 'success', 3000);
+            }, 'image/png');
+        } catch (error) {
+            console.error('QR download error:', error);
+            showToast('Failed to download QR code', 'error', 3000);
+        }
+    }
+
+    // Handle share via email
+    function handleShareViaEmail() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const subject = encodeURIComponent(`File shared: ${currentShareData.original_filename}`);
+        const body = encodeURIComponent(generateEmailBody(currentShareData));
+        const mailtoUrl = `mailto:?subject=${subject}&body=${body}`;
+
+        // Open email client
+        window.location.href = mailtoUrl;
+
+        // Close modal and show feedback
+        closeShareModal();
+        showToast('Opening email client...', 'info', 2000);
+    }
+
+    // Handle copy link
+    async function handleShareCopyLink() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const success = await copyToClipboard(currentShareData.download_url, 'Download link copied!');
+        if (success) {
+            closeShareModal();
+        }
+    }
+
+    // Handle copy details
+    async function handleShareCopyDetails() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const message = generateShareMessage(currentShareData);
+        const success = await copyToClipboard(message, 'File details copied!');
+        if (success) {
+            closeShareModal();
+        }
+    }
+
+    // Generate share message
+    function generateShareMessage(data) {
+        const expiresDate = new Date(data.expires_at);
+        const formattedExpires = expiresDate.toLocaleString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        let message = `Hi! I've shared a file with you via SafeShare.\n\n`;
+        message += `File: ${data.original_filename}\n`;
+        message += `Size: ${formatFileSize(data.file_size)}\n`;
+        message += `Expires: ${formattedExpires}\n\n`;
+        message += `Download link:\n${data.download_url}\n\n`;
+        message += `Alternatively, you can go to ${window.location.origin} and enter this claim code: ${data.claim_code}\n\n`;
+
+        if (data.max_downloads) {
+            message += `Note: This link can be used ${data.max_downloads} time(s).\n`;
+        }
+
+        message += `This file will be automatically deleted after expiration.`;
+
+        return message;
+    }
+
+    // Generate email body
+    function generateEmailBody(data) {
+        const expiresDate = new Date(data.expires_at);
+        const formattedExpires = expiresDate.toLocaleString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        let body = `Hi,\n\n`;
+        body += `I've shared a file with you using SafeShare:\n\n`;
+        body += `File: ${data.original_filename}\n`;
+        body += `Size: ${formatFileSize(data.file_size)}\n`;
+        body += `Expires: ${formattedExpires}\n\n`;
+        body += `Download link:\n${data.download_url}\n\n`;
+        body += `Alternatively, you can go to ${window.location.origin} and enter this claim code:\n${data.claim_code}\n\n`;
+
+        if (data.max_downloads) {
+            body += `Note: This file can be downloaded ${data.max_downloads} time(s).\n\n`;
+        }
+
+        body += `This file will be automatically deleted after expiration.\n\n`;
+        body += `SafeShare is a secure temporary file sharing service with automatic expiration.`;
+
+        return body;
+    }
+
+    // ========== End Share Functions ==========
 
     // Format file size
     function formatFileSize(bytes) {
