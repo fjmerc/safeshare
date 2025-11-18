@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Share File Functionality**: Added native share button and modal for easy file sharing after upload
+  - Smart share button uses Web Share API on mobile/modern browsers with graceful fallback to modal
+  - Share options: Email (mailto link), Copy Link, Copy Details (formatted message)
+  - Download QR Code button to save QR code as PNG image
+  - Outline button style for reduced visual weight (tertiary action)
+  - Mobile-optimized with responsive design
+  - Includes file details, expiration info, and download limits in share messages
+  - Accessible with keyboard navigation, Escape key support, and ARIA labels
+
 ### Changed
 - **Download Performance**: Optimized non-encrypted file downloads to use streaming instead of loading entire files into memory
   - Reduces memory usage for concurrent downloads (100MB file × 10 users = 1GB saved)
