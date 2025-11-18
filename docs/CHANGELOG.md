@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Download Performance**: Optimized non-encrypted file downloads to use streaming instead of loading entire files into memory
+  - Reduces memory usage for concurrent downloads (100MB file × 10 users = 1GB saved)
+  - Full downloads use `io.Copy()` for efficient streaming
+  - Range requests use `f.Seek()` + `io.LimitReader()` for partial content delivery
+  - Legacy encrypted files still use in-memory approach (rare case, required for decryption)
+  - SFSE1 stream-encrypted files unchanged (already optimized)
+  - No API changes, fully backward compatible
+- **Cleanup Performance**: Optimized file cleanup job to use batch DELETE operations
+  - Reduces database write overhead from N individual DELETEs to 1 batch DELETE
+  - For 100 expired files: 100 DELETE statements → 1 batch operation
+  - Chunks large batches at 500 IDs to stay within SQLite parameter limits
+  - Maintains defensive pattern: physical files deleted first, then database records in batch
+  - Graceful error handling preserves safety guarantees
+
 ### Fixed
 - **Cleanup Job Data Integrity**: Fixed orphaned file issue in cleanup worker by reversing deletion order
   - Changed deletion order: physical file first, then database record (previously: database first, then file)

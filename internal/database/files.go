@@ -208,7 +208,9 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	}
 
 	// Delete files (file first, then database record)
-	deletedCount := 0
+	// Collect successfully deleted file IDs for batch DELETE
+	var deletedIDs []int64
+
 	for _, f := range expiredFiles {
 		// Step 1: Validate stored filename first (fail fast)
 		if err := validateStoredFilename(f.StoredFilename); err != nil {
@@ -237,22 +239,18 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 			slog.Warn("physical file already deleted", "path", filePath, "file_id", f.ID)
 		}
 
-		// Step 3: Delete database record ONLY after file is gone
-		deleteQuery := `DELETE FROM files WHERE id = ?`
-		if _, err := db.Exec(deleteQuery, f.ID); err != nil {
-			slog.Error("failed to delete file record after file deletion",
-				"id", f.ID,
-				"error", err,
-			)
-			// File deleted but DB record remains - will retry deletion next cleanup
-			continue
-		}
-
-		deletedCount++
-		slog.Debug("successfully deleted expired file",
+		// Step 3: Track ID for batch deletion
+		deletedIDs = append(deletedIDs, f.ID)
+		slog.Debug("successfully deleted physical file",
 			"file_id", f.ID,
 			"filename", f.StoredFilename,
 		)
+	}
+
+	// Step 4: Batch delete database records for successfully deleted files
+	deletedCount := 0
+	if len(deletedIDs) > 0 {
+		deletedCount = batchDeleteFiles(db, deletedIDs)
 	}
 
 	// Update query planner statistics after bulk deletes
@@ -267,6 +265,59 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	}
 
 	return deletedCount, nil
+}
+
+// batchDeleteFiles deletes multiple file records using batch DELETE operations
+// Chunks large batches to stay within SQLite parameter limits (max 999 params, using 500 for safety)
+func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
+	const batchSize = 500
+	deletedCount := 0
+
+	// Process in chunks to avoid SQLite parameter limit
+	for i := 0; i < len(fileIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(fileIDs) {
+			end = len(fileIDs)
+		}
+		batch := fileIDs[i:end]
+
+		// Build DELETE IN query with placeholders
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+		deleteQuery := fmt.Sprintf("DELETE FROM files WHERE id IN (%s)", placeholders)
+
+		// Convert []int64 to []interface{} for db.Exec
+		args := make([]interface{}, len(batch))
+		for j, id := range batch {
+			args[j] = id
+		}
+
+		// Execute batch DELETE
+		result, err := db.Exec(deleteQuery, args...)
+		if err != nil {
+			slog.Error("failed to batch delete file records",
+				"batch_size", len(batch),
+				"error", err,
+			)
+			// Don't stop processing other batches, continue
+			continue
+		}
+
+		affected, err := result.RowsAffected()
+		if err != nil {
+			slog.Warn("failed to get rows affected for batch delete", "error", err)
+			// Assume all rows were deleted if we can't get count
+			affected = int64(len(batch))
+		}
+
+		deletedCount += int(affected)
+		slog.Debug("batch deleted file records",
+			"batch_size", len(batch),
+			"deleted", affected,
+		)
+	}
+
+	return deletedCount
 }
 
 // GetTotalUsage returns the total storage used by all active files AND partial uploads in bytes
