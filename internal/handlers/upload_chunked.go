@@ -118,13 +118,14 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Validate expiration hours
-		if req.ExpiresInHours <= 0 {
+		// Special case: 0 means "never expire", negative values use default
+		if req.ExpiresInHours < 0 {
 			req.ExpiresInHours = cfg.GetDefaultExpirationHours()
 		}
 
-		if req.ExpiresInHours > cfg.GetMaxExpirationHours() {
+		if req.ExpiresInHours > 0 && req.ExpiresInHours > cfg.GetMaxExpirationHours() {
 			sendSmartError(w,
-				fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours)", cfg.GetMaxExpirationHours()),
+				fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Use 0 for files that never expire.", cfg.GetMaxExpirationHours()),
 				"EXPIRATION_TOO_LONG",
 				http.StatusBadRequest,
 			)
@@ -560,7 +561,13 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
 
 				// Calculate expiration time
-				expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+				var expiresAt time.Time
+				if partialUpload.ExpiresInHours == 0 {
+					// Never expire - set to 100 years in the future
+					expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
+				} else {
+					expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+				}
 
 				response := models.UploadCompleteResponse{
 					ClaimCode:        *partialUpload.ClaimCode,

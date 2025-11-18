@@ -184,11 +184,11 @@ func TestExpirationBoundaries(t *testing.T) {
 		expiresInHours string
 		wantCode       int
 	}{
-		{"zero expiration", "0", 400},       // Rejected - handler requires hours > 0
-		{"one hour", "1", 201},              // Minimum valid (returns 201 Created)
-		{"exactly max", "168", 201},         // At max boundary (returns 201 Created)
-		{"one hour over max", "169", 400},   // Just over max
-		{"very large", "999999", 400},       // Far over max
+		{"zero expiration (never expire)", "0", 201}, // Allowed - never expire (returns 201 Created)
+		{"one hour", "1", 201},                       // Minimum valid (returns 201 Created)
+		{"exactly max", "168", 201},                  // At max boundary (returns 201 Created)
+		{"one hour over max", "169", 400},            // Just over max
+		{"very large", "999999", 400},                // Far over max
 	}
 
 	for _, tt := range tests {
