@@ -576,12 +576,13 @@ header h1 {
 
 .settings-content {
     max-height: 1500px;
-    overflow: hidden;
+    overflow: visible;
     transition: max-height 0.3s ease;
 }
 
 .settings.collapsed .settings-content {
     max-height: 0;
+    overflow: hidden;
 }
 
 .form-group {
@@ -753,16 +754,15 @@ header h1 {
     bottom: 100%;
     left: 50%;
     transform: translateX(-50%);
-    padding: 0.5rem;
+    padding: 0.5rem 0.75rem;
     background: var(--text-primary);
     color: var(--bg-primary);
     border-radius: var(--radius);
     font-size: 0.875rem;
-    white-space: normal;
-    max-width: 200px;
-    text-align: center;
+    white-space: nowrap;
     z-index: 10;
     margin-bottom: 0.5rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 /* Progress */
