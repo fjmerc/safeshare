@@ -30,15 +30,30 @@ A command-line utility for importing existing files into SafeShare without re-up
 
 ## Requirements
 
-- Go 1.21 or higher (for building)
+- **Docker deployment** (v1.1.0+): Tool is pre-built, no compilation needed
+- **Non-Docker deployment**: Go 1.21 or higher (for building from source)
 - Direct server access (SSH, console, etc.)
 - SafeShare database path
 - SafeShare uploads directory path
-- Encryption key (must match running SafeShare instance)
+- Encryption key (optional - only if SafeShare uses encryption)
 
 ## Installation
 
+### Docker (Recommended)
+
+**As of v1.1.0**, the import-tool is **pre-built in all SafeShare Docker images**. No manual compilation needed!
+
+```bash
+# Tool is available at /app/import-file in the container
+docker exec safeshare /app/import-file --version
+
+# Run import directly
+docker exec safeshare /app/import-file --help
+```
+
 ### Build from source
+
+For non-Docker deployments or custom builds:
 
 ```bash
 cd /path/to/safeshare
@@ -169,7 +184,7 @@ Get machine-readable output:
 |------|-------------|---------|
 | `--db <path>` | Path to SafeShare database | **required** |
 | `--uploads <path>` | Path to SafeShare uploads directory | **required** |
-| `--enckey <key>` | Encryption key (64 hex chars) | **required** |
+| `--enckey <key>` | Encryption key (64 hex chars) - **optional** | - |
 | `--public-url <url>` | Public URL for download links | `https://share.example.com` |
 | `--ip <address>` | Uploader IP to record | `import-tool` |
 
@@ -250,15 +265,15 @@ First preview, then execute:
   --enckey "your-key"
 ```
 
-### Example 3: Docker Container Import
+### Example 3: Docker Container Import (Simplified)
 
-Import files into a running SafeShare Docker container:
+**As of v1.1.0**, the import-tool is pre-built in Docker images. No need to copy binaries!
 
 ```bash
 # Copy files into container's volume
 docker cp /local/files safeshare:/app/data/import/
 
-# Execute import inside container
+# Execute import directly (tool is already at /app/import-file)
 docker exec safeshare /app/import-file \
   --directory /app/data/import \
   --db /app/data/safeshare.db \
@@ -266,9 +281,20 @@ docker exec safeshare /app/import-file \
   --enckey "$ENCRYPTION_KEY" \
   --no-delete
 
-# Or build and copy binary into container
-docker cp cmd/import-file/import-file safeshare:/app/
-docker exec safeshare /app/import-file --version
+# Or mount a volume for import
+docker run -d \
+  -v /local/files:/import \
+  -v safeshare-data:/app/data \
+  -v safeshare-uploads:/app/uploads \
+  -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  --name safeshare \
+  safeshare:latest
+
+docker exec safeshare /app/import-file \
+  --directory /import \
+  --db /app/data/safeshare.db \
+  --uploads /app/uploads \
+  --enckey "$ENCRYPTION_KEY"
 ```
 
 ### Example 4: Authenticated Import (User Ownership)
@@ -288,7 +314,35 @@ Import files and assign ownership to a specific user:
 # Files will appear in user's dashboard at /dashboard
 ```
 
-### Example 5: Scripting with JSON Output
+### Example 5: Import Without Encryption (New in v1.1.0)
+
+For non-encrypted SafeShare deployments or faster imports:
+
+```bash
+# Import without encryption (no --enckey flag)
+./import-file \
+  --source /data/public-file.pdf \
+  --filename "Public Document.pdf" \
+  --expires 168 \
+  --db /app/data/safeshare.db \
+  --uploads /app/uploads
+
+# Or in Docker
+docker exec safeshare /app/import-file \
+  --directory /app/data/import \
+  --db /app/data/safeshare.db \
+  --uploads /app/uploads \
+  --no-delete
+
+# Benefits:
+# - Faster processing (no encryption overhead)
+# - Works with non-encrypted SafeShare instances
+# - Still validates extensions, quota, disk space
+```
+
+**Note**: Files imported without encryption require the SafeShare instance to run **without** the `ENCRYPTION_KEY` environment variable. Mixed encrypted/unencrypted files are supported - SafeShare auto-detects the format.
+
+### Example 6: Scripting with JSON Output
 
 Automate imports with error handling:
 
@@ -418,10 +472,18 @@ This tool requires **direct server access** (SSH, console, physical access). It 
 
 ### Encryption Key Management
 
-- The encryption key (`--enckey`) **must match** the key used by the running SafeShare instance
-- **Wrong key** = files cannot be downloaded (no decryption possible)
-- **Lost key** = data is permanently unrecoverable
-- Store the key securely (environment variable, secrets manager, encrypted file)
+**As of v1.1.0**, encryption is **optional**:
+
+- **With encryption**: Provide `--enckey` flag with 64-character hex key
+  - Key **must match** the running SafeShare instance's `ENCRYPTION_KEY`
+  - **Wrong key** = files cannot be downloaded (no decryption possible)
+  - **Lost key** = data is permanently unrecoverable
+  - Store the key securely (environment variable, secrets manager, encrypted file)
+
+- **Without encryption**: Omit `--enckey` flag
+  - Faster processing (no encryption overhead)
+  - SafeShare instance must run **without** `ENCRYPTION_KEY` environment variable
+  - Mixed encrypted/unencrypted files supported (SafeShare auto-detects)
 
 ### Source File Deletion
 
@@ -504,19 +566,30 @@ The tool validates that sufficient disk space is available before importing. Req
 
 ### Error: "encryption key must be exactly 64 hexadecimal characters"
 
-**Cause**: Invalid encryption key format.
+**Cause**: Invalid encryption key format (or encryption key not needed).
 
-**Solution**: Generate a valid key or retrieve from SafeShare configuration:
+**Solution**:
 
+**Option 1** - If SafeShare uses encryption, get the correct key:
 ```bash
-# Generate new key (DO NOT use if SafeShare is already running with a key!)
-openssl rand -hex 32
-
 # Get key from Docker container environment
 docker exec safeshare env | grep ENCRYPTION_KEY
 
 # Get key from systemd service
 systemctl show safeshare.service | grep ENCRYPTION_KEY
+
+# Generate new key (DO NOT use if SafeShare is already running with a key!)
+openssl rand -hex 32
+```
+
+**Option 2** - If SafeShare does NOT use encryption, omit the `--enckey` flag:
+```bash
+# Import without encryption (faster, no encryption overhead)
+./import-file \
+  --source /path/to/file.pdf \
+  --db /app/data/safeshare.db \
+  --uploads /app/uploads
+  # Note: no --enckey flag
 ```
 
 ### Error: "verification failed: hash mismatch"
