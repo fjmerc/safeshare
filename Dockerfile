@@ -10,10 +10,16 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binary (CGO not needed with modernc.org/sqlite)
+# Build binaries (CGO not needed with modernc.org/sqlite)
 RUN CGO_ENABLED=0 GOOS=linux go build -a \
     -ldflags="-w -s" \
-    -o safeshare ./cmd/safeshare
+    -o safeshare ./cmd/safeshare && \
+    CGO_ENABLED=0 GOOS=linux go build -a \
+    -ldflags="-w -s" \
+    -o import-file ./cmd/import-file && \
+    CGO_ENABLED=0 GOOS=linux go build -a \
+    -ldflags="-w -s" \
+    -o migrate-chunks ./cmd/migrate-chunks
 
 # Runtime stage
 FROM alpine:latest
@@ -27,8 +33,10 @@ RUN addgroup -g 1000 safeshare && \
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /build/safeshare .
+COPY --from=builder /build/import-file .
+COPY --from=builder /build/migrate-chunks .
 
 # Create data directories
 RUN mkdir -p /app/uploads /app/data && \
