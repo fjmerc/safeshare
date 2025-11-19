@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -153,6 +154,7 @@ func TestStaticFileSystem(t *testing.T) {
 		"dashboard.html",
 		"admin/login.html",
 		"admin/dashboard.html",
+		"service-worker.js",
 	}
 
 	for _, path := range tests {
@@ -174,6 +176,57 @@ func TestStaticFileSystem(t *testing.T) {
 				t.Errorf("%s should not be empty", path)
 			}
 		})
+	}
+}
+
+// TestServeServiceWorker tests that the service worker is served correctly
+func TestServeServiceWorker(t *testing.T) {
+	req := httptest.NewRequest("GET", "/service-worker.js", nil)
+	w := httptest.NewRecorder()
+
+	handler := serveServiceWorker()
+	handler(w, req)
+
+	// Check status code
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+
+	// Check Content-Type header
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/javascript" {
+		t.Errorf("expected Content-Type 'application/javascript', got %q", contentType)
+	}
+
+	// Check Cache-Control header
+	cacheControl := w.Header().Get("Cache-Control")
+	if cacheControl != "no-cache" {
+		t.Errorf("expected Cache-Control 'no-cache', got %q", cacheControl)
+	}
+
+	// Check that response body is not empty
+	body := w.Body.String()
+	if len(body) == 0 {
+		t.Error("service worker response body should not be empty")
+	}
+
+	// Verify response contains service worker code (basic sanity check)
+	if !strings.Contains(body, "service worker") && !strings.Contains(body, "Service Worker") {
+		t.Error("response body should contain service worker code")
+	}
+
+	// Verify it contains expected service worker functionality
+	expectedStrings := []string{
+		"addEventListener",
+		"install",
+		"activate",
+		"fetch",
+	}
+
+	for _, expected := range expectedStrings {
+		if !strings.Contains(body, expected) {
+			t.Errorf("service worker should contain '%s'", expected)
+		}
 	}
 }
 
