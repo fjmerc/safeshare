@@ -356,6 +356,10 @@ func run() error {
 
 	// Register static file routes (embedded frontend)
 	mux.Handle("/assets/", http.StripPrefix("/", static.Handler()))
+
+	// Service worker route (must be at root scope for PWA)
+	mux.HandleFunc("/service-worker.js", serveServiceWorker())
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Serve index.html for root path only
 		if r.URL.Path != "/" {
@@ -547,5 +551,29 @@ func serveUserPage(path string) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, path, stat.ModTime(), file.(io.ReadSeeker))
+	}
+}
+
+// serveServiceWorker serves the service worker file with proper headers for PWA
+func serveServiceWorker() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fs := static.FileSystem()
+		file, err := fs.Open("service-worker.js")
+		if err != nil {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+
+		stat, err := file.Stat()
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+
+		// Set proper MIME type and cache headers for service worker
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeContent(w, r, "service-worker.js", stat.ModTime(), file.(io.ReadSeeker))
 	}
 }
