@@ -1718,10 +1718,13 @@
                         <td style="text-align: center;">${statusBadge}</td>
                         <td class="actions-col">
                             <div class="actions-cell">
-                                <button class="btn-icon btn-primary" onclick="copyDownloadLink('${downloadUrl}', this)" title="Copy Link">
+                                <button class="btn-icon btn-primary" onclick="openShareModal({original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.download_count}, claim_code: '${file.claim_code}'})" title="Share File">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        <circle cx="18" cy="5" r="3"></circle>
+                                        <circle cx="6" cy="12" r="3"></circle>
+                                        <circle cx="18" cy="19" r="3"></circle>
+                                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                                     </svg>
                                 </button>
                                 <button class="btn-icon btn-danger" onclick="deleteFile(${file.id})" title="Delete">
@@ -1984,6 +1987,195 @@
             }
         }
 
+        // ========== Share Functions ==========
+
+        // State for current share data
+        let currentShareData = null;
+
+        // Open share modal or use Web Share API
+        async function openShareModal(fileData) {
+            currentShareData = fileData;
+
+            // Check if Web Share API is supported
+            if (navigator.share) {
+                try {
+                    const shareText = generateShareMessage(currentShareData);
+                    await navigator.share({
+                        title: `File shared: ${currentShareData.original_filename}`,
+                        text: shareText,
+                        url: currentShareData.download_url
+                    });
+                    // User completed share (or cancelled, which is fine)
+                } catch (error) {
+                    // Only show error if it's not a user cancellation
+                    if (error.name !== 'AbortError') {
+                        console.error('Share error:', error);
+                        // Fallback to modal
+                        showShareModal();
+                    }
+                }
+            } else {
+                // Web Share API not supported, show modal
+                showShareModal();
+            }
+        }
+
+        // Show share modal
+        function showShareModal() {
+            const shareModal = document.getElementById('shareModal');
+            if (shareModal) {
+                shareModal.classList.remove('hidden');
+            }
+        }
+
+        // Close share modal
+        function closeShareModal() {
+            const shareModal = document.getElementById('shareModal');
+            if (shareModal) {
+                shareModal.classList.add('hidden');
+            }
+        }
+
+        // Handle share via email
+        function handleShareViaEmail() {
+            if (!currentShareData) {
+                showToast('No file data available to share', 'error', 3000);
+                return;
+            }
+
+            const subject = encodeURIComponent(`File shared: ${currentShareData.original_filename}`);
+            const body = encodeURIComponent(generateEmailBody(currentShareData));
+            const mailtoUrl = `mailto:?subject=${subject}&body=${body}`;
+
+            // Open email client
+            window.location.href = mailtoUrl;
+
+            // Close modal and show feedback
+            closeShareModal();
+            showToast('Opening email client...', 'info', 2000);
+        }
+
+        // Handle copy link
+        async function handleShareCopyLink() {
+            if (!currentShareData) {
+                showToast('No file data available to share', 'error', 3000);
+                return;
+            }
+
+            const success = await copyToClipboard(currentShareData.download_url, 'Download link copied!');
+            if (success) {
+                closeShareModal();
+            }
+        }
+
+        // Handle copy details
+        async function handleShareCopyDetails() {
+            if (!currentShareData) {
+                showToast('No file data available to share', 'error', 3000);
+                return;
+            }
+
+            const message = generateShareMessage(currentShareData);
+            const success = await copyToClipboard(message, 'File details copied!');
+            if (success) {
+                closeShareModal();
+            }
+        }
+
+        // Generate share message
+        function generateShareMessage(data) {
+            const expiresDate = new Date(data.expires_at);
+            const formattedExpires = expiresDate.toLocaleString('en-US', {
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+
+            let message = `Hi! I've shared a file with you via SafeShare.\n\n`;
+            message += `File: ${data.original_filename}\n`;
+            message += `Size: ${formatFileSize(data.file_size)}\n`;
+            message += `Expires: ${formattedExpires}\n\n`;
+            message += `Download link:\n${data.download_url}\n\n`;
+            message += `Alternatively, you can go to ${window.location.origin} and enter this claim code: ${data.claim_code}\n\n`;
+
+            if (data.max_downloads) {
+                message += `Note: This link can be used ${data.max_downloads} time(s).\n`;
+            }
+
+            message += `This file will be automatically deleted after expiration.`;
+
+            return message;
+        }
+
+        // Generate email body
+        function generateEmailBody(data) {
+            const expiresDate = new Date(data.expires_at);
+            const formattedExpires = expiresDate.toLocaleString('en-US', {
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+
+            let body = `Hi,\n\n`;
+            body += `I've shared a file with you using SafeShare:\n\n`;
+            body += `File: ${data.original_filename}\n`;
+            body += `Size: ${formatFileSize(data.file_size)}\n`;
+            body += `Expires: ${formattedExpires}\n\n`;
+            body += `Download link:\n${data.download_url}\n\n`;
+            body += `Alternatively, you can go to ${window.location.origin} and enter this claim code:\n${data.claim_code}\n\n`;
+
+            if (data.max_downloads) {
+                body += `Note: This file can be downloaded ${data.max_downloads} time(s).\n\n`;
+            }
+
+            body += `This file will be automatically deleted after expiration.\n\n`;
+            body += `SafeShare is a secure temporary file sharing service with automatic expiration.`;
+
+            return body;
+        }
+
+        // Copy to clipboard utility
+        async function copyToClipboard(text, successMessage = 'Copied to clipboard') {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(successMessage, 'success', 3000);
+                return true;
+            } catch (error) {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+
+                try {
+                    const success = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+
+                    if (success) {
+                        showToast(successMessage, 'success', 3000);
+                        return true;
+                    } else {
+                        showToast('Failed to copy to clipboard', 'error', 3000);
+                        return false;
+                    }
+                } catch (fallbackError) {
+                    document.body.removeChild(textarea);
+                    showToast('Failed to copy to clipboard', 'error', 3000);
+                    return false;
+                }
+            }
+        }
+
+        // ========== End Share Functions ==========
+
         // Initialize theme icons on load
         document.addEventListener('DOMContentLoaded', () => {
             const theme = document.documentElement.getAttribute('data-theme');
@@ -1999,11 +2191,94 @@
                     moonIcon.style.display = 'block';
                 }
             }
+
+            // Initialize share modal event listeners
+            const shareModal = document.getElementById('shareModal');
+            const shareModalClose = document.querySelector('.share-modal-close');
+            const shareViaEmail = document.getElementById('shareViaEmail');
+            const shareCopyLink = document.getElementById('shareCopyLink');
+            const shareCopyDetails = document.getElementById('shareCopyDetails');
+
+            // Close modal button
+            if (shareModalClose) {
+                shareModalClose.addEventListener('click', closeShareModal);
+            }
+
+            // Share options
+            if (shareViaEmail) {
+                shareViaEmail.addEventListener('click', handleShareViaEmail);
+            }
+
+            if (shareCopyLink) {
+                shareCopyLink.addEventListener('click', handleShareCopyLink);
+            }
+
+            if (shareCopyDetails) {
+                shareCopyDetails.addEventListener('click', handleShareCopyDetails);
+            }
+
+            // Close modal on background click
+            if (shareModal) {
+                shareModal.addEventListener('click', (e) => {
+                    if (e.target === shareModal) {
+                        closeShareModal();
+                    }
+                });
+            }
+
+            // Close modal on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && shareModal && !shareModal.classList.contains('hidden')) {
+                    closeShareModal();
+                }
+            });
         });
 
         // Initialize
         checkAuth();
     </script>
+
+    <!-- Share Modal -->
+    <div id="shareModal" class="share-modal hidden">
+        <div class="share-modal-content">
+            <div class="share-modal-header">
+                <h3>Share this file</h3>
+                <button class="share-modal-close" aria-label="Close modal">&times;</button>
+            </div>
+            <div class="share-modal-body">
+                <button class="share-option" id="shareViaEmail">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                        <polyline points="22,6 12,13 2,6"></polyline>
+                    </svg>
+                    <div class="share-option-text">
+                        <span class="share-option-title">Email</span>
+                        <span class="share-option-desc">Opens your email client</span>
+                    </div>
+                </button>
+                <button class="share-option" id="shareCopyLink">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                    </svg>
+                    <div class="share-option-text">
+                        <span class="share-option-title">Copy Link</span>
+                        <span class="share-option-desc">Copies download URL</span>
+                    </div>
+                </button>
+                <button class="share-option" id="shareCopyDetails">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <div class="share-option-text">
+                        <span class="share-option-title">Copy Details</span>
+                        <span class="share-option-desc">Copies formatted message</span>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>

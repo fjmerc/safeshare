@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dashboard Share Modal**: Added full share functionality to user dashboard file listing
+  - Changed "Copy Link" button to "Share File" button with share icon
+  - Smart share button uses Web Share API on mobile/modern browsers with graceful fallback to modal
+  - Share options: Email (mailto link), Copy Link, Copy Details (formatted message)
+  - Consistent sharing experience across upload page and dashboard
+  - Includes file details, expiration info, claim code, and download limits in share messages
+  - Accessible with keyboard navigation (Escape to close), background click to close, and proper event handlers
+
 ### Fixed
 - **Import Tool Expiration**: Fixed `--expires 0` flag in import-tool to correctly set files to never expire (100 years in the future) instead of expiring immediately
   - Now consistent with web upload and chunked upload behavior where `expires_in_hours=0` means "never expire"
