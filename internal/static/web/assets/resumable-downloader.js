@@ -193,8 +193,8 @@ class ResumableDownloader {
 
             while (true) {
                 if (this.isPaused) {
-                    this.emit('paused', { downloadedBytes: receivedBytes });
-                    throw new Error('Download paused');
+                    // Clean break - handle pause after loop
+                    break;
                 }
 
                 const { done, value } = await reader.read();
@@ -214,6 +214,13 @@ class ResumableDownloader {
 
                 // Emit progress
                 this.emitProgress();
+            }
+
+            // Check if we exited due to pause
+            if (this.isPaused) {
+                this.saveProgress();
+                this.emit('paused', { downloadedBytes: receivedBytes });
+                return null; // Return null to indicate pause (not an error)
             }
 
             // Download complete
@@ -255,6 +262,15 @@ class ResumableDownloader {
         if (!this.isPaused) return;
         this.isPaused = false;
         return this.start();
+    }
+
+    /**
+     * Cancel download permanently
+     */
+    cancel() {
+        this.isPaused = true;
+        this.clearProgress();
+        this.emit('cancelled', { downloadedBytes: this.downloadedBytes });
     }
 
     /**
@@ -300,7 +316,10 @@ class ResumableDownloader {
     async downloadWithProgress(forceNew = false) {
         try {
             const blob = await this.start(forceNew);
-            this.triggerBrowserDownload(blob);
+            // If blob is null, download was paused (not an error)
+            if (blob) {
+                this.triggerBrowserDownload(blob);
+            }
         } catch (error) {
             console.error('Download failed:', error);
             throw error;

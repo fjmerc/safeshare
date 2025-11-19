@@ -43,6 +43,7 @@
     const downloadSpeed = document.getElementById('downloadSpeed');
     const downloadETA = document.getElementById('downloadETA');
     const pauseDownloadButton = document.getElementById('pauseDownloadButton');
+    const cancelDownloadButton = document.getElementById('cancelDownloadButton');
     const resumePrompt = document.getElementById('resumePrompt');
     const resumeDownloadButton = document.getElementById('resumeDownloadButton');
     const startFreshButton = document.getElementById('startFreshButton');
@@ -482,13 +483,49 @@
         // Pickup Tab - Download button
         downloadButton.addEventListener('click', handleDownload);
 
-        // Pickup Tab - Pause download button
+        // Pickup Tab - Pause/Resume download button (toggle)
         if (pauseDownloadButton) {
-            pauseDownloadButton.addEventListener('click', () => {
+            pauseDownloadButton.addEventListener('click', async () => {
                 if (currentDownloader) {
-                    currentDownloader.pause();
-                    pauseDownloadButton.textContent = '▶️ Resume';
-                    showToast('Download paused', 'info', 2000);
+                    if (currentDownloader.isPaused) {
+                        // Currently paused, so resume
+                        // Store local reference before await (race condition: event handler may null currentDownloader)
+                        const downloader = currentDownloader;
+                        pauseDownloadButton.textContent = '⏸ Pause';
+                        pauseDownloadButton.classList.remove('btn-success');
+                        pauseDownloadButton.classList.add('btn-neutral');
+                        showToast('Resuming download...', 'success', 2000);
+                        try {
+                            const blob = await downloader.resume();
+                            if (blob) {
+                                downloader.triggerBrowserDownload(blob);
+                            }
+                        } catch (error) {
+                            console.error('Resume failed:', error);
+                            showToast('Failed to resume download', 'error', 3000);
+                        }
+                    } else {
+                        // Currently downloading, so pause
+                        currentDownloader.pause();
+                        pauseDownloadButton.textContent = '▶️ Resume';
+                        pauseDownloadButton.classList.remove('btn-neutral');
+                        pauseDownloadButton.classList.add('btn-success');
+                        showToast('Download paused', 'info', 2000);
+                    }
+                }
+            });
+        }
+
+        // Pickup Tab - Cancel download button
+        if (cancelDownloadButton) {
+            cancelDownloadButton.addEventListener('click', () => {
+                if (currentDownloader && confirm('Are you sure you want to cancel this download? Progress will be lost.')) {
+                    currentDownloader.cancel();
+                    // Reset UI
+                    downloadProgress.classList.add('hidden');
+                    downloadButton.classList.remove('hidden');
+                    currentDownloader = null;
+                    showToast('Download cancelled', 'info', 2000);
                 }
             });
         }
@@ -1677,7 +1714,7 @@
             // Create downloader instance
             currentDownloader = new ResumableDownloader(
                 downloadUrl,
-                currentFileInfo.filename,
+                currentFileInfo.original_filename,
                 currentFileInfo.file_size
             );
 
@@ -1703,8 +1740,8 @@
             });
 
             currentDownloader.on('complete', (data) => {
-                // Trigger browser download
-                currentDownloader.triggerBrowserDownload(data.blob);
+                // Note: Browser download is already triggered by downloadWithProgress()
+                // This event handler only handles UI updates
 
                 // Reset UI
                 downloadProgress.classList.add('hidden');
