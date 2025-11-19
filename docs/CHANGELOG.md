@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Import Tool Expiration**: Fixed `--expires 0` flag in import-tool to correctly set files to never expire (100 years in the future) instead of expiring immediately
+  - Now consistent with web upload and chunked upload behavior where `expires_in_hours=0` means "never expire"
+  - Updated help text to document `0 = never expire`
+
 ## [2.7.0] - 2025-11-19
 
 ### Added
