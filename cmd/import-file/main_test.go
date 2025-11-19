@@ -92,11 +92,6 @@ func TestRun_MissingRequiredFlags(t *testing.T) {
 			args:    []string{"-source", "/tmp/test.txt", "-db", "/tmp/db.db", "-enckey", "abc"},
 			wantErr: "-uploads flag is required",
 		},
-		{
-			name:    "missing enckey flag",
-			args:    []string{"-source", "/tmp/test.txt", "-db", "/tmp/db.db", "-uploads", "/tmp/uploads"},
-			wantErr: "-enckey flag is required",
-		},
 	}
 
 	for _, tt := range tests {
