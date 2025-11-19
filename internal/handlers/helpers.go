@@ -10,6 +10,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/static"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // buildDownloadURL constructs the full download URL for a claim code
@@ -63,30 +64,16 @@ func getHost(r *http.Request) string {
 	return r.Host
 }
 
-// getClientIP returns the client IP address respecting reverse proxy headers
+// getClientIPWithConfig returns the client IP address with trusted proxy validation
+func getClientIPWithConfig(r *http.Request, cfg *config.Config) string {
+	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+}
+
+// getClientIP returns the client IP address with default trusted proxy settings
+// This function uses auto mode with RFC1918 + localhost ranges for backward compatibility
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (standard for reverse proxies)
-	// Format: "client, proxy1, proxy2"
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Get the first IP (the original client)
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
-		}
-	}
-
-	// Check X-Real-IP header (used by nginx)
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (direct connection)
-	// RemoteAddr format is "IP:port", we just want the IP
-	if idx := strings.LastIndex(r.RemoteAddr, ":"); idx != -1 {
-		return r.RemoteAddr[:idx]
-	}
-
-	return r.RemoteAddr
+	// Use auto mode with standard private IP ranges
+	return utils.GetClientIPWithTrust(r, "auto", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
 }
 
 // getUserAgent returns the client User-Agent header

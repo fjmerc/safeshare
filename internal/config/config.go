@@ -30,6 +30,8 @@ type Config struct {
 	PartialUploadExpiryHours int
 	ReadTimeoutSeconds       int
 	WriteTimeoutSeconds      int
+	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
+	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
 
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
@@ -66,6 +68,8 @@ func Load() (*Config, error) {
 		PartialUploadExpiryHours: getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
 		ReadTimeoutSeconds:       getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
 		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
+		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
+		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -133,10 +137,28 @@ func (c *Config) GetQuotaLimitGB() int64 {
 	return c.quotaLimitGB
 }
 
+// QuotaLimitGB returns the quota limit for public access (no lock needed for metrics)
+// This is used by the metrics collector which needs direct access
+func (c *Config) QuotaLimitGB() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return float64(c.quotaLimitGB)
+}
+
 func (c *Config) GetAdminPassword() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.adminPassword
+}
+
+// GetTrustProxyHeaders returns the proxy header trust setting
+func (c *Config) GetTrustProxyHeaders() string {
+	return c.TrustProxyHeaders
+}
+
+// GetTrustedProxyIPs returns the trusted proxy IPs configuration
+func (c *Config) GetTrustedProxyIPs() string {
+	return c.TrustedProxyIPs
 }
 
 // Setter methods for mutable fields (thread-safe writes with validation)
@@ -325,6 +347,12 @@ func (c *Config) validate() error {
 
 	if c.PartialUploadExpiryHours <= 0 {
 		return fmt.Errorf("PARTIAL_UPLOAD_EXPIRY_HOURS must be positive, got %d", c.PartialUploadExpiryHours)
+	}
+
+	// Validate TRUST_PROXY_HEADERS
+	validProxySettings := map[string]bool{"auto": true, "true": true, "false": true}
+	if !validProxySettings[c.TrustProxyHeaders] {
+		return fmt.Errorf("TRUST_PROXY_HEADERS must be 'auto', 'true', or 'false', got '%s'", c.TrustProxyHeaders)
 	}
 
 	return nil

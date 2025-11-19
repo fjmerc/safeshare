@@ -18,6 +18,7 @@ type File struct {
 	PasswordHash     string  // bcrypt hash - empty string means no password
 	UserID           *int64  // nullable - nil means no associated user (anonymous upload or legacy)
 	Username         *string // optional - populated in admin queries for display purposes
+	SHA256Hash       string  // SHA256 checksum of original file (before encryption) - empty for legacy files
 }
 
 // UploadResponse is the JSON response returned after a successful upload
@@ -41,6 +42,7 @@ type ErrorResponse struct {
 // HealthResponse is the JSON response for the health check endpoint
 type HealthResponse struct {
 	Status             string           `json:"status"`
+	StatusDetails      []string         `json:"status_details,omitempty"`     // Details when status is degraded or unhealthy
 	UptimeSeconds      int64            `json:"uptime_seconds"`
 	TotalFiles         int              `json:"total_files"`
 	StorageUsedBytes   int64            `json:"storage_used_bytes"`

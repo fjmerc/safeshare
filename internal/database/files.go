@@ -6,18 +6,49 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
 )
+
+// validateStoredFilename validates that a stored filename is safe to use in file paths.
+// This is a defense-in-depth measure duplicated here to avoid circular imports
+// (utils imports database via assembly_recovery.go).
+func validateStoredFilename(filename string) error {
+	if filename == "" {
+		return fmt.Errorf("filename cannot be empty")
+	}
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		return fmt.Errorf("filename contains path separator")
+	}
+	if strings.Contains(filename, "..") {
+		return fmt.Errorf("filename contains path traversal sequence")
+	}
+	if strings.HasPrefix(filename, ".") {
+		return fmt.Errorf("filename starts with dot (hidden file)")
+	}
+	for _, char := range filename {
+		isValid := (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' ||
+			char == '_' ||
+			char == '.'
+		if !isValid {
+			return fmt.Errorf("filename contains invalid character: %c", char)
+		}
+	}
+	return nil
+}
 
 // CreateFile inserts a new file record into the database
 func CreateFile(db *sql.DB, file *models.File) error {
 	query := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := db.Exec(
@@ -32,6 +63,7 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		file.UploaderIP,
 		file.PasswordHash,
 		file.UserID,
+		file.SHA256Hash,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -52,7 +84,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
+			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id, sha256_hash
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -61,6 +93,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	var createdAt, expiresAt string
 	var passwordHash sql.NullString
 	var userID sql.NullInt64
+	var sha256Hash sql.NullString
 
 	err := db.QueryRow(query, claimCode).Scan(
 		&file.ID,
@@ -76,6 +109,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
+		&sha256Hash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -102,6 +136,9 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	}
 	if userID.Valid {
 		file.UserID = &userID.Int64
+	}
+	if sha256Hash.Valid {
+		file.SHA256Hash = sha256Hash.String
 	}
 
 	// Check if expired
@@ -170,26 +207,50 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 		return 0, fmt.Errorf("error iterating expired files: %w", err)
 	}
 
-	// Delete files
-	deletedCount := 0
+	// Delete files (file first, then database record)
+	// Collect successfully deleted file IDs for batch DELETE
+	var deletedIDs []int64
+
 	for _, f := range expiredFiles {
-		// Delete from database first
-		deleteQuery := `DELETE FROM files WHERE id = ?`
-		if _, err := db.Exec(deleteQuery, f.ID); err != nil {
-			slog.Error("failed to delete file record", "id", f.ID, "error", err)
+		// Step 1: Validate stored filename first (fail fast)
+		if err := validateStoredFilename(f.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed during cleanup",
+				"filename", f.StoredFilename,
+				"error", err,
+				"file_id", f.ID,
+			)
+			// Keep DB record intact for investigation
 			continue
 		}
 
-		// Delete physical file
+		// Step 2: Delete physical file FIRST
 		filePath := filepath.Join(uploadDir, f.StoredFilename)
 		if err := os.Remove(filePath); err != nil {
 			if !os.IsNotExist(err) {
-				slog.Error("failed to delete physical file", "path", filePath, "error", err)
+				// File exists but couldn't delete - keep DB record for retry
+				slog.Error("failed to delete physical file, keeping DB record for retry",
+					"path", filePath,
+					"file_id", f.ID,
+					"error", err,
+				)
+				continue // IMPORTANT: Skip DB deletion, retry next cleanup
 			}
-			// Continue even if physical file deletion fails
+			// File doesn't exist (already deleted) - OK to delete DB record
+			slog.Warn("physical file already deleted", "path", filePath, "file_id", f.ID)
 		}
 
-		deletedCount++
+		// Step 3: Track ID for batch deletion
+		deletedIDs = append(deletedIDs, f.ID)
+		slog.Debug("successfully deleted physical file",
+			"file_id", f.ID,
+			"filename", f.StoredFilename,
+		)
+	}
+
+	// Step 4: Batch delete database records for successfully deleted files
+	deletedCount := 0
+	if len(deletedIDs) > 0 {
+		deletedCount = batchDeleteFiles(db, deletedIDs)
 	}
 
 	// Update query planner statistics after bulk deletes
@@ -204,6 +265,59 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	}
 
 	return deletedCount, nil
+}
+
+// batchDeleteFiles deletes multiple file records using batch DELETE operations
+// Chunks large batches to stay within SQLite parameter limits (max 999 params, using 500 for safety)
+func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
+	const batchSize = 500
+	deletedCount := 0
+
+	// Process in chunks to avoid SQLite parameter limit
+	for i := 0; i < len(fileIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(fileIDs) {
+			end = len(fileIDs)
+		}
+		batch := fileIDs[i:end]
+
+		// Build DELETE IN query with placeholders
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+		deleteQuery := fmt.Sprintf("DELETE FROM files WHERE id IN (%s)", placeholders)
+
+		// Convert []int64 to []interface{} for db.Exec
+		args := make([]interface{}, len(batch))
+		for j, id := range batch {
+			args[j] = id
+		}
+
+		// Execute batch DELETE
+		result, err := db.Exec(deleteQuery, args...)
+		if err != nil {
+			slog.Error("failed to batch delete file records",
+				"batch_size", len(batch),
+				"error", err,
+			)
+			// Don't stop processing other batches, continue
+			continue
+		}
+
+		affected, err := result.RowsAffected()
+		if err != nil {
+			slog.Warn("failed to get rows affected for batch delete", "error", err)
+			// Assume all rows were deleted if we can't get count
+			affected = int64(len(batch))
+		}
+
+		deletedCount += int(affected)
+		slog.Debug("batch deleted file records",
+			"batch_size", len(batch),
+			"deleted", affected,
+		)
+	}
+
+	return deletedCount
 }
 
 // GetTotalUsage returns the total storage used by all active files AND partial uploads in bytes

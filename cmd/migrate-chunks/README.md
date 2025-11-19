@@ -10,12 +10,29 @@ This tool migrates existing SFSE1-encrypted files from 64MB chunks to 10MB chunk
 
 ## Prerequisites
 
-- Go 1.21+ installed
+- **Docker deployment** (v1.1.0+): Tool is pre-built, no compilation needed
+- **Non-Docker deployment**: Go 1.21+ installed (for building from source)
 - Access to SafeShare upload directory
 - 64-character hex encryption key (same key used for original encryption)
 - Sufficient disk space (migration requires temporary storage equal to file sizes being migrated)
 
-## Building
+## Installation
+
+### Docker (Recommended)
+
+**As of v1.1.0**, the migrate-chunks tool is **pre-built in all SafeShare Docker images**. No manual compilation needed!
+
+```bash
+# Tool is available at /app/migrate-chunks in the container
+docker exec safeshare /app/migrate-chunks --help
+
+# Verify it's available
+docker exec safeshare ls -lh /app/migrate-chunks
+```
+
+### Building from Source
+
+For non-Docker deployments or custom builds:
 
 ```bash
 # From project root
@@ -109,16 +126,24 @@ Failed: 0 files
 
 ## Examples
 
-### Docker Container Migration
+### Docker Container Migration (Recommended)
+
+**As of v1.1.0**, the tool is pre-built in Docker images at `/app/migrate-chunks`:
 
 ```bash
 # Get encryption key from container
 ENCKEY=$(docker exec safeshare printenv ENCRYPTION_KEY)
 
-# Run migration inside container
+# Run migration inside container (tool is pre-built!)
 docker exec safeshare /app/migrate-chunks \
   --upload-dir /app/uploads \
   --encryption-key "$ENCKEY"
+
+# Or with verbose logging
+docker exec safeshare /app/migrate-chunks \
+  --upload-dir /app/uploads \
+  --encryption-key "$ENCKEY" \
+  --verbose
 ```
 
 ### Dry Run Before Migrating Production

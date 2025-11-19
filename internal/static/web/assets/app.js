@@ -16,6 +16,7 @@
     const uploadButton = document.getElementById('uploadButton');
     const removeFileButton = document.getElementById('removeFileButton');
     const expirationHours = document.getElementById('expirationHours');
+    const neverExpireCheckbox = document.getElementById('neverExpire');
     const maxDownloads = document.getElementById('maxDownloads');
     const uploadSection = document.getElementById('uploadSection');
     const resultsSection = document.getElementById('resultsSection');
@@ -42,6 +43,7 @@
     const downloadSpeed = document.getElementById('downloadSpeed');
     const downloadETA = document.getElementById('downloadETA');
     const pauseDownloadButton = document.getElementById('pauseDownloadButton');
+    const cancelDownloadButton = document.getElementById('cancelDownloadButton');
     const resumePrompt = document.getElementById('resumePrompt');
     const resumeDownloadButton = document.getElementById('resumeDownloadButton');
     const startFreshButton = document.getElementById('startFreshButton');
@@ -53,12 +55,24 @@
     const userName = document.getElementById('userName');
     const logoutBtn = document.getElementById('logoutBtn');
 
+    // DOM Elements - Share
+    const shareButton = document.getElementById('shareButton');
+    const downloadQRButton = document.getElementById('downloadQRButton');
+    const shareModal = document.getElementById('shareModal');
+    const shareModalClose = document.querySelector('.share-modal-close');
+    const shareViaEmail = document.getElementById('shareViaEmail');
+    const shareCopyLink = document.getElementById('shareCopyLink');
+    const shareCopyDetails = document.getElementById('shareCopyDetails');
+
     // State - Pickup
     let currentFileInfo = null;
     let currentDownloader = null; // Current ResumableDownloader instance
 
     // State - User
     let currentUser = null;
+
+    // State - Share
+    let currentShareData = null; // Stores upload data for sharing
 
     // State - Server config
     let serverConfig = {
@@ -321,11 +335,18 @@
         // Dropoff Tab - Quick select buttons
         document.querySelectorAll('.btn-small[data-hours]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                expirationHours.value = e.target.dataset.hours;
+                const hours = e.target.dataset.hours;
+                expirationHours.value = hours;
                 // Remove active class from all hour buttons
                 document.querySelectorAll('.btn-small[data-hours]').forEach(b => b.classList.remove('active'));
                 // Add active class to clicked button
                 e.target.classList.add('active');
+                // Sync checkbox state: check if "never" (0 hours)
+                if (neverExpireCheckbox) {
+                    neverExpireCheckbox.checked = (hours === '0');
+                    // Disable/enable expiration input based on checkbox
+                    expirationHours.disabled = (hours === '0');
+                }
             });
         });
 
@@ -345,6 +366,29 @@
         if (defaultHourBtn) defaultHourBtn.classList.add('active');
         if (unlimitedDownloadBtn) unlimitedDownloadBtn.classList.add('active');
 
+        // Never expire checkbox handler
+        if (neverExpireCheckbox) {
+            neverExpireCheckbox.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    // Checkbox checked - set to "never" (0 hours)
+                    expirationHours.value = '0';
+                    expirationHours.disabled = true;
+                    // Activate "Never" button
+                    document.querySelectorAll('.btn-small[data-hours]').forEach(b => {
+                        b.classList.toggle('active', b.dataset.hours === '0');
+                    });
+                } else {
+                    // Checkbox unchecked - restore default (24 hours)
+                    expirationHours.disabled = false;
+                    expirationHours.value = '24';
+                    // Activate 24h button
+                    document.querySelectorAll('.btn-small[data-hours]').forEach(b => {
+                        b.classList.toggle('active', b.dataset.hours === '24');
+                    });
+                }
+            });
+        }
+
         // Clear active state when user manually types in input
         expirationHours.addEventListener('input', () => {
             const currentValue = expirationHours.value;
@@ -357,6 +401,11 @@
                     btn.classList.remove('active');
                 }
             });
+            // Update checkbox state based on input value
+            if (neverExpireCheckbox) {
+                neverExpireCheckbox.checked = (currentValue === '0');
+                expirationHours.disabled = (currentValue === '0');
+            }
         });
 
         maxDownloads.addEventListener('input', () => {
@@ -434,13 +483,49 @@
         // Pickup Tab - Download button
         downloadButton.addEventListener('click', handleDownload);
 
-        // Pickup Tab - Pause download button
+        // Pickup Tab - Pause/Resume download button (toggle)
         if (pauseDownloadButton) {
-            pauseDownloadButton.addEventListener('click', () => {
+            pauseDownloadButton.addEventListener('click', async () => {
                 if (currentDownloader) {
-                    currentDownloader.pause();
-                    pauseDownloadButton.textContent = '▶️ Resume';
-                    showToast('Download paused', 'info', 2000);
+                    if (currentDownloader.isPaused) {
+                        // Currently paused, so resume
+                        // Store local reference before await (race condition: event handler may null currentDownloader)
+                        const downloader = currentDownloader;
+                        pauseDownloadButton.textContent = '⏸ Pause';
+                        pauseDownloadButton.classList.remove('btn-success');
+                        pauseDownloadButton.classList.add('btn-neutral');
+                        showToast('Resuming download...', 'success', 2000);
+                        try {
+                            const blob = await downloader.resume();
+                            if (blob) {
+                                downloader.triggerBrowserDownload(blob);
+                            }
+                        } catch (error) {
+                            console.error('Resume failed:', error);
+                            showToast('Failed to resume download', 'error', 3000);
+                        }
+                    } else {
+                        // Currently downloading, so pause
+                        currentDownloader.pause();
+                        pauseDownloadButton.textContent = '▶️ Resume';
+                        pauseDownloadButton.classList.remove('btn-neutral');
+                        pauseDownloadButton.classList.add('btn-success');
+                        showToast('Download paused', 'info', 2000);
+                    }
+                }
+            });
+        }
+
+        // Pickup Tab - Cancel download button
+        if (cancelDownloadButton) {
+            cancelDownloadButton.addEventListener('click', () => {
+                if (currentDownloader && confirm('Are you sure you want to cancel this download? Progress will be lost.')) {
+                    currentDownloader.cancel();
+                    // Reset UI
+                    downloadProgress.classList.add('hidden');
+                    downloadButton.classList.remove('hidden');
+                    currentDownloader = null;
+                    showToast('Download cancelled', 'info', 2000);
                 }
             });
         }
@@ -474,6 +559,47 @@
 
         // Close user menu when clicking outside
         document.addEventListener('click', closeUserMenuOnClickOutside);
+
+        // Share functionality
+        if (shareButton) {
+            shareButton.addEventListener('click', handleShareClick);
+        }
+
+        if (downloadQRButton) {
+            downloadQRButton.addEventListener('click', handleDownloadQR);
+        }
+
+        if (shareModalClose) {
+            shareModalClose.addEventListener('click', closeShareModal);
+        }
+
+        if (shareViaEmail) {
+            shareViaEmail.addEventListener('click', handleShareViaEmail);
+        }
+
+        if (shareCopyLink) {
+            shareCopyLink.addEventListener('click', handleShareCopyLink);
+        }
+
+        if (shareCopyDetails) {
+            shareCopyDetails.addEventListener('click', handleShareCopyDetails);
+        }
+
+        // Close share modal on background click
+        if (shareModal) {
+            shareModal.addEventListener('click', (e) => {
+                if (e.target === shareModal) {
+                    closeShareModal();
+                }
+            });
+        }
+
+        // Close share modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && shareModal && !shareModal.classList.contains('hidden')) {
+                closeShareModal();
+            }
+        });
 
         // Logout button
         if (logoutBtn) {
@@ -698,7 +824,8 @@
         formData.append('file', selectedFile);
 
         const expiresIn = parseFloat(expirationHours.value);
-        if (expiresIn && expiresIn > 0) {
+        if (expiresIn >= 0) {
+            // Send 0 for "never expire", or positive value for specific expiration
             formData.append('expires_in_hours', expiresIn);
         }
 
@@ -801,7 +928,7 @@
         try {
             // Create uploader instance
             const uploader = new ChunkedUploader(selectedFile, {
-                expiresInHours: expiresIn || 24,
+                expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
                 password: password
             });
@@ -906,6 +1033,9 @@
 
             // Send browser notification
             sendUploadCompleteNotification(data);
+
+            // Store data for sharing
+            currentShareData = data;
 
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
@@ -1184,6 +1314,194 @@
         }
     }
 
+    // ========== Share Functions ==========
+
+    // Handle share button click
+    async function handleShareClick() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        // Check if Web Share API is supported
+        if (navigator.share) {
+            try {
+                const shareText = generateShareMessage(currentShareData);
+                await navigator.share({
+                    title: `File shared: ${currentShareData.original_filename}`,
+                    text: shareText,
+                    url: currentShareData.download_url
+                });
+                // User completed share (or cancelled, which is fine)
+                // Don't show toast on cancellation as it's expected behavior
+            } catch (error) {
+                // Only show error if it's not a user cancellation
+                if (error.name !== 'AbortError') {
+                    console.error('Share error:', error);
+                    // Fallback to modal
+                    showShareModal();
+                }
+            }
+        } else {
+            // Web Share API not supported, show modal
+            showShareModal();
+        }
+    }
+
+    // Show share modal
+    function showShareModal() {
+        if (shareModal) {
+            shareModal.classList.remove('hidden');
+        }
+    }
+
+    // Close share modal
+    function closeShareModal() {
+        if (shareModal) {
+            shareModal.classList.add('hidden');
+        }
+    }
+
+    // Handle download QR code
+    function handleDownloadQR() {
+        try {
+            const qrcodeDiv = document.getElementById('qrcode');
+            const canvas = qrcodeDiv.querySelector('canvas');
+
+            if (!canvas) {
+                showToast('QR code not available', 'error', 3000);
+                return;
+            }
+
+            // Convert canvas to blob and download
+            canvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const filename = currentShareData
+                    ? `safeshare-${currentShareData.claim_code}.png`
+                    : 'safeshare-qr.png';
+
+                link.download = filename;
+                link.href = url;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+
+                showToast('QR code downloaded!', 'success', 3000);
+            }, 'image/png');
+        } catch (error) {
+            console.error('QR download error:', error);
+            showToast('Failed to download QR code', 'error', 3000);
+        }
+    }
+
+    // Handle share via email
+    function handleShareViaEmail() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const subject = encodeURIComponent(`File shared: ${currentShareData.original_filename}`);
+        const body = encodeURIComponent(generateEmailBody(currentShareData));
+        const mailtoUrl = `mailto:?subject=${subject}&body=${body}`;
+
+        // Open email client
+        window.location.href = mailtoUrl;
+
+        // Close modal and show feedback
+        closeShareModal();
+        showToast('Opening email client...', 'info', 2000);
+    }
+
+    // Handle copy link
+    async function handleShareCopyLink() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const success = await copyToClipboard(currentShareData.download_url, 'Download link copied!');
+        if (success) {
+            closeShareModal();
+        }
+    }
+
+    // Handle copy details
+    async function handleShareCopyDetails() {
+        if (!currentShareData) {
+            showToast('No file data available to share', 'error', 3000);
+            return;
+        }
+
+        const message = generateShareMessage(currentShareData);
+        const success = await copyToClipboard(message, 'File details copied!');
+        if (success) {
+            closeShareModal();
+        }
+    }
+
+    // Generate share message
+    function generateShareMessage(data) {
+        const expiresDate = new Date(data.expires_at);
+        const formattedExpires = expiresDate.toLocaleString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        let message = `Hi! I've shared a file with you via SafeShare.\n\n`;
+        message += `File: ${data.original_filename}\n`;
+        message += `Size: ${formatFileSize(data.file_size)}\n`;
+        message += `Expires: ${formattedExpires}\n\n`;
+        message += `Download link:\n${data.download_url}\n\n`;
+        message += `Alternatively, you can go to ${window.location.origin} and enter this claim code: ${data.claim_code}\n\n`;
+
+        if (data.max_downloads) {
+            message += `Note: This link can be used ${data.max_downloads} time(s).\n`;
+        }
+
+        message += `This file will be automatically deleted after expiration.`;
+
+        return message;
+    }
+
+    // Generate email body
+    function generateEmailBody(data) {
+        const expiresDate = new Date(data.expires_at);
+        const formattedExpires = expiresDate.toLocaleString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+
+        let body = `Hi,\n\n`;
+        body += `I've shared a file with you using SafeShare:\n\n`;
+        body += `File: ${data.original_filename}\n`;
+        body += `Size: ${formatFileSize(data.file_size)}\n`;
+        body += `Expires: ${formattedExpires}\n\n`;
+        body += `Download link:\n${data.download_url}\n\n`;
+        body += `Alternatively, you can go to ${window.location.origin} and enter this claim code:\n${data.claim_code}\n\n`;
+
+        if (data.max_downloads) {
+            body += `Note: This file can be downloaded ${data.max_downloads} time(s).\n\n`;
+        }
+
+        body += `This file will be automatically deleted after expiration.\n\n`;
+        body += `SafeShare is a secure temporary file sharing service with automatic expiration.`;
+
+        return body;
+    }
+
+    // ========== End Share Functions ==========
+
     // Format file size
     function formatFileSize(bytes) {
         if (bytes === 0) return '0 Bytes';
@@ -1218,6 +1536,12 @@
         const date = new Date(dateString);
         const now = new Date();
         const diff = date - now;
+
+        // Check if expiration is far in the future (>90 years = "never expire")
+        const ninetyYearsInMs = 90 * 365 * 24 * 60 * 60 * 1000;
+        if (diff > ninetyYearsInMs) {
+            return 'Never';
+        }
 
         // Show relative time if within 7 days
         if (diff > 0 && diff < 7 * 24 * 60 * 60 * 1000) {
@@ -1390,7 +1714,7 @@
             // Create downloader instance
             currentDownloader = new ResumableDownloader(
                 downloadUrl,
-                currentFileInfo.filename,
+                currentFileInfo.original_filename,
                 currentFileInfo.file_size
             );
 
@@ -1416,8 +1740,8 @@
             });
 
             currentDownloader.on('complete', (data) => {
-                // Trigger browser download
-                currentDownloader.triggerBrowserDownload(data.blob);
+                // Note: Browser download is already triggered by downloadWithProgress()
+                // This event handler only handles UI updates
 
                 // Reset UI
                 downloadProgress.classList.add('hidden');

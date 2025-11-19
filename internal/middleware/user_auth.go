@@ -140,7 +140,9 @@ func OptionalUserAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Update session activity
-			database.UpdateUserSessionActivity(db, cookie.Value)
+			if err := database.UpdateUserSessionActivity(db, cookie.Value); err != nil {
+				slog.Error("failed to update user session activity", "error", err)
+			}
 
 			// Add user to context
 			ctx := context.WithValue(r.Context(), "user", user)

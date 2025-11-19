@@ -66,14 +66,14 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 	storedFilename := uuid.New().String() + filepath.Ext(partialUpload.Filename)
 	finalPath := filepath.Join(cfg.UploadDir, storedFilename)
 
-	// Assemble chunks into final file
+	// Assemble chunks into final file (also computes SHA256 hash)
 	slog.Info("assembling chunks into final file",
 		"upload_id", uploadID,
 		"total_chunks", partialUpload.TotalChunks,
 		"filename", partialUpload.Filename,
 	)
 
-	totalBytesWritten, err := utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
+	totalBytesWritten, sha256Hash, err := utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
 	if err != nil {
 		slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
 		os.Remove(finalPath) // Clean up partial final file if it exists
@@ -168,7 +168,13 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 	}
 
 	// Calculate expiration time
-	expiresAt := partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+	var expiresAt time.Time
+	if partialUpload.ExpiresInHours == 0 {
+		// Never expire - set to 100 years in the future
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
+	} else {
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+	}
 
 	// Create file record in database
 	// Always set maxDownloads (0 = unlimited, not "unset")
@@ -185,6 +191,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		UploaderIP:       clientIP,
 		PasswordHash:     partialUpload.PasswordHash,
 		UserID:           partialUpload.UserID,
+		SHA256Hash:       sha256Hash,
 	}
 
 	if err := database.CreateFile(db, fileRecord); err != nil {

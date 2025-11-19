@@ -11,6 +11,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -61,6 +62,9 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if utils.IsPasswordProtected(file.PasswordHash) {
 			providedPassword := r.URL.Query().Get("password")
 			if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
+				// Record metrics
+				metrics.DownloadsTotal.WithLabelValues("password_failed").Inc()
+
 				slog.Warn("file access denied",
 					"reason", "incorrect_password",
 					"claim_code", redactClaimCode(claimCode),
@@ -84,6 +88,18 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"client_ip", getClientIP(r),
 			)
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
+			return
+		}
+
+		// Validate stored filename (defense-in-depth against database corruption/compromise)
+		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+			slog.Error("stored filename validation failed",
+				"filename", file.StoredFilename,
+				"error", err,
+				"claim_code", redactClaimCode(claimCode),
+				"client_ip", getClientIP(r),
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
@@ -181,6 +197,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"download_limit_reached": downloadLimitReached,
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
+			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
 		}
 
 		w.Header().Set("Content-Type", "application/json")

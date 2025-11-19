@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -101,41 +103,84 @@ func serveEntireFile(
 		}
 	} else {
 		// Handle legacy encrypted format or non-encrypted files
-		fileData, err := os.ReadFile(filePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
-				sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
+		// Check if encryption is enabled and file might be legacy encrypted
+		isLegacyEncrypted := false
+		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+			// Read first 29 bytes to check for legacy encryption without loading entire file
+			f, err := os.Open(filePath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
+					sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
+					return
+				}
+				slog.Error("failed to open file", "path", filePath, "error", err)
+				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
-			slog.Error("failed to read file", "path", filePath, "error", err)
-			sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+			header := make([]byte, 29)
+			n, err := f.Read(header)
+			f.Close()
+			if err == nil && n == 29 && utils.IsEncrypted(header) {
+				isLegacyEncrypted = true
+			}
 		}
 
-		// Decrypt if file appears to be encrypted (legacy format)
-		var dataToServe []byte
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) && utils.IsEncrypted(fileData) {
+		if isLegacyEncrypted {
+			// Legacy encrypted file - must read entire file into memory to decrypt
+			fileData, err := os.ReadFile(filePath)
+			if err != nil {
+				slog.Error("failed to read encrypted file", "path", filePath, "error", err)
+				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
-			dataToServe = decrypted
-		} else {
-			dataToServe = fileData
-		}
 
-		// Set Content-Length and write to response
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(dataToServe)))
-		writtenInt, err := w.Write(dataToServe)
-		written = int64(writtenInt)
-		if err != nil {
-			slog.Error("failed to write file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-			return
+			// Write decrypted data to response
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(decrypted)))
+			writtenInt, err := w.Write(decrypted)
+			written = int64(writtenInt)
+			if err != nil {
+				slog.Error("failed to write file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+				return
+			}
+		} else {
+			// Non-encrypted file - use streaming to avoid loading entire file into memory
+			f, err := os.Open(filePath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
+					sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
+					return
+				}
+				slog.Error("failed to open file", "path", filePath, "error", err)
+				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			defer f.Close()
+
+			// Set Content-Length header
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
+
+			// Stream file directly to response
+			written, err = io.Copy(w, f)
+			if err != nil {
+				slog.Error("failed to stream file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+				// Headers already sent, can't send error response
+				return
+			}
 		}
 	}
+
+	// Record metrics
+	metrics.DownloadsTotal.WithLabelValues("success").Inc()
+	metrics.DownloadSizeBytes.Observe(float64(written))
 
 	slog.Info("file downloaded (full)",
 		"claim_code", redactClaimCode(file.ClaimCode),
@@ -176,36 +221,80 @@ func servePartialContent(
 		}
 	} else {
 		// Handle legacy encrypted format or non-encrypted files
-		fileData, err := os.ReadFile(filePath)
-		if err != nil {
-			slog.Error("failed to read file", "path", filePath, "error", err)
-			// Can't send error response - headers already sent
-			return
+		// Check if encryption is enabled and file might be legacy encrypted
+		isLegacyEncrypted := false
+		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+			// Read first 29 bytes to check for legacy encryption without loading entire file
+			f, err := os.Open(filePath)
+			if err != nil {
+				slog.Error("failed to open file", "path", filePath, "error", err)
+				// Can't send error response - headers already sent
+				return
+			}
+			header := make([]byte, 29)
+			n, err := f.Read(header)
+			f.Close()
+			if err == nil && n == 29 && utils.IsEncrypted(header) {
+				isLegacyEncrypted = true
+			}
 		}
 
-		// Decrypt if file appears to be encrypted (legacy format)
-		var dataToServe []byte
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) && utils.IsEncrypted(fileData) {
+		if isLegacyEncrypted {
+			// Legacy encrypted file - must read entire file into memory to decrypt
+			fileData, err := os.ReadFile(filePath)
+			if err != nil {
+				slog.Error("failed to read encrypted file", "path", filePath, "error", err)
+				// Can't send error response - headers already sent
+				return
+			}
+
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				// Can't send error response - headers already sent
 				return
 			}
-			dataToServe = decrypted
-		} else {
-			dataToServe = fileData
-		}
 
-		// Extract and write the requested range
-		rangeData := dataToServe[httpRange.Start : httpRange.End+1]
-		writtenInt, err := w.Write(rangeData)
-		written = int64(writtenInt)
-		if err != nil {
-			slog.Error("failed to write range to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-			return
+			// Extract and write the requested range from decrypted data
+			rangeData := decrypted[httpRange.Start : httpRange.End+1]
+			writtenInt, err := w.Write(rangeData)
+			written = int64(writtenInt)
+			if err != nil {
+				slog.Error("failed to write range to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+				return
+			}
+		} else {
+			// Non-encrypted file - use streaming with seek to avoid loading entire file into memory
+			f, err := os.Open(filePath)
+			if err != nil {
+				slog.Error("failed to open file", "path", filePath, "error", err)
+				// Can't send error response - headers already sent
+				return
+			}
+			defer f.Close()
+
+			// Seek to the start of the requested range
+			_, err = f.Seek(httpRange.Start, io.SeekStart)
+			if err != nil {
+				slog.Error("failed to seek in file", "path", filePath, "offset", httpRange.Start, "error", err)
+				return
+			}
+
+			// Create a limited reader for the requested range
+			limitedReader := io.LimitReader(f, httpRange.ContentLength())
+
+			// Stream the range to response
+			written, err = io.Copy(w, limitedReader)
+			if err != nil {
+				slog.Error("failed to stream range to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
+				return
+			}
 		}
 	}
+
+	// Record metrics
+	metrics.DownloadsTotal.WithLabelValues("success").Inc()
+	metrics.DownloadSizeBytes.Observe(float64(written))
 
 	slog.Info("file downloaded (partial)",
 		"claim_code", redactClaimCode(file.ClaimCode),

@@ -576,12 +576,13 @@ header h1 {
 
 .settings-content {
     max-height: 1500px;
-    overflow: hidden;
+    overflow: visible;
     transition: max-height 0.3s ease;
 }
 
 .settings.collapsed .settings-content {
     max-height: 0;
+    overflow: hidden;
 }
 
 .form-group {
@@ -694,12 +695,12 @@ header h1 {
 }
 
 .btn-small {
-    padding: 0.5rem 1rem;
+    padding: 0.375rem 0.75rem;
     background: var(--bg-tertiary);
     border: 2px solid var(--border-color);
     border-radius: calc(var(--radius) * 0.6);
     cursor: pointer;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 600;
     transition: var(--transition);
     color: var(--text-primary);
@@ -714,12 +715,55 @@ header h1 {
     background: var(--primary-color);
     color: white;
     border-color: var(--primary-color);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
 }
 
 .btn-small:active {
-    transform: translateY(0);
+    opacity: 0.9;
+}
+
+.btn-small.btn-success {
+    background: var(--success-color);
+    color: white;
+    border-color: var(--success-color);
+}
+
+.btn-small.btn-success:hover {
+    background: #059669;
+    border-color: #059669;
+}
+
+.btn-small.btn-danger {
+    background: var(--danger-color);
+    color: white;
+    border-color: var(--danger-color);
+}
+
+.btn-small.btn-danger:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+.btn-small.btn-danger-outline {
+    background: transparent;
+    color: var(--danger-color);
+    border-color: var(--danger-color);
+}
+
+.btn-small.btn-danger-outline:hover {
+    background: var(--danger-color);
+    color: white;
+    border-color: var(--danger-color);
+}
+
+.btn-small.btn-neutral {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.btn-small.btn-neutral:hover {
+    background: var(--bg-secondary);
+    border-color: var(--primary-color);
 }
 
 /* Tooltip */
@@ -753,7 +797,7 @@ header h1 {
     bottom: 100%;
     left: 50%;
     transform: translateX(-50%);
-    padding: 0.5rem;
+    padding: 0.5rem 0.75rem;
     background: var(--text-primary);
     color: var(--bg-primary);
     border-radius: var(--radius);
@@ -761,11 +805,32 @@ header h1 {
     white-space: nowrap;
     z-index: 10;
     margin-bottom: 0.5rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 /* Progress */
 .upload-progress {
     margin-top: 2rem;
+}
+
+.progress-container {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius);
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.progress-header span {
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .progress-bar {
@@ -774,6 +839,7 @@ header h1 {
     background: var(--bg-tertiary);
     border-radius: 1rem;
     overflow: hidden;
+    margin-bottom: 0.75rem;
 }
 
 .progress-fill {
@@ -781,6 +847,14 @@ header h1 {
     background: linear-gradient(90deg, var(--primary-color), #8b5cf6);
     width: 0%;
     transition: width 0.3s ease;
+}
+
+.progress-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
 }
 
 #progressText {
@@ -1084,6 +1158,215 @@ header h1 {
     font-size: 0.875rem;
 }
 
+/* Share Button Styles */
+.btn-link-small {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    font-size: 0.875rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    margin-top: 0.75rem;
+    text-decoration: underline;
+    transition: var(--transition);
+}
+
+.btn-link-small:hover {
+    color: var(--primary-hover);
+    text-decoration: none;
+}
+
+.btn-share {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    margin-top: 1.5rem;
+    background: transparent;
+    color: var(--primary-color);
+    border: 2px solid var(--primary-color);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    max-width: 200px;
+}
+
+.btn-share:hover {
+    background: var(--primary-color);
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px -2px rgba(59, 130, 246, 0.3);
+}
+
+.btn-share:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.btn-share svg {
+    flex-shrink: 0;
+}
+
+/* Share Modal */
+.share-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 1rem;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.share-modal.hidden {
+    display: none;
+}
+
+.share-modal-content {
+    background: var(--bg-primary);
+    border-radius: var(--radius);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: slideUp 0.3s ease-out;
+}
+
+.share-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.share-modal-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    color: var(--text-primary);
+}
+
+.share-modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: var(--transition);
+}
+
+.share-modal-close:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.share-modal-body {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.share-option {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: left;
+    width: 100%;
+}
+
+.share-option:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+    transform: translateX(4px);
+}
+
+.share-option:active {
+    transform: translateX(2px);
+}
+
+.share-option svg {
+    flex-shrink: 0;
+    color: var(--primary-color);
+}
+
+.share-option-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.share-option-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.share-option-desc {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Mobile responsiveness for share modal */
+@media (max-width: 768px) {
+    .btn-share {
+        width: 100%;
+        max-width: 200px;
+    }
+
+    .share-modal-content {
+        max-width: 100%;
+    }
+
+    .share-option {
+        padding: 0.875rem;
+    }
+}
+
 /* Footer */
 footer {
     text-align: center;
@@ -1124,7 +1407,6 @@ footer .version-info {
     border-radius: var(--radius);
     color: var(--text-primary);
     transition: var(--transition);
-    text-transform: uppercase;
 }
 
 .claim-code-input::placeholder {

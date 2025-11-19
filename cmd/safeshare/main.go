@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
+	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -22,6 +24,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+// run is the main application entry point that can be tested
+func run() error {
 	// Setup structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -31,8 +41,7 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	slog.Info("starting safeshare",
@@ -45,8 +54,7 @@ func main() {
 	// Initialize database
 	db, err := database.Initialize(cfg.DBPath)
 	if err != nil {
-		slog.Error("failed to initialize database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer db.Close()
 
@@ -56,8 +64,7 @@ func main() {
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		err = database.InitializeAdminCredentials(db, cfg.AdminUsername, cfg.GetAdminPassword())
 		if err != nil {
-			slog.Error("failed to initialize admin credentials", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to initialize admin credentials: %w", err)
 		}
 		slog.Info("admin credentials initialized", "username", cfg.AdminUsername)
 	}
@@ -87,8 +94,7 @@ func main() {
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
-		slog.Error("failed to create upload directory", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create upload directory: %w", err)
 	}
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
@@ -100,7 +106,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Register public API routes (with IP blocking middleware and conditional user auth)
-	ipBlockMw := middleware.IPBlockCheck(db)
+	ipBlockMw := middleware.IPBlockCheck(db, cfg)
 	optionalUserAuth := middleware.OptionalUserAuth(db)
 	userAuth := middleware.UserAuth(db)
 
@@ -147,7 +153,13 @@ func main() {
 		}
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
+	// Health check endpoints (no auth required for monitoring)
 	mux.HandleFunc("/health", handlers.HealthHandler(db, cfg, startTime))
+	mux.HandleFunc("/health/live", handlers.HealthLivenessHandler(db))
+	mux.HandleFunc("/health/ready", handlers.HealthReadinessHandler(db, cfg, startTime))
+
+	// Prometheus metrics endpoint (no auth required for Prometheus scraper)
+	mux.Handle("/metrics", handlers.MetricsHandler(db, cfg))
 
 	// Public configuration endpoint (no auth required)
 	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
@@ -300,6 +312,10 @@ func main() {
 			adminAuth(http.HandlerFunc(handlers.AdminGetConfigHandler(cfg))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/config-assistant/analyze", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminConfigAssistantHandler(cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin user management routes
 		mux.HandleFunc("/admin/api/users/create", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(db)))).ServeHTTP(w, r)
@@ -369,11 +385,13 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(cfg)
 	defer rateLimiter.Stop()
 
-	// Wrap with middleware (order: Recovery -> Logging -> Security -> RateLimit -> handlers)
+	// Wrap with middleware (order: Recovery -> Logging -> Metrics -> Security -> RateLimit -> handlers)
 	handler := middleware.RecoveryMiddleware(
 		middleware.LoggingMiddleware(
-			middleware.SecurityHeadersMiddleware(
-				middleware.RateLimitMiddleware(rateLimiter)(mux),
+			metrics.Middleware(
+				middleware.SecurityHeadersMiddleware(
+					middleware.RateLimitMiddleware(rateLimiter)(mux),
+				),
 			),
 		),
 	)
@@ -448,8 +466,7 @@ func main() {
 	// Wait for shutdown signal or server error
 	select {
 	case err := <-serverErrors:
-		slog.Error("server error", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server error: %w", err)
 
 	case sig := <-shutdown:
 		slog.Info("shutdown signal received", "signal", sig)
@@ -464,12 +481,13 @@ func main() {
 		if err := server.Shutdown(ctx); err != nil {
 			slog.Error("graceful shutdown failed", "error", err)
 			if err := server.Close(); err != nil {
-				slog.Error("server close failed", "error", err)
+				return fmt.Errorf("server close failed: %w", err)
 			}
-			os.Exit(1)
+			return fmt.Errorf("graceful shutdown failed: %w", err)
 		}
 
 		slog.Info("server shutdown complete")
+		return nil
 	}
 }
 
