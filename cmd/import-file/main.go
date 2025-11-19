@@ -124,13 +124,13 @@ func run(args []string) error {
 	// Database and storage
 	fs.StringVar(&opts.DBPath, "db", "", "Path to SafeShare database (required)")
 	fs.StringVar(&opts.UploadsDir, "uploads", "", "Path to SafeShare uploads directory (required)")
-	fs.StringVar(&opts.EncryptKey, "enckey", "", "Encryption key (64 hex chars, required)")
+	fs.StringVar(&opts.EncryptKey, "enckey", "", "Encryption key (64 hex chars, optional - files stored unencrypted if not provided)")
 	fs.StringVar(&opts.PublicURL, "public-url", "https://share.example.com", "Public URL for download links")
 	fs.StringVar(&opts.UploaderIP, "ip", "import-tool", "Uploader IP to record")
 
 	// Behavior flags
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "Preview only, no changes")
-	fs.BoolVar(&opts.Verify, "verify", false, "Verify file integrity after encryption (hash check)")
+	fs.BoolVar(&opts.Verify, "verify", false, "Verify file integrity after processing (hash check)")
 	fs.BoolVar(&opts.NoDelete, "no-delete", false, "Preserve source files (copy instead of move)")
 	fs.BoolVar(&opts.Quiet, "quiet", false, "Minimal output for scripting")
 	fs.BoolVar(&opts.JSON, "json", false, "JSON output format")
@@ -203,16 +203,15 @@ func validateOptions(opts *ImportOptions) error {
 	if opts.UploadsDir == "" {
 		return fmt.Errorf("-uploads flag is required")
 	}
-	if opts.EncryptKey == "" {
-		return fmt.Errorf("-enckey flag is required")
-	}
 
-	// Validate encryption key format
-	if len(opts.EncryptKey) != 64 {
-		return fmt.Errorf("encryption key must be exactly 64 hexadecimal characters, got %d", len(opts.EncryptKey))
-	}
-	if _, err := hex.DecodeString(opts.EncryptKey); err != nil {
-		return fmt.Errorf("encryption key must be valid hexadecimal: %w", err)
+	// Validate encryption key format (only if provided)
+	if opts.EncryptKey != "" {
+		if len(opts.EncryptKey) != 64 {
+			return fmt.Errorf("encryption key must be exactly 64 hexadecimal characters, got %d", len(opts.EncryptKey))
+		}
+		if _, err := hex.DecodeString(opts.EncryptKey); err != nil {
+			return fmt.Errorf("encryption key must be valid hexadecimal: %w", err)
+		}
 	}
 
 	// Validate source file exists (single file mode)
@@ -246,6 +245,11 @@ func validateOptions(opts *ImportOptions) error {
 	}
 
 	return nil
+}
+
+// shouldEncrypt returns true if encryption should be used based on the provided key
+func shouldEncrypt(opts *ImportOptions) bool {
+	return opts.EncryptKey != "" && len(opts.EncryptKey) == 64
 }
 
 // loadSettings loads blocked extensions and quota from database
@@ -529,22 +533,62 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 	storedFilename := uuid.New().String()
 	destPath := filepath.Join(opts.UploadsDir, storedFilename)
 
-	// Encrypt the file
-	if !opts.Quiet && !opts.JSON {
-		fmt.Printf("  ├─ Encrypting... ")
-	}
-	startTime := time.Now()
+	// Process the file (encrypt or copy based on encryption key)
+	useEncryption := shouldEncrypt(opts)
+	var processTime time.Duration
 
-	err = utils.EncryptFileStreaming(sourcePath, destPath, opts.EncryptKey)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to encrypt file: %v", err)
-		return result
-	}
+	if useEncryption {
+		// Encrypt the file
+		if !opts.Quiet && !opts.JSON {
+			fmt.Printf("  ├─ Encrypting... ")
+		}
+		startTime := time.Now()
 
-	encryptionTime := time.Since(startTime)
-	result.EncryptionTime = encryptionTime.String()
-	if !opts.Quiet && !opts.JSON {
-		fmt.Printf("✓ (%s)\n", encryptionTime)
+		err = utils.EncryptFileStreaming(sourcePath, destPath, opts.EncryptKey)
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to encrypt file: %v", err)
+			return result
+		}
+
+		processTime = time.Since(startTime)
+		result.EncryptionTime = processTime.String()
+		if !opts.Quiet && !opts.JSON {
+			fmt.Printf("✓ (%s)\n", processTime)
+		}
+	} else {
+		// Copy the file without encryption
+		if !opts.Quiet && !opts.JSON {
+			fmt.Printf("  ├─ Copying... ")
+		}
+		startTime := time.Now()
+
+		srcFile, err := os.Open(sourcePath)
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to open source file: %v", err)
+			return result
+		}
+		defer srcFile.Close()
+
+		dstFile, err := os.Create(destPath)
+		if err != nil {
+			srcFile.Close()
+			result.Error = fmt.Sprintf("failed to create destination file: %v", err)
+			return result
+		}
+		defer dstFile.Close()
+
+		_, err = io.Copy(dstFile, srcFile)
+		if err != nil {
+			os.Remove(destPath) // Cleanup on failure
+			result.Error = fmt.Sprintf("failed to copy file: %v", err)
+			return result
+		}
+
+		processTime = time.Since(startTime)
+		result.EncryptionTime = processTime.String() // Reuse field for consistency
+		if !opts.Quiet && !opts.JSON {
+			fmt.Printf("✓ (%s)\n", processTime)
+		}
 	}
 
 	// Verify if requested
@@ -554,7 +598,14 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		}
 		startVerify := time.Now()
 
-		if err := verifyEncryptedFile(sourcePath, destPath, opts.EncryptKey); err != nil {
+		var err error
+		if useEncryption {
+			err = verifyEncryptedFile(sourcePath, destPath, opts.EncryptKey)
+		} else {
+			err = verifyUnencryptedFile(sourcePath, destPath)
+		}
+
+		if err != nil {
 			os.Remove(destPath) // Cleanup
 			result.Error = fmt.Sprintf("verification failed: %v", err)
 			return result
@@ -692,6 +743,28 @@ func verifyEncryptedFile(sourcePath, encryptedPath, encryptionKey string) error 
 	// Compare hashes
 	if originalHash != decryptedHash {
 		return fmt.Errorf("hash mismatch (original: %s, decrypted: %s)", originalHash[:16], decryptedHash[:16])
+	}
+
+	return nil
+}
+
+// verifyUnencryptedFile verifies file integrity by comparing hashes
+func verifyUnencryptedFile(sourcePath, destPath string) error {
+	// Calculate hash of source file
+	sourceHash, err := hashFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed to hash source file: %w", err)
+	}
+
+	// Calculate hash of destination file
+	destHash, err := hashFile(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to hash destination file: %w", err)
+	}
+
+	// Compare hashes
+	if sourceHash != destHash {
+		return fmt.Errorf("hash mismatch (source: %s, dest: %s)", sourceHash[:16], destHash[:16])
 	}
 
 	return nil
