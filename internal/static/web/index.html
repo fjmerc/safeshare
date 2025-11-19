@@ -367,7 +367,10 @@
                     <div id="downloadProgress" class="progress-container hidden">
                         <div class="progress-header">
                             <span id="downloadProgressText">Downloading...</span>
-                            <button id="pauseDownloadButton" class="btn-small btn-secondary">⏸ Pause</button>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button id="pauseDownloadButton" class="btn-small btn-neutral">⏸ Pause</button>
+                                <button id="cancelDownloadButton" class="btn-small btn-danger-outline">✖ Cancel</button>
+                            </div>
                         </div>
                         <div class="progress-bar">
                             <div id="downloadProgressFill" class="progress-fill"></div>
