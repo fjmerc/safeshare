@@ -470,15 +470,20 @@
         }
 
         .file-name {
-            color: #1e293b;
-            font-weight: 500;
-            max-width: 200px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
             display: flex;
             align-items: center;
             gap: 6px;
+            max-width: 200px;
+        }
+
+        .file-name-text {
+            color: #1e293b;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
         }
 
         .inline-edit-icon {
@@ -1311,7 +1316,7 @@
             border-color: #374151;
         }
 
-        [data-theme="dark"] .file-name {
+        [data-theme="dark"] .file-name-text {
             color: #f9fafb;
         }
 
@@ -1754,7 +1759,7 @@
                     <tr>
                         <td>
                             <div class="file-name">
-                                ${escapeHtml(file.original_filename)}
+                                <span class="file-name-text">${escapeHtml(file.original_filename)}</span>
                                 <svg class="inline-edit-icon" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                                 </svg>
