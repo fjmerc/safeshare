@@ -194,3 +194,90 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		})
 	}
 }
+
+// UserRenameFileHandler allows users to rename their own files
+func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get user from context
+		user := r.Context().Value("user").(*models.User)
+
+		// Parse request
+		var req struct {
+			FileID      int64  `json:"file_id"`
+			NewFilename string `json:"new_filename"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+			})
+			return
+		}
+
+		// Validate file ID
+		if req.FileID <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid file ID",
+			})
+			return
+		}
+
+		// Validate and sanitize new filename
+		if req.NewFilename == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Filename cannot be empty",
+			})
+			return
+		}
+
+		sanitizedFilename := utils.SanitizeFilename(req.NewFilename)
+		if sanitizedFilename == "" || sanitizedFilename == "download" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid filename",
+			})
+			return
+		}
+
+		// Update filename in database
+		err := database.UpdateFileNameByIDAndUserID(db, req.FileID, user.ID, sanitizedFilename)
+		if err != nil {
+			slog.Warn("user file rename failed",
+				"user_id", user.ID,
+				"file_id", req.FileID,
+				"error", err,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "File not found or does not belong to you",
+			})
+			return
+		}
+
+		slog.Info("user renamed file",
+			"user_id", user.ID,
+			"username", user.Username,
+			"file_id", req.FileID,
+			"old_filename", req.NewFilename,
+			"new_filename", sanitizedFilename,
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message":      "File renamed successfully",
+			"new_filename": sanitizedFilename,
+		})
+	}
+}

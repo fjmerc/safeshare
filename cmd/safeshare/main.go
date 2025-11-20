@@ -211,6 +211,10 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserDeleteFileHandler(db, cfg))).ServeHTTP(w, r)
 	})
 
+	mux.HandleFunc("/api/user/files/rename", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.UserRenameFileHandler(db, cfg))).ServeHTTP(w, r)
+	})
+
 	// Admin routes (only enabled if admin credentials are configured)
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)

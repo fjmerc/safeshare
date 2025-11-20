@@ -484,3 +484,305 @@ func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 		t.Error("download_url should not be empty")
 	}
 }
+
+// TestUserRenameFileHandler_Success tests successful file rename
+func TestUserRenameFileHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Create file owned by user
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-rename-success"
+	file.OriginalFilename = "oldname.txt"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Rename file request
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "newname.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp["message"] != "File renamed successfully" {
+		t.Errorf("message = %q, want 'File renamed successfully'", resp["message"])
+	}
+
+	if resp["new_filename"] != "newname.txt" {
+		t.Errorf("new_filename = %q, want 'newname.txt'", resp["new_filename"])
+	}
+
+	// Verify file was renamed in database
+	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if updatedFile.OriginalFilename != "newname.txt" {
+		t.Errorf("file not renamed in database, got %q", updatedFile.OriginalFilename)
+	}
+}
+
+// TestUserRenameFileHandler_NotOwner tests that users can't rename files they don't own
+func TestUserRenameFileHandler_NotOwner(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
+	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+
+	// Create file owned by user1
+	file := testutil.SampleFile()
+	file.UserID = &user1.ID
+	file.ClaimCode = "user1-file-rename"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to rename as user2
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "hacked.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user2)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or does not belong to you" {
+		t.Errorf("error = %q, want ownership error", errResp["error"])
+	}
+
+	// Verify file was NOT renamed
+	unchangedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if unchangedFile.OriginalFilename == "hacked.txt" {
+		t.Error("file should not have been renamed")
+	}
+}
+
+// TestUserRenameFileHandler_FileNotFound tests renaming non-existent file
+func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	renameReq := map[string]interface{}{
+		"file_id":      int64(99999),
+		"new_filename": "newname.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+}
+
+// TestUserRenameFileHandler_InvalidFileID tests invalid file ID validation
+func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	tests := []struct {
+		name   string
+		fileID int64
+	}{
+		{"zero file ID", 0},
+		{"negative file ID", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			renameReq := map[string]interface{}{
+				"file_id":      tt.fileID,
+				"new_filename": "newname.txt",
+			}
+
+			body, _ := json.Marshal(renameReq)
+			req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			ctx := context.WithValue(req.Context(), "user", user)
+			req = req.WithContext(ctx)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+			var errResp map[string]string
+			json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+			if errResp["error"] != "Invalid file ID" {
+				t.Errorf("error = %q, want 'Invalid file ID'", errResp["error"])
+			}
+		})
+	}
+}
+
+// TestUserRenameFileHandler_EmptyFilename tests empty filename validation
+func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	renameReq := map[string]interface{}{
+		"file_id":      int64(1),
+		"new_filename": "",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Filename cannot be empty" {
+		t.Errorf("error = %q, want 'Filename cannot be empty'", errResp["error"])
+	}
+}
+
+// TestUserRenameFileHandler_InvalidJSON tests malformed request handling
+func TestUserRenameFileHandler_InvalidJSON(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+}
+
+// TestUserRenameFileHandler_MethodNotAllowed tests HTTP method validation
+func TestUserRenameFileHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/user/files/rename", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestUserRenameFileHandler_SanitizationWorks tests filename sanitization
+func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-sanitize"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to rename with dangerous characters
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "../../../etc/passwd",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Should be sanitized to "passwd" (path components removed)
+	if resp["new_filename"] != "passwd" {
+		t.Errorf("new_filename = %q, want 'passwd' (sanitized)", resp["new_filename"])
+	}
+
+	// Verify in database
+	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if updatedFile.OriginalFilename != "passwd" {
+		t.Errorf("filename in database = %q, want 'passwd'", updatedFile.OriginalFilename)
+	}
+}

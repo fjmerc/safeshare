@@ -1565,6 +1565,23 @@
         </div>
     </div>
 
+    <!-- Rename File Modal -->
+    <div id="renameModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Rename File</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>New Filename</label>
+                    <input type="text" id="newFilename" placeholder="Enter new filename" maxlength="255">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideRenameModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmRename()">Rename</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Load theme preference from localStorage
         (function() {
@@ -1600,6 +1617,7 @@
 
         let currentUser = null;
         let fileToDelete = null;
+        let fileToRename = { id: null, currentName: '' };
 
         // Check authentication and load user info
         async function checkAuth() {
@@ -1727,6 +1745,11 @@
                                         <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                                     </svg>
                                 </button>
+                                <button class="btn-icon btn-primary" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                    </svg>
+                                </button>
                                 <button class="btn-icon btn-danger" onclick="deleteFile(${file.id})" title="Delete">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -1785,6 +1808,58 @@
         function hideDeleteModal() {
             document.getElementById('deleteModal').classList.remove('show');
             fileToDelete = null;
+        }
+
+        // Rename file
+        function renameFile(fileId, currentName) {
+            fileToRename = { id: fileId, currentName: currentName };
+            document.getElementById('newFilename').value = currentName;
+            document.getElementById('renameModal').classList.add('show');
+            // Focus the input field
+            setTimeout(() => document.getElementById('newFilename').focus(), 100);
+        }
+
+        async function confirmRename() {
+            if (!fileToRename.id) return;
+
+            const newFilename = document.getElementById('newFilename').value.trim();
+            if (!newFilename) {
+                showToast('Filename cannot be empty', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/user/files/rename', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        file_id: fileToRename.id,
+                        new_filename: newFilename,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showToast('File renamed successfully', 'success');
+                    loadFiles();
+                    hideRenameModal();
+                } else {
+                    showToast(data.error || 'Failed to rename file', 'error');
+                }
+            } catch (error) {
+                console.error('Rename failed:', error);
+                showToast('Network error renaming file', 'error');
+            }
+        }
+
+        function hideRenameModal() {
+            document.getElementById('renameModal').classList.remove('show');
+            fileToRename = { id: null, currentName: '' };
+            document.getElementById('newFilename').value = '';
         }
 
         // Change password
