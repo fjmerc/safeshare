@@ -476,6 +476,25 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .inline-edit-icon {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+            stroke: #64748b;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: all 0.2s ease;
+        }
+
+        .inline-edit-icon:hover {
+            opacity: 1;
+            stroke: #1e293b;
+            transform: scale(1.1);
         }
 
         .file-size {
@@ -1296,6 +1315,14 @@
             color: #f9fafb;
         }
 
+        [data-theme="dark"] .inline-edit-icon {
+            stroke: #94a3b8;
+        }
+
+        [data-theme="dark"] .inline-edit-icon:hover {
+            stroke: #f9fafb;
+        }
+
         [data-theme="dark"] .claim-code {
             background: #312e81;
             color: #c7d2fe;
@@ -1726,7 +1753,12 @@
                 tableHTML += `
                     <tr>
                         <td>
-                            <div class="file-name">${escapeHtml(file.original_filename)}</div>
+                            <div class="file-name">
+                                ${escapeHtml(file.original_filename)}
+                                <svg class="inline-edit-icon" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                </svg>
+                            </div>
                         </td>
                         <td><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td><span class="claim-code">${file.claim_code}</span></td>
@@ -1743,11 +1775,6 @@
                                         <circle cx="18" cy="19" r="3"></circle>
                                         <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
                                         <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                                    </svg>
-                                </button>
-                                <button class="btn-icon btn-primary" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                                     </svg>
                                 </button>
                                 <button class="btn-icon btn-danger" onclick="deleteFile(${file.id})" title="Delete">
