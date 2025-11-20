@@ -1940,20 +1940,14 @@
             return div.innerHTML;
         }
 
-        // Format date in compact format (e.g., "Nov 5 @ 5:50 PM")
+        // Format date in compact format (e.g., "11/05/25")
         function formatCompactDate(dateString) {
             const date = new Date(dateString);
-            const now = new Date();
-            const month = date.toLocaleString('en-US', { month: 'short' });
-            const day = date.getDate();
-            const time = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2); // Get last 2 digits of year
 
-            // Only show year if different from current year
-            if (date.getFullYear() !== now.getFullYear()) {
-                return `${month} ${day}, ${date.getFullYear()} @ ${time}`;
-            }
-
-            return `${month} ${day} @ ${time}`;
+            return `${month}/${day}/${year}`;
         }
 
         // Refresh files with animation
