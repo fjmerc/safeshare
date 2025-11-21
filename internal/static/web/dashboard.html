@@ -1983,12 +1983,12 @@
                 const expiresDateObj = new Date(file.expires_at);
                 const expiresDate = expiresDateObj.getFullYear() === 9999 ? 'Never' : formatCompactDate(file.expires_at);
 
-                const downloads = file.max_downloads ? `${file.download_count}/${file.max_downloads}` : file.download_count;
+                const downloads = file.max_downloads ? `${file.completed_downloads}/${file.max_downloads}` : file.completed_downloads;
 
                 let statusBadge = '';
                 if (file.is_expired) {
                     statusBadge = '<span class="badge badge-danger">Expired</span>';
-                } else if (file.max_downloads && file.download_count >= file.max_downloads) {
+                } else if (file.max_downloads && file.completed_downloads >= file.max_downloads) {
                     statusBadge = '<span class="badge badge-warning">Limit Reached</span>';
                 } else {
                     statusBadge = '<span class="badge badge-success">Active</span>';
@@ -2021,7 +2021,7 @@
                         <td style="text-align: center;">${statusBadge}</td>
                         <td class="actions-col">
                             <div class="actions-cell">
-                                <button class="btn-icon btn-primary" onclick="openShareModal({id: ${file.id}, original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.download_count}, claim_code: '${file.claim_code}'})" title="Share File">
+                                <button class="btn-icon btn-primary" onclick="openShareModal({id: ${file.id}, original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.completed_downloads}, claim_code: '${file.claim_code}'})" title="Share File">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
                                         <circle cx="6" cy="12" r="3"></circle>

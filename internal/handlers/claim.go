@@ -128,7 +128,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Serve file with Range support (handles both full and partial downloads)
-		serveFileWithRangeSupport(w, r, file, filePath, cfg)
+		serveFileWithRangeSupport(w, r, file, filePath, cfg, db)
 
 		// Calculate remaining downloads for logging
 		var remainingDownloads string
@@ -209,6 +209,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"expires_at":             file.ExpiresAt,
 			"max_downloads":          file.MaxDownloads,
 			"download_count":         file.DownloadCount,
+		"completed_downloads":    file.CompletedDownloads,
 			"download_limit_reached": downloadLimitReached,
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
