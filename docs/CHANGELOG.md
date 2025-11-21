@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2025-11-21
+
 ### Added
 - **Progressive Web App (PWA) Support**: SafeShare is now installable as a Progressive Web App
   - Service worker with intelligent caching strategy (static assets cached, API requests always fresh)
@@ -853,7 +855,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/fjmerc/safeshare/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/fjmerc/safeshare/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1
