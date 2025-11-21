@@ -106,10 +106,25 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Read file from disk
 		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 
+		// Store original claim code for optimistic locking
+		originalClaimCode := file.ClaimCode
+
 		// Increment download count before serving (important for tracking)
-		if err := database.IncrementDownloadCount(db, file.ID); err != nil {
-			slog.Error("failed to increment download count", "file_id", file.ID, "error", err)
-			// Continue anyway - don't fail the download
+		// Use optimistic locking to detect claim code regeneration during download
+		if err := database.IncrementDownloadCountIfUnchanged(db, file.ID, originalClaimCode); err != nil {
+			// Check if claim code changed during download
+			if err.Error() == "claim code changed during download" {
+				slog.Warn("claim code changed during download",
+					"file_id", file.ID,
+					"original_code", redactClaimCode(originalClaimCode),
+					"client_ip", getClientIP(r),
+				)
+				// Continue with download - file retrieval already succeeded
+				// But don't increment counter since claim code is now invalid
+			} else {
+				slog.Error("failed to increment download count", "file_id", file.ID, "error", err)
+				// Continue anyway - don't fail the download
+			}
 		}
 
 		// Serve file with Range support (handles both full and partial downloads)

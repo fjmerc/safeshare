@@ -434,10 +434,23 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 		// Get client IP for audit logging
 		clientIP := getClientIP(r)
 
+		// Begin transaction to prevent race conditions
+		tx, err := db.Begin()
+		if err != nil {
+			slog.Error("failed to begin transaction", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Database error",
+			})
+			return
+		}
+		defer tx.Rollback() // Safe to call even after Commit()
+
 		// Verify file exists and belongs to user
 		var currentClaimCode string
 		var filename string
-		err := db.QueryRow(`
+		err = tx.QueryRow(`
 			SELECT claim_code, original_filename
 			FROM files
 			WHERE id = ? AND user_id = ?
@@ -464,27 +477,35 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 			return
 		}
 
-		// Generate new unique claim code
+		// Generate new unique claim code with exponential backoff
 		var newClaimCode string
-		maxAttempts := 5
+		maxAttempts := 10
 		for attempt := 0; attempt < maxAttempts; attempt++ {
+			// Add exponential backoff after first attempt
+			if attempt > 0 {
+				backoff := time.Duration(10*(1<<uint(attempt-1))) * time.Millisecond
+				time.Sleep(backoff)
+				slog.Debug("retrying claim code generation",
+					"attempt", attempt,
+					"backoff_ms", backoff.Milliseconds(),
+				)
+			}
+
 			code, err := utils.GenerateClaimCode()
 			if err != nil {
-				slog.Error("failed to generate claim code",
-					"error", err,
-					"attempt", attempt,
-				)
+				slog.Error("failed to generate claim code", "error", err)
+				// Abort after 3 crypto failures (indicates RNG failure)
+				if attempt >= 2 {
+					break
+				}
 				continue
 			}
 
-			// Check if code already exists
+			// Check if code already exists (using transaction)
 			var exists bool
-			err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM files WHERE claim_code = ?)", code).Scan(&exists)
+			err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM files WHERE claim_code = ?)", code).Scan(&exists)
 			if err != nil {
-				slog.Error("failed to check claim code uniqueness",
-					"error", err,
-					"code", code,
-				)
+				slog.Error("failed to check claim code uniqueness", "error", err)
 				continue
 			}
 
@@ -492,27 +513,34 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 				newClaimCode = code
 				break
 			}
+
+			// Log collision (extremely rare - possible attack indicator)
+			slog.Warn("claim code collision detected",
+				"attempt", attempt,
+				"file_id", req.FileID,
+			)
 		}
 
 		if newClaimCode == "" {
 			slog.Error("failed to generate unique claim code after max attempts",
 				"max_attempts", maxAttempts,
 				"file_id", req.FileID,
+				"user_id", user.ID,
 			)
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Failed to generate unique claim code",
+				"error": "Service temporarily unavailable. Please try again later.",
 			})
 			return
 		}
 
-		// Update database with new claim code
-		_, err = db.Exec(`
+		// Update database with new claim code (with user_id check for security)
+		result, err := tx.Exec(`
 			UPDATE files
 			SET claim_code = ?
-			WHERE id = ?
-		`, newClaimCode, req.FileID)
+			WHERE id = ? AND user_id = ?
+		`, newClaimCode, req.FileID, user.ID)
 
 		if err != nil {
 			slog.Error("failed to update claim code",
@@ -521,6 +549,33 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 				"old_claim_code", currentClaimCode,
 				"new_claim_code", newClaimCode,
 			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to update claim code",
+			})
+			return
+		}
+
+		// Verify row was actually updated (defense-in-depth)
+		rowsAffected, err := result.RowsAffected()
+		if err != nil || rowsAffected == 0 {
+			// File ownership changed during operation or file deleted
+			slog.Warn("claim code update affected 0 rows",
+				"file_id", req.FileID,
+				"user_id", user.ID,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "File not found or access denied",
+			})
+			return
+		}
+
+		// Commit transaction
+		if err := tx.Commit(); err != nil {
+			slog.Error("failed to commit transaction", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
