@@ -1,7 +1,7 @@
 // SafeShare Service Worker
 // Enables PWA functionality with offline support for static assets
 
-const CACHE_VERSION = 'safeshare-v1';
+const CACHE_VERSION = 'safeshare-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -72,6 +72,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+
+  // CRITICAL FIX: Skip cross-origin requests entirely
+  // Let the browser handle these natively to avoid Service Worker streaming issues
+  if (url.origin !== self.location.origin) {
+    // Don't intercept - browser handles cross-origin requests directly
+    return;
+  }
 
   // Skip caching for API requests (uploads, downloads, admin)
   if (url.pathname.startsWith('/api/') ||

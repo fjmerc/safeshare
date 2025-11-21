@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Service Worker Download Failures**: Fixed critical bug causing all large file downloads (>1GB) to fail with "Error in input stream"
+  - Service Worker now skips cross-origin requests (e.g., downloads.mercitlabs.com) entirely
+  - Prevents Service Worker from intercepting and crashing on large file streams
+  - Browser handles cross-origin downloads natively for optimal performance
+  - Fixes 34+ failed download attempts reported in production
+  - Cache version bumped to v2 to force Service Worker update for all users
+
 ## [2.8.0] - 2025-11-21
 
 ### Added
