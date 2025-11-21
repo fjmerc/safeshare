@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -473,5 +474,378 @@ func TestGetBlockedIPs_Multiple(t *testing.T) {
 	}
 	if len(blockedIPs) != 3 {
 		t.Errorf("expected 3 blocked IPs, got %d", len(blockedIPs))
+	}
+}
+
+// TestGetAllFilesForAdmin tests paginated file retrieval with user JOIN
+func TestGetAllFilesForAdmin(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create test user
+	user, err := CreateUser(db, "testuser", "test@example.com", "password123", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// Insert 5 test files (3 with user, 2 anonymous)
+	for i := 1; i <= 5; i++ {
+		var uid *int64
+		if i <= 3 {
+			uid = &user.ID
+		}
+
+		_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip, user_id)
+			VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?, ?)`,
+			fmt.Sprintf("claim%d", i), fmt.Sprintf("file%d.txt", i), fmt.Sprintf("stored%d.bin", i),
+			1024*i, "text/plain", "192.168.1.1", uid)
+		if err != nil {
+			t.Fatalf("failed to insert file %d: %v", i, err)
+		}
+	}
+
+	// Test pagination - page 1 (limit 2, offset 0)
+	files, total, err := GetAllFilesForAdmin(db, 2, 0)
+	if err != nil {
+		t.Fatalf("failed to get files page 1: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 files, got %d", total)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected 2 files in page 1, got %d", len(files))
+	}
+	// Verify username is populated for user-uploaded files
+	if files[0].Username != nil && *files[0].Username != "testuser" {
+		t.Errorf("expected username 'testuser', got %v", *files[0].Username)
+	}
+
+	// Test pagination - page 2 (limit 2, offset 2)
+	files, total, err = GetAllFilesForAdmin(db, 2, 2)
+	if err != nil {
+		t.Fatalf("failed to get files page 2: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 files, got %d", total)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected 2 files in page 2, got %d", len(files))
+	}
+
+	// Test pagination - page 3 (limit 2, offset 4) - last page
+	files, total, err = GetAllFilesForAdmin(db, 2, 4)
+	if err != nil {
+		t.Fatalf("failed to get files page 3: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 files, got %d", total)
+	}
+	if len(files) != 1 {
+		t.Errorf("expected 1 file in page 3, got %d", len(files))
+	}
+}
+
+// TestGetAllFilesForAdmin_Empty tests empty file list
+func TestGetAllFilesForAdmin_Empty(t *testing.T) {
+	db := setupTestDB(t)
+
+	files, total, err := GetAllFilesForAdmin(db, 10, 0)
+	if err != nil {
+		t.Fatalf("failed to get files: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected total 0 files, got %d", total)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected 0 files, got %d", len(files))
+	}
+}
+
+// TestSearchFilesForAdmin tests file search with various filters
+func TestSearchFilesForAdmin(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create test user
+	user, err := CreateUser(db, "johndoe", "john@example.com", "password123", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// Insert test files with different attributes
+	files := []struct {
+		claimCode string
+		filename  string
+		ip        string
+		userID    *int64
+	}{
+		{"ABC123", "document.pdf", "192.168.1.10", &user.ID},
+		{"XYZ789", "image.png", "192.168.1.20", nil},
+		{"DEF456", "report.docx", "10.0.0.5", &user.ID},
+		{"GHI999", "photo.jpg", "172.16.0.1", nil},
+	}
+
+	for _, f := range files {
+		_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip, user_id)
+			VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?, ?)`,
+			f.claimCode, f.filename, "stored.bin", 1024, "application/octet-stream", f.ip, f.userID)
+		if err != nil {
+			t.Fatalf("failed to insert file %s: %v", f.claimCode, err)
+		}
+	}
+
+	// Test search by claim code
+	results, total, err := SearchFilesForAdmin(db, "ABC", 10, 0)
+	if err != nil {
+		t.Fatalf("failed to search by claim code: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 result for claim code search, got %d", total)
+	}
+	if len(results) != 1 || results[0].ClaimCode != "ABC123" {
+		t.Errorf("expected ABC123, got %v", results)
+	}
+
+	// Test search by filename
+	results, total, err = SearchFilesForAdmin(db, "image", 10, 0)
+	if err != nil {
+		t.Fatalf("failed to search by filename: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 result for filename search, got %d", total)
+	}
+	if len(results) != 1 || results[0].OriginalFilename != "image.png" {
+		t.Errorf("expected image.png, got %v", results)
+	}
+
+	// Test search by IP address
+	results, total, err = SearchFilesForAdmin(db, "192.168.1", 10, 0)
+	if err != nil {
+		t.Fatalf("failed to search by IP: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 results for IP search, got %d", total)
+	}
+
+	// Test search by username (via LEFT JOIN)
+	results, total, err = SearchFilesForAdmin(db, "johndoe", 10, 0)
+	if err != nil {
+		t.Fatalf("failed to search by username: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected 2 results for username search, got %d", total)
+	}
+
+	// Test search with no results
+	results, total, err = SearchFilesForAdmin(db, "NOTFOUND", 10, 0)
+	if err != nil {
+		t.Fatalf("failed to search with no results: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected 0 results for not found search, got %d", total)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty results, got %d", len(results))
+	}
+}
+
+// TestSearchFilesForAdmin_Pagination tests search result pagination
+func TestSearchFilesForAdmin_Pagination(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert 5 files with similar names
+	for i := 1; i <= 5; i++ {
+		_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip)
+			VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?)`,
+			fmt.Sprintf("claim%d", i), fmt.Sprintf("testfile%d.txt", i), "stored.bin", 1024, "text/plain", "192.168.1.1")
+		if err != nil {
+			t.Fatalf("failed to insert file %d: %v", i, err)
+		}
+	}
+
+	// Page 1: limit 2, offset 0
+	results, total, err := SearchFilesForAdmin(db, "testfile", 2, 0)
+	if err != nil {
+		t.Fatalf("failed to search page 1: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 results, got %d", total)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results in page 1, got %d", len(results))
+	}
+
+	// Page 2: limit 2, offset 2
+	results, total, err = SearchFilesForAdmin(db, "testfile", 2, 2)
+	if err != nil {
+		t.Fatalf("failed to search page 2: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5 results, got %d", total)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results in page 2, got %d", len(results))
+	}
+}
+
+// TestDeleteFileByClaimCode tests single file deletion
+func TestDeleteFileByClaimCode(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert test file
+	claimCode := "TEST123"
+	_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip)
+		VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?)`,
+		claimCode, "test.txt", "stored123.bin", 1024, "text/plain", "192.168.1.1")
+	if err != nil {
+		t.Fatalf("failed to insert test file: %v", err)
+	}
+
+	// Delete file
+	file, err := DeleteFileByClaimCode(db, claimCode)
+	if err != nil {
+		t.Fatalf("failed to delete file: %v", err)
+	}
+	if file == nil {
+		t.Fatal("expected file to be returned")
+	}
+	if file.ClaimCode != claimCode {
+		t.Errorf("expected claim code %s, got %s", claimCode, file.ClaimCode)
+	}
+	if file.OriginalFilename != "test.txt" {
+		t.Errorf("expected filename test.txt, got %s", file.OriginalFilename)
+	}
+	if file.StoredFilename != "stored123.bin" {
+		t.Errorf("expected stored filename stored123.bin, got %s", file.StoredFilename)
+	}
+
+	// Verify file is deleted from database
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code = ?", claimCode).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count files: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected file to be deleted, but count = %d", count)
+	}
+}
+
+// TestDeleteFileByClaimCode_NotFound tests deleting non-existent file
+func TestDeleteFileByClaimCode_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+
+	file, err := DeleteFileByClaimCode(db, "NOTFOUND")
+	if err == nil {
+		t.Error("expected error when deleting non-existent file")
+	}
+	if file != nil {
+		t.Error("expected nil file when not found")
+	}
+	if err.Error() != "file not found" {
+		t.Errorf("expected 'file not found' error, got %v", err)
+	}
+}
+
+// TestDeleteFilesByClaimCodes tests bulk file deletion
+func TestDeleteFilesByClaimCodes(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert 5 test files
+	claimCodes := []string{"BULK1", "BULK2", "BULK3", "BULK4", "BULK5"}
+	for i, code := range claimCodes {
+		_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip)
+			VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?)`,
+			code, fmt.Sprintf("file%d.txt", i+1), fmt.Sprintf("stored%d.bin", i+1), 1024*(i+1), "text/plain", "192.168.1.1")
+		if err != nil {
+			t.Fatalf("failed to insert file %s: %v", code, err)
+		}
+	}
+
+	// Delete 3 files
+	deleteList := []string{"BULK1", "BULK3", "BULK5"}
+	files, err := DeleteFilesByClaimCodes(db, deleteList)
+	if err != nil {
+		t.Fatalf("failed to delete files: %v", err)
+	}
+	if len(files) != 3 {
+		t.Errorf("expected 3 files deleted, got %d", len(files))
+	}
+
+	// Verify correct files were deleted
+	expectedCodes := map[string]bool{"BULK1": true, "BULK3": true, "BULK5": true}
+	for _, file := range files {
+		if !expectedCodes[file.ClaimCode] {
+			t.Errorf("unexpected file deleted: %s", file.ClaimCode)
+		}
+	}
+
+	// Verify files are deleted from database
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code IN ('BULK1', 'BULK3', 'BULK5')").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count deleted files: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected deleted files to be gone, but count = %d", count)
+	}
+
+	// Verify remaining files still exist
+	err = db.QueryRow("SELECT COUNT(*) FROM files WHERE claim_code IN ('BULK2', 'BULK4')").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count remaining files: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 remaining files, but count = %d", count)
+	}
+}
+
+// TestDeleteFilesByClaimCodes_PartialNotFound tests bulk delete with some non-existent files
+func TestDeleteFilesByClaimCodes_PartialNotFound(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert 2 test files
+	_, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip)
+		VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?)`,
+		"EXISTS1", "file1.txt", "stored1.bin", 1024, "text/plain", "192.168.1.1")
+	if err != nil {
+		t.Fatalf("failed to insert file 1: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, created_at, expires_at, uploader_ip)
+		VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now', '+24 hours'), ?)`,
+		"EXISTS2", "file2.txt", "stored2.bin", 2048, "text/plain", "192.168.1.1")
+	if err != nil {
+		t.Fatalf("failed to insert file 2: %v", err)
+	}
+
+	// Try to delete 4 files (2 exist, 2 don't)
+	deleteList := []string{"EXISTS1", "NOTFOUND1", "EXISTS2", "NOTFOUND2"}
+	files, err := DeleteFilesByClaimCodes(db, deleteList)
+	if err != nil {
+		t.Fatalf("failed to delete files: %v", err)
+	}
+	// Should only delete the 2 that exist (skip non-existent ones)
+	if len(files) != 2 {
+		t.Errorf("expected 2 files deleted, got %d", len(files))
+	}
+
+	// Verify correct files were deleted
+	for _, file := range files {
+		if file.ClaimCode != "EXISTS1" && file.ClaimCode != "EXISTS2" {
+			t.Errorf("unexpected file deleted: %s", file.ClaimCode)
+		}
+	}
+}
+
+// TestDeleteFilesByClaimCodes_EmptyList tests bulk delete with empty list
+func TestDeleteFilesByClaimCodes_EmptyList(t *testing.T) {
+	db := setupTestDB(t)
+
+	files, err := DeleteFilesByClaimCodes(db, []string{})
+	if err == nil {
+		t.Error("expected error for empty claim codes list")
+	}
+	if files != nil {
+		t.Error("expected nil files for empty list")
+	}
+	if err.Error() != "no claim codes provided" {
+		t.Errorf("expected 'no claim codes provided' error, got %v", err)
 	}
 }

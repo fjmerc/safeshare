@@ -66,6 +66,7 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ExpiresAt        time.Time `json:"expires_at"`
 			MaxDownloads     *int      `json:"max_downloads"`
 			DownloadCount    int       `json:"download_count"`
+		CompletedDownloads  int       `json:"completed_downloads"`
 			DownloadURL      string    `json:"download_url"`
 			IsExpired        bool      `json:"is_expired"`
 			IsPasswordProtected bool   `json:"is_password_protected"`
@@ -83,6 +84,7 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				ExpiresAt:        file.ExpiresAt,
 				MaxDownloads:     file.MaxDownloads,
 				DownloadCount:    file.DownloadCount,
+				CompletedDownloads:  file.CompletedDownloads,
 				DownloadURL:      buildDownloadURL(r, cfg, file.ClaimCode),
 				IsExpired:        time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",

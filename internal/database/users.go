@@ -386,7 +386,7 @@ func GetFilesByUserID(db *sql.DB, userID int64, limit, offset int) ([]models.Fil
 
 	// Get paginated files
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
+		created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
 		FROM files WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, userID, limit, offset)
@@ -414,6 +414,7 @@ func GetFilesByUserID(db *sql.DB, userID int64, limit, offset int) ([]models.Fil
 			&expiresAt,
 			&maxDownloads,
 			&file.DownloadCount,
+			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
 			&userIDVal,

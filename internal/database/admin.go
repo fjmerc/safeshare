@@ -249,7 +249,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 
 	// Get paginated files with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
-		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.uploader_ip, f.password_hash, f.user_id,
+		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
 		u.username
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
@@ -280,7 +280,8 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-			&file.DownloadCount,
+						&file.DownloadCount,
+			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
@@ -342,7 +343,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 
 	// Get paginated results with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
-		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.uploader_ip, f.password_hash, f.user_id,
+		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
 		u.username
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
@@ -374,7 +375,8 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-			&file.DownloadCount,
+						&file.DownloadCount,
+			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
@@ -426,7 +428,7 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -447,7 +449,8 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&createdAt,
 		&expiresAt,
 		&maxDownloads,
-		&file.DownloadCount,
+					&file.DownloadCount,
+			&file.CompletedDownloads,
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
@@ -507,7 +510,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 		query := `
 			SELECT
 				id, claim_code, original_filename, stored_filename, file_size,
-				mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
+				mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
 			FROM files
 			WHERE claim_code = ?
 		`
@@ -529,7 +532,8 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-			&file.DownloadCount,
+						&file.DownloadCount,
+			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,

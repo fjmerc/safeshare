@@ -406,7 +406,7 @@ function updateFilesTable(files) {
             <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
             <td>${formatDate(file.created_at)}</td>
             <td>${formatDate(file.expires_at)}</td>
-            <td>${file.download_count} / ${file.max_downloads || '∞'}</td>
+            <td>${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
             <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td>
                 <button class="btn-small btn-delete" onclick="deleteFile('${escapeHtml(file.claim_code)}')">
