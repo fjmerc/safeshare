@@ -170,6 +170,32 @@ func IncrementDownloadCount(db *sql.DB, id int64) error {
 	return nil
 }
 
+// IncrementDownloadCountIfUnchanged increments the download count only if the claim code hasn't changed.
+// This prevents download count inconsistencies when claim codes are regenerated mid-download.
+func IncrementDownloadCountIfUnchanged(db *sql.DB, id int64, expectedClaimCode string) error {
+	query := `
+		UPDATE files
+		SET download_count = download_count + 1
+		WHERE id = ? AND claim_code = ?
+	`
+
+	result, err := db.Exec(query, id, expectedClaimCode)
+	if err != nil {
+		return fmt.Errorf("failed to increment download count: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("claim code changed during download")
+	}
+
+	return nil
+}
+
 // DeleteExpiredFiles removes expired files from both database and filesystem
 // Returns the count of deleted files
 func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
