@@ -4,7 +4,23 @@ This directory contains comprehensive documentation for SafeShare.
 
 ## Documentation Files
 
-### [CLAUDE.md](CLAUDE.md)
+### [API_REFERENCE.md](API_REFERENCE.md)
+**API Documentation** - Complete REST API reference
+
+**Contents:**
+- Authentication endpoints (user login, logout, password change)
+- File sharing endpoints (upload, download, chunked upload, file info)
+- User management endpoints (dashboard, file operations, rename, expiration editing)
+- Admin operations (file management, IP blocking, settings, configuration assistant)
+- Health & monitoring (health checks, liveness/readiness probes, Prometheus metrics)
+- Error responses and rate limiting details
+- HTTP/2 support and API versioning
+
+**Audience:** API consumers, frontend developers, integration developers
+
+---
+
+### [CLAUDE.md](../CLAUDE.md)
 **Developer Guide** - For developers working on SafeShare codebase
 
 **Contents:**
@@ -41,20 +57,19 @@ This directory contains comprehensive documentation for SafeShare.
 
 ---
 
-### [FRONTEND.md](FRONTEND.md)
-**Frontend Guide** - Web UI customization and features
+### [CHUNKED_UPLOAD.md](CHUNKED_UPLOAD.md)
+**Chunked Upload Guide** - Resumable upload implementation
 
 **Contents:**
-- Public web UI features (upload interface, QR codes, dark mode)
-- Admin dashboard UI (login, files, IP blocking, settings)
-- Technical stack (HTML, CSS, JavaScript)
-- File structure and organization
-- API integration details
-- Browser compatibility
-- Customization guide (colors, branding, text)
-- Performance considerations
+- Chunked upload architecture and workflow
+- API endpoints (init, chunk, complete, status)
+- Client implementation guide
+- JavaScript ChunkedUploader class
+- Async file assembly and recovery
+- Error handling and validation
+- Performance characteristics
 
-**Audience:** Frontend developers, UI/UX designers
+**Audience:** Frontend developers, API consumers
 
 ---
 
@@ -71,6 +86,111 @@ This directory contains comprehensive documentation for SafeShare.
 - Load balancing examples
 
 **Audience:** DevOps engineers, system administrators
+
+---
+
+### [PROMETHEUS.md](PROMETHEUS.md)
+**Monitoring & Metrics** - Prometheus integration guide
+
+**Contents:**
+- Prometheus metrics endpoint (/metrics)
+- Available metrics (counters, histograms, gauges)
+- Grafana dashboard configurations
+- Alerting rules and thresholds
+- Integration with monitoring stacks
+
+**Audience:** DevOps engineers, SRE teams, system administrators
+
+---
+
+### [FRONTEND.md](FRONTEND.md)
+**Frontend Guide** - Web UI customization and features
+
+**Contents:**
+- Public web UI features (upload interface, QR codes, dark mode, PWA)
+- Admin dashboard UI (login, files, IP blocking, settings)
+- Technical stack (HTML, CSS, JavaScript)
+- File structure and organization
+- API integration details
+- Browser compatibility
+- Customization guide (colors, branding, text)
+- Performance considerations
+
+**Audience:** Frontend developers, UI/UX designers
+
+---
+
+### [PRODUCTION.md](PRODUCTION.md)
+**Production Deployment** - Enterprise deployment guide
+
+**Contents:**
+- Security hardening checklist
+- HTTPS setup with Let's Encrypt
+- Environment configuration
+- Database and storage setup
+- Monitoring and logging
+- Backup strategies
+- Post-deployment verification
+- Maintenance and updates
+
+**Audience:** DevOps engineers, system administrators
+
+---
+
+### [HTTP_RANGE_SUPPORT.md](HTTP_RANGE_SUPPORT.md)
+**Resumable Downloads** - HTTP Range request implementation
+
+**Contents:**
+- RFC 7233 compliance
+- Range request formats
+- Browser download resume
+- Partial content delivery
+- Optimized encrypted file handling
+- Client implementation examples
+
+**Audience:** Frontend developers, API consumers
+
+---
+
+### [VERSION_STRATEGY.md](VERSION_STRATEGY.md)
+**Versioning & Release Process** - Git Flow and semantic versioning
+
+**Contents:**
+- Semantic versioning (MAJOR.MINOR.PATCH)
+- Git Flow branching strategy
+- Release process and procedures
+- CHANGELOG management
+- Version tagging and GitHub releases
+
+**Audience:** Developers, release managers
+
+---
+
+### [TESTING.md](TESTING.md)
+**Testing Guide** - Test suite and coverage
+
+**Contents:**
+- Test execution procedures (Docker-based)
+- Test-driven development workflow
+- Coverage requirements (60% minimum)
+- Integration tests
+- Performance tests
+
+**Audience:** Developers, QA engineers
+
+---
+
+### [INFRASTRUCTURE_PLANNING.md](INFRASTRUCTURE_PLANNING.md)
+**Infrastructure Planning** - Deployment planning guide
+
+**Contents:**
+- CDN timeout constraints
+- Upload speed testing methodology
+- Configuration formulas and calculations
+- Deployment scenario examples
+- File size limit decision matrix
+
+**Audience:** DevOps engineers, system architects
 
 ---
 
@@ -123,4 +243,4 @@ For issues and questions:
 ---
 
 **Last Updated:** November 2025
-**SafeShare Version:** 1.0
+**SafeShare Version:** 2.8.0
