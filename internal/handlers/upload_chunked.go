@@ -570,12 +570,13 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				}
 
 				response := models.UploadCompleteResponse{
-					ClaimCode:        *partialUpload.ClaimCode,
-					DownloadURL:      downloadURL,
-					OriginalFilename: partialUpload.Filename,
-					FileSize:         partialUpload.TotalSize,
-					ExpiresAt:        expiresAt,
-					MaxDownloads:     partialUpload.MaxDownloads,
+					ClaimCode:          *partialUpload.ClaimCode,
+					DownloadURL:        downloadURL,
+					OriginalFilename:   partialUpload.Filename,
+					FileSize:           partialUpload.TotalSize,
+					ExpiresAt:          expiresAt,
+					MaxDownloads:       partialUpload.MaxDownloads,
+					CompletedDownloads: 0, // New uploads have 0 downloads
 				}
 
 				w.Header().Set("Content-Type", "application/json")

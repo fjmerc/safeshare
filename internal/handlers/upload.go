@@ -365,12 +365,13 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Send success response
 		response := models.UploadResponse{
-			ClaimCode:        claimCode,
-			ExpiresAt:        expiresAt,
-			DownloadURL:      downloadURL,
-			MaxDownloads:     maxDownloads,
-			FileSize:         written,
-			OriginalFilename: sanitizedFilename,
+			ClaimCode:          claimCode,
+			ExpiresAt:          expiresAt,
+			DownloadURL:        downloadURL,
+			MaxDownloads:       maxDownloads,
+			CompletedDownloads: 0, // New uploads have 0 downloads
+			FileSize:           written,
+			OriginalFilename:   sanitizedFilename,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
