@@ -1075,7 +1075,11 @@
             fileNameElement.title = data.original_filename; // Show full name on hover
             document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
             document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
-            document.getElementById('maxDownloadsInfo').textContent = data.max_downloads || 'Unlimited';
+            // Display downloads in "X / Y" format to match Pickup/Dashboard pages
+            const downloadsText = data.max_downloads
+                ? `${data.completed_downloads} / ${data.max_downloads}`
+                : `${data.completed_downloads} / Unlimited`;
+            document.getElementById('maxDownloadsInfo').textContent = downloadsText;
 
             // Generate QR code (optional - if library loaded)
             const qrcodeDiv = document.getElementById('qrcode');
@@ -1669,6 +1673,59 @@
             ? `${data.completed_downloads} / ${data.max_downloads}`
             : `${data.completed_downloads} / Unlimited`;
         document.getElementById('pickupDownloads').textContent = downloadsText;
+
+        // SHA256 hash display with copy functionality
+        const sha256Element = document.getElementById('pickupSHA256');
+        const copySHA256Btn = document.getElementById('copySHA256Btn');
+        const sha256DetailRow = sha256Element.closest('.detail-sha256');
+        
+        if (data.sha256_hash) {
+            sha256Element.textContent = data.sha256_hash;
+            sha256Element.title = data.sha256_hash; // Show full hash on hover
+            sha256DetailRow.classList.remove('hidden');
+            
+            // Setup copy button (remove old listeners by cloning)
+            const newCopyBtn = copySHA256Btn.cloneNode(true);
+            copySHA256Btn.parentNode.replaceChild(newCopyBtn, copySHA256Btn);
+            
+            newCopyBtn.addEventListener('click', async function() {
+                try {
+                    // Modern clipboard API with fallback for HTTP contexts
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(data.sha256_hash);
+                    } else {
+                        // Fallback for HTTP contexts
+                        const textArea = document.createElement('textarea');
+                        textArea.value = data.sha256_hash;
+                        textArea.style.position = 'fixed';
+                        textArea.style.left = '-999999px';
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        try {
+                            document.execCommand('copy');
+                        } finally {
+                            document.body.removeChild(textArea);
+                        }
+                    }
+                    
+                    // Visual feedback
+                    const originalHTML = this.innerHTML;
+                    this.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    this.classList.add('copied');
+                    
+                    setTimeout(() => {
+                        this.innerHTML = originalHTML;
+                        this.classList.remove('copied');
+                    }, 2000);
+                } catch (err) {
+                    console.error('Failed to copy SHA256:', err);
+                    alert('Failed to copy to clipboard. Please copy manually.');
+                }
+            });
+        } else {
+            sha256Element.textContent = 'Not available';
+            sha256DetailRow.classList.add('hidden');
+        }
 
         // Show/hide warning if download limit reached
         if (data.download_limit_reached) {

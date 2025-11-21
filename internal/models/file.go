@@ -24,12 +24,13 @@ type File struct {
 
 // UploadResponse is the JSON response returned after a successful upload
 type UploadResponse struct {
-	ClaimCode        string    `json:"claim_code"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	DownloadURL      string    `json:"download_url"`
-	MaxDownloads     *int      `json:"max_downloads"`
-	FileSize         int64     `json:"file_size"`
-	OriginalFilename string    `json:"original_filename"`
+	ClaimCode          string    `json:"claim_code"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	DownloadURL        string    `json:"download_url"`
+	MaxDownloads       *int      `json:"max_downloads"`
+	CompletedDownloads int       `json:"completed_downloads"` // Always 0 for new uploads
+	FileSize           int64     `json:"file_size"`
+	OriginalFilename   string    `json:"original_filename"`
 }
 
 // ErrorResponse is the JSON error response
