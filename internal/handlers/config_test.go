@@ -106,6 +106,10 @@ func TestPublicConfigHandler_AllFields(t *testing.T) {
 		t.Errorf("max_file_size = %d, want %d", response.MaxFileSize, 100*1024*1024)
 	}
 
+	if response.MaxExpirationHours != 168 {
+		t.Errorf("max_expiration_hours = %d, want 168", response.MaxExpirationHours)
+	}
+
 	if response.ChunkedUploadEnabled != true {
 		t.Errorf("chunked_upload_enabled = %v, want true", response.ChunkedUploadEnabled)
 	}

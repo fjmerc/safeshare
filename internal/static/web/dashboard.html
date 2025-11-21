@@ -470,12 +470,52 @@
         }
 
         .file-name {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 200px;
+        }
+
+        .file-name-text {
             color: #1e293b;
             font-weight: 500;
-            max-width: 200px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .date-truncate {
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: inline-block;
+            cursor: help;
+        }
+
+        .file-name-expires {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 140px;
+        }
+
+        .inline-edit-icon {
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+            stroke: #64748b;
+            cursor: pointer;
+            opacity: 0.6;
+            transition: all 0.2s ease;
+        }
+
+        .inline-edit-icon:hover {
+            opacity: 1;
+            stroke: #1e293b;
+            transform: scale(1.1);
         }
 
         .file-size {
@@ -689,6 +729,82 @@
             font-size: 14px;
         }
 
+        /* Toggle Switch Styles */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            user-select: none;
+            padding: 8px 0;
+        }
+
+        .toggle-checkbox {
+            display: none;
+        }
+
+        .toggle-slider {
+            position: relative;
+            width: 48px;
+            height: 24px;
+            background-color: #cbd5e1;
+            border-radius: 24px;
+            transition: background-color 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background-color: white;
+            top: 3px;
+            left: 3px;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle-checkbox:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+
+        .toggle-checkbox:checked + .toggle-slider::before {
+            transform: translateX(24px);
+        }
+
+        .toggle-container:hover .toggle-slider {
+            background-color: #94a3b8;
+        }
+
+        .toggle-checkbox:checked + .toggle-slider:hover {
+            background-color: #2563eb;
+        }
+
+        .toggle-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #334155;
+        }
+
+        /* Dark mode toggle styles */
+        [data-theme="dark"] .toggle-slider {
+            background-color: #475569;
+        }
+
+        [data-theme="dark"] .toggle-checkbox:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+
+        [data-theme="dark"] .toggle-label {
+            color: #f1f5f9;
+        }
+
+        [data-theme="dark"] .toggle-container:hover .toggle-slider {
+            background-color: #64748b;
+        }
+
         .password-wrapper {
             position: relative;
             display: flex;
@@ -715,6 +831,78 @@
 
         .password-toggle:hover {
             color: #334155;
+        }
+
+        /* Expiration preset buttons */
+        .expiration-presets {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .preset-btn {
+            padding: 10px 12px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #374151;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .preset-btn:hover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .preset-btn.selected {
+            border-color: #3b82f6;
+            background: #3b82f6;
+            color: white;
+        }
+
+        /* Dark mode expiration presets */
+        [data-theme="dark"] .preset-btn {
+            background: #374151;
+            border-color: #4b5563;
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .preset-btn:hover {
+            border-color: #3b82f6;
+            background: #1e3a8a;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .preset-btn.selected {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        [data-theme="dark"] #expirationPreview {
+            background: #374151;
+        }
+
+        [data-theme="dark"] #expirationPreview div:first-child {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] #expirationPreviewDate {
+            color: #f9fafb;
+        }
+
+        /* Datetime-local input specific styles */
+        input[type="datetime-local"] {
+            color-scheme: light;
+        }
+
+        [data-theme="dark"] input[type="datetime-local"] {
+            color-scheme: dark;
         }
 
         .form-group input {
@@ -1082,6 +1270,10 @@
             .empty-state p {
                 font-size: 13px;
             }
+
+            .expiration-presets {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
 
         /* Small Mobile Styles */
@@ -1292,8 +1484,16 @@
             border-color: #374151;
         }
 
-        [data-theme="dark"] .file-name {
+        [data-theme="dark"] .file-name-text {
             color: #f9fafb;
+        }
+
+        [data-theme="dark"] .inline-edit-icon {
+            stroke: #94a3b8;
+        }
+
+        [data-theme="dark"] .inline-edit-icon:hover {
+            stroke: #f9fafb;
         }
 
         [data-theme="dark"] .claim-code {
@@ -1565,6 +1765,75 @@
         </div>
     </div>
 
+    <!-- Rename File Modal -->
+    <div id="renameModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Rename File</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>New Filename</label>
+                    <input type="text" id="newFilename" placeholder="Enter new filename" maxlength="255">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideRenameModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmRename()">Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Expiration Modal -->
+    <div id="editExpirationModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">Edit Expiration Date</div>
+            <div class="modal-body">
+                <!-- Never Expire Toggle -->
+                <label class="toggle-container" style="margin-bottom: 20px;">
+                    <input type="checkbox" id="neverExpireCheckbox" class="toggle-checkbox">
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-label">Never expire</span>
+                </label>
+
+                <div id="expirationOptionsContainer">
+                    <!-- Quick Presets -->
+                    <div class="form-group">
+                        <label style="font-weight: 600; margin-bottom: 8px; display: block; color: #374151;">Quick Presets</label>
+                        <div class="expiration-presets">
+                            <button class="preset-btn" data-hours="6">6 hours</button>
+                            <button class="preset-btn" data-hours="12">12 hours</button>
+                            <button class="preset-btn" data-hours="24">1 day</button>
+                            <button class="preset-btn" data-hours="72">3 days</button>
+                            <button class="preset-btn" data-hours="168">7 days</button>
+                            <button class="preset-btn" data-hours="720">30 days</button>
+                        </div>
+                    </div>
+
+                    <!-- Custom Date & Time -->
+                    <div class="form-group" style="margin-top: 20px;">
+                        <label style="font-weight: 600; margin-bottom: 8px; display: block; color: #374151;">
+                            Or Pick Exact Date & Time
+                        </label>
+                        <input type="datetime-local" id="newExpiration" required
+                               style="width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 14px;">
+                        <small class="text-muted" style="display: block; margin-top: 6px;">
+                            Maximum: <span id="maxExpirationText"></span>
+                        </small>
+                    </div>
+
+                    <!-- Expiration Preview -->
+                    <div id="expirationPreview" style="margin-top: 16px; padding: 12px; background: #f3f4f6; border-radius: 6px; display: none;">
+                        <div style="font-size: 12px; color: #6b7280; font-weight: 600; margin-bottom: 4px;">FILE WILL EXPIRE ON</div>
+                        <div id="expirationPreviewDate" style="font-size: 14px; font-weight: 600; color: #374151;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideExpirationModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmExpirationUpdate()">Update Expiration</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Load theme preference from localStorage
         (function() {
@@ -1600,6 +1869,9 @@
 
         let currentUser = null;
         let fileToDelete = null;
+        let fileToRename = { id: null, currentName: '' };
+        let fileToEditExpiration = { id: null, currentExpiration: '' };
+        let maxExpirationHours = 168; // Default, will be loaded from config
 
         // Check authentication and load user info
         async function checkAuth() {
@@ -1624,6 +1896,7 @@
                         showChangePasswordModal();
                     }
 
+                    loadConfig();
                     loadFiles();
                 } else {
                     // Not authenticated, redirect to login
@@ -1632,6 +1905,20 @@
             } catch (error) {
                 console.error('Auth check failed:', error);
                 window.location.href = '/login';
+            }
+        }
+
+        // Load config (for max expiration hours)
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                if (response.ok) {
+                    const config = await response.json();
+                    maxExpirationHours = config.max_expiration_hours || 168;
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+                // Keep default value
             }
         }
 
@@ -1691,7 +1978,11 @@
 
             files.forEach(file => {
                 const createdDate = formatCompactDate(file.created_at);
-                const expiresDate = formatCompactDate(file.expires_at);
+
+                // Check if "never expire" (year 9999)
+                const expiresDateObj = new Date(file.expires_at);
+                const expiresDate = expiresDateObj.getFullYear() === 9999 ? 'Never' : formatCompactDate(file.expires_at);
+
                 const downloads = file.max_downloads ? `${file.download_count}/${file.max_downloads}` : file.download_count;
 
                 let statusBadge = '';
@@ -1708,17 +1999,29 @@
                 tableHTML += `
                     <tr>
                         <td>
-                            <div class="file-name">${escapeHtml(file.original_filename)}</div>
+                            <div class="file-name">
+                                <span class="file-name-text">${escapeHtml(file.original_filename)}</span>
+                                <svg class="inline-edit-icon" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                </svg>
+                            </div>
                         </td>
                         <td><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td><span class="claim-code">${file.claim_code}</span></td>
-                        <td style="white-space: nowrap;">${createdDate}</td>
-                        <td style="white-space: nowrap;">${expiresDate}</td>
+                        <td><span class="date-truncate" title="${createdDate}">${createdDate}</span></td>
+                        <td>
+                            <div class="file-name-expires">
+                                <span class="file-name-text">${expiresDate}</span>
+                                <svg class="inline-edit-icon" onclick="editExpiration(${file.id}, '${file.expires_at}')" title="Edit expiration" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                </svg>
+                            </div>
+                        </td>
                         <td style="text-align: center;">${downloads}</td>
                         <td style="text-align: center;">${statusBadge}</td>
                         <td class="actions-col">
                             <div class="actions-cell">
-                                <button class="btn-icon btn-primary" onclick="openShareModal({original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.download_count}, claim_code: '${file.claim_code}'})" title="Share File">
+                                <button class="btn-icon btn-primary" onclick="openShareModal({id: ${file.id}, original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.download_count}, claim_code: '${file.claim_code}'})" title="Share File">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
                                         <circle cx="6" cy="12" r="3"></circle>
@@ -1785,6 +2088,240 @@
         function hideDeleteModal() {
             document.getElementById('deleteModal').classList.remove('show');
             fileToDelete = null;
+        }
+
+        // Rename file
+        function renameFile(fileId, currentName) {
+            fileToRename = { id: fileId, currentName: currentName };
+            document.getElementById('newFilename').value = currentName;
+            document.getElementById('renameModal').classList.add('show');
+            // Focus the input field
+            setTimeout(() => document.getElementById('newFilename').focus(), 100);
+        }
+
+        async function confirmRename() {
+            if (!fileToRename.id) return;
+
+            const newFilename = document.getElementById('newFilename').value.trim();
+            if (!newFilename) {
+                showToast('Filename cannot be empty', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/user/files/rename', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        file_id: fileToRename.id,
+                        new_filename: newFilename,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showToast('File renamed successfully', 'success');
+                    loadFiles();
+                    hideRenameModal();
+                } else {
+                    showToast(data.error || 'Failed to rename file', 'error');
+                }
+            } catch (error) {
+                console.error('Rename failed:', error);
+                showToast('Network error renaming file', 'error');
+            }
+        }
+
+        function hideRenameModal() {
+            document.getElementById('renameModal').classList.remove('show');
+            fileToRename = { id: null, currentName: '' };
+            document.getElementById('newFilename').value = '';
+        }
+
+        // Edit file expiration
+        function editExpiration(fileId, currentExpiration) {
+            fileToEditExpiration = { id: fileId, currentExpiration: currentExpiration };
+
+            // Check if current expiration is "never expire" (year 9999)
+            const expirationDate = new Date(currentExpiration);
+            const isNeverExpire = expirationDate.getFullYear() === 9999;
+
+            const neverExpireCheckbox = document.getElementById('neverExpireCheckbox');
+            const expirationOptionsContainer = document.getElementById('expirationOptionsContainer');
+            const datetimeInput = document.getElementById('newExpiration');
+            const previewContainer = document.getElementById('expirationPreview');
+            const previewDate = document.getElementById('expirationPreviewDate');
+            const maxExpirationText = document.getElementById('maxExpirationText');
+
+            // Reset form
+            neverExpireCheckbox.checked = isNeverExpire;
+            datetimeInput.value = '';
+            previewContainer.style.display = 'none';
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
+
+            // Set min/max attributes for datetime input
+            const now = new Date();
+            const minDatetime = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+                .toISOString()
+                .slice(0, 16);
+            datetimeInput.setAttribute('min', minDatetime);
+
+            const maxDate = new Date(now.getTime() + maxExpirationHours * 60 * 60 * 1000);
+            const maxDatetime = new Date(maxDate.getTime() - maxDate.getTimezoneOffset() * 60000)
+                .toISOString()
+                .slice(0, 16);
+            datetimeInput.setAttribute('max', maxDatetime);
+
+            // Set maximum expiration text
+            maxExpirationText.textContent = formatCompactDate(maxDate.toISOString());
+
+            // Toggle options visibility based on "Never expire" checkbox
+            function toggleExpirationOptions() {
+                if (neverExpireCheckbox.checked) {
+                    expirationOptionsContainer.style.display = 'none';
+                } else {
+                    expirationOptionsContainer.style.display = 'block';
+                }
+            }
+
+            // Update expiration preview
+            function updatePreview(hours) {
+                if (!hours || hours <= 0 || neverExpireCheckbox.checked) {
+                    previewContainer.style.display = 'none';
+                    return;
+                }
+
+                const futureDate = new Date(Date.now() + hours * 60 * 60 * 1000);
+                previewDate.textContent = formatCompactDate(futureDate.toISOString());
+                previewContainer.style.display = 'block';
+            }
+
+            // Initial toggle
+            toggleExpirationOptions();
+
+            // Never expire checkbox handler
+            neverExpireCheckbox.addEventListener('change', function() {
+                toggleExpirationOptions();
+                if (this.checked) {
+                    previewContainer.style.display = 'none';
+                    customValueInput.value = '';
+                    document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
+                }
+            });
+
+            // Preset button handlers
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const hours = parseInt(this.getAttribute('data-hours'));
+
+                    // Validate against max expiration
+                    if (hours > maxExpirationHours) {
+                        showToast(`Cannot exceed maximum of ${maxExpirationHours} hours`, 'error');
+                        return;
+                    }
+
+                    // Calculate future date
+                    const futureDate = new Date(Date.now() + hours * 60 * 60 * 1000);
+
+                    // Convert to local datetime format for input (YYYY-MM-DDTHH:MM)
+                    const localDatetime = new Date(futureDate.getTime() - futureDate.getTimezoneOffset() * 60000)
+                        .toISOString()
+                        .slice(0, 16);
+
+                    // Populate datetime input
+                    datetimeInput.value = localDatetime;
+
+                    // Update UI
+                    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+                    this.classList.add('selected');
+
+                    // Update preview
+                    updatePreview(hours);
+                });
+            });
+
+            // Datetime input change handler
+            datetimeInput.addEventListener('change', function() {
+                // Clear preset selection when manually changing datetime
+                document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
+
+                if (this.value) {
+                    // Calculate hours from now until selected datetime
+                    const selectedDate = new Date(this.value);
+                    const hours = Math.round((selectedDate.getTime() - Date.now()) / (1000 * 60 * 60));
+                    updatePreview(hours);
+                } else {
+                    previewContainer.style.display = 'none';
+                }
+            });
+
+            // Show modal
+            document.getElementById('editExpirationModal').classList.add('show');
+        }
+
+        async function confirmExpirationUpdate() {
+            if (!fileToEditExpiration.id) return;
+
+            const neverExpireCheckbox = document.getElementById('neverExpireCheckbox');
+            const datetimeInput = document.getElementById('newExpiration');
+            let isoExpiration;
+
+            if (neverExpireCheckbox.checked) {
+                // Set to "never expire" sentinel date
+                isoExpiration = '9999-12-31T23:59:59Z';
+            } else {
+                // Get value from datetime input
+                const newExpiration = datetimeInput.value;
+                if (!newExpiration) {
+                    showToast('Please select an expiration date or choose a preset', 'error');
+                    return;
+                }
+
+                // Convert local datetime to ISO8601/RFC3339
+                const expirationDate = new Date(newExpiration);
+                isoExpiration = expirationDate.toISOString();
+            }
+
+            try {
+                const response = await fetch('/api/user/files/update-expiration', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        file_id: fileToEditExpiration.id,
+                        new_expiration: isoExpiration,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showToast('Expiration updated successfully', 'success');
+                    loadFiles();
+                    hideExpirationModal();
+                } else {
+                    showToast(data.error || 'Failed to update expiration', 'error');
+                }
+            } catch (error) {
+                console.error('Update expiration failed:', error);
+                showToast('Network error updating expiration', 'error');
+            }
+        }
+
+        function hideExpirationModal() {
+            document.getElementById('editExpirationModal').classList.remove('show');
+            fileToEditExpiration = { id: null, currentExpiration: '' };
+            document.getElementById('neverExpireCheckbox').checked = false;
+            document.getElementById('newExpiration').value = '';
+            document.getElementById('expirationPreview').style.display = 'none';
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
         }
 
         // Change password
@@ -1940,20 +2477,15 @@
             return div.innerHTML;
         }
 
-        // Format date in compact format (e.g., "Nov 5 @ 5:50 PM")
+        // Format date in compact format (e.g., "11/05/25 3:45 PM")
         function formatCompactDate(dateString) {
             const date = new Date(dateString);
-            const now = new Date();
-            const month = date.toLocaleString('en-US', { month: 'short' });
-            const day = date.getDate();
+            const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2); // Get last 2 digits of year
             const time = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
-            // Only show year if different from current year
-            if (date.getFullYear() !== now.getFullYear()) {
-                return `${month} ${day}, ${date.getFullYear()} @ ${time}`;
-            }
-
-            return `${month} ${day} @ ${time}`;
+            return `${month}/${day}/${year} ${time}`;
         }
 
         // Refresh files with animation
@@ -2033,6 +2565,125 @@
             const shareModal = document.getElementById('shareModal');
             if (shareModal) {
                 shareModal.classList.add('hidden');
+            }
+        }
+
+        // Show detailed share modal
+        function showDetailedShareModal() {
+            if (!currentShareData) {
+                showToast('No file data available', 'error');
+                return;
+            }
+
+            // Populate modal with file data
+            document.getElementById('shareFileName').textContent = currentShareData.original_filename;
+            document.getElementById('shareFileSize').textContent = formatFileSize(currentShareData.file_size);
+            document.getElementById('shareExpires').textContent = formatCompactDate(currentShareData.expires_at);
+
+            const downloadsText = currentShareData.max_downloads
+                ? `${currentShareData.download_count}/${currentShareData.max_downloads}`
+                : `${currentShareData.download_count}/∞`;
+            document.getElementById('shareDownloads').textContent = downloadsText;
+
+            document.getElementById('shareDownloadUrl').value = currentShareData.download_url;
+
+            // Show modal
+            document.getElementById('detailedShareModal').classList.add('show');
+        }
+
+        // Hide detailed share modal
+        function hideDetailedShareModal() {
+            document.getElementById('detailedShareModal').classList.remove('show');
+        }
+
+        // Copy share link from detailed modal
+        function copyShareLink() {
+            const urlInput = document.getElementById('shareDownloadUrl');
+            urlInput.select();
+
+            try {
+                document.execCommand('copy');
+                showToast('Link copied to clipboard!', 'success');
+            } catch (err) {
+                // Fallback for modern browsers
+                navigator.clipboard.writeText(urlInput.value).then(() => {
+                    showToast('Link copied to clipboard!', 'success');
+                }).catch(() => {
+                    showToast('Failed to copy link', 'error');
+                });
+            }
+        }
+
+        // Show regenerate confirmation modal
+        function showRegenerateConfirmation() {
+            if (!currentShareData) {
+                showToast('No file data available', 'error');
+                return;
+            }
+
+            // Populate current claim code
+            document.getElementById('currentClaimCodeDisplay').textContent = currentShareData.claim_code;
+
+            // Show confirmation modal
+            document.getElementById('regenerateConfirmModal').classList.add('show');
+        }
+
+        // Hide regenerate confirmation modal
+        function hideRegenerateConfirmation() {
+            document.getElementById('regenerateConfirmModal').classList.remove('show');
+        }
+
+        // Execute claim code regeneration
+        async function executeRegenerateClaim() {
+            if (!currentShareData || !currentShareData.id) {
+                showToast('No file data available', 'error');
+                return;
+            }
+
+            const confirmBtn = document.getElementById('confirmRegenerateBtn');
+            const originalText = confirmBtn.textContent;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Regenerating...';
+
+            try {
+                const response = await fetch('/api/user/files/regenerate-claim-code', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        file_id: currentShareData.id
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Update currentShareData with new values
+                    currentShareData.claim_code = data.claim_code;
+                    currentShareData.download_url = data.download_url;
+
+                    // Update detailed share modal
+                    document.getElementById('shareDownloadUrl').value = data.download_url;
+
+                    // Hide confirmation modal
+                    hideRegenerateConfirmation();
+
+                    // Show success message
+                    showToast('Claim code regenerated! Old link no longer works.', 'success');
+
+                    // Reload files to update table
+                    loadFiles();
+                } else {
+                    showToast(data.error || 'Failed to regenerate claim code', 'error');
+                }
+            } catch (error) {
+                console.error('Regenerate claim code failed:', error);
+                showToast('Network error', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = originalText;
             }
         }
 
@@ -2276,6 +2927,98 @@
                         <span class="share-option-desc">Copies formatted message</span>
                     </div>
                 </button>
+                <button class="share-option" id="shareShowDetails" onclick="showDetailedShareModal(); closeShareModal();">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>
+                    <div class="share-option-text">
+                        <span class="share-option-title">View Details & Security</span>
+                        <span class="share-option-desc">Manage link and regenerate code</span>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed Share Modal with Security Actions -->
+    <div id="detailedShareModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">Share File</div>
+            <div class="modal-body">
+                <!-- File Info -->
+                <div style="margin-bottom: 20px;">
+                    <div style="font-weight: 600; font-size: 15px; color: #374151; margin-bottom: 12px;" id="shareFileName">test.txt</div>
+                    <div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">
+                        <strong>Size:</strong> <span id="shareFileSize">18 B</span>
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">
+                        <strong>Expires:</strong> <span id="shareExpires">Nov 22 @ 3:45 PM</span>
+                    </div>
+                    <div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">
+                        <strong>Downloads:</strong> <span id="shareDownloads">2/5</span>
+                    </div>
+                </div>
+
+                <!-- Download Link -->
+                <div style="margin-bottom: 20px;">
+                    <label style="font-weight: 600; margin-bottom: 8px; display: block; font-size: 13px; color: #374151;">Download Link</label>
+                    <div style="display: flex; gap: 8px; align-items: stretch;">
+                        <input type="text" id="shareDownloadUrl" readonly
+                               style="flex: 1; min-width: 0; padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 12px; font-family: monospace; color: #6b7280; background: #f9fafb;">
+                        <button onclick="copyShareLink()"
+                                style="flex-shrink: 0; padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Security Actions -->
+                <div style="padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                    <div style="margin-bottom: 12px;">
+                        <strong style="font-size: 13px; color: #374151;">Security Actions</strong>
+                    </div>
+                    <button class="btn btn-secondary" onclick="showRegenerateConfirmation()" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Regenerate Claim Code</span>
+                    </button>
+                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px; margin-bottom: 0;">
+                        ⚠️ Generate a new download link. The old link will stop working immediately.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideDetailedShareModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Regenerate Claim Code Confirmation Modal -->
+    <div id="regenerateConfirmModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Regenerate Claim Code?</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px; font-weight: 600; color: #374151;">This will break the current download link.</p>
+                <p style="margin-bottom: 12px; color: #6b7280;">Anyone with the old link will lose access immediately.</p>
+                <div style="padding: 10px; background: #f3f4f6; border-radius: 6px; margin-top: 12px;">
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Current claim code:</div>
+                    <code style="font-size: 13px; font-weight: 600; color: #374151;" id="currentClaimCodeDisplay"></code>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideRegenerateConfirmation()">Cancel</button>
+                <button class="btn btn-danger" onclick="executeRegenerateClaim()" id="confirmRegenerateBtn">Regenerate Code</button>
             </div>
         </div>
     </div>
