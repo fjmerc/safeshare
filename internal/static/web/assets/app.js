@@ -1666,8 +1666,8 @@
 
         // Downloads info
         const downloadsText = data.max_downloads
-            ? `${data.download_count} / ${data.max_downloads}`
-            : `${data.download_count} / Unlimited`;
+            ? `${data.completed_downloads} / ${data.max_downloads}`
+            : `${data.completed_downloads} / Unlimited`;
         document.getElementById('pickupDownloads').textContent = downloadsText;
 
         // Show/hide warning if download limit reached
