@@ -8,10 +8,22 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 )
+
+// Time constants for testing
+const (
+	TimeRFC3339 = time.RFC3339
+	TimeHour    = time.Hour
+)
+
+// TimeNow returns current time (wrapper for time.Now for testability)
+func TimeNow() time.Time {
+	return time.Now()
+}
 
 // SetupTestDB creates an in-memory SQLite database for testing
 // The database is automatically closed when the test completes

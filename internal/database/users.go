@@ -549,3 +549,25 @@ func UpdateFileNameByIDAndUserID(db *sql.DB, fileID, userID int64, newFilename s
 
 	return nil
 }
+
+// UpdateFileExpirationByIDAndUserID updates the expiration date for a file owned by the specified user
+// Returns error if file not found or doesn't belong to the user
+func UpdateFileExpirationByIDAndUserID(db *sql.DB, fileID, userID int64, newExpiration time.Time) error {
+	query := `UPDATE files SET expires_at = ? WHERE id = ? AND user_id = ?`
+
+	result, err := db.Exec(query, newExpiration, fileID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update expiration: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("file not found or does not belong to user")
+	}
+
+	return nil
+}

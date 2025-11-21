@@ -215,6 +215,13 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserRenameFileHandler(db, cfg))).ServeHTTP(w, r)
 	})
 
+	mux.HandleFunc("/api/user/files/update-expiration", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.UserEditExpirationHandler(db, cfg))).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/api/user/files/regenerate-claim-code", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+	})
+
 	// Admin routes (only enabled if admin credentials are configured)
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)
