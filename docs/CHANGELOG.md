@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2025-11-21
+
+### Added
+- **Progressive Web App (PWA) Support**: SafeShare is now installable as a Progressive Web App
+  - Service worker with intelligent caching strategy (static assets cached, API requests always fresh)
+  - Web app manifest with proper icons (192x192, 512x512, maskable, Apple touch icon)
+  - "Add to Home Screen" support on Android Chrome/Edge and iOS Safari
+  - "Install App" button in desktop browsers
+  - Offline support for static UI assets
+  - Standalone app window without browser UI when installed
+  - Custom splash screen with SafeShare branding
+- **Dashboard Share Modal**: Added full share functionality to user dashboard file listing
+  - Changed "Copy Link" button to "Share File" button with share icon
+  - Smart share button uses Web Share API on mobile/modern browsers with graceful fallback to modal
+  - Share options: Email (mailto link), Copy Link, Copy Details (formatted message)
+  - Consistent sharing experience across upload page and dashboard
+  - Includes file details, expiration info, claim code, and download limits in share messages
+  - Accessible with keyboard navigation (Escape to close), background click to close, and proper event handlers
+
+### Fixed
+- **Import Tool Expiration**: Fixed `--expires 0` flag in import-tool to correctly set files to never expire (100 years in the future) instead of expiring immediately
+  - Now consistent with web upload and chunked upload behavior where `expires_in_hours=0` means "never expire"
+  - Updated help text to document `0 = never expire`
+
 ## [2.7.0] - 2025-11-19
 
 ### Added
@@ -831,7 +855,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/fjmerc/safeshare/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/fjmerc/safeshare/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1

@@ -365,6 +365,7 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			ExpiresAt         time.Time `json:"expires_at"`
 			MaxDownloads      *int      `json:"max_downloads"`
 			DownloadCount     int       `json:"download_count"`
+		CompletedDownloads int       `json:"completed_downloads"`
 			Username          *string   `json:"username"`           // nullable - nil for anonymous uploads
 			UploaderIP        string    `json:"uploader_ip"`
 			PasswordProtected bool      `json:"password_protected"`
@@ -382,6 +383,7 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 				ExpiresAt:         file.ExpiresAt,
 				MaxDownloads:      file.MaxDownloads,
 				DownloadCount:     file.DownloadCount,
+			CompletedDownloads: file.CompletedDownloads,
 				Username:          file.Username,
 				UploaderIP:        file.UploaderIP,
 				PasswordProtected: file.PasswordHash != "",

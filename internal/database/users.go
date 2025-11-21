@@ -386,7 +386,7 @@ func GetFilesByUserID(db *sql.DB, userID int64, limit, offset int) ([]models.Fil
 
 	// Get paginated files
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
+		created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
 		FROM files WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, userID, limit, offset)
@@ -414,6 +414,7 @@ func GetFilesByUserID(db *sql.DB, userID int64, limit, offset int) ([]models.Fil
 			&expiresAt,
 			&maxDownloads,
 			&file.DownloadCount,
+			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
 			&userIDVal,
@@ -526,4 +527,48 @@ func DeleteFileByIDAndUserID(db *sql.DB, fileID, userID int64) (*models.File, er
 	}
 
 	return file, nil
+}
+
+// UpdateFileNameByIDAndUserID updates the original filename for a file owned by the specified user
+// Returns error if file not found or doesn't belong to the user
+func UpdateFileNameByIDAndUserID(db *sql.DB, fileID, userID int64, newFilename string) error {
+	query := `UPDATE files SET original_filename = ? WHERE id = ? AND user_id = ?`
+
+	result, err := db.Exec(query, newFilename, fileID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update filename: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("file not found or does not belong to user")
+	}
+
+	return nil
+}
+
+// UpdateFileExpirationByIDAndUserID updates the expiration date for a file owned by the specified user
+// Returns error if file not found or doesn't belong to the user
+func UpdateFileExpirationByIDAndUserID(db *sql.DB, fileID, userID int64, newExpiration time.Time) error {
+	query := `UPDATE files SET expires_at = ? WHERE id = ? AND user_id = ?`
+
+	result, err := db.Exec(query, newExpiration, fileID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update expiration: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("file not found or does not belong to user")
+	}
+
+	return nil
 }

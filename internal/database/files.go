@@ -84,7 +84,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id, sha256_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id, sha256_hash
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -106,6 +106,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&expiresAt,
 		&file.MaxDownloads,
 		&file.DownloadCount,
+		&file.CompletedDownloads,
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
@@ -156,6 +157,55 @@ func IncrementDownloadCount(db *sql.DB, id int64) error {
 	result, err := db.Exec(query, id)
 	if err != nil {
 		return fmt.Errorf("failed to increment download count: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("no file found with id %d", id)
+	}
+
+	return nil
+}
+
+// IncrementDownloadCountIfUnchanged increments the download count only if the claim code hasn't changed.
+// This prevents download count inconsistencies when claim codes are regenerated mid-download.
+func IncrementDownloadCountIfUnchanged(db *sql.DB, id int64, expectedClaimCode string) error {
+	query := `
+		UPDATE files
+		SET download_count = download_count + 1
+		WHERE id = ? AND claim_code = ?
+	`
+
+	result, err := db.Exec(query, id, expectedClaimCode)
+	if err != nil {
+		return fmt.Errorf("failed to increment download count: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("claim code changed during download")
+	}
+
+	return nil
+}
+
+// IncrementCompletedDownloads atomically increments the completed downloads counter for a file.
+// This should only be called when a full file download (HTTP 200 OK) completes successfully.
+// Do NOT call this for partial/range downloads (HTTP 206 Partial Content).
+func IncrementCompletedDownloads(db *sql.DB, id int64) error {
+	query := `UPDATE files SET completed_downloads = completed_downloads + 1 WHERE id = ?`
+
+	result, err := db.Exec(query, id)
+	if err != nil {
+		return fmt.Errorf("failed to increment completed downloads: %w", err)
 	}
 
 	rows, err := result.RowsAffected()

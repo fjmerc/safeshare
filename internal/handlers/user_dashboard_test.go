@@ -484,3 +484,856 @@ func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 		t.Error("download_url should not be empty")
 	}
 }
+
+// TestUserRenameFileHandler_Success tests successful file rename
+func TestUserRenameFileHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Create file owned by user
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-rename-success"
+	file.OriginalFilename = "oldname.txt"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Rename file request
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "newname.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp["message"] != "File renamed successfully" {
+		t.Errorf("message = %q, want 'File renamed successfully'", resp["message"])
+	}
+
+	if resp["new_filename"] != "newname.txt" {
+		t.Errorf("new_filename = %q, want 'newname.txt'", resp["new_filename"])
+	}
+
+	// Verify file was renamed in database
+	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if updatedFile.OriginalFilename != "newname.txt" {
+		t.Errorf("file not renamed in database, got %q", updatedFile.OriginalFilename)
+	}
+}
+
+// TestUserRenameFileHandler_NotOwner tests that users can't rename files they don't own
+func TestUserRenameFileHandler_NotOwner(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
+	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+
+	// Create file owned by user1
+	file := testutil.SampleFile()
+	file.UserID = &user1.ID
+	file.ClaimCode = "user1-file-rename"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to rename as user2
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "hacked.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user2)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or does not belong to you" {
+		t.Errorf("error = %q, want ownership error", errResp["error"])
+	}
+
+	// Verify file was NOT renamed
+	unchangedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if unchangedFile.OriginalFilename == "hacked.txt" {
+		t.Error("file should not have been renamed")
+	}
+}
+
+// TestUserRenameFileHandler_FileNotFound tests renaming non-existent file
+func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	renameReq := map[string]interface{}{
+		"file_id":      int64(99999),
+		"new_filename": "newname.txt",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+}
+
+// TestUserRenameFileHandler_InvalidFileID tests invalid file ID validation
+func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	tests := []struct {
+		name   string
+		fileID int64
+	}{
+		{"zero file ID", 0},
+		{"negative file ID", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			renameReq := map[string]interface{}{
+				"file_id":      tt.fileID,
+				"new_filename": "newname.txt",
+			}
+
+			body, _ := json.Marshal(renameReq)
+			req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			ctx := context.WithValue(req.Context(), "user", user)
+			req = req.WithContext(ctx)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+			var errResp map[string]string
+			json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+			if errResp["error"] != "Invalid file ID" {
+				t.Errorf("error = %q, want 'Invalid file ID'", errResp["error"])
+			}
+		})
+	}
+}
+
+// TestUserRenameFileHandler_EmptyFilename tests empty filename validation
+func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	renameReq := map[string]interface{}{
+		"file_id":      int64(1),
+		"new_filename": "",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Filename cannot be empty" {
+		t.Errorf("error = %q, want 'Filename cannot be empty'", errResp["error"])
+	}
+}
+
+// TestUserRenameFileHandler_InvalidJSON tests malformed request handling
+func TestUserRenameFileHandler_InvalidJSON(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+}
+
+// TestUserRenameFileHandler_MethodNotAllowed tests HTTP method validation
+func TestUserRenameFileHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/user/files/rename", nil)
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+		})
+	}
+}
+
+// TestUserRenameFileHandler_SanitizationWorks tests filename sanitization
+func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRenameFileHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-sanitize"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to rename with dangerous characters
+	renameReq := map[string]interface{}{
+		"file_id":      createdFile.ID,
+		"new_filename": "../../../etc/passwd",
+	}
+
+	body, _ := json.Marshal(renameReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	// Should be sanitized to "passwd" (path components removed)
+	if resp["new_filename"] != "passwd" {
+		t.Errorf("new_filename = %q, want 'passwd' (sanitized)", resp["new_filename"])
+	}
+
+	// Verify in database
+	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if updatedFile.OriginalFilename != "passwd" {
+		t.Errorf("filename in database = %q, want 'passwd'", updatedFile.OriginalFilename)
+	}
+}
+
+// ========== Edit Expiration Tests ==========
+
+// TestUserEditExpirationHandler_Success tests successful expiration update
+func TestUserEditExpirationHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Create file owned by user
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-edit-expiration-success"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// New expiration: 24 hours from now (well within MAX_EXPIRATION_HOURS)
+	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
+
+	// Edit expiration request
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": newExpiration.Format(testutil.TimeRFC3339),
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp["message"] != "File expiration updated successfully" {
+		t.Errorf("message = %q, want 'File expiration updated successfully'", resp["message"])
+	}
+
+	// Verify file expiration was updated in database
+	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	if updatedFile.ExpiresAt.Unix() != newExpiration.Unix() {
+		t.Errorf("expiration not updated in database, got %v, want %v", updatedFile.ExpiresAt, newExpiration)
+	}
+}
+
+// TestUserEditExpirationHandler_NotOwner tests that users can't edit files they don't own
+func TestUserEditExpirationHandler_NotOwner(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
+	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+
+	// Create file owned by user1
+	file := testutil.SampleFile()
+	file.UserID = &user1.ID
+	file.ClaimCode = "user1-file-edit-expiration"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to edit expiration as user2
+	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": newExpiration.Format(testutil.TimeRFC3339),
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user2)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or does not belong to you" {
+		t.Errorf("error = %q, want ownership error", errResp["error"])
+	}
+}
+
+// TestUserEditExpirationHandler_FileNotFound tests invalid file ID
+func TestUserEditExpirationHandler_FileNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Try to edit non-existent file
+	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
+	editReq := map[string]interface{}{
+		"file_id":        99999,
+		"new_expiration": newExpiration.Format(testutil.TimeRFC3339),
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or does not belong to you" {
+		t.Errorf("error = %q, want not found error", errResp["error"])
+	}
+}
+
+// TestUserEditExpirationHandler_InvalidDate tests malformed date
+func TestUserEditExpirationHandler_InvalidDate(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-invalid-date"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Invalid date format
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": "not-a-date",
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Invalid date format" {
+		t.Errorf("error = %q, want 'Invalid date format'", errResp["error"])
+	}
+}
+
+// TestUserEditExpirationHandler_PastDate tests expiration in the past
+func TestUserEditExpirationHandler_PastDate(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-past-date"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Past date
+	pastDate := testutil.TimeNow().Add(-24 * testutil.TimeHour)
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": pastDate.Format(testutil.TimeRFC3339),
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Expiration date must be in the future" {
+		t.Errorf("error = %q, want 'Expiration date must be in the future'", errResp["error"])
+	}
+}
+
+// TestUserEditExpirationHandler_ExceedsMax tests expiration beyond max allowed
+func TestUserEditExpirationHandler_ExceedsMax(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.SetMaxExpirationHours(168) // 7 days
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-exceeds-max"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Date beyond max (8 days from now)
+	tooFarDate := testutil.TimeNow().Add(200 * testutil.TimeHour)
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": tooFarDate.Format(testutil.TimeRFC3339),
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	expectedError := fmt.Sprintf("Expiration cannot be more than %d hours from now", cfg.GetMaxExpirationHours())
+	if errResp["error"] != expectedError {
+		t.Errorf("error = %q, want %q", errResp["error"], expectedError)
+	}
+}
+
+// TestUserEditExpirationHandler_EmptyExpiration tests empty expiration
+func TestUserEditExpirationHandler_EmptyExpiration(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserEditExpirationHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-empty-expiration"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Empty expiration
+	editReq := map[string]interface{}{
+		"file_id":        createdFile.ID,
+		"new_expiration": "",
+	}
+
+	body, _ := json.Marshal(editReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Expiration date cannot be empty" {
+		t.Errorf("error = %q, want 'Expiration date cannot be empty'", errResp["error"])
+	}
+}
+
+// TestUserRegenerateClaimCodeHandler_Success tests successful claim code regeneration
+func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Create file owned by user
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "original-claim-code"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	originalClaimCode := createdFile.ClaimCode
+
+	// Regenerate claim code request
+	regenReq := map[string]int64{
+		"file_id": createdFile.ID,
+	}
+
+	body, _ := json.Marshal(regenReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+
+	var resp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if resp["message"] != "Claim code regenerated successfully" {
+		t.Errorf("message = %q, want 'Claim code regenerated successfully'", resp["message"])
+	}
+
+	// Verify new claim code is different from original
+	newClaimCode := resp["claim_code"]
+	if newClaimCode == "" {
+		t.Error("new claim_code should not be empty")
+	}
+	if newClaimCode == originalClaimCode {
+		t.Error("new claim_code should be different from original")
+	}
+
+	// Verify download URL is present
+	if resp["download_url"] == "" {
+		t.Error("download_url should not be empty")
+	}
+
+	// Verify claim code was updated in database
+	updatedFile, _ := database.GetFileByClaimCode(db, newClaimCode)
+	if updatedFile == nil {
+		t.Fatal("should be able to retrieve file with new claim code")
+	}
+	if updatedFile.ClaimCode != newClaimCode {
+		t.Errorf("claim code in database = %q, want %q", updatedFile.ClaimCode, newClaimCode)
+	}
+
+	// Verify old claim code no longer works
+	oldFile, _ := database.GetFileByClaimCode(db, originalClaimCode)
+	if oldFile != nil {
+		t.Error("old claim code should not retrieve file")
+	}
+}
+
+// TestUserRegenerateClaimCodeHandler_MethodNotAllowed tests non-PUT methods are rejected
+func TestUserRegenerateClaimCodeHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Try GET method (should fail)
+	req := httptest.NewRequest(http.MethodGet, "/api/user/files/regenerate-claim-code", nil)
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusMethodNotAllowed)
+}
+
+// TestUserRegenerateClaimCodeHandler_InvalidJSON tests malformed JSON is rejected
+func TestUserRegenerateClaimCodeHandler_InvalidJSON(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Send invalid JSON
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader([]byte("{invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Invalid request format" {
+		t.Errorf("error = %q, want 'Invalid request format'", errResp["error"])
+	}
+}
+
+// TestUserRegenerateClaimCodeHandler_InvalidFileID tests invalid file ID is rejected
+func TestUserRegenerateClaimCodeHandler_InvalidFileID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Test with file_id = 0
+	regenReq := map[string]int64{
+		"file_id": 0,
+	}
+
+	body, _ := json.Marshal(regenReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "Invalid file ID" {
+		t.Errorf("error = %q, want 'Invalid file ID'", errResp["error"])
+	}
+}
+
+// TestUserRegenerateClaimCodeHandler_FileNotFound tests non-existent file returns 404
+func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	// Create user
+	passwordHash, _ := utils.HashPassword("password123")
+	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+
+	// Try to regenerate claim code for non-existent file
+	regenReq := map[string]int64{
+		"file_id": 99999,
+	}
+
+	body, _ := json.Marshal(regenReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or access denied" {
+		t.Errorf("error = %q, want 'File not found or access denied'", errResp["error"])
+	}
+}
+
+// TestUserRegenerateClaimCodeHandler_NotOwner tests users can't regenerate claim codes for files they don't own
+func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	handler := UserRegenerateClaimCodeHandler(db, cfg)
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
+	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+
+	// Create file owned by user1
+	file := testutil.SampleFile()
+	file.UserID = &user1.ID
+	file.ClaimCode = "user1-file-regen"
+	database.CreateFile(db, file)
+
+	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+
+	// Try to regenerate claim code as user2
+	regenReq := map[string]int64{
+		"file_id": createdFile.ID,
+	}
+
+	body, _ := json.Marshal(regenReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(req.Context(), "user", user2)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	testutil.AssertStatusCode(t, rr, http.StatusNotFound)
+
+	var errResp map[string]string
+	json.Unmarshal(rr.Body.Bytes(), &errResp)
+
+	if errResp["error"] != "File not found or access denied" {
+		t.Errorf("error = %q, want 'File not found or access denied'", errResp["error"])
+	}
+
+	// Verify file's claim code was NOT changed
+	unchangedFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	if unchangedFile == nil {
+		t.Error("file should still exist with original claim code")
+	}
+}

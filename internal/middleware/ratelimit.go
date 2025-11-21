@@ -142,6 +142,9 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
+			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
+				limit = 10 // Hardcoded: 10 regenerations per hour per IP
+				limitType = "regeneration"
 			} else {
 				// No rate limit for other endpoints (health, info, static files)
 				next.ServeHTTP(w, r)

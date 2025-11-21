@@ -12,6 +12,7 @@ type PublicConfigResponse struct {
 	Version                string `json:"version"`
 	RequireAuthForUpload   bool   `json:"require_auth_for_upload"`
 	MaxFileSize            int64  `json:"max_file_size"`
+	MaxExpirationHours     int    `json:"max_expiration_hours"`
 	ChunkedUploadEnabled   bool   `json:"chunked_upload_enabled"`
 	ChunkedUploadThreshold int64  `json:"chunked_upload_threshold"`
 	ChunkSize              int64  `json:"chunk_size"`
@@ -31,6 +32,7 @@ func PublicConfigHandler(cfg *config.Config) http.HandlerFunc {
 			Version:                Version,
 			RequireAuthForUpload:   cfg.RequireAuthForUpload,
 			MaxFileSize:            cfg.GetMaxFileSize(),
+			MaxExpirationHours:     cfg.GetMaxExpirationHours(),
 			ChunkedUploadEnabled:   cfg.ChunkedUploadEnabled,
 			ChunkedUploadThreshold: cfg.ChunkedUploadThreshold,
 			ChunkSize:              cfg.ChunkSize,

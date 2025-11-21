@@ -116,7 +116,7 @@ func run(args []string) error {
 
 	// File metadata
 	fs.StringVar(&opts.DisplayName, "filename", "", "Display filename (defaults to source filename)")
-	fs.IntVar(&opts.ExpiresHours, "expires", 168, "Expiration time in hours (default: 168 = 7 days)")
+	fs.IntVar(&opts.ExpiresHours, "expires", 168, "Expiration time in hours (0 = never expire, default: 168 = 7 days)")
 	fs.IntVar(&opts.MaxDownloads, "maxdownloads", 0, "Maximum downloads (0 = unlimited)")
 	fs.StringVar(&opts.Password, "password", "", "Optional password protection")
 	fs.IntVar(&opts.UserID, "user-id", 0, "Optional user_id for authenticated imports (sets file ownership)")
@@ -661,7 +661,14 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 	}
 
 	// Calculate expiration
-	expiresAt := time.Now().Add(time.Duration(opts.ExpiresHours) * time.Hour)
+	// Special case: 0 means "never expire" (consistent with upload handlers)
+	var expiresAt time.Time
+	if opts.ExpiresHours == 0 {
+		// Never expire - set to 100 years in the future
+		expiresAt = time.Now().Add(time.Duration(100*365*24) * time.Hour)
+	} else {
+		expiresAt = time.Now().Add(time.Duration(opts.ExpiresHours) * time.Hour)
+	}
 	result.ExpiresAt = expiresAt
 
 	// Create file record
