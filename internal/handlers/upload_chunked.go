@@ -830,17 +830,20 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Build response
 		response := models.UploadStatusResponse{
-			UploadID:       uploadID,
-			Filename:       partialUpload.Filename,
-			ChunksReceived: chunksReceived,
-			TotalChunks:    partialUpload.TotalChunks,
-			MissingChunks:  missingChunks,
-			Complete:       partialUpload.Completed,
-			ExpiresAt:      expiresAt,
-			ClaimCode:      partialUpload.ClaimCode,
-			Status:         partialUpload.Status,
-			ErrorMessage:   partialUpload.ErrorMessage,
-			DownloadURL:    downloadURL,
+			UploadID:           uploadID,
+			Filename:           partialUpload.Filename,
+			ChunksReceived:     chunksReceived,
+			TotalChunks:        partialUpload.TotalChunks,
+			MissingChunks:      missingChunks,
+			Complete:           partialUpload.Completed,
+			ExpiresAt:          expiresAt,
+			ClaimCode:          partialUpload.ClaimCode,
+			Status:             partialUpload.Status,
+			ErrorMessage:       partialUpload.ErrorMessage,
+			DownloadURL:        downloadURL,
+			FileSize:           partialUpload.TotalSize,
+			MaxDownloads:       partialUpload.MaxDownloads,
+			CompletedDownloads: 0, // TODO: Get actual download count from files table once completed
 		}
 
 		w.Header().Set("Content-Type", "application/json")

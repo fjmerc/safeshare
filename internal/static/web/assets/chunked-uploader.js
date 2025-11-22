@@ -489,9 +489,10 @@ class ChunkedUploader {
                         claim_code: status.claim_code,
                         download_url: status.download_url,
                         original_filename: status.filename,
-                        file_size: this.file.size,
+                        file_size: status.file_size,
                         expires_at: status.expires_at,
-                        max_downloads: this.options.maxDownloads
+                        max_downloads: status.max_downloads,
+                        completed_downloads: status.completed_downloads
                     };
                 }
 

@@ -145,9 +145,6 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// Rationale: Single file can have hundreds of chunks
 				limit = rl.config.GetRateLimitUpload() * 10
 				limitType = "chunk"
-			} else if strings.HasPrefix(r.URL.Path, "/api/upload/complete/") {
-				limit = rl.config.GetRateLimitUpload()
-				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
@@ -155,7 +152,9 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP
 				limitType = "regeneration"
 			} else {
-				// No rate limit for other endpoints (health, info, static files)
+				// No rate limit for other endpoints:
+				// - /api/upload/complete/* (part of init operation, already rate limited)
+				// - health, info, static files
 				next.ServeHTTP(w, r)
 				return
 			}

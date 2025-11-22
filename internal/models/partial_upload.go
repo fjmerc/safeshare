@@ -55,17 +55,20 @@ type UploadChunkResponse struct {
 
 // UploadStatusResponse represents the response for upload status requests
 type UploadStatusResponse struct {
-	UploadID       string    `json:"upload_id"`
-	Filename       string    `json:"filename"`
-	ChunksReceived int       `json:"chunks_received"`
-	TotalChunks    int       `json:"total_chunks"`
-	MissingChunks  []int     `json:"missing_chunks,omitempty"`
-	Complete       bool      `json:"complete"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	ClaimCode      *string   `json:"claim_code,omitempty"`
-	Status         string    `json:"status"` // uploading, processing, completed, failed
-	ErrorMessage   *string   `json:"error_message,omitempty"`
-	DownloadURL    *string   `json:"download_url,omitempty"` // Only set when completed
+	UploadID           string    `json:"upload_id"`
+	Filename           string    `json:"filename"`
+	ChunksReceived     int       `json:"chunks_received"`
+	TotalChunks        int       `json:"total_chunks"`
+	MissingChunks      []int     `json:"missing_chunks,omitempty"`
+	Complete           bool      `json:"complete"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	ClaimCode          *string   `json:"claim_code,omitempty"`
+	Status             string    `json:"status"` // uploading, processing, completed, failed
+	ErrorMessage       *string   `json:"error_message,omitempty"`
+	DownloadURL        *string   `json:"download_url,omitempty"` // Only set when completed
+	FileSize           int64     `json:"file_size"`
+	MaxDownloads       int       `json:"max_downloads"`
+	CompletedDownloads int       `json:"completed_downloads"`
 }
 
 // UploadCompleteResponse represents the response after completing a chunked upload
