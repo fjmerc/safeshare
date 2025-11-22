@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Pickup Tab Download Failures**: Fixed downloads failing at ~60% when initiated through Pickup tab
   - Root cause: Service Worker was intercepting cross-origin fetch() requests from ResumableDownloader
-  - Added cross-origin detection in handleDownload() - bypasses ResumableDownloader for downloads.mercitlabs.com
+  - Added cross-origin detection in handleDownload()
   - Uses native browser download (`<a>` tag) for cross-origin downloads to avoid Service Worker interference
   - Fixed Service Worker bug: Removed unnecessary `event.respondWith()` for API routes (was causing memory/streaming issues)
   - Direct URL downloads always worked; issue only occurred when using Pickup tab claim code flow
