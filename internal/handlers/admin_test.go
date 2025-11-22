@@ -1043,12 +1043,13 @@ func TestAdminResetUserPasswordHandler(t *testing.T) {
 
 func TestAdminDeleteUserHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	// Create user
 	hashedPassword, _ := utils.HashPassword("password")
 	user, _ := database.CreateUser(db, "deleteuser", "delete@example.com", hashedPassword, "user", true)
 
-	handler := AdminDeleteUserHandler(db)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/users/%d", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1068,8 +1069,9 @@ func TestAdminDeleteUserHandler(t *testing.T) {
 
 func TestAdminDeleteUserHandler_NotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
-	handler := AdminDeleteUserHandler(db)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/99999", nil)
 	rr := httptest.NewRecorder()

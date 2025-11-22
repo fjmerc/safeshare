@@ -43,6 +43,78 @@ func CreatePartialUpload(db *sql.DB, upload *models.PartialUpload) error {
 	return nil
 }
 
+// CreatePartialUploadWithQuotaCheck atomically checks quota and inserts partial upload record in a transaction.
+// This prevents race conditions where multiple uploads could exceed quota limits.
+// Returns error if quota would be exceeded.
+func CreatePartialUploadWithQuotaCheck(db *sql.DB, upload *models.PartialUpload, quotaLimitBytes int64) error {
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			// Rollback failed - already committed or other error
+		}
+	}()
+
+	// Check quota within transaction (atomic with insert)
+	var currentUsage int64
+	query := `
+		SELECT
+			COALESCE(SUM(file_size), 0) +
+			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+		FROM files
+		WHERE expires_at > datetime('now')
+	`
+	if err := tx.QueryRow(query).Scan(&currentUsage); err != nil {
+		return fmt.Errorf("failed to get current usage: %w", err)
+	}
+
+	// Check if adding this upload would exceed quota
+	if currentUsage+upload.TotalSize > quotaLimitBytes {
+		return fmt.Errorf("quota exceeded: current usage %d bytes + upload size %d bytes > limit %d bytes",
+			currentUsage, upload.TotalSize, quotaLimitBytes)
+	}
+
+	// Insert partial upload record (still within transaction)
+	insertQuery := `
+		INSERT INTO partial_uploads (
+			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
+			chunks_received, received_bytes, expires_in_hours, max_downloads,
+			password_hash, created_at, last_activity, completed, claim_code
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	_, err = tx.Exec(insertQuery,
+		upload.UploadID,
+		upload.UserID,
+		upload.Filename,
+		upload.TotalSize,
+		upload.ChunkSize,
+		upload.TotalChunks,
+		upload.ChunksReceived,
+		upload.ReceivedBytes,
+		upload.ExpiresInHours,
+		upload.MaxDownloads,
+		upload.PasswordHash,
+		upload.CreatedAt,
+		upload.LastActivity,
+		upload.Completed,
+		upload.ClaimCode,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert partial upload: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // GetPartialUpload retrieves a partial upload by upload_id
 func GetPartialUpload(db *sql.DB, uploadID string) (*models.PartialUpload, error) {
 	query := `

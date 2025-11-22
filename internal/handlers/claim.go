@@ -77,19 +77,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-		// Check download limit
-		if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
-			slog.Warn("file access denied",
-				"reason", "download_limit_reached",
-				"claim_code", redactClaimCode(claimCode),
-				"filename", file.OriginalFilename,
-				"download_count", file.DownloadCount,
-				"max_downloads", *file.MaxDownloads,
-				"client_ip", getClientIP(r),
-			)
-			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
-			return
-		}
+		// Note: Download limit check moved to atomic TryIncrementDownloadWithLimit() to prevent race conditions (P1 fix)
 
 		// Validate stored filename (defense-in-depth against database corruption/compromise)
 		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
@@ -109,11 +97,12 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Store original claim code for optimistic locking
 		originalClaimCode := file.ClaimCode
 
-		// Increment download count before serving (important for tracking)
-		// Use optimistic locking to detect claim code regeneration during download
-		if err := database.IncrementDownloadCountIfUnchanged(db, file.ID, originalClaimCode); err != nil {
+		// Atomically increment download count with limit check (P1 fix)
+		// This prevents race conditions where multiple downloads could exceed max_downloads
+		success, err := database.TryIncrementDownloadWithLimit(db, file.ID, originalClaimCode)
+		if err != nil {
 			// Check if claim code changed during download
-			if err.Error() == "claim code changed during download" {
+			if strings.Contains(err.Error(), "claim code changed during download") {
 				slog.Warn("claim code changed during download",
 					"file_id", file.ID,
 					"original_code", redactClaimCode(originalClaimCode),
@@ -125,6 +114,16 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				slog.Error("failed to increment download count", "file_id", file.ID, "error", err)
 				// Continue anyway - don't fail the download
 			}
+		} else if !success {
+			// Download limit reached (atomic check)
+			slog.Warn("file access denied",
+				"reason", "download_limit_reached",
+				"claim_code", redactClaimCode(claimCode),
+				"filename", file.OriginalFilename,
+				"client_ip", getClientIP(r),
+			)
+			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
+			return
 		}
 
 		// Serve file with Range support (handles both full and partial downloads)

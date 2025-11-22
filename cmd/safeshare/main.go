@@ -345,7 +345,7 @@ func run() error {
 			if r.Method == "PUT" || r.Method == "PATCH" {
 				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(db)))).ServeHTTP(w, r)
 			} else if r.Method == "DELETE" {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteUserHandler(db)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteUserHandler(db, cfg)))).ServeHTTP(w, r)
 			} else if r.Method == "POST" {
 				// Check which action: enable, disable, or reset-password
 				if strings.Contains(path, "/enable") || strings.Contains(path, "/disable") {

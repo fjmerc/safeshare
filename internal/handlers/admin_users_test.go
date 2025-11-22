@@ -679,7 +679,8 @@ func TestAdminResetUserPasswordHandler_MethodNotAllowed(t *testing.T) {
 // TestAdminDeleteUserHandler_Success tests user deletion
 func TestAdminDeleteUserHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminDeleteUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -711,7 +712,8 @@ func TestAdminDeleteUserHandler_Success(t *testing.T) {
 // TestAdminDeleteUserHandler_UserNotFound tests deleting non-existent user
 func TestAdminDeleteUserHandler_UserNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminDeleteUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/99999", nil)
 	rr := httptest.NewRecorder()
@@ -724,7 +726,8 @@ func TestAdminDeleteUserHandler_UserNotFound(t *testing.T) {
 // TestAdminDeleteUserHandler_InvalidUserID tests invalid user ID
 func TestAdminDeleteUserHandler_InvalidUserID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminDeleteUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/invalid", nil)
 	rr := httptest.NewRecorder()
@@ -737,7 +740,8 @@ func TestAdminDeleteUserHandler_InvalidUserID(t *testing.T) {
 // TestAdminDeleteUserHandler_MethodNotAllowed tests HTTP method validation
 func TestAdminDeleteUserHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminDeleteUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	handler := AdminDeleteUserHandler(db, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut}
 

@@ -3,6 +3,7 @@ package database
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -672,5 +673,414 @@ func TestGetStats(t *testing.T) {
 	expectedStorage := int64(2000) // 500 + 1500
 	if storageUsed != expectedStorage {
 		t.Errorf("GetStats() storageUsed = %d, want %d", storageUsed, expectedStorage)
+	}
+}
+
+// TestCreateFileWithQuotaCheck_Success tests file creation with quota check when under limit
+func TestCreateFileWithQuotaCheck_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create a small existing file
+	existingFile := &models.File{
+		ClaimCode:        "EXISTING1",
+		OriginalFilename: "existing.txt",
+		StoredFilename:   "stored-existing.txt",
+		FileSize:         1000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, existingFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Create new file with quota check (2000 bytes under 10GB limit)
+	newFile := &models.File{
+		ClaimCode:        "NEWFILE1",
+		OriginalFilename: "new.txt",
+		StoredFilename:   "stored-new.txt",
+		FileSize:         2000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	quotaLimit := int64(10 * 1024 * 1024 * 1024) // 10GB
+	err = CreateFileWithQuotaCheck(db, newFile, quotaLimit)
+	if err != nil {
+		t.Fatalf("CreateFileWithQuotaCheck() error: %v", err)
+	}
+
+	// Verify file was created
+	retrieved, err := GetFileByClaimCode(db, "NEWFILE1")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("File should be created when under quota")
+	}
+
+	if retrieved.FileSize != 2000 {
+		t.Errorf("FileSize = %d, want 2000", retrieved.FileSize)
+	}
+}
+
+// TestCreateFileWithQuotaCheck_ExceedsQuota tests quota enforcement
+func TestCreateFileWithQuotaCheck_ExceedsQuota(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create existing file using 900 bytes
+	existingFile := &models.File{
+		ClaimCode:        "QUOTA1",
+		OriginalFilename: "quota.txt",
+		StoredFilename:   "stored-quota.txt",
+		FileSize:         900,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, existingFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Try to create new file that would exceed quota (900 + 200 > 1000)
+	newFile := &models.File{
+		ClaimCode:        "QUOTA2",
+		OriginalFilename: "exceed.txt",
+		StoredFilename:   "stored-exceed.txt",
+		FileSize:         200,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	quotaLimit := int64(1000) // 1000 bytes limit
+	err = CreateFileWithQuotaCheck(db, newFile, quotaLimit)
+	if err == nil {
+		t.Fatal("CreateFileWithQuotaCheck() should return error when quota exceeded")
+	}
+
+	if !strings.Contains(err.Error(), "quota exceeded") {
+		t.Errorf("Expected quota exceeded error, got: %v", err)
+	}
+
+	// Verify file was NOT created
+	retrieved, err := GetFileByClaimCode(db, "QUOTA2")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved != nil {
+		t.Error("File should NOT be created when quota exceeded")
+	}
+}
+
+// TestCreateFileWithQuotaCheck_IgnoresExpiredFiles tests that expired files don't count toward quota
+func TestCreateFileWithQuotaCheck_IgnoresExpiredFiles(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create expired file (should not count toward quota)
+	expiredFile := &models.File{
+		ClaimCode:        "EXPIRED_QUOTA",
+		OriginalFilename: "expired.txt",
+		StoredFilename:   "stored-expired.txt",
+		FileSize:         5000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, expiredFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Create new file (should succeed because expired file doesn't count)
+	newFile := &models.File{
+		ClaimCode:        "NEW_QUOTA",
+		OriginalFilename: "new.txt",
+		StoredFilename:   "stored-new.txt",
+		FileSize:         900,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	quotaLimit := int64(1000) // 1000 bytes limit
+	err = CreateFileWithQuotaCheck(db, newFile, quotaLimit)
+	if err != nil {
+		t.Fatalf("CreateFileWithQuotaCheck() should succeed (expired file shouldn't count): %v", err)
+	}
+
+	// Verify file was created
+	retrieved, err := GetFileByClaimCode(db, "NEW_QUOTA")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("File should be created (expired files don't count toward quota)")
+	}
+}
+
+// TestCreateFileWithQuotaCheck_ExactlyAtLimit tests file creation exactly at quota limit
+func TestCreateFileWithQuotaCheck_ExactlyAtLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create file exactly at limit (should succeed)
+	file := &models.File{
+		ClaimCode:        "AT_LIMIT",
+		OriginalFilename: "exact.txt",
+		StoredFilename:   "stored-exact.txt",
+		FileSize:         1000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	quotaLimit := int64(1000)
+	err := CreateFileWithQuotaCheck(db, file, quotaLimit)
+	if err != nil {
+		t.Fatalf("CreateFileWithQuotaCheck() should succeed at exact limit: %v", err)
+	}
+
+	// Verify file was created
+	retrieved, err := GetFileByClaimCode(db, "AT_LIMIT")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("File should be created when exactly at quota limit")
+	}
+}
+
+// TestTryIncrementDownloadWithLimit_Success tests successful download increment
+func TestTryIncrementDownloadWithLimit_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	maxDownloads := 5
+	file := &models.File{
+		ClaimCode:        "DOWNLOAD_LIMIT1",
+		OriginalFilename: "limited.txt",
+		StoredFilename:   "stored-limited.txt",
+		FileSize:         1000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     &maxDownloads,
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Try to increment (should succeed - 0 < 5)
+	success, err := TryIncrementDownloadWithLimit(db, file.ID, "DOWNLOAD_LIMIT1")
+	if err != nil {
+		t.Fatalf("TryIncrementDownloadWithLimit() error: %v", err)
+	}
+
+	if !success {
+		t.Error("TryIncrementDownloadWithLimit() should succeed when under limit")
+	}
+
+	// Verify download count incremented
+	retrieved, err := GetFileByClaimCode(db, "DOWNLOAD_LIMIT1")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved.DownloadCount != 1 {
+		t.Errorf("DownloadCount = %d, want 1", retrieved.DownloadCount)
+	}
+}
+
+// TestTryIncrementDownloadWithLimit_ReachesLimit tests hitting download limit
+func TestTryIncrementDownloadWithLimit_ReachesLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	maxDownloads := 3
+	file := &models.File{
+		ClaimCode:        "LIMIT_TEST",
+		OriginalFilename: "test.txt",
+		StoredFilename:   "stored-test.txt",
+		FileSize:         500,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     &maxDownloads,
+		DownloadCount:    2, // Already at 2 downloads
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Manually set download_count to 2 (CreateFile doesn't set it)
+	_, err = db.Exec("UPDATE files SET download_count = 2 WHERE id = ?", file.ID)
+	if err != nil {
+		t.Fatalf("Failed to set download_count: %v", err)
+	}
+
+	// First increment (2 -> 3, should succeed)
+	success, err := TryIncrementDownloadWithLimit(db, file.ID, "LIMIT_TEST")
+	if err != nil {
+		t.Fatalf("TryIncrementDownloadWithLimit() error: %v", err)
+	}
+
+	if !success {
+		t.Error("TryIncrementDownloadWithLimit() should succeed for last allowed download")
+	}
+
+	// Verify count is now 3
+	retrieved, err := GetFileByClaimCode(db, "LIMIT_TEST")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved.DownloadCount != 3 {
+		t.Errorf("DownloadCount = %d, want 3", retrieved.DownloadCount)
+	}
+
+	// Try to increment again (3 >= 3, should fail)
+	success, err = TryIncrementDownloadWithLimit(db, file.ID, "LIMIT_TEST")
+	if err != nil {
+		t.Fatalf("TryIncrementDownloadWithLimit() error: %v", err)
+	}
+
+	if success {
+		t.Error("TryIncrementDownloadWithLimit() should fail when limit reached")
+	}
+
+	// Verify count stayed at 3
+	retrieved, err = GetFileByClaimCode(db, "LIMIT_TEST")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved.DownloadCount != 3 {
+		t.Errorf("DownloadCount = %d, want 3 (should not increment past limit)", retrieved.DownloadCount)
+	}
+}
+
+// TestTryIncrementDownloadWithLimit_NoLimit tests files without download limit
+func TestTryIncrementDownloadWithLimit_NoLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	// File with no download limit (MaxDownloads = nil)
+	file := &models.File{
+		ClaimCode:        "UNLIMITED",
+		OriginalFilename: "unlimited.txt",
+		StoredFilename:   "stored-unlimited.txt",
+		FileSize:         500,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     nil, // No limit
+		DownloadCount:    100, // Already downloaded 100 times
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Manually set download_count to 100 (CreateFile doesn't set it)
+	_, err = db.Exec("UPDATE files SET download_count = 100 WHERE id = ?", file.ID)
+	if err != nil {
+		t.Fatalf("Failed to set download_count: %v", err)
+	}
+
+	// Should always succeed when no limit
+	success, err := TryIncrementDownloadWithLimit(db, file.ID, "UNLIMITED")
+	if err != nil {
+		t.Fatalf("TryIncrementDownloadWithLimit() error: %v", err)
+	}
+
+	if !success {
+		t.Error("TryIncrementDownloadWithLimit() should always succeed when no limit set")
+	}
+
+	// Verify count incremented
+	retrieved, err := GetFileByClaimCode(db, "UNLIMITED")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved.DownloadCount != 101 {
+		t.Errorf("DownloadCount = %d, want 101", retrieved.DownloadCount)
+	}
+}
+
+// TestTryIncrementDownloadWithLimit_WrongClaimCode tests claim code validation
+func TestTryIncrementDownloadWithLimit_WrongClaimCode(t *testing.T) {
+	db := setupTestDB(t)
+
+	maxDownloads := 5
+	file := &models.File{
+		ClaimCode:        "CORRECT_CODE",
+		OriginalFilename: "secure.txt",
+		StoredFilename:   "stored-secure.txt",
+		FileSize:         500,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     &maxDownloads,
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Try with wrong claim code (should return error)
+	success, err := TryIncrementDownloadWithLimit(db, file.ID, "WRONG_CODE")
+	if err == nil {
+		t.Fatal("TryIncrementDownloadWithLimit() should return error with wrong claim code")
+	}
+
+	if success {
+		t.Error("TryIncrementDownloadWithLimit() should return success=false with wrong claim code")
+	}
+
+	if !strings.Contains(err.Error(), "claim code changed") {
+		t.Errorf("Expected 'claim code changed' error, got: %v", err)
+	}
+
+	// Verify count NOT incremented
+	retrieved, err := GetFileByClaimCode(db, "CORRECT_CODE")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if retrieved.DownloadCount != 0 {
+		t.Errorf("DownloadCount = %d, want 0 (should not increment with wrong code)", retrieved.DownloadCount)
+	}
+}
+
+// TestTryIncrementDownloadWithLimit_NonExistentFile tests with non-existent file ID
+func TestTryIncrementDownloadWithLimit_NonExistentFile(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Try with non-existent file ID (should return error)
+	success, err := TryIncrementDownloadWithLimit(db, 99999, "NONEXISTENT")
+	if err == nil {
+		t.Fatal("TryIncrementDownloadWithLimit() should return error for non-existent file")
+	}
+
+	if success {
+		t.Error("TryIncrementDownloadWithLimit() should return success=false for non-existent file")
+	}
+
+	if !strings.Contains(err.Error(), "claim code changed") {
+		t.Errorf("Expected 'claim code changed' error, got: %v", err)
 	}
 }

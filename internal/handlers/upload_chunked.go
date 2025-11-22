@@ -160,34 +160,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check quota if configured (0 = unlimited)
-		if quotaConfigured {
-			// Get current usage (includes both completed files and partial uploads)
-			currentUsage, err := database.GetTotalUsage(db)
-			if err != nil {
-				slog.Error("failed to get storage usage", "error", err)
-				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-
-			if currentUsage+req.TotalSize > quotaBytes {
-				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
-				slog.Warn("quota exceeded for chunked upload init",
-					"file_size", req.TotalSize,
-					"current_usage_gb", quotaUsedGB,
-					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", getClientIP(r),
-				)
-				sendSmartError(w,
-					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
-					"QUOTA_EXCEEDED",
-					http.StatusInsufficientStorage,
-				)
-				return
-			}
-		}
+		// Note: Quota check moved to transactional CreatePartialUploadWithQuotaCheck() to prevent race conditions
 
 		// Hash password if provided
 		var passwordHash string
@@ -229,10 +202,30 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ClaimCode:      nil,
 		}
 
-		if err := database.CreatePartialUpload(db, partialUpload); err != nil {
-			slog.Error("failed to create partial upload", "error", err)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Use transactional quota check to prevent race conditions (P0 fix)
+		if quotaConfigured {
+			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+			if err := database.CreatePartialUploadWithQuotaCheck(db, partialUpload, quotaBytes); err != nil {
+				if strings.Contains(err.Error(), "quota exceeded") {
+					slog.Warn("quota exceeded for chunked upload (transactional check)",
+						"file_size", req.TotalSize,
+						"quota_limit_gb", cfg.GetQuotaLimitGB(),
+						"client_ip", getClientIP(r),
+					)
+					sendSmartError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+					return
+				}
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// No quota configured - use regular CreatePartialUpload
+			if err := database.CreatePartialUpload(db, partialUpload); err != nil {
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Calculate expiration time
