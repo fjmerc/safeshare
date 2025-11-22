@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1012,12 +1013,12 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Verify current password
-		if currentPassword != cfg.GetAdminPassword() {
+		// Verify current password using constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(currentPassword), []byte(cfg.GetAdminPassword())) != 1 {
 			slog.Warn("admin password change failed - incorrect current password",
 				"admin_ip", getClientIP(r),
 			)
-			time.Sleep(500 * time.Millisecond) // Prevent timing attacks
+			time.Sleep(500 * time.Millisecond) // Additional defense against timing attacks
 			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
 			return
 		}

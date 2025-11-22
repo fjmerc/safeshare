@@ -362,6 +362,25 @@ func DeleteUserSession(db *sql.DB, token string) error {
 	return nil
 }
 
+// DeleteUserSessionsByUserID deletes all sessions for a specific user
+// Used when password is changed/reset to invalidate all existing sessions
+func DeleteUserSessionsByUserID(db *sql.DB, userID int64) error {
+	query := `DELETE FROM user_sessions WHERE user_id = ?`
+
+	result, err := db.Exec(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user sessions: %w", err)
+	}
+
+	// Log how many sessions were deleted
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected > 0 {
+		// Sessions were deleted (this is expected behavior)
+	}
+
+	return nil
+}
+
 // CleanupExpiredUserSessions removes expired user sessions
 func CleanupExpiredUserSessions(db *sql.DB) error {
 	query := `DELETE FROM user_sessions WHERE expires_at < CURRENT_TIMESTAMP`

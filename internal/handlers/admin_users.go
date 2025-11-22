@@ -437,6 +437,15 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Invalidate all existing sessions for this user (security best practice)
+		if err := database.DeleteUserSessionsByUserID(db, userID); err != nil {
+			slog.Error("failed to delete user sessions after password reset",
+				"error", err,
+				"user_id", userID,
+			)
+			// Don't fail the request - password was updated, just log the error
+		}
+
 		slog.Info("admin reset user password",
 			"admin_ip", getClientIP(r),
 			"user_id", userID,
