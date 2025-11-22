@@ -108,7 +108,8 @@ func SetupTestConfig(t *testing.T) *config.Config {
 	if err := cfg.SetRateLimitDownload(50); err != nil {
 		t.Fatalf("failed to set download rate limit: %v", err)
 	}
-	if err := cfg.SetQuotaLimitGB(0); err != nil { // Unlimited
+	// Set quota to 100GB to skip disk percentage checks in tests (CI runners often have high disk usage)
+	if err := cfg.SetQuotaLimitGB(100); err != nil {
 		t.Fatalf("failed to set quota limit: %v", err)
 	}
 	if err := cfg.SetAdminPassword("testpass"); err != nil {

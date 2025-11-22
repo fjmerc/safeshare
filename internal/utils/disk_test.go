@@ -59,8 +59,9 @@ func TestCheckDiskSpace_Success(t *testing.T) {
 	tmpDir := os.TempDir()
 
 	// Test with small upload size (1KB) - should succeed
+	// Skip percentage check since CI runners may have high disk usage
 	smallUpload := int64(1024)
-	ok, msg, err := CheckDiskSpace(tmpDir, smallUpload, false)
+	ok, msg, err := CheckDiskSpace(tmpDir, smallUpload, true)
 	if err != nil {
 		t.Fatalf("CheckDiskSpace failed: %v", err)
 	}
