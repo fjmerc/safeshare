@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- **Resource Management Improvements**: Enhanced memory and concurrency controls to prevent resource exhaustion
+  - Database connection pool: Configured limits (max 25 connections, 5 idle, 5min lifetime) to prevent unlimited connections
+  - JSON endpoint protection: Added 1MB request body limit to all JSON endpoints to prevent memory exhaustion attacks
+  - Assembly worker concurrency: Limited to 10 concurrent file assemblies (200MB max) to prevent memory exhaustion during batch uploads
+  - Prevents denial-of-service via unbounded goroutine spawning and memory allocation
+  - Improves stability under heavy load and prevents server crashes
+
 ### Fixed
 - **Chunked Upload State Machine**: Fixed 5 race conditions and error handling issues in chunked upload system
   - Fixed cleanup race: `last_activity` now updates on every chunk upload, preventing cleanup worker from deleting active uploads (HIGH)

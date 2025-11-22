@@ -36,6 +36,9 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				Username string `json:"username"`
 				Password string `json:"password"`
 			}
+			// Limit JSON request body size to prevent memory exhaustion
+			r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 			if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
 				slog.Error("failed to parse JSON login request", "error", err)
 				w.Header().Set("Content-Type", "application/json")

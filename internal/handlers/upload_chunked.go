@@ -22,6 +22,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// assemblySemaphore limits concurrent assembly workers to prevent memory exhaustion
+// Each assembly uses a 20MB buffer, so 10 concurrent = 200MB max
+var assemblySemaphore = make(chan struct{}, 10)
+
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
 func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +40,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			sendError(w, "Chunked uploads are disabled", "FEATURE_DISABLED", http.StatusServiceUnavailable)
 			return
 		}
+
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse JSON request body
 		var req models.UploadInitRequest
@@ -723,10 +730,16 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get client IP for logging
 		clientIP := getClientIP(r)
 
-		// Spawn goroutine to assemble file asynchronously
+		// Spawn goroutine to assemble file asynchronously with concurrency limit
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
-		go AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		go func() {
+			// Acquire semaphore slot (blocks if 10 assemblies already running)
+			assemblySemaphore <- struct{}{}
+			defer func() { <-assemblySemaphore }() // Release slot when done
+
+			AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		}()
 
 		// Record metrics
 		metrics.ChunkedUploadsCompletedTotal.Inc()

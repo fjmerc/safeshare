@@ -24,6 +24,9 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 
 		// Parse request
 		var req models.CreateUserRequest
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to parse create user request", "error", err)
 			w.Header().Set("Content-Type", "application/json")
@@ -208,6 +211,9 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
+// Limit JSON request body size to prevent memory exhaustion
+r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 
 		// Parse request
 		var req models.UpdateUserRequest

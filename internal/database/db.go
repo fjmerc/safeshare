@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -138,6 +139,12 @@ func Initialize(dbPath string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
+
+	// Configure connection pool to prevent resource exhaustion
+	// SQLite with WAL mode benefits from connection pool limits
+	db.SetMaxOpenConns(25)              // Maximum 25 concurrent connections
+	db.SetMaxIdleConns(5)               // Keep 5 idle connections for reuse
+	db.SetConnMaxLifetime(5 * time.Minute) // Recycle connections every 5 minutes
 
 	// Enable foreign keys and WAL mode for better concurrency
 	pragmas := []string{

@@ -118,6 +118,9 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		var req struct {
 			FileID int64 `json:"file_id"`
 		}
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -209,6 +212,9 @@ func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get user from context
 		user := r.Context().Value("user").(*models.User)
 
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		// Parse request
 		var req struct {
 			FileID      int64  `json:"file_id"`
@@ -295,6 +301,9 @@ func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		// Get user from context
 		user := r.Context().Value("user").(*models.User)
+
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse request
 		var req struct {
@@ -409,6 +418,9 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 
 		// Get user from context
 		user := r.Context().Value("user").(*models.User)
+
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse request
 		var req struct {
