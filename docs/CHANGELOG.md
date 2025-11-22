@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1] - 2025-11-22
+
 ### Fixed
 - **Pickup Tab Download Failures**: Fixed downloads failing at ~60% when initiated through Pickup tab
   - Root cause: Service Worker was intercepting cross-origin fetch() requests from ResumableDownloader
@@ -865,7 +867,8 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/fjmerc/safeshare/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/fjmerc/safeshare/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/fjmerc/safeshare/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
