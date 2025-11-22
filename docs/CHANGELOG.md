@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2] - 2025-11-22
+
+### Fixed
+- **Chunked Upload UI Display**: Fixed missing download count information in chunked upload results
+  - Backend: Added `file_size`, `max_downloads`, and `completed_downloads` fields to `UploadStatusResponse`
+  - Frontend: Updated `chunked-uploader.js` to use server response values instead of client-side cached values
+  - Fixes "undefined / Unlimited" display issue in Downloads field after chunked upload completion
+  - Now correctly shows "0 / Unlimited" or "0 / 5" matching simple upload behavior
+- **Chunked Upload Rate Limiting**: Removed duplicate rate limiting on `/api/upload/complete/*` endpoint
+  - Complete endpoint is now exempt from rate limiting (already covered by init endpoint)
+  - Prevents false 429 errors when completing chunked uploads
+  - Improves reliability of large file uploads
+
+### Performance
+- **Resource Management Improvements**: Enhanced memory and concurrency controls to prevent resource exhaustion
+  - Database connection pool: Configured limits (max 25 connections, 5 idle, 5min lifetime) to prevent unlimited connections
+  - JSON endpoint protection: Added 1MB request body limit to all JSON endpoints to prevent memory exhaustion attacks
+  - Assembly worker concurrency: Limited to 10 concurrent file assemblies (200MB max) to prevent memory exhaustion during batch uploads
+  - Prevents denial-of-service via unbounded goroutine spawning and memory allocation
+  - Improves stability under heavy load and prevents server crashes
+
+### Fixed
+- **Chunked Upload State Machine**: Fixed 5 race conditions and error handling issues in chunked upload system
+  - Fixed cleanup race: `last_activity` now updates on every chunk upload, preventing cleanup worker from deleting active uploads (HIGH)
+  - Fixed stuck processing uploads: Cleanup worker now removes uploads stuck in "processing" status for >2 hours (MEDIUM)
+  - Fixed missing assembly timeout: Maximum assembly time now enforced via cleanup worker (MEDIUM)
+  - Fixed silent errors: `GetChunkCount()` errors are now properly logged and handled with safe fallbacks (LOW)
+  - Fixed checksum verification errors: Read failures in idempotent chunk uploads are now logged instead of silently ignored (LOW)
+  - Updated `GetAbandonedPartialUploads()` query to include stuck processing uploads with 2-hour timeout
+  - Added error handling for chunk count failures in upload status responses
+  - Prevents resource leaks and improves reliability of large file uploads
+
+### Security
+- **Input Validation & Injection Prevention**: Fixed 4 input validation vulnerabilities identified by security audit
+  - Fixed SQL LIKE wildcard injection in admin search allowing DoS via inefficient queries (P1)
+  - Fixed integer overflow in chunked upload allowing bypass of 10,000 chunk limit on 32-bit systems (P1)
+  - Fixed integer underflow in last chunk size calculation allowing file corruption and crashes (P1)
+  - Fixed missing pagination upper limit allowing integer overflow and full table scans (P2)
+  - Added `escapeLikePattern()` function to escape SQL LIKE wildcards (% and _)
+  - Added overflow validation in chunk calculations before int64→int conversion
+  - Added underflow validation for last chunk size to detect database corruption
+  - Added pagination caps (max page: 1,000,000) to prevent DoS attacks
+- **Session Invalidation on Password Change**: All user sessions are now invalidated when a password is changed or reset
+  - Prevents stolen session tokens from being used after password changes (OWASP best practice)
+  - Added `DeleteUserSessionsByUserID()` function to invalidate all sessions for a user
+  - Applied to both admin password reset and user password change flows
+  - Fixes critical security vulnerability where attackers could continue using stolen sessions for up to 24 hours
+- **Constant-Time Token Comparison**: Implemented constant-time comparison for security tokens to prevent timing attacks
+  - CSRF tokens now use `crypto/subtle.ConstantTimeCompare()` instead of string equality
+  - Admin password verification now uses constant-time comparison
+  - Prevents timing side-channel attacks that could leak token/password information character-by-character
+
 ## [2.8.1] - 2025-11-22
 
 ### Fixed

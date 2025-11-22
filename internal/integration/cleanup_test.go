@@ -25,14 +25,14 @@ func TestCleanupExpiredFiles(t *testing.T) {
 		claimCode, _ := utils.GenerateClaimCode()
 		storedFilename := "expired_" + claimCode + ".dat"
 
-		// Create database record (expired)
+		// Create database record (expired 2 hours ago to account for 1-hour grace period)
 		database.CreateFile(db, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   storedFilename,
 			OriginalFilename: "file.txt",
 			FileSize:         1024,
 			MimeType:         "text/plain",
-			ExpiresAt:        time.Now().Add(-1 * time.Hour),
+			ExpiresAt:        time.Now().Add(-2 * time.Hour),
 			UploaderIP:       "127.0.0.1",
 		})
 
@@ -310,7 +310,7 @@ func TestCleanupMissingPhysicalFiles(t *testing.T) {
 		OriginalFilename: "missing.txt",
 		FileSize:         1024,
 		MimeType:         "text/plain",
-		ExpiresAt:        time.Now().Add(-1 * time.Hour), // Expired
+		ExpiresAt:        time.Now().Add(-2 * time.Hour), // Expired 2 hours ago for 1-hour grace period
 		UploaderIP:       "127.0.0.1",
 	})
 

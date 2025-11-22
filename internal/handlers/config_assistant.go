@@ -74,6 +74,9 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 
 		// Parse request
 		var req ConfigAssistantRequest
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to parse config assistant request", "error", err)
 			w.Header().Set("Content-Type", "application/json")

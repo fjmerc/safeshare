@@ -22,6 +22,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// assemblySemaphore limits concurrent assembly workers to prevent memory exhaustion
+// Each assembly uses a 20MB buffer, so 10 concurrent = 200MB max
+var assemblySemaphore = make(chan struct{}, 10)
+
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
 func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +40,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			sendError(w, "Chunked uploads are disabled", "FEATURE_DISABLED", http.StatusServiceUnavailable)
 			return
 		}
+
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse JSON request body
 		var req models.UploadInitRequest
@@ -95,20 +102,15 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Falls back to configured chunk size if dynamic sizing is disabled
 		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
 
-		// Calculate total chunks using optimal chunk size
-		totalChunks := int(req.TotalSize / chunkSize)
+		// Calculate total chunks using optimal chunk size (P1 security fix: prevent integer overflow)
+		// Use int64 for calculation to prevent overflow on 32-bit systems
+		totalChunks64 := req.TotalSize / chunkSize
 		if req.TotalSize%chunkSize != 0 {
-			totalChunks++
+			totalChunks64++
 		}
 
-		slog.Debug("calculated chunk parameters",
-			"file_size", req.TotalSize,
-			"chunk_size", chunkSize,
-			"total_chunks", totalChunks,
-		)
-
-		// Validate total chunks (prevent DoS with too many small chunks)
-		if totalChunks > 10000 {
+		// Validate total chunks BEFORE converting to int (prevent overflow bypass)
+		if totalChunks64 > 10000 {
 			sendSmartError(w,
 				"File requires too many chunks (maximum 10,000). Try increasing chunk size.",
 				"TOO_MANY_CHUNKS",
@@ -116,6 +118,15 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			)
 			return
 		}
+
+		// Safe to convert to int after validation
+		totalChunks := int(totalChunks64)
+
+		slog.Debug("calculated chunk parameters",
+			"file_size", req.TotalSize,
+			"chunk_size", chunkSize,
+			"total_chunks", totalChunks,
+		)
 
 		// Validate expiration hours
 		// Special case: 0 means "never expire", negative values use default
@@ -156,34 +167,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check quota if configured (0 = unlimited)
-		if quotaConfigured {
-			// Get current usage (includes both completed files and partial uploads)
-			currentUsage, err := database.GetTotalUsage(db)
-			if err != nil {
-				slog.Error("failed to get storage usage", "error", err)
-				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-
-			if currentUsage+req.TotalSize > quotaBytes {
-				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
-				slog.Warn("quota exceeded for chunked upload init",
-					"file_size", req.TotalSize,
-					"current_usage_gb", quotaUsedGB,
-					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", getClientIP(r),
-				)
-				sendSmartError(w,
-					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
-					"QUOTA_EXCEEDED",
-					http.StatusInsufficientStorage,
-				)
-				return
-			}
-		}
+		// Note: Quota check moved to transactional CreatePartialUploadWithQuotaCheck() to prevent race conditions
 
 		// Hash password if provided
 		var passwordHash string
@@ -225,10 +209,30 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ClaimCode:      nil,
 		}
 
-		if err := database.CreatePartialUpload(db, partialUpload); err != nil {
-			slog.Error("failed to create partial upload", "error", err)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Use transactional quota check to prevent race conditions (P0 fix)
+		if quotaConfigured {
+			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+			if err := database.CreatePartialUploadWithQuotaCheck(db, partialUpload, quotaBytes); err != nil {
+				if strings.Contains(err.Error(), "quota exceeded") {
+					slog.Warn("quota exceeded for chunked upload (transactional check)",
+						"file_size", req.TotalSize,
+						"quota_limit_gb", cfg.GetQuotaLimitGB(),
+						"client_ip", getClientIP(r),
+					)
+					sendSmartError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+					return
+				}
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// No quota configured - use regular CreatePartialUpload
+			if err := database.CreatePartialUpload(db, partialUpload); err != nil {
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Calculate expiration time
@@ -390,8 +394,24 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				return
 			}
 		} else {
-			// Last chunk - calculate expected size
+			// Last chunk - calculate expected size (P1 security fix: prevent integer underflow)
 			lastChunkSize := partialUpload.TotalSize - (int64(partialUpload.TotalChunks-1) * expectedChunkSize)
+			// Validate that lastChunkSize is positive (detect database corruption/manipulation)
+			if lastChunkSize <= 0 {
+				slog.Error("invalid last chunk size calculation (possible database corruption)",
+					"upload_id", uploadID,
+					"total_size", partialUpload.TotalSize,
+					"total_chunks", partialUpload.TotalChunks,
+					"expected_chunk_size", expectedChunkSize,
+					"calculated_last_chunk_size", lastChunkSize,
+				)
+				sendSmartError(w,
+					"Invalid upload metadata - possible corruption",
+					"INVALID_METADATA",
+					http.StatusInternalServerError,
+				)
+				return
+			}
 			if chunkSize != lastChunkSize {
 				sendSmartError(w,
 					fmt.Sprintf("Last chunk size mismatch: expected %d, got %d", lastChunkSize, chunkSize),
@@ -411,6 +431,14 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				if err == nil {
 					hash := sha256.Sum256(existingData)
 					existingChecksum = hex.EncodeToString(hash[:])
+				} else {
+					// If we can't read the chunk for checksum, log warning but continue
+					slog.Warn("failed to read existing chunk for checksum verification",
+						"error", err,
+						"upload_id", uploadID,
+						"chunk_number", chunkNumber,
+					)
+					existingChecksum = "" // Empty checksum indicates verification skipped
 				}
 
 				// Chunk already exists with same size - treat as success (idempotent)
@@ -427,7 +455,11 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				}
 
 				// Count actual chunks from disk instead of relying on DB counter
-				chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+				chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
+				if err != nil {
+					slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
+					chunksReceived = 0
+				}
 
 				// Return success response
 				response := models.UploadChunkResponse{
@@ -482,13 +514,24 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Update last_activity to prevent cleanup worker from removing active uploads
+		if err := database.UpdatePartialUploadActivity(db, uploadID); err != nil {
+			slog.Error("failed to update partial upload activity", "error", err)
+			// Non-fatal error - continue processing
+		}
+
 		// NOTE: We no longer increment chunks_received in the database on every chunk upload.
 		// This caused severe database lock contention (31-35% SQLITE_BUSY errors with concurrency=3).
 		// Instead, chunk count is calculated on-demand from disk when status is requested.
 		// This eliminates all database writes during upload, allowing higher concurrency.
 
 		// Count actual chunks from disk instead of relying on DB counter
-		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		if err != nil {
+			slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
+			// Use 0 as fallback if we can't count chunks
+			chunksReceived = 0
+		}
 
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,
@@ -687,10 +730,16 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get client IP for logging
 		clientIP := getClientIP(r)
 
-		// Spawn goroutine to assemble file asynchronously
+		// Spawn goroutine to assemble file asynchronously with concurrency limit
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
-		go AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		go func() {
+			// Acquire semaphore slot (blocks if 10 assemblies already running)
+			assemblySemaphore <- struct{}{}
+			defer func() { <-assemblySemaphore }() // Release slot when done
+
+			AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		}()
 
 		// Record metrics
 		metrics.ChunkedUploadsCompletedTotal.Inc()
@@ -781,17 +830,20 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Build response
 		response := models.UploadStatusResponse{
-			UploadID:       uploadID,
-			Filename:       partialUpload.Filename,
-			ChunksReceived: chunksReceived,
-			TotalChunks:    partialUpload.TotalChunks,
-			MissingChunks:  missingChunks,
-			Complete:       partialUpload.Completed,
-			ExpiresAt:      expiresAt,
-			ClaimCode:      partialUpload.ClaimCode,
-			Status:         partialUpload.Status,
-			ErrorMessage:   partialUpload.ErrorMessage,
-			DownloadURL:    downloadURL,
+			UploadID:           uploadID,
+			Filename:           partialUpload.Filename,
+			ChunksReceived:     chunksReceived,
+			TotalChunks:        partialUpload.TotalChunks,
+			MissingChunks:      missingChunks,
+			Complete:           partialUpload.Completed,
+			ExpiresAt:          expiresAt,
+			ClaimCode:          partialUpload.ClaimCode,
+			Status:             partialUpload.Status,
+			ErrorMessage:       partialUpload.ErrorMessage,
+			DownloadURL:        downloadURL,
+			FileSize:           partialUpload.TotalSize,
+			MaxDownloads:       partialUpload.MaxDownloads,
+			CompletedDownloads: 0, // TODO: Get actual download count from files table once completed
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -78,6 +78,84 @@ func CreateFile(db *sql.DB, file *models.File) error {
 	return nil
 }
 
+// CreateFileWithQuotaCheck atomically checks quota and inserts file record in a transaction.
+// This prevents race conditions where multiple uploads could exceed quota limits.
+// Returns error if quota would be exceeded.
+func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int64) error {
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
+	// IMMEDIATE acquires RESERVED lock, blocking other writers but allowing readers
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			slog.Warn("failed to rollback transaction", "error", err)
+		}
+	}()
+
+	// Check quota within transaction (atomic with insert)
+	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
+	// This prevents quota leakage when uploads fail partway through
+	var currentUsage int64
+	query := `
+		SELECT
+			COALESCE(SUM(file_size), 0) +
+			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
+		FROM files
+		WHERE expires_at > datetime('now')
+	`
+	if err := tx.QueryRow(query).Scan(&currentUsage); err != nil {
+		return fmt.Errorf("failed to get current usage: %w", err)
+	}
+
+	// Check if adding this file would exceed quota
+	if currentUsage+file.FileSize > quotaLimitBytes {
+		return fmt.Errorf("quota exceeded: current usage %d bytes + file size %d bytes > limit %d bytes",
+			currentUsage, file.FileSize, quotaLimitBytes)
+	}
+
+	// Insert file record (still within transaction)
+	insertQuery := `
+		INSERT INTO files (
+			claim_code, original_filename, stored_filename, file_size,
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := tx.Exec(
+		insertQuery,
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		file.ExpiresAt,
+		file.MaxDownloads,
+		file.UploaderIP,
+		file.PasswordHash,
+		file.UserID,
+		file.SHA256Hash,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert file: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	file.ID = id
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // GetFileByClaimCode retrieves a file record by its claim code
 // Returns nil if not found or expired
 func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
@@ -197,6 +275,59 @@ func IncrementDownloadCountIfUnchanged(db *sql.DB, id int64, expectedClaimCode s
 	return nil
 }
 
+// TryIncrementDownloadWithLimit atomically increments download count only if under the limit.
+// This prevents race conditions where multiple downloads could exceed max_downloads.
+// Returns true if increment succeeded, false if limit reached.
+func TryIncrementDownloadWithLimit(db *sql.DB, id int64, expectedClaimCode string) (bool, error) {
+	// Atomic compare-and-increment: only increment if download_count < max_downloads
+	// This prevents the TOCTOU race condition in download limit checks
+	query := `
+		UPDATE files
+		SET download_count = download_count + 1
+		WHERE id = ?
+		  AND claim_code = ?
+		  AND (max_downloads IS NULL OR download_count < max_downloads)
+	`
+
+	result, err := db.Exec(query, id, expectedClaimCode)
+	if err != nil {
+		return false, fmt.Errorf("failed to increment download count: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// rows == 0 means either claim code changed OR limit reached
+	if rows == 0 {
+		// Check which case it is
+		var currentCount, maxDownloads int
+		var maxDownloadsNull sql.NullInt64
+		checkQuery := `SELECT download_count, max_downloads FROM files WHERE id = ? AND claim_code = ?`
+		err := db.QueryRow(checkQuery, id, expectedClaimCode).Scan(&currentCount, &maxDownloadsNull)
+		if err == sql.ErrNoRows {
+			return false, fmt.Errorf("claim code changed during download")
+		}
+		if err != nil {
+			return false, fmt.Errorf("failed to check download limit: %w", err)
+		}
+
+		// If we got here, claim code is valid but limit was reached
+		if maxDownloadsNull.Valid {
+			maxDownloads = int(maxDownloadsNull.Int64)
+			if currentCount >= maxDownloads {
+				return false, nil // Limit reached
+			}
+		}
+
+		// Shouldn't reach here, but treat as limit reached to be safe
+		return false, nil
+	}
+
+	return true, nil // Success
+}
+
 // IncrementCompletedDownloads atomically increments the completed downloads counter for a file.
 // This should only be called when a full file download (HTTP 200 OK) completes successfully.
 // Do NOT call this for partial/range downloads (HTTP 206 Partial Content).
@@ -223,11 +354,12 @@ func IncrementCompletedDownloads(db *sql.DB, id int64) error {
 // DeleteExpiredFiles removes expired files from both database and filesystem
 // Returns the count of deleted files
 func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
-	// Find expired files
+	// Find expired files with 1-hour grace period to prevent deletion during active downloads
+	// Files must be expired for at least 1 hour before cleanup
 	query := `
 		SELECT id, stored_filename
 		FROM files
-		WHERE expires_at <= datetime('now')
+		WHERE expires_at <= datetime('now', '-1 hour')
 	`
 
 	rows, err := db.Query(query)
@@ -317,11 +449,24 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	return deletedCount, nil
 }
 
-// batchDeleteFiles deletes multiple file records using batch DELETE operations
+// batchDeleteFiles deletes multiple file records using batch DELETE operations within a transaction
 // Chunks large batches to stay within SQLite parameter limits (max 999 params, using 500 for safety)
+// Uses transaction to ensure atomic cleanup (all-or-nothing)
 func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 	const batchSize = 500
 	deletedCount := 0
+
+	// Begin transaction for atomic batch delete
+	tx, err := db.Begin()
+	if err != nil {
+		slog.Error("failed to begin transaction for batch delete", "error", err)
+		return 0
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			slog.Warn("failed to rollback transaction", "error", err)
+		}
+	}()
 
 	// Process in chunks to avoid SQLite parameter limit
 	for i := 0; i < len(fileIDs); i += batchSize {
@@ -342,15 +487,15 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 			args[j] = id
 		}
 
-		// Execute batch DELETE
-		result, err := db.Exec(deleteQuery, args...)
+		// Execute batch DELETE within transaction
+		result, err := tx.Exec(deleteQuery, args...)
 		if err != nil {
 			slog.Error("failed to batch delete file records",
 				"batch_size", len(batch),
 				"error", err,
 			)
-			// Don't stop processing other batches, continue
-			continue
+			// Rollback and return on error (atomic operation)
+			return 0
 		}
 
 		affected, err := result.RowsAffected()
@@ -367,16 +512,23 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 		)
 	}
 
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		slog.Error("failed to commit batch delete transaction", "error", err)
+		return 0
+	}
+
 	return deletedCount
 }
 
 // GetTotalUsage returns the total storage used by all active files AND partial uploads in bytes
 // This includes both completed files and incomplete chunked uploads for accurate quota tracking
+// Note: Uses total_size for partial uploads (not received_bytes) since quota is reserved upfront
 func GetTotalUsage(db *sql.DB) (int64, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE expires_at > datetime('now')
 	`
@@ -405,4 +557,70 @@ func GetStats(db *sql.DB, uploadDir string) (totalFiles int, storageUsed int64, 
 	}
 
 	return totalFiles, storageUsed, nil
+}
+
+// GetAllFiles returns all files in the database (including expired files)
+// This is primarily used for administrative tools like the encryption migration utility
+func GetAllFiles(db *sql.DB) ([]*models.File, error) {
+	query := `
+		SELECT
+			id, claim_code, original_filename, stored_filename, file_size,
+			mime_type, created_at, expires_at, max_downloads,
+			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash
+		FROM files
+		ORDER BY created_at DESC
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all files: %w", err)
+	}
+	defer rows.Close()
+
+	var files []*models.File
+	for rows.Next() {
+		file := &models.File{}
+		var passwordHash sql.NullString
+		var userID sql.NullInt64
+		var sha256Hash sql.NullString
+
+		err := rows.Scan(
+			&file.ID,
+			&file.ClaimCode,
+			&file.OriginalFilename,
+			&file.StoredFilename,
+			&file.FileSize,
+			&file.MimeType,
+			&file.CreatedAt,
+			&file.ExpiresAt,
+			&file.MaxDownloads,
+			&file.CompletedDownloads,
+			&file.UploaderIP,
+			&passwordHash,
+			&userID,
+			&sha256Hash,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan file row: %w", err)
+		}
+
+		if passwordHash.Valid {
+			file.PasswordHash = passwordHash.String
+		}
+		if userID.Valid {
+			uid := userID.Int64
+			file.UserID = &uid
+		}
+		if sha256Hash.Valid {
+			file.SHA256Hash = sha256Hash.String
+		}
+
+		files = append(files, file)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating file rows: %w", err)
+	}
+
+	return files, nil
 }

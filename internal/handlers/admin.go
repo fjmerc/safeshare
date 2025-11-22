@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,9 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				Username string `json:"username"`
 				Password string `json:"password"`
 			}
+			// Limit JSON request body size to prevent memory exhaustion
+			r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 			if err := json.NewDecoder(r.Body).Decode(&loginReq); err != nil {
 				slog.Error("failed to parse JSON login request", "error", err)
 				w.Header().Set("Content-Type", "application/json")
@@ -289,6 +293,10 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		if page < 1 {
 			page = 1
 		}
+		// P2 security fix: Add upper limit to prevent integer overflow and full table scans
+		if page > 1000000 {
+			page = 1000000
+		}
 
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
 		if pageSize < 1 || pageSize > 100 {
@@ -297,7 +305,13 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		searchTerm := r.URL.Query().Get("search")
 
+		// Calculate offset with validation to prevent overflow
 		offset := (page - 1) * pageSize
+		// Sanity check: if offset is negative (overflow), cap it
+		if offset < 0 {
+			offset = 0
+			page = 1
+		}
 
 		// Get files
 		var files []models.File
@@ -1012,12 +1026,12 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Verify current password
-		if currentPassword != cfg.GetAdminPassword() {
+		// Verify current password using constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(currentPassword), []byte(cfg.GetAdminPassword())) != 1 {
 			slog.Warn("admin password change failed - incorrect current password",
 				"admin_ip", getClientIP(r),
 			)
-			time.Sleep(500 * time.Millisecond) // Prevent timing attacks
+			time.Sleep(500 * time.Millisecond) // Additional defense against timing attacks
 			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
 			return
 		}

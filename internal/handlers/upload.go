@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -95,32 +96,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check quota if configured (0 = unlimited)
-		if quotaConfigured {
-			currentUsage, err := database.GetTotalUsage(db)
-			if err != nil {
-				slog.Error("failed to get current storage usage", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024 // Convert GB to bytes
-			if currentUsage+header.Size > quotaBytes {
-				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
-				slog.Warn("quota exceeded",
-					"file_size", header.Size,
-					"current_usage_gb", quotaUsedGB,
-					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", getClientIP(r),
-				)
-				sendError(w,
-					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
-					"QUOTA_EXCEEDED",
-					http.StatusInsufficientStorage,
-				)
-				return
-			}
-		}
+		// Note: Quota check moved to transactional CreateFileWithQuotaCheck() to prevent race conditions
 
 		// Parse optional parameters
 		expiresInHours := cfg.GetDefaultExpirationHours()
@@ -353,11 +329,32 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			SHA256Hash:       sha256Hash,
 		}
 
-		if err := database.CreateFile(db, fileRecord); err != nil {
-			os.Remove(filePath) // Clean up on error
-			slog.Error("failed to create file record", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Use transactional quota check to prevent race conditions (P0 fix)
+		if quotaConfigured {
+			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+			if err := database.CreateFileWithQuotaCheck(db, fileRecord, quotaBytes); err != nil {
+				os.Remove(filePath) // Clean up on error
+				if strings.Contains(err.Error(), "quota exceeded") {
+					slog.Warn("quota exceeded (transactional check)",
+						"file_size", written,
+						"quota_limit_gb", cfg.GetQuotaLimitGB(),
+						"client_ip", clientIP,
+					)
+					sendError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+					return
+				}
+				slog.Error("failed to create file record", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// No quota configured - use regular CreateFile
+			if err := database.CreateFile(db, fileRecord); err != nil {
+				os.Remove(filePath) // Clean up on error
+				slog.Error("failed to create file record", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Build download URL (respects reverse proxy headers and PUBLIC_URL config)

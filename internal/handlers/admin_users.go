@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -23,6 +24,9 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 
 		// Parse request
 		var req models.CreateUserRequest
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to parse create user request", "error", err)
 			w.Header().Set("Content-Type", "application/json")
@@ -207,6 +211,9 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
+// Limit JSON request body size to prevent memory exhaustion
+r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 
 		// Parse request
 		var req models.UpdateUserRequest
@@ -437,6 +444,15 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Invalidate all existing sessions for this user (security best practice)
+		if err := database.DeleteUserSessionsByUserID(db, userID); err != nil {
+			slog.Error("failed to delete user sessions after password reset",
+				"error", err,
+				"user_id", userID,
+			)
+			// Don't fail the request - password was updated, just log the error
+		}
+
 		slog.Info("admin reset user password",
 			"admin_ip", getClientIP(r),
 			"user_id", userID,
@@ -454,7 +470,7 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminDeleteUserHandler deletes a user account
-func AdminDeleteUserHandler(db *sql.DB) http.HandlerFunc {
+func AdminDeleteUserHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -490,8 +506,8 @@ func AdminDeleteUserHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Delete user from database
-		if err := database.DeleteUser(db, userID); err != nil {
+		// Delete user from database and cleanup physical files (P2 fix)
+		if err := database.DeleteUser(db, userID, cfg.UploadDir); err != nil {
 			slog.Error("failed to delete user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

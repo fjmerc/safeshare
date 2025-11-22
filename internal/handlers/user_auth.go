@@ -24,6 +24,9 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Parse JSON request
 		var req models.UserLoginRequest
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			slog.Error("failed to parse login request", "error", err)
 			w.Header().Set("Content-Type", "application/json")
@@ -203,6 +206,9 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 
 		// Get user from context (set by middleware)
 		user := r.Context().Value("user").(*models.User)
+// Limit JSON request body size to prevent memory exhaustion
+r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+
 
 		// Parse request
 		var req models.ChangePasswordRequest
@@ -274,6 +280,15 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 			slog.Error("failed to update password", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
+		}
+
+		// Invalidate all existing sessions for this user (security best practice)
+		if err := database.DeleteUserSessionsByUserID(db, user.ID); err != nil {
+			slog.Error("failed to delete user sessions after password change",
+				"error", err,
+				"user_id", user.ID,
+			)
+			// Don't fail the request - password was updated, just log the error
 		}
 
 		slog.Info("password changed successfully",

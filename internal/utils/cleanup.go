@@ -144,12 +144,21 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 	}
 
 	// Phase 2: Clean up orphaned chunks (filesystem has chunks but no database record)
+	// Optimized: Fetch all active upload_ids once to avoid N+1 queries
 	partialDir := GetPartialUploadDir(uploadDir)
 	if _, err := os.Stat(partialDir); err == nil {
 		entries, err := os.ReadDir(partialDir)
 		if err != nil {
 			slog.Error("failed to read partial uploads directory for orphan cleanup", "error", err)
 		} else {
+			// Fetch all active upload_ids from database (single query)
+			activeUploads, err := database.GetAllPartialUploadIDs(db)
+			if err != nil {
+				slog.Error("failed to fetch active upload IDs for orphan detection", "error", err)
+				// Fall back to per-upload check if batch query fails
+				activeUploads = nil
+			}
+
 			for _, entry := range entries {
 				if !entry.IsDir() {
 					continue // Skip non-directory entries
@@ -158,13 +167,20 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 				uploadID := entry.Name()
 
 				// Check if this upload_id exists in the database
-				exists, err := database.PartialUploadExists(db, uploadID)
-				if err != nil {
-					slog.Error("failed to check if partial upload exists",
-						"upload_id", uploadID,
-						"error", err,
-					)
-					continue
+				var exists bool
+				if activeUploads != nil {
+					// Use optimized map lookup (O(1))
+					exists = activeUploads[uploadID]
+				} else {
+					// Fallback to individual query if batch query failed
+					exists, err = database.PartialUploadExists(db, uploadID)
+					if err != nil {
+						slog.Error("failed to check if partial upload exists",
+							"upload_id", uploadID,
+							"error", err,
+						)
+						continue
+					}
 				}
 
 				// If upload exists in database, skip it (handled by Phase 1 or still active)

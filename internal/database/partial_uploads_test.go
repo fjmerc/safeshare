@@ -1042,3 +1042,146 @@ func TestTryLockUploadForProcessing_NotFound(t *testing.T) {
 		t.Error("TryLockUploadForProcessing() should return false for non-existent upload")
 	}
 }
+
+// TestCreatePartialUploadWithQuotaCheck_Success tests partial upload creation with quota check
+func TestCreatePartialUploadWithQuotaCheck_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create existing file using 1000 bytes
+	existingFile := &models.File{
+		ClaimCode:        "EXISTING_FILE",
+		OriginalFilename: "existing.txt",
+		StoredFilename:   "stored-existing.txt",
+		FileSize:         1000,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, existingFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Create partial upload that fits within quota
+	userID := int64(1)
+	upload := &models.PartialUpload{
+		UploadID:       "quota-upload-1",
+		Filename:       "chunked.bin",
+		TotalSize:      2000, // 1000 + 2000 = 3000 < 10000 quota
+		ChunkSize:      500,
+		TotalChunks:    4,
+		ExpiresInHours: 24,
+		MaxDownloads:   5,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+		Completed:      false,
+		UserID:         &userID,
+	}
+
+	quotaLimit := int64(10000) // 10KB quota
+	err = CreatePartialUploadWithQuotaCheck(db, upload, quotaLimit)
+	if err != nil {
+		t.Fatalf("CreatePartialUploadWithQuotaCheck() error: %v", err)
+	}
+
+	// Verify upload was created
+	retrieved, err := GetPartialUpload(db, "quota-upload-1")
+	if err != nil {
+		t.Fatalf("GetPartialUpload() error: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("Partial upload should be created when under quota")
+	}
+
+	if retrieved.TotalSize != 2000 {
+		t.Errorf("TotalSize = %d, want 2000", retrieved.TotalSize)
+	}
+}
+
+// TestCreatePartialUploadWithQuotaCheck_ExceedsQuota tests quota enforcement for partial uploads
+func TestCreatePartialUploadWithQuotaCheck_ExceedsQuota(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create existing file using 900 bytes
+	existingFile := &models.File{
+		ClaimCode:        "QUOTA_FILE",
+		OriginalFilename: "quota.txt",
+		StoredFilename:   "stored-quota.txt",
+		FileSize:         900,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+	}
+
+	err := CreateFile(db, existingFile)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Try to create partial upload that exceeds quota (900 + 200 > 1000)
+	upload := &models.PartialUpload{
+		UploadID:       "exceed-upload",
+		Filename:       "exceed.bin",
+		TotalSize:      200,
+		ChunkSize:      100,
+		TotalChunks:    2,
+		ExpiresInHours: 24,
+		MaxDownloads:   5,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+		Completed:      false,
+	}
+
+	quotaLimit := int64(1000) // 1KB quota
+	err = CreatePartialUploadWithQuotaCheck(db, upload, quotaLimit)
+	if err == nil {
+		t.Fatal("CreatePartialUploadWithQuotaCheck() should return error when quota exceeded")
+	}
+
+	// Verify upload was NOT created
+	retrieved, err := GetPartialUpload(db, "exceed-upload")
+	if err != nil {
+		t.Fatalf("GetPartialUpload() error: %v", err)
+	}
+
+	if retrieved != nil {
+		t.Error("Partial upload should NOT be created when quota exceeded")
+	}
+}
+
+// TestCreatePartialUploadWithQuotaCheck_ExactlyAtLimit tests at quota boundary
+func TestCreatePartialUploadWithQuotaCheck_ExactlyAtLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create upload exactly at quota limit (should succeed)
+	upload := &models.PartialUpload{
+		UploadID:       "at-limit-upload",
+		Filename:       "exact.bin",
+		TotalSize:      1000,
+		ChunkSize:      500,
+		TotalChunks:    2,
+		ExpiresInHours: 24,
+		MaxDownloads:   5,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+		Completed:      false,
+	}
+
+	quotaLimit := int64(1000)
+	err := CreatePartialUploadWithQuotaCheck(db, upload, quotaLimit)
+	if err != nil {
+		t.Fatalf("CreatePartialUploadWithQuotaCheck() should succeed at exact limit: %v", err)
+	}
+
+	// Verify upload was created
+	retrieved, err := GetPartialUpload(db, "at-limit-upload")
+	if err != nil {
+		t.Fatalf("GetPartialUpload() error: %v", err)
+	}
+
+	if retrieved == nil {
+		t.Fatal("Partial upload should be created when exactly at quota limit")
+	}
+}

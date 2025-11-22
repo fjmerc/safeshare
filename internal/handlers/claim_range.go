@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
@@ -141,6 +142,11 @@ func serveEntireFile(
 
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
+				// Normalize timing to prevent timing attacks that distinguish between:
+				// - Authentication failures (wrong key)
+				// - Format errors (invalid ciphertext)
+				// - I/O errors (file read issues)
+				time.Sleep(10 * time.Millisecond)
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
@@ -260,6 +266,8 @@ func servePartialContent(
 
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
 			if err != nil {
+				// Normalize timing to prevent timing attacks that distinguish between error types
+				time.Sleep(10 * time.Millisecond)
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				// Can't send error response - headers already sent
 				return

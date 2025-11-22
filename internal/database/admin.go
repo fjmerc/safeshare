@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
@@ -327,15 +328,27 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 	return files, total, nil
 }
 
+// escapeLikePattern escapes SQL LIKE wildcard characters (% and _) to prevent LIKE injection
+func escapeLikePattern(s string) string {
+	// Replace \ with \\ first to avoid double-escaping
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	// Escape % and _ wildcards
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
 // SearchFilesForAdmin searches files by claim code or filename
 func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]models.File, int, error) {
-	searchPattern := "%" + searchTerm + "%"
+	// Escape LIKE wildcards to prevent LIKE injection (P1 security fix)
+	escapedTerm := escapeLikePattern(searchTerm)
+	searchPattern := "%" + escapedTerm + "%"
 
 	// Get total count
 	var total int
 	countQuery := `SELECT COUNT(*) FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		WHERE f.claim_code LIKE ? OR f.original_filename LIKE ? OR f.uploader_ip LIKE ? OR u.username LIKE ?`
+		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'`
 	err := db.QueryRow(countQuery, searchPattern, searchPattern, searchPattern, searchPattern).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
@@ -347,7 +360,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		u.username
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		WHERE f.claim_code LIKE ? OR f.original_filename LIKE ? OR f.uploader_ip LIKE ? OR u.username LIKE ?
+		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
 		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset)
