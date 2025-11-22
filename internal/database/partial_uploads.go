@@ -59,11 +59,13 @@ func CreatePartialUploadWithQuotaCheck(db *sql.DB, upload *models.PartialUpload,
 	}()
 
 	// Check quota within transaction (atomic with insert)
+	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
+	// This prevents quota leakage when uploads fail partway through
 	var currentUsage int64
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE expires_at > datetime('now')
 	`

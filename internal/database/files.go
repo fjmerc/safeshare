@@ -95,11 +95,13 @@ func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int
 	}()
 
 	// Check quota within transaction (atomic with insert)
+	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
+	// This prevents quota leakage when uploads fail partway through
 	var currentUsage int64
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE expires_at > datetime('now')
 	`
@@ -521,11 +523,12 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 
 // GetTotalUsage returns the total storage used by all active files AND partial uploads in bytes
 // This includes both completed files and incomplete chunked uploads for accurate quota tracking
+// Note: Uses total_size for partial uploads (not received_bytes) since quota is reserved upfront
 func GetTotalUsage(db *sql.DB) (int64, error) {
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE expires_at > datetime('now')
 	`

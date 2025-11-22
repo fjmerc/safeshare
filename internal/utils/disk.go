@@ -9,10 +9,12 @@ import (
 
 const (
 	// MinimumFreeSpace is the minimum free disk space required (in bytes)
-	MinimumFreeSpace = 1 * 1024 * 1024 * 1024 // 1GB
+	// Increased from 1GB to 5GB to provide better safety margin against race conditions
+	MinimumFreeSpace = 5 * 1024 * 1024 * 1024 // 5GB
 
 	// MaximumDiskUsagePercent is the maximum allowed disk usage percentage
-	MaximumDiskUsagePercent = 80 // 80%
+	// Reduced from 80% to 75% to provide better safety margin against race conditions
+	MaximumDiskUsagePercent = 75 // 75%
 )
 
 // DiskSpaceInfo contains information about disk space
@@ -59,7 +61,7 @@ func CheckDiskSpace(path string, uploadSize int64, skipPercentCheck bool) (bool,
 
 	// Check if available space is less than minimum required
 	if info.AvailableBytes < MinimumFreeSpace {
-		return false, fmt.Sprintf("Insufficient disk space (less than 1GB available)"), nil
+		return false, fmt.Sprintf("Insufficient disk space (less than 5GB available)"), nil
 	}
 
 	// Check if upload would exceed maximum disk usage percentage
