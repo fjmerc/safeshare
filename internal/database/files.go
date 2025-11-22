@@ -406,3 +406,69 @@ func GetStats(db *sql.DB, uploadDir string) (totalFiles int, storageUsed int64, 
 
 	return totalFiles, storageUsed, nil
 }
+
+// GetAllFiles returns all files in the database (including expired files)
+// This is primarily used for administrative tools like the encryption migration utility
+func GetAllFiles(db *sql.DB) ([]*models.File, error) {
+	query := `
+		SELECT
+			id, claim_code, original_filename, stored_filename, file_size,
+			mime_type, created_at, expires_at, max_downloads,
+			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash
+		FROM files
+		ORDER BY created_at DESC
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all files: %w", err)
+	}
+	defer rows.Close()
+
+	var files []*models.File
+	for rows.Next() {
+		file := &models.File{}
+		var passwordHash sql.NullString
+		var userID sql.NullInt64
+		var sha256Hash sql.NullString
+
+		err := rows.Scan(
+			&file.ID,
+			&file.ClaimCode,
+			&file.OriginalFilename,
+			&file.StoredFilename,
+			&file.FileSize,
+			&file.MimeType,
+			&file.CreatedAt,
+			&file.ExpiresAt,
+			&file.MaxDownloads,
+			&file.CompletedDownloads,
+			&file.UploaderIP,
+			&passwordHash,
+			&userID,
+			&sha256Hash,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan file row: %w", err)
+		}
+
+		if passwordHash.Valid {
+			file.PasswordHash = passwordHash.String
+		}
+		if userID.Valid {
+			uid := userID.Int64
+			file.UserID = &uid
+		}
+		if sha256Hash.Valid {
+			file.SHA256Hash = sha256Hash.String
+		}
+
+		files = append(files, file)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating file rows: %w", err)
+	}
+
+	return files, nil
+}
