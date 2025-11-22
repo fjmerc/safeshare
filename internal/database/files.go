@@ -281,12 +281,13 @@ func IncrementDownloadCountIfUnchanged(db *sql.DB, id int64, expectedClaimCode s
 func TryIncrementDownloadWithLimit(db *sql.DB, id int64, expectedClaimCode string) (bool, error) {
 	// Atomic compare-and-increment: only increment if download_count < max_downloads
 	// This prevents the TOCTOU race condition in download limit checks
+	// Note: max_downloads=0 is treated as unlimited for backward compatibility
 	query := `
 		UPDATE files
 		SET download_count = download_count + 1
 		WHERE id = ?
 		  AND claim_code = ?
-		  AND (max_downloads IS NULL OR download_count < max_downloads)
+		  AND (max_downloads IS NULL OR max_downloads = 0 OR download_count < max_downloads)
 	`
 
 	result, err := db.Exec(query, id, expectedClaimCode)
@@ -316,7 +317,8 @@ func TryIncrementDownloadWithLimit(db *sql.DB, id int64, expectedClaimCode strin
 		// If we got here, claim code is valid but limit was reached
 		if maxDownloadsNull.Valid {
 			maxDownloads = int(maxDownloadsNull.Int64)
-			if currentCount >= maxDownloads {
+			// Only treat as limit reached if maxDownloads > 0 (backward compat: 0 = unlimited)
+			if maxDownloads > 0 && currentCount >= maxDownloads {
 				return false, nil // Limit reached
 			}
 		}

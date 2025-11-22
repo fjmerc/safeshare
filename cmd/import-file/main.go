@@ -684,10 +684,11 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 	}
 
 	// Set optional fields
-	// Always set MaxDownloads (0 = unlimited, not "unset")
-	if opts.MaxDownloads >= 0 {
+	// MaxDownloads: 0 = unlimited (NULL in database), >0 = limited
+	if opts.MaxDownloads > 0 {
 		fileRecord.MaxDownloads = &opts.MaxDownloads
 	}
+	// If MaxDownloads == 0, leave as nil (NULL in database = unlimited)
 	if opts.UserID > 0 {
 		userID := int64(opts.UserID)
 		fileRecord.UserID = &userID
