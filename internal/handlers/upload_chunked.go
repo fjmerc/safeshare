@@ -431,6 +431,14 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				if err == nil {
 					hash := sha256.Sum256(existingData)
 					existingChecksum = hex.EncodeToString(hash[:])
+				} else {
+					// If we can't read the chunk for checksum, log warning but continue
+					slog.Warn("failed to read existing chunk for checksum verification",
+						"error", err,
+						"upload_id", uploadID,
+						"chunk_number", chunkNumber,
+					)
+					existingChecksum = "" // Empty checksum indicates verification skipped
 				}
 
 				// Chunk already exists with same size - treat as success (idempotent)
@@ -447,7 +455,11 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				}
 
 				// Count actual chunks from disk instead of relying on DB counter
-				chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+				chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
+				if err != nil {
+					slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
+					chunksReceived = 0
+				}
 
 				// Return success response
 				response := models.UploadChunkResponse{
@@ -502,13 +514,24 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Update last_activity to prevent cleanup worker from removing active uploads
+		if err := database.UpdatePartialUploadActivity(db, uploadID); err != nil {
+			slog.Error("failed to update partial upload activity", "error", err)
+			// Non-fatal error - continue processing
+		}
+
 		// NOTE: We no longer increment chunks_received in the database on every chunk upload.
 		// This caused severe database lock contention (31-35% SQLITE_BUSY errors with concurrency=3).
 		// Instead, chunk count is calculated on-demand from disk when status is requested.
 		// This eliminates all database writes during upload, allowing higher concurrency.
 
 		// Count actual chunks from disk instead of relying on DB counter
-		chunksReceived, _ := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
+		if err != nil {
+			slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
+			// Use 0 as fallback if we can't count chunks
+			chunksReceived = 0
+		}
 
 		response := models.UploadChunkResponse{
 			UploadID:       uploadID,

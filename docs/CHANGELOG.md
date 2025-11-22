@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Chunked Upload State Machine**: Fixed 5 race conditions and error handling issues in chunked upload system
+  - Fixed cleanup race: `last_activity` now updates on every chunk upload, preventing cleanup worker from deleting active uploads (HIGH)
+  - Fixed stuck processing uploads: Cleanup worker now removes uploads stuck in "processing" status for >2 hours (MEDIUM)
+  - Fixed missing assembly timeout: Maximum assembly time now enforced via cleanup worker (MEDIUM)
+  - Fixed silent errors: `GetChunkCount()` errors are now properly logged and handled with safe fallbacks (LOW)
+  - Fixed checksum verification errors: Read failures in idempotent chunk uploads are now logged instead of silently ignored (LOW)
+  - Updated `GetAbandonedPartialUploads()` query to include stuck processing uploads with 2-hour timeout
+  - Added error handling for chunk count failures in upload status responses
+  - Prevents resource leaks and improves reliability of large file uploads
+
 ### Security
 - **Input Validation & Injection Prevention**: Fixed 4 input validation vulnerabilities identified by security audit
   - Fixed SQL LIKE wildcard injection in admin search allowing DoS via inefficient queries (P1)

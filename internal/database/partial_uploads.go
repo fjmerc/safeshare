@@ -177,7 +177,7 @@ func DeletePartialUpload(db *sql.DB, uploadID string) error {
 }
 
 // GetAbandonedPartialUploads returns partial uploads that haven't been active for the specified hours
-// and are not completed or currently processing
+// and are not completed. Includes stuck processing uploads that exceed timeout.
 func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUpload, error) {
 	// For immediate cleanup (expiryHours=0), use <= to catch all incomplete uploads
 	// For timed cleanup (expiryHours>0), use < to respect the grace period
@@ -189,6 +189,10 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 	// Note: last_activity is stored in RFC3339 format (e.g., "2025-11-07T18:50:20.987933526Z")
 	// which SQLite's datetime() cannot parse. We use direct string comparison since both
 	// last_activity and the calculated cutoff are in lexicographically sortable formats.
+	//
+	// Updated query includes stuck processing uploads:
+	// - Uploads with status='processing' that started > 2 hours ago (assembly timeout)
+	// - All other incomplete uploads that are past expiry time
 	query := fmt.Sprintf(`
 		SELECT
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
@@ -197,8 +201,13 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 			status, error_message, assembly_started_at, assembly_completed_at
 		FROM partial_uploads
 		WHERE completed = 0
-		AND (status IS NULL OR status != 'processing')
-		AND last_activity %s datetime('now', '-' || ? || ' hours')
+		AND (
+			-- Stuck processing uploads (assembly timeout: 2 hours)
+			(status = 'processing' AND assembly_started_at IS NOT NULL AND assembly_started_at < datetime('now', '-2 hours'))
+			OR
+			-- Regular abandoned uploads (not processing)
+			((status IS NULL OR status != 'processing') AND last_activity %s datetime('now', '-' || ? || ' hours'))
+		)
 		ORDER BY last_activity ASC
 	`, operator)
 
