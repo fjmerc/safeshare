@@ -1792,6 +1792,36 @@
             downloadUrl += `?password=${encodeURIComponent(password)}`;
         }
 
+        // CRITICAL: Check if download URL is cross-origin
+        // Cross-origin downloads should bypass ResumableDownloader to avoid Service Worker issues
+        try {
+            const downloadUrlObj = new URL(downloadUrl);
+            const currentOrigin = window.location.origin;
+            
+            if (downloadUrlObj.origin !== currentOrigin) {
+                // Cross-origin download - use simple browser download (no Service Worker interference)
+                console.log('Cross-origin download detected - using <a> tag download');
+                console.log(`Download origin: ${downloadUrlObj.origin}, Current origin: ${currentOrigin}`);
+                
+                // Use <a> tag for cross-origin downloads (avoids pop-up blockers)
+                // This completely bypasses Service Worker and uses native browser download
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = currentFileInfo.original_filename; // Suggest filename
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer'; // Security best practice
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                showToast('Download started', 'success', 3000);
+                return; // Exit early - don't use ResumableDownloader for cross-origin
+            }
+        } catch (error) {
+            console.error('Error checking download URL origin:', error);
+            // If URL parsing fails, fall through to ResumableDownloader
+        }
+
         // Hide download button, show progress
         downloadButton.classList.add('hidden');
         downloadProgress.classList.remove('hidden');

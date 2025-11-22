@@ -81,12 +81,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Skip caching for API requests (uploads, downloads, admin)
+  // DON'T intercept - let browser handle these natively to avoid SW streaming issues
   if (url.pathname.startsWith('/api/') ||
       url.pathname.startsWith('/admin/') ||
       url.pathname.startsWith('/health') ||
       url.pathname.startsWith('/metrics')) {
-    // Network only for API endpoints
-    event.respondWith(fetch(request));
+    // Let browser handle API endpoints natively (no SW interception)
     return;
   }
 
