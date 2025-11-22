@@ -3,6 +3,9 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
@@ -190,23 +193,90 @@ func SetUserActive(db *sql.DB, userID int64, isActive bool) error {
 	return nil
 }
 
-// DeleteUser deletes a user from the database
-func DeleteUser(db *sql.DB, userID int64) error {
-	query := `DELETE FROM users WHERE id = ?`
+// DeleteUser deletes a user from the database and cleans up their physical files.
+// This prevents orphaned files and disk leaks after user deletion.
+func DeleteUser(db *sql.DB, userID int64, uploadDir string) error {
+	// First, get all files owned by this user
+	var fileRecords []struct {
+		ID             int64
+		StoredFilename string
+	}
 
-	result, err := db.Exec(query, userID)
+	query := `SELECT id, stored_filename FROM files WHERE user_id = ?`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to query user files: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rec struct {
+			ID             int64
+			StoredFilename string
+		}
+		if err := rows.Scan(&rec.ID, &rec.StoredFilename); err != nil {
+			return fmt.Errorf("failed to scan file record: %w", err)
+		}
+		fileRecords = append(fileRecords, rec)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating user files: %w", err)
+	}
+
+	// Delete physical files from disk (before DB deletion)
+	for _, rec := range fileRecords {
+		// Validate filename before deletion (defense-in-depth)
+		if err := validateStoredFilename(rec.StoredFilename); err != nil {
+			slog.Warn("skipping invalid stored filename during user deletion",
+				"user_id", userID,
+				"file_id", rec.ID,
+				"filename", rec.StoredFilename,
+				"error", err,
+			)
+			continue
+		}
+
+		filePath := filepath.Join(uploadDir, rec.StoredFilename)
+		if err := os.Remove(filePath); err != nil {
+			if !os.IsNotExist(err) {
+				// Log error but continue - DB deletion will happen anyway
+				slog.Warn("failed to delete user file from disk",
+					"user_id", userID,
+					"file_id", rec.ID,
+					"path", filePath,
+					"error", err,
+				)
+			}
+		} else {
+			slog.Debug("deleted user file from disk",
+				"user_id", userID,
+				"file_id", rec.ID,
+				"filename", rec.StoredFilename,
+			)
+		}
+	}
+
+	// Delete user from database (foreign key will set user_id to NULL in files table)
+	deleteQuery := `DELETE FROM users WHERE id = ?`
+	result, err := db.Exec(deleteQuery, userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to check affected rows: %w", err)
 	}
 
-	if rows == 0 {
+	if rowsAffected == 0 {
 		return fmt.Errorf("user not found")
 	}
+
+	slog.Info("user deleted with file cleanup",
+		"user_id", userID,
+		"files_cleaned", len(fileRecords),
+	)
 
 	return nil
 }

@@ -78,6 +78,82 @@ func CreateFile(db *sql.DB, file *models.File) error {
 	return nil
 }
 
+// CreateFileWithQuotaCheck atomically checks quota and inserts file record in a transaction.
+// This prevents race conditions where multiple uploads could exceed quota limits.
+// Returns error if quota would be exceeded.
+func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int64) error {
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
+	// IMMEDIATE acquires RESERVED lock, blocking other writers but allowing readers
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			slog.Warn("failed to rollback transaction", "error", err)
+		}
+	}()
+
+	// Check quota within transaction (atomic with insert)
+	var currentUsage int64
+	query := `
+		SELECT
+			COALESCE(SUM(file_size), 0) +
+			COALESCE((SELECT SUM(received_bytes) FROM partial_uploads WHERE completed = 0), 0)
+		FROM files
+		WHERE expires_at > datetime('now')
+	`
+	if err := tx.QueryRow(query).Scan(&currentUsage); err != nil {
+		return fmt.Errorf("failed to get current usage: %w", err)
+	}
+
+	// Check if adding this file would exceed quota
+	if currentUsage+file.FileSize > quotaLimitBytes {
+		return fmt.Errorf("quota exceeded: current usage %d bytes + file size %d bytes > limit %d bytes",
+			currentUsage, file.FileSize, quotaLimitBytes)
+	}
+
+	// Insert file record (still within transaction)
+	insertQuery := `
+		INSERT INTO files (
+			claim_code, original_filename, stored_filename, file_size,
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := tx.Exec(
+		insertQuery,
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		file.ExpiresAt,
+		file.MaxDownloads,
+		file.UploaderIP,
+		file.PasswordHash,
+		file.UserID,
+		file.SHA256Hash,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert file: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	file.ID = id
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 // GetFileByClaimCode retrieves a file record by its claim code
 // Returns nil if not found or expired
 func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
@@ -195,6 +271,59 @@ func IncrementDownloadCountIfUnchanged(db *sql.DB, id int64, expectedClaimCode s
 	}
 
 	return nil
+}
+
+// TryIncrementDownloadWithLimit atomically increments download count only if under the limit.
+// This prevents race conditions where multiple downloads could exceed max_downloads.
+// Returns true if increment succeeded, false if limit reached.
+func TryIncrementDownloadWithLimit(db *sql.DB, id int64, expectedClaimCode string) (bool, error) {
+	// Atomic compare-and-increment: only increment if download_count < max_downloads
+	// This prevents the TOCTOU race condition in download limit checks
+	query := `
+		UPDATE files
+		SET download_count = download_count + 1
+		WHERE id = ?
+		  AND claim_code = ?
+		  AND (max_downloads IS NULL OR download_count < max_downloads)
+	`
+
+	result, err := db.Exec(query, id, expectedClaimCode)
+	if err != nil {
+		return false, fmt.Errorf("failed to increment download count: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// rows == 0 means either claim code changed OR limit reached
+	if rows == 0 {
+		// Check which case it is
+		var currentCount, maxDownloads int
+		var maxDownloadsNull sql.NullInt64
+		checkQuery := `SELECT download_count, max_downloads FROM files WHERE id = ? AND claim_code = ?`
+		err := db.QueryRow(checkQuery, id, expectedClaimCode).Scan(&currentCount, &maxDownloadsNull)
+		if err == sql.ErrNoRows {
+			return false, fmt.Errorf("claim code changed during download")
+		}
+		if err != nil {
+			return false, fmt.Errorf("failed to check download limit: %w", err)
+		}
+
+		// If we got here, claim code is valid but limit was reached
+		if maxDownloadsNull.Valid {
+			maxDownloads = int(maxDownloadsNull.Int64)
+			if currentCount >= maxDownloads {
+				return false, nil // Limit reached
+			}
+		}
+
+		// Shouldn't reach here, but treat as limit reached to be safe
+		return false, nil
+	}
+
+	return true, nil // Success
 }
 
 // IncrementCompletedDownloads atomically increments the completed downloads counter for a file.

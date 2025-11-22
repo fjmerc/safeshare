@@ -22,6 +22,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// assemblySemaphore limits concurrent assembly workers to prevent memory exhaustion
+// Each assembly uses a 20MB buffer, so 10 concurrent = 200MB max
+var assemblySemaphore = make(chan struct{}, 10)
+
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
 func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +40,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			sendError(w, "Chunked uploads are disabled", "FEATURE_DISABLED", http.StatusServiceUnavailable)
 			return
 		}
+
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse JSON request body
 		var req models.UploadInitRequest
@@ -160,34 +167,7 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check quota if configured (0 = unlimited)
-		if quotaConfigured {
-			// Get current usage (includes both completed files and partial uploads)
-			currentUsage, err := database.GetTotalUsage(db)
-			if err != nil {
-				slog.Error("failed to get storage usage", "error", err)
-				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-
-			if currentUsage+req.TotalSize > quotaBytes {
-				quotaUsedGB := float64(currentUsage) / (1024 * 1024 * 1024)
-				slog.Warn("quota exceeded for chunked upload init",
-					"file_size", req.TotalSize,
-					"current_usage_gb", quotaUsedGB,
-					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", getClientIP(r),
-				)
-				sendSmartError(w,
-					fmt.Sprintf("Storage quota exceeded. Current usage: %.2f GB / %d GB", quotaUsedGB, cfg.GetQuotaLimitGB()),
-					"QUOTA_EXCEEDED",
-					http.StatusInsufficientStorage,
-				)
-				return
-			}
-		}
+		// Note: Quota check moved to transactional CreatePartialUploadWithQuotaCheck() to prevent race conditions
 
 		// Hash password if provided
 		var passwordHash string
@@ -229,10 +209,30 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ClaimCode:      nil,
 		}
 
-		if err := database.CreatePartialUpload(db, partialUpload); err != nil {
-			slog.Error("failed to create partial upload", "error", err)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Use transactional quota check to prevent race conditions (P0 fix)
+		if quotaConfigured {
+			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+			if err := database.CreatePartialUploadWithQuotaCheck(db, partialUpload, quotaBytes); err != nil {
+				if strings.Contains(err.Error(), "quota exceeded") {
+					slog.Warn("quota exceeded for chunked upload (transactional check)",
+						"file_size", req.TotalSize,
+						"quota_limit_gb", cfg.GetQuotaLimitGB(),
+						"client_ip", getClientIP(r),
+					)
+					sendSmartError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+					return
+				}
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// No quota configured - use regular CreatePartialUpload
+			if err := database.CreatePartialUpload(db, partialUpload); err != nil {
+				slog.Error("failed to create partial upload", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Calculate expiration time
@@ -730,10 +730,16 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get client IP for logging
 		clientIP := getClientIP(r)
 
-		// Spawn goroutine to assemble file asynchronously
+		// Spawn goroutine to assemble file asynchronously with concurrency limit
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
-		go AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		go func() {
+			// Acquire semaphore slot (blocks if 10 assemblies already running)
+			assemblySemaphore <- struct{}{}
+			defer func() { <-assemblySemaphore }() // Release slot when done
+
+			AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+		}()
 
 		// Record metrics
 		metrics.ChunkedUploadsCompletedTotal.Inc()

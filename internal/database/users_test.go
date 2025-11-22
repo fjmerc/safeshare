@@ -293,8 +293,8 @@ func TestDeleteUser(t *testing.T) {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
-	// Delete user
-	err = DeleteUser(db, user.ID)
+	// Delete user (pass empty uploadDir for test - no files to clean)
+	err = DeleteUser(db, user.ID, t.TempDir())
 	if err != nil {
 		t.Fatalf("DeleteUser() error: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestDeleteUser(t *testing.T) {
 func TestDeleteUser_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 
-	err := DeleteUser(db, 99999)
+	err := DeleteUser(db, 99999, t.TempDir())
 	if err == nil {
 		t.Error("DeleteUser() should return error for non-existent user")
 	}
