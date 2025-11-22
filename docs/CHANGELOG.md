@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.3] - 2025-11-22
+
+### Fixed
+- **Download Limit Backward Compatibility**: Restored backward compatibility for files with `max_downloads=0` (unlimited downloads)
+  - Critical bug introduced in v2.8.2 (commit 8671e36) broke all downloads for files imported with unlimited downloads
+  - Old code treated both NULL and 0 as unlimited downloads
+  - New atomic download limit checking only treated NULL as unlimited, blocking all downloads for `max_downloads=0`
+  - Updated SQL query to treat `max_downloads=0` as unlimited: `AND (max_downloads IS NULL OR max_downloads = 0 OR download_count < max_downloads)`
+  - Updated fallback logic to skip limit check when `max_downloads=0`
+  - Updated import tool to align with web upload behavior (set NULL for unlimited instead of 0)
+  - All files imported via import tool with `--maxdownloads=0` are now accessible again
+
 ## [2.8.2] - 2025-11-22
 
 ### Fixed
