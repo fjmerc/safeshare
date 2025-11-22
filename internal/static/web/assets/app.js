@@ -1075,7 +1075,11 @@
             fileNameElement.title = data.original_filename; // Show full name on hover
             document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
             document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
-            document.getElementById('maxDownloadsInfo').textContent = data.max_downloads || 'Unlimited';
+            // Display downloads in "X / Y" format to match Pickup/Dashboard pages
+            const downloadsText = data.max_downloads
+                ? `${data.completed_downloads} / ${data.max_downloads}`
+                : `${data.completed_downloads} / Unlimited`;
+            document.getElementById('maxDownloadsInfo').textContent = downloadsText;
 
             // Generate QR code (optional - if library loaded)
             const qrcodeDiv = document.getElementById('qrcode');
@@ -1666,9 +1670,62 @@
 
         // Downloads info
         const downloadsText = data.max_downloads
-            ? `${data.download_count} / ${data.max_downloads}`
-            : `${data.download_count} / Unlimited`;
+            ? `${data.completed_downloads} / ${data.max_downloads}`
+            : `${data.completed_downloads} / Unlimited`;
         document.getElementById('pickupDownloads').textContent = downloadsText;
+
+        // SHA256 hash display with copy functionality
+        const sha256Element = document.getElementById('pickupSHA256');
+        const copySHA256Btn = document.getElementById('copySHA256Btn');
+        const sha256DetailRow = sha256Element.closest('.detail-sha256');
+        
+        if (data.sha256_hash) {
+            sha256Element.textContent = data.sha256_hash;
+            sha256Element.title = data.sha256_hash; // Show full hash on hover
+            sha256DetailRow.classList.remove('hidden');
+            
+            // Setup copy button (remove old listeners by cloning)
+            const newCopyBtn = copySHA256Btn.cloneNode(true);
+            copySHA256Btn.parentNode.replaceChild(newCopyBtn, copySHA256Btn);
+            
+            newCopyBtn.addEventListener('click', async function() {
+                try {
+                    // Modern clipboard API with fallback for HTTP contexts
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(data.sha256_hash);
+                    } else {
+                        // Fallback for HTTP contexts
+                        const textArea = document.createElement('textarea');
+                        textArea.value = data.sha256_hash;
+                        textArea.style.position = 'fixed';
+                        textArea.style.left = '-999999px';
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        try {
+                            document.execCommand('copy');
+                        } finally {
+                            document.body.removeChild(textArea);
+                        }
+                    }
+                    
+                    // Visual feedback
+                    const originalHTML = this.innerHTML;
+                    this.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    this.classList.add('copied');
+                    
+                    setTimeout(() => {
+                        this.innerHTML = originalHTML;
+                        this.classList.remove('copied');
+                    }, 2000);
+                } catch (err) {
+                    console.error('Failed to copy SHA256:', err);
+                    alert('Failed to copy to clipboard. Please copy manually.');
+                }
+            });
+        } else {
+            sha256Element.textContent = 'Not available';
+            sha256DetailRow.classList.add('hidden');
+        }
 
         // Show/hide warning if download limit reached
         if (data.download_limit_reached) {
@@ -1733,6 +1790,36 @@
                 return;
             }
             downloadUrl += `?password=${encodeURIComponent(password)}`;
+        }
+
+        // CRITICAL: Check if download URL is cross-origin
+        // Cross-origin downloads should bypass ResumableDownloader to avoid Service Worker issues
+        try {
+            const downloadUrlObj = new URL(downloadUrl);
+            const currentOrigin = window.location.origin;
+            
+            if (downloadUrlObj.origin !== currentOrigin) {
+                // Cross-origin download - use simple browser download (no Service Worker interference)
+                console.log('Cross-origin download detected - using <a> tag download');
+                console.log(`Download origin: ${downloadUrlObj.origin}, Current origin: ${currentOrigin}`);
+                
+                // Use <a> tag for cross-origin downloads (avoids pop-up blockers)
+                // This completely bypasses Service Worker and uses native browser download
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = currentFileInfo.original_filename; // Suggest filename
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer'; // Security best practice
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                showToast('Download started', 'success', 3000);
+                return; // Exit early - don't use ResumableDownloader for cross-origin
+            }
+        } catch (error) {
+            console.error('Error checking download URL origin:', error);
+            // If URL parsing fails, fall through to ResumableDownloader
         }
 
         // Hide download button, show progress

@@ -70,12 +70,13 @@ type UploadStatusResponse struct {
 
 // UploadCompleteResponse represents the response after completing a chunked upload
 type UploadCompleteResponse struct {
-	ClaimCode        string    `json:"claim_code"`
-	DownloadURL      string    `json:"download_url"`
-	OriginalFilename string    `json:"original_filename"`
-	FileSize         int64     `json:"file_size"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	MaxDownloads     int       `json:"max_downloads"`
+	ClaimCode          string    `json:"claim_code"`
+	DownloadURL        string    `json:"download_url"`
+	OriginalFilename   string    `json:"original_filename"`
+	FileSize           int64     `json:"file_size"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	MaxDownloads       int       `json:"max_downloads"`
+	CompletedDownloads int       `json:"completed_downloads"` // Always 0 for new uploads
 }
 
 // UploadCompleteErrorResponse represents an error response with missing chunks

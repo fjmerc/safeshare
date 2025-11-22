@@ -1473,6 +1473,88 @@ footer .version-info {
     word-break: break-word;
 }
 
+/* SHA256 Hash Display */
+.sha256-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 70%;
+}
+
+.sha256-hash {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Courier New', monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    background: var(--bg-tertiary);
+    padding: 0.5rem 0.75rem;
+    border-radius: calc(var(--radius) * 0.75);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border-color);
+    transition: var(--transition);
+}
+
+.sha256-hash:hover {
+    background: var(--bg-primary);
+    border-color: var(--primary-color);
+}
+
+.btn-copy-sha256 {
+    flex-shrink: 0;
+    padding: 0.625rem;
+    background: var(--bg-tertiary);
+    border: 2px solid var(--border-color);
+    border-radius: calc(var(--radius) * 0.75);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    width: 36px;
+    height: 36px;
+}
+
+.btn-copy-sha256:hover {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+    transform: scale(1.05);
+}
+
+.btn-copy-sha256:active {
+    transform: scale(0.95);
+}
+
+.btn-copy-sha256.copied {
+    background: var(--success-color);
+    border-color: var(--success-color);
+    color: white;
+}
+
+.btn-copy-sha256 svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Mobile responsiveness for SHA256 */
+@media (max-width: 768px) {
+    .sha256-container {
+        max-width: 100%;
+        flex-wrap: wrap;
+    }
+    
+    .sha256-hash {
+        font-size: 0.6875rem;
+        padding: 0.5rem 0.75rem;
+        flex: 1 1 100%;
+    }
+}
+
 .warning-box {
     padding: 1rem 1.5rem;
     background: rgba(239, 68, 68, 0.1);
