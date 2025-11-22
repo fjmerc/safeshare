@@ -8,12 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Service Worker Download Failures**: Fixed critical bug causing all large file downloads (>1GB) to fail with "Error in input stream"
-  - Service Worker now skips cross-origin requests (e.g., downloads.mercitlabs.com) entirely
-  - Prevents Service Worker from intercepting and crashing on large file streams
-  - Browser handles cross-origin downloads natively for optimal performance
-  - Fixes 34+ failed download attempts reported in production
-  - Cache version bumped to v2 to force Service Worker update for all users
+- **Pickup Tab Download Failures**: Fixed downloads failing at ~60% when initiated through Pickup tab
+  - Root cause: Service Worker was intercepting cross-origin fetch() requests from ResumableDownloader
+  - Added cross-origin detection in handleDownload() - bypasses ResumableDownloader for downloads.mercitlabs.com
+  - Uses native browser download (`<a>` tag) for cross-origin downloads to avoid Service Worker interference
+  - Fixed Service Worker bug: Removed unnecessary `event.respondWith()` for API routes (was causing memory/streaming issues)
+  - Direct URL downloads always worked; issue only occurred when using Pickup tab claim code flow
+  - Cross-origin downloads now reliable but without progress tracking (acceptable trade-off for reliability)
+  - Same-origin downloads retain full ResumableDownloader functionality with progress and resume capability
 
 ## [2.8.0] - 2025-11-21
 
