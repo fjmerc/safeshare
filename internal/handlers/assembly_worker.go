@@ -24,6 +24,17 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 
 	uploadID := partialUpload.UploadID
 
+	// Add panic recovery to prevent goroutine death and orphaned files
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("assembly worker panic recovered",
+				"upload_id", uploadID,
+				"panic", r,
+			)
+			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Assembly panicked: %v", r))
+		}
+	}()
+
 	slog.Info("starting async assembly",
 		"upload_id", uploadID,
 		"filename", partialUpload.Filename,

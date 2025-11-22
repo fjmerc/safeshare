@@ -223,11 +223,12 @@ func IncrementCompletedDownloads(db *sql.DB, id int64) error {
 // DeleteExpiredFiles removes expired files from both database and filesystem
 // Returns the count of deleted files
 func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
-	// Find expired files
+	// Find expired files with 1-hour grace period to prevent deletion during active downloads
+	// Files must be expired for at least 1 hour before cleanup
 	query := `
 		SELECT id, stored_filename
 		FROM files
-		WHERE expires_at <= datetime('now')
+		WHERE expires_at <= datetime('now', '-1 hour')
 	`
 
 	rows, err := db.Query(query)
@@ -317,11 +318,24 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	return deletedCount, nil
 }
 
-// batchDeleteFiles deletes multiple file records using batch DELETE operations
+// batchDeleteFiles deletes multiple file records using batch DELETE operations within a transaction
 // Chunks large batches to stay within SQLite parameter limits (max 999 params, using 500 for safety)
+// Uses transaction to ensure atomic cleanup (all-or-nothing)
 func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 	const batchSize = 500
 	deletedCount := 0
+
+	// Begin transaction for atomic batch delete
+	tx, err := db.Begin()
+	if err != nil {
+		slog.Error("failed to begin transaction for batch delete", "error", err)
+		return 0
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			slog.Warn("failed to rollback transaction", "error", err)
+		}
+	}()
 
 	// Process in chunks to avoid SQLite parameter limit
 	for i := 0; i < len(fileIDs); i += batchSize {
@@ -342,15 +356,15 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 			args[j] = id
 		}
 
-		// Execute batch DELETE
-		result, err := db.Exec(deleteQuery, args...)
+		// Execute batch DELETE within transaction
+		result, err := tx.Exec(deleteQuery, args...)
 		if err != nil {
 			slog.Error("failed to batch delete file records",
 				"batch_size", len(batch),
 				"error", err,
 			)
-			// Don't stop processing other batches, continue
-			continue
+			// Rollback and return on error (atomic operation)
+			return 0
 		}
 
 		affected, err := result.RowsAffected()
@@ -365,6 +379,12 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 			"batch_size", len(batch),
 			"deleted", affected,
 		)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		slog.Error("failed to commit batch delete transaction", "error", err)
+		return 0
 	}
 
 	return deletedCount
