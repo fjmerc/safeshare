@@ -95,20 +95,15 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Falls back to configured chunk size if dynamic sizing is disabled
 		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
 
-		// Calculate total chunks using optimal chunk size
-		totalChunks := int(req.TotalSize / chunkSize)
+		// Calculate total chunks using optimal chunk size (P1 security fix: prevent integer overflow)
+		// Use int64 for calculation to prevent overflow on 32-bit systems
+		totalChunks64 := req.TotalSize / chunkSize
 		if req.TotalSize%chunkSize != 0 {
-			totalChunks++
+			totalChunks64++
 		}
 
-		slog.Debug("calculated chunk parameters",
-			"file_size", req.TotalSize,
-			"chunk_size", chunkSize,
-			"total_chunks", totalChunks,
-		)
-
-		// Validate total chunks (prevent DoS with too many small chunks)
-		if totalChunks > 10000 {
+		// Validate total chunks BEFORE converting to int (prevent overflow bypass)
+		if totalChunks64 > 10000 {
 			sendSmartError(w,
 				"File requires too many chunks (maximum 10,000). Try increasing chunk size.",
 				"TOO_MANY_CHUNKS",
@@ -116,6 +111,15 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			)
 			return
 		}
+
+		// Safe to convert to int after validation
+		totalChunks := int(totalChunks64)
+
+		slog.Debug("calculated chunk parameters",
+			"file_size", req.TotalSize,
+			"chunk_size", chunkSize,
+			"total_chunks", totalChunks,
+		)
 
 		// Validate expiration hours
 		// Special case: 0 means "never expire", negative values use default
@@ -390,8 +394,24 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				return
 			}
 		} else {
-			// Last chunk - calculate expected size
+			// Last chunk - calculate expected size (P1 security fix: prevent integer underflow)
 			lastChunkSize := partialUpload.TotalSize - (int64(partialUpload.TotalChunks-1) * expectedChunkSize)
+			// Validate that lastChunkSize is positive (detect database corruption/manipulation)
+			if lastChunkSize <= 0 {
+				slog.Error("invalid last chunk size calculation (possible database corruption)",
+					"upload_id", uploadID,
+					"total_size", partialUpload.TotalSize,
+					"total_chunks", partialUpload.TotalChunks,
+					"expected_chunk_size", expectedChunkSize,
+					"calculated_last_chunk_size", lastChunkSize,
+				)
+				sendSmartError(w,
+					"Invalid upload metadata - possible corruption",
+					"INVALID_METADATA",
+					http.StatusInternalServerError,
+				)
+				return
+			}
 			if chunkSize != lastChunkSize {
 				sendSmartError(w,
 					fmt.Sprintf("Last chunk size mismatch: expected %d, got %d", lastChunkSize, chunkSize),

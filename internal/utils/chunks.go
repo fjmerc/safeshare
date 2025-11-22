@@ -348,8 +348,13 @@ func VerifyChunkIntegrity(uploadDir, uploadID string, totalChunks int, expectedC
 				return fmt.Errorf("chunk %d has incorrect size: expected %d, got %d", i, expectedChunkSize, size)
 			}
 		} else {
-			// Last chunk - calculate expected size
+			// Last chunk - calculate expected size (P1 security fix: prevent integer underflow)
 			lastChunkSize := totalSize - (int64(totalChunks-1) * expectedChunkSize)
+			// Validate that lastChunkSize is positive (detect corruption/manipulation)
+			if lastChunkSize <= 0 {
+				return fmt.Errorf("invalid last chunk size calculation (expected %d, got %d): totalSize=%d, totalChunks=%d, expectedChunkSize=%d - possible metadata corruption",
+					lastChunkSize, size, totalSize, totalChunks, expectedChunkSize)
+			}
 			if size != lastChunkSize {
 				return fmt.Errorf("last chunk %d has incorrect size: expected %d, got %d", i, lastChunkSize, size)
 			}

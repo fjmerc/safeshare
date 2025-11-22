@@ -290,6 +290,10 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		if page < 1 {
 			page = 1
 		}
+		// P2 security fix: Add upper limit to prevent integer overflow and full table scans
+		if page > 1000000 {
+			page = 1000000
+		}
 
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
 		if pageSize < 1 || pageSize > 100 {
@@ -298,7 +302,13 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		searchTerm := r.URL.Query().Get("search")
 
+		// Calculate offset with validation to prevent overflow
 		offset := (page - 1) * pageSize
+		// Sanity check: if offset is negative (overflow), cap it
+		if offset < 0 {
+			offset = 0
+			page = 1
+		}
 
 		// Get files
 		var files []models.File
