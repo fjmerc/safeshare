@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Input Validation & Injection Prevention**: Fixed 4 input validation vulnerabilities identified by security audit
+  - Fixed SQL LIKE wildcard injection in admin search allowing DoS via inefficient queries (P1)
+  - Fixed integer overflow in chunked upload allowing bypass of 10,000 chunk limit on 32-bit systems (P1)
+  - Fixed integer underflow in last chunk size calculation allowing file corruption and crashes (P1)
+  - Fixed missing pagination upper limit allowing integer overflow and full table scans (P2)
+  - Added `escapeLikePattern()` function to escape SQL LIKE wildcards (% and _)
+  - Added overflow validation in chunk calculations before int64→int conversion
+  - Added underflow validation for last chunk size to detect database corruption
+  - Added pagination caps (max page: 1,000,000) to prevent DoS attacks
 - **Session Invalidation on Password Change**: All user sessions are now invalidated when a password is changed or reset
   - Prevents stolen session tokens from being used after password changes (OWASP best practice)
   - Added `DeleteUserSessionsByUserID()` function to invalidate all sessions for a user
