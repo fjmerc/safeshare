@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Chunked Upload UI Display**: Fixed missing download count information in chunked upload results
+  - Backend: Added `file_size`, `max_downloads`, and `completed_downloads` fields to `UploadStatusResponse`
+  - Frontend: Updated `chunked-uploader.js` to use server response values instead of client-side cached values
+  - Fixes "undefined / Unlimited" display issue in Downloads field after chunked upload completion
+  - Now correctly shows "0 / Unlimited" or "0 / 5" matching simple upload behavior
+- **Chunked Upload Rate Limiting**: Removed duplicate rate limiting on `/api/upload/complete/*` endpoint
+  - Complete endpoint is now exempt from rate limiting (already covered by init endpoint)
+  - Prevents false 429 errors when completing chunked uploads
+  - Improves reliability of large file uploads
+
 ### Performance
 - **Resource Management Improvements**: Enhanced memory and concurrency controls to prevent resource exhaustion
   - Database connection pool: Configured limits (max 25 connections, 5 idle, 5min lifetime) to prevent unlimited connections
