@@ -191,8 +191,9 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 	// last_activity and the calculated cutoff are in lexicographically sortable formats.
 	//
 	// Updated query includes stuck processing uploads:
-	// - Uploads with status='processing' that started > 2 hours ago (assembly timeout)
+	// - Uploads with status='processing' that started > 6 hours ago (assembly timeout)
 	// - All other incomplete uploads that are past expiry time
+	// Note: Increased timeout from 2h to 6h to support large file assemblies (50GB+)
 	query := fmt.Sprintf(`
 		SELECT
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
@@ -202,8 +203,8 @@ func GetAbandonedPartialUploads(db *sql.DB, expiryHours int) ([]models.PartialUp
 		FROM partial_uploads
 		WHERE completed = 0
 		AND (
-			-- Stuck processing uploads (assembly timeout: 2 hours)
-			(status = 'processing' AND assembly_started_at IS NOT NULL AND assembly_started_at < datetime('now', '-2 hours'))
+			-- Stuck processing uploads (assembly timeout: 6 hours)
+			(status = 'processing' AND assembly_started_at IS NOT NULL AND assembly_started_at < datetime('now', '-6 hours'))
 			OR
 			-- Regular abandoned uploads (not processing)
 			((status IS NULL OR status != 'processing') AND last_activity %s datetime('now', '-' || ? || ' hours'))
@@ -454,6 +455,33 @@ func PartialUploadExists(db *sql.DB, uploadID string) (bool, error) {
 	}
 
 	return count > 0, nil
+}
+
+// GetAllPartialUploadIDs returns all upload_ids currently in the database
+// This is optimized for orphaned chunk detection to avoid N+1 queries
+func GetAllPartialUploadIDs(db *sql.DB) (map[string]bool, error) {
+	query := `SELECT upload_id FROM partial_uploads`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query partial upload IDs: %w", err)
+	}
+	defer rows.Close()
+
+	uploadIDs := make(map[string]bool)
+	for rows.Next() {
+		var uploadID string
+		if err := rows.Scan(&uploadID); err != nil {
+			return nil, fmt.Errorf("failed to scan upload ID: %w", err)
+		}
+		uploadIDs[uploadID] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating upload IDs: %w", err)
+	}
+
+	return uploadIDs, nil
 }
 
 // UpdatePartialUploadStatus updates the status and error_message (if provided)

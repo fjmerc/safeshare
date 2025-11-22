@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -430,20 +431,37 @@ func run() error {
 		MaxHeaderBytes: 1 << 20,           // 1MB header limit
 	}
 
-	// Start cleanup workers
+	// Start cleanup workers with WaitGroup for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes)
+	var workerWg sync.WaitGroup
+
+	// Start file cleanup worker
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes)
+	}()
 
 	// Start partial upload cleanup worker (runs every 6 hours)
-	go utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+	}()
 
 	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)
-	go utils.StartAssemblyRecoveryWorker(ctx, db, cfg, handlers.AssembleUploadAsync)
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		utils.StartAssemblyRecoveryWorker(ctx, db, cfg, handlers.AssembleUploadAsync)
+	}()
 
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
+	workerWg.Add(1)
 	go func() {
+		defer workerWg.Done()
 		ticker := time.NewTicker(30 * time.Minute)
 		defer ticker.Stop()
 
@@ -452,17 +470,26 @@ func run() error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := database.CleanupExpiredSessions(db); err != nil {
-					slog.Error("failed to cleanup expired admin sessions", "error", err)
-				} else {
-					slog.Debug("cleaned up expired admin sessions")
-				}
+				// Add panic recovery to prevent goroutine death
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("session cleanup worker panic recovered", "panic", r)
+						}
+					}()
 
-				if err := database.CleanupExpiredUserSessions(db); err != nil {
-					slog.Error("failed to cleanup expired user sessions", "error", err)
-				} else {
-					slog.Debug("cleaned up expired user sessions")
-				}
+					if err := database.CleanupExpiredSessions(db); err != nil {
+						slog.Error("failed to cleanup expired admin sessions", "error", err)
+					} else {
+						slog.Debug("cleaned up expired admin sessions")
+					}
+
+					if err := database.CleanupExpiredUserSessions(db); err != nil {
+						slog.Error("failed to cleanup expired user sessions", "error", err)
+					} else {
+						slog.Debug("cleaned up expired user sessions")
+					}
+				}()
 			}
 		}
 	}()
@@ -486,14 +513,14 @@ func run() error {
 	case sig := <-shutdown:
 		slog.Info("shutdown signal received", "signal", sig)
 
-		// Cancel cleanup worker
+		// Cancel context to signal workers to stop
 		cancel()
 
 		// Give outstanding requests 10 seconds to complete
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
 
-		if err := server.Shutdown(ctx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			slog.Error("graceful shutdown failed", "error", err)
 			if err := server.Close(); err != nil {
 				return fmt.Errorf("server close failed: %w", err)
@@ -502,6 +529,22 @@ func run() error {
 		}
 
 		slog.Info("server shutdown complete")
+
+		// Wait for all background workers to finish (with 5 second timeout)
+		slog.Info("waiting for background workers to finish")
+		workerDone := make(chan struct{})
+		go func() {
+			workerWg.Wait()
+			close(workerDone)
+		}()
+
+		select {
+		case <-workerDone:
+			slog.Info("all background workers stopped gracefully")
+		case <-time.After(5 * time.Second):
+			slog.Warn("background workers did not finish within timeout, forcing exit")
+		}
+
 		return nil
 	}
 }

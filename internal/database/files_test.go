@@ -179,14 +179,14 @@ func TestDeleteExpiredFiles(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create expired file
+	// Create expired file (expired 2 hours ago to account for 1-hour grace period)
 	expiredFile := &models.File{
 		ClaimCode:        "EXPIRED1",
 		OriginalFilename: "expired1.txt",
 		StoredFilename:   "stored-expired1.txt",
 		FileSize:         100,
 		MimeType:         "text/plain",
-		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		ExpiresAt:        time.Now().Add(-2 * time.Hour),
 		UploaderIP:       "192.168.1.1",
 	}
 
@@ -277,14 +277,14 @@ func TestDeleteExpiredFiles_FileAlreadyDeleted(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create expired file in DB but NOT on disk
+	// Create expired file in DB but NOT on disk (expired 2 hours ago to account for 1-hour grace period)
 	expiredFile := &models.File{
 		ClaimCode:        "EXPIRED_NO_FILE",
 		OriginalFilename: "missing.txt",
 		StoredFilename:   "stored-missing.txt",
 		FileSize:         100,
 		MimeType:         "text/plain",
-		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		ExpiresAt:        time.Now().Add(-2 * time.Hour),
 		UploaderIP:       "192.168.1.1",
 	}
 
@@ -341,14 +341,14 @@ func TestDeleteExpiredFiles_FileDeletionFails(t *testing.T) {
 		t.Fatalf("Failed to create readonly dir: %v", err)
 	}
 
-	// Create expired file
+	// Create expired file (expired 2 hours ago to account for 1-hour grace period)
 	expiredFile := &models.File{
 		ClaimCode:        "EXPIRED_LOCKED",
 		OriginalFilename: "locked.txt",
 		StoredFilename:   "stored-locked.txt",
 		FileSize:         100,
 		MimeType:         "text/plain",
-		ExpiresAt:        time.Now().Add(-1 * time.Hour),
+		ExpiresAt:        time.Now().Add(-2 * time.Hour),
 		UploaderIP:       "192.168.1.1",
 	}
 
@@ -427,7 +427,8 @@ func TestDeleteExpiredFiles_ValidationFails(t *testing.T) {
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
-	expiresAt := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	// Expired 2 hours ago to account for 1-hour grace period
+	expiresAt := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
 	_, err = db.Exec(query, "INVALID_PATH", "test.txt", "../evil.txt", 100, "text/plain", expiresAt, "192.168.1.1")
 	if err != nil {
 		t.Fatalf("Failed to insert invalid file: %v", err)
@@ -467,7 +468,7 @@ func TestDeleteExpiredFiles_MultipleFiles(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Create 3 expired files
+	// Create 3 expired files (expired 2 hours ago to account for 1-hour grace period)
 	for i := 1; i <= 3; i++ {
 		claimCode := "MULTI" + string(rune('0'+i))
 		originalFilename := "file" + string(rune('0'+i)) + ".txt"
@@ -479,7 +480,7 @@ func TestDeleteExpiredFiles_MultipleFiles(t *testing.T) {
 			StoredFilename:   storedFilename,
 			FileSize:         100 * int64(i),
 			MimeType:         "text/plain",
-			ExpiresAt:        time.Now().Add(-1 * time.Hour),
+			ExpiresAt:        time.Now().Add(-2 * time.Hour),
 			UploaderIP:       "192.168.1.1",
 		}
 

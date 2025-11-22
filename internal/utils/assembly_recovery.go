@@ -57,10 +57,11 @@ func recoverInterruptedAssemblies(db *sql.DB, cfg *config.Config, assemblyFunc A
 
 	// Resume each interrupted assembly
 	for _, upload := range processingUploads {
-		// Check if upload has been stuck for more than 30 minutes (likely crashed)
+		// Check if upload has been stuck for more than 1 hour (likely crashed)
+		// Note: Normal assemblies should complete faster; 1 hour threshold is conservative
 		if upload.AssemblyStartedAt != nil {
 			timeSinceStart := time.Since(*upload.AssemblyStartedAt)
-			if timeSinceStart < 30*time.Minute {
+			if timeSinceStart < 1*time.Hour {
 				// Skip - assembly is probably still in progress
 				slog.Debug("skipping recent processing upload",
 					"upload_id", upload.UploadID,

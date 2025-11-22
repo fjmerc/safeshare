@@ -482,10 +482,10 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 		}
 	}
 
-	// Manually expire some files
+	// Manually expire some files (2 hours ago to account for 1-hour grace period)
 	for i := 0; i < 3; i++ {
 		db.Exec("UPDATE files SET expires_at = ? WHERE claim_code = ?",
-			time.Now().Add(-1*time.Hour), claimCodes[i])
+			time.Now().Add(-2*time.Hour), claimCodes[i])
 	}
 
 	// Run cleanup
