@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Session Invalidation on Password Change**: All user sessions are now invalidated when a password is changed or reset
+  - Prevents stolen session tokens from being used after password changes (OWASP best practice)
+  - Added `DeleteUserSessionsByUserID()` function to invalidate all sessions for a user
+  - Applied to both admin password reset and user password change flows
+  - Fixes critical security vulnerability where attackers could continue using stolen sessions for up to 24 hours
+- **Constant-Time Token Comparison**: Implemented constant-time comparison for security tokens to prevent timing attacks
+  - CSRF tokens now use `crypto/subtle.ConstantTimeCompare()` instead of string equality
+  - Admin password verification now uses constant-time comparison
+  - Prevents timing side-channel attacks that could leak token/password information character-by-character
+
 ## [2.8.1] - 2025-11-22
 
 ### Fixed

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"log/slog"
 	"net/http"
@@ -170,16 +171,26 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 
 				// Get CSRF token from cookie
 				csrfCookie, err := r.Cookie("csrf_token")
-				if err != nil || csrfToken == "" || csrfCookie.Value != csrfToken {
-					slog.Warn("CSRF validation failed - token mismatch",
-						"path", r.URL.Path,
-						"ip", getClientIP(r),
-						"has_csrf_header", csrfToken != "",
-						"has_csrf_cookie", csrfCookie != nil,
-					)
-					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
-					return
+				if err != nil || csrfToken == "" || csrfCookie == nil {
+				slog.Warn("CSRF validation failed - missing token",
+				"path", r.URL.Path,
+				"ip", getClientIP(r),
+				"has_csrf_header", csrfToken != "",
+				"has_csrf_cookie", csrfCookie != nil,
+				)
+				http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
+				return
 				}
+
+			// Use constant-time comparison to prevent timing attacks
+			if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
+				slog.Warn("CSRF validation failed - token mismatch",
+					"path", r.URL.Path,
+					"ip", getClientIP(r),
+				)
+				http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
+				return
+			}
 			}
 
 			next.ServeHTTP(w, r)

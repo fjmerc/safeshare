@@ -276,6 +276,15 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Invalidate all existing sessions for this user (security best practice)
+		if err := database.DeleteUserSessionsByUserID(db, user.ID); err != nil {
+			slog.Error("failed to delete user sessions after password change",
+				"error", err,
+				"user_id", user.ID,
+			)
+			// Don't fail the request - password was updated, just log the error
+		}
+
 		slog.Info("password changed successfully",
 			"user_id", user.ID,
 			"username", user.Username,
