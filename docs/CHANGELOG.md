@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Admin Dashboard - Webhook Tables UI**: Improved table alignment and styling in webhook management interface
+  - Fixed table header and column alignment issues in both Webhook Configurations and Delivery History tables
+  - Centered all columns except URL (Webhook Configurations) and Timestamp (Delivery History) which remain left-aligned
+  - Fixed action button centering in both tables
+  - Fixed dark mode visibility issue for URL input field in Edit Webhook modal
+  - Simplified CSS from 140+ lines to 35 lines using global centering with specific exceptions
+  - Improved CSS selector reliability by replacing `:nth-of-type()` with `:first-child` and attribute selectors
+
 ### Added
 - **Webhook System**: Real-time event notifications for file lifecycle events
   - Event types: `file.uploaded`, `file.downloaded`, `file.deleted`
@@ -24,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `POST /admin/api/webhooks/test?id={id}` - Test webhook delivery
     - `GET /admin/api/webhook-deliveries` - List delivery history
     - `GET /admin/api/webhook-deliveries/detail?id={id}` - Get delivery details
+  - **Admin Dashboard UI**: Complete webhook management interface
+    - New "Webhooks" tab in admin dashboard
+    - Webhook configuration management (create, edit, delete, test)
+    - Secret generator for HMAC signature keys
+    - Event type multi-select (file.uploaded, file.downloaded, file.deleted)
+    - Configurable retry and timeout settings
+    - Real-time delivery history with filtering by event type and status
+    - Detailed delivery view with full payload, response, and error information
+    - Auto-refresh option for delivery monitoring (10-second interval)
+    - Dark mode support
+    - Mobile responsive design
   - Opt-in by default (100% backward compatible)
   - Buffered channel (1000 events) with drop-on-full strategy to prevent blocking
   - Automatic retry processor for failed deliveries (runs every 10 seconds)

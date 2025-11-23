@@ -110,6 +110,7 @@
             <button class="tab-btn active" data-tab="files">Files</button>
             <button class="tab-btn" data-tab="users">Users</button>
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
+            <button class="tab-btn" data-tab="webhooks">Webhooks</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
@@ -216,7 +217,7 @@
         <div id="blockedIPsTab" class="tab-content">
             <div class="table-controls">
                 <form id="blockIPForm" class="inline-form">
-                    <input type="text" name="ip_address" placeholder="IP Address" required>
+                    <input type="text" name="ip_address" placeholder="IP Address">
                     <input type="text" name="reason" placeholder="Reason (optional)">
                     <button type="submit" class="btn-primary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -242,6 +243,92 @@
                     <tbody id="blockedIPsTableBody">
                         <tr>
                             <td colspan="5" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Webhooks Tab -->
+        <div id="webhooksTab" class="tab-content">
+            <div class="table-controls">
+                <button id="createWebhookBtn" class="btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        <line x1="12" y1="12" x2="12" y2="12"></line>
+                        <line x1="17" y1="7" x2="17" y2="7"></line>
+                    </svg>
+                    Add Webhook
+                </button>
+                <button id="refreshWebhooksBtn" class="btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div class="table-container">
+                <h3 style="margin-bottom: 16px; color: var(--text-primary);">Webhook Configurations</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>URL</th>
+                            <th>Enabled</th>
+                            <th>Events</th>
+                            <th>Retries</th>
+                            <th>Timeout</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="webhooksTableBody">
+                        <tr>
+                            <td colspan="7" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="table-container" style="margin-top: 32px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 style="margin: 0; color: var(--text-primary);">Delivery History</h3>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="autoRefreshDeliveries" style="width: auto;">
+                            <span style="font-size: 14px; color: var(--text-secondary);">Auto-refresh (10s)</span>
+                        </label>
+                        <select id="deliveryEventFilter" class="webhook-filter">
+                            <option value="">All Events</option>
+                            <option value="file.uploaded">file.uploaded</option>
+                            <option value="file.downloaded">file.downloaded</option>
+                            <option value="file.deleted">file.deleted</option>
+                        </select>
+                        <select id="deliveryStatusFilter" class="webhook-filter">
+                            <option value="">All Statuses</option>
+                            <option value="success">Success</option>
+                            <option value="failed">Failed</option>
+                            <option value="retrying">Retrying</option>
+                        </select>
+                    </div>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Event Type</th>
+                            <th>Status</th>
+                            <th>Response Code</th>
+                            <th>Attempts</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deliveriesTableBody">
+                        <tr>
+                            <td colspan="6" class="loading">Loading...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -833,6 +920,85 @@
             <div class="modal-actions">
                 <button id="confirmYes" class="btn-danger">Confirm</button>
                 <button id="confirmNo" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Webhook Modal -->
+    <div id="webhookModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="webhookModalTitle">Add Webhook</h3>
+            <form id="webhookForm">
+                <input type="hidden" id="webhookId">
+                <div class="form-group">
+                    <label for="webhookURL">Webhook URL *</label>
+                    <input type="url" id="webhookURL" name="url" required placeholder="https://your-domain.com/webhook">
+                    <small>HTTP or HTTPS URLs only</small>
+                </div>
+                <div class="form-group">
+                    <label for="webhookSecret">Secret *</label>
+                    <div class="input-with-button">
+                        <input type="password" id="webhookSecret" name="secret" required placeholder="Enter webhook secret">
+                        <button type="button" class="btn-secondary btn-small" onclick="generateWebhookSecret()" style="white-space: nowrap;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                            </svg>
+                            Generate
+                        </button>
+                    </div>
+                    <small>Used for HMAC signature verification</small>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="webhookEnabled" name="enabled" checked style="width: auto; margin-right: 8px;">
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Event Types *</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" class="webhook-event" value="file.uploaded" style="width: auto; margin-right: 8px;">
+                            <span style="font-family: monospace; font-size: 14px;">file.uploaded</span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" class="webhook-event" value="file.downloaded" style="width: auto; margin-right: 8px;">
+                            <span style="font-family: monospace; font-size: 14px;">file.downloaded</span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" class="webhook-event" value="file.deleted" style="width: auto; margin-right: 8px;">
+                            <span style="font-family: monospace; font-size: 14px;">file.deleted</span>
+                        </label>
+                    </div>
+                    <small>Select at least one event type</small>
+                </div>
+                <div class="form-group">
+                    <label for="webhookMaxRetries">Max Retries</label>
+                    <input type="number" id="webhookMaxRetries" name="max_retries" min="1" max="10" value="5">
+                    <small>Number of retry attempts on failure (1-10)</small>
+                </div>
+                <div class="form-group">
+                    <label for="webhookTimeout">Timeout (seconds)</label>
+                    <input type="number" id="webhookTimeout" name="timeout_seconds" min="5" max="60" value="30">
+                    <small>Request timeout in seconds (5-60)</small>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-primary">Save Webhook</button>
+                    <button type="button" class="btn-secondary" onclick="hideWebhookModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Webhook Delivery Detail Modal -->
+    <div id="deliveryDetailModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 700px;">
+            <h3>Webhook Delivery Details</h3>
+            <div id="deliveryDetailContent" style="margin: 20px 0;">
+                <!-- Content populated by JavaScript -->
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="hideDeliveryDetailModal()">Close</button>
             </div>
         </div>
     </div>
