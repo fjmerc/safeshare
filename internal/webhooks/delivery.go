@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
+	"unicode"
 )
 
 var (
@@ -55,6 +57,17 @@ func ComputeHMACSignature(payload, secret string) string {
 
 // DeliverWebhook delivers a webhook to the specified URL with HMAC signature
 func DeliverWebhook(url, secret, payload string, timeoutSeconds int) DeliveryResult {
+	return DeliverWebhookWithConfig(nil, url, secret, payload, timeoutSeconds)
+}
+
+// DeliverWebhookWithConfig delivers a webhook with full config support (including service tokens)
+func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeoutSeconds int) DeliveryResult {
+	// Construct final URL based on config format (for Gotify token injection)
+	finalURL := url
+	if config != nil && config.ServiceToken != "" {
+		finalURL = constructURLWithToken(url, config.ServiceToken, config.Format)
+	}
+
 	// Compute HMAC signature
 	signature := ComputeHMACSignature(payload, secret)
 
@@ -62,7 +75,7 @@ func DeliverWebhook(url, secret, payload string, timeoutSeconds int) DeliveryRes
 	client := getHTTPClient(timeoutSeconds)
 
 	// Create request
-	req, err := http.NewRequest("POST", url, bytes.NewBufferString(payload))
+	req, err := http.NewRequest("POST", finalURL, bytes.NewBufferString(payload))
 	if err != nil {
 		slog.Error("failed to create webhook request", "url", url, "error", err)
 		return DeliveryResult{
@@ -76,6 +89,11 @@ func DeliverWebhook(url, secret, payload string, timeoutSeconds int) DeliveryRes
 	req.Header.Set("User-Agent", "SafeShare-Webhook/1.0")
 	req.Header.Set("X-SafeShare-Signature", signature)
 	req.Header.Set("X-SafeShare-Signature-Algorithm", "sha256")
+
+	// Add service-specific auth headers (for ntfy)
+	if config != nil && config.ServiceToken != "" {
+		addAuthHeaders(req, config.ServiceToken, config.Format)
+	}
 
 	// Send request
 	startTime := time.Now()
@@ -159,4 +177,61 @@ func CalculateRetryDelay(attemptCount int) time.Duration {
 // ShouldRetry determines if a delivery should be retried based on attempt count and max retries
 func ShouldRetry(attemptCount, maxRetries int) bool {
 	return attemptCount < maxRetries
+}
+
+// constructURLWithToken constructs the final webhook URL with service token based on format
+func constructURLWithToken(baseURL, token string, format WebhookFormat) string {
+	switch format {
+	case FormatGotify:
+		// Gotify: Append token as query parameter with proper URL encoding
+		parsedURL, err := url.Parse(baseURL)
+		if err != nil {
+			// Return original URL on parse error (will fail later in request)
+			slog.Error("failed to parse webhook URL for token injection", "url", baseURL, "error", err)
+			return baseURL
+		}
+		
+		// Use url.Values for proper encoding (prevents injection)
+		query := parsedURL.Query()
+		query.Set("token", token) // Properly encodes special characters
+		parsedURL.RawQuery = query.Encode()
+		
+		return parsedURL.String()
+	case FormatNtfy, FormatDiscord, FormatSafeShare:
+		// No URL modification needed for these formats
+		return baseURL
+	default:
+		return baseURL
+	}
+}
+
+// validateToken checks if token contains forbidden control characters
+func validateToken(token string) bool {
+	// Reject tokens with control characters (newlines, carriage returns, etc.)
+	for _, r := range token {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// addAuthHeaders adds service-specific authentication headers based on format
+func addAuthHeaders(req *http.Request, token string, format WebhookFormat) {
+	switch format {
+	case FormatNtfy:
+		// Validate token before use (prevents header injection)
+		if !validateToken(token) {
+			slog.Error("invalid service token contains control characters",
+				"format", format)
+			return // Don't set header with invalid token
+		}
+		// ntfy: Add Authorization Bearer header
+		req.Header.Set("Authorization", "Bearer "+token)
+	case FormatGotify, FormatDiscord, FormatSafeShare:
+		// No auth headers needed for these formats
+		// Gotify uses URL query param (handled in constructURLWithToken)
+		// Discord token is in webhook URL itself
+		// SafeShare uses HMAC signature only
+	}
 }

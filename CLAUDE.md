@@ -65,6 +65,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **platform-engineer** - Docker optimization, deployment automation
 - **network-engineer** - Reverse proxy (Traefik), Cloudflare CDN
 
+**Security & Quality:**
+- **bug-hunter** - Security audits, vulnerability detection, correctness analysis (REQUIRED before testing)
+
 **Testing:**
 - **app-testing** - Web UI testing, API testing, integration tests
 
@@ -72,16 +75,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Plan** - Implementation planning, architecture design
 - **Explore** - Codebase exploration, finding files/patterns
 
-### Testing Procedures - REQUIRED FOR ALL CODE CHANGES
+### Security Audit & Testing Procedures - REQUIRED FOR ALL CODE CHANGES
 
 **CRITICAL**: This project has no local Go installation. All tests MUST run in Docker using the golang:1.24 image.
+
+**Development Workflow Order:**
+
+1. **Write/modify code** - Implement the feature or fix
+2. **SECURITY AUDIT FIRST** - Run bug-hunter agent BEFORE testing
+3. **Fix security issues** - Address any vulnerabilities found
+4. **Run tests** - Delegate to app-testing agent
+5. **Fix test failures** - Address any failing tests
+6. **Verify coverage** - Ensure coverage meets 60% threshold
+
+**Bug Hunter Agent - REQUIRED BEFORE TESTING:**
+
+**When to invoke bug-hunter:**
+- After writing new code (features, bug fixes, refactors)
+- BEFORE running the test suite
+- When modifying security-critical code (auth, encryption, webhooks)
+- After making database schema changes
+- When handling user input or external data
+
+**Why audit before testing:**
+- Catches security vulnerabilities early (SQL injection, XSS, etc.)
+- Identifies logic bugs before they become test failures
+- Prevents shipping insecure code that passes tests
+- Reduces rework by finding issues before test suite runs
+
+**How to invoke:**
+```
+Use Task tool with subagent_type: bug-hunter
+Provide context about what code changed and what to audit
+```
+
+**What bug-hunter checks:**
+- SQL injection vulnerabilities
+- XSS and injection attacks
+- Authentication/authorization bypasses
+- Input validation issues
+- Race conditions and concurrency bugs
+- Resource leaks (memory, file handles, goroutines)
+- Logic errors and off-by-one bugs
+- OWASP Top 10 vulnerabilities
 
 **Test Execution Rules:**
 
 1. **NEVER run tests directly** - Do NOT use `go test` on the host
-2. **ALWAYS delegate to app-testing agent** - Use Task tool with `subagent_type: app-testing`
-3. **Agent runs tests, YOU fix code** - Agent only executes tests; you fix failures
-4. **All tests use Docker** - Every test command must use: `docker run --rm -v "$PWD":/app -w /app golang:1.24 go test ...`
+2. **Run bug-hunter FIRST** - Security audit before app-testing agent
+3. **THEN delegate to app-testing agent** - Use Task tool with `subagent_type: app-testing`
+4. **Agent runs tests, YOU fix code** - Agent only executes tests; you fix failures
+5. **All tests use Docker** - Every test command must use: `docker run --rm -v "$PWD":/app -w /app golang:1.24 go test ...`
 
 **Required Docker Test Format:**
 ```bash

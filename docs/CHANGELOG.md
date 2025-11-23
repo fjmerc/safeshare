@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Webhook Service Token Authentication**: Dedicated authentication token field for webhook services
+  - Separate "Service Token" field in webhook configuration for cleaner UX
+  - Gotify: Token automatically appended to URL as query parameter (`?token=ABC123`)
+  - ntfy.sh: Token sent as `Authorization: Bearer` header for private topics
+  - Discord/SafeShare: No service token needed (unchanged behavior)
+  - Token field visibility automatically shown/hidden based on selected webhook format
+  - Service tokens are masked in API responses (`abc***xyz`) for security
+  - Password field with show/hide toggle for secure token entry
+  - Context-sensitive help text explains token usage for each service
+  - Database migration adds `service_token` column (nullable)
+  - Backward compatible: existing webhooks without tokens continue working
 - **Webhook Format Presets**: Support for Gotify, ntfy.sh, and Discord webhook formats
   - Admin dashboard now includes "Webhook Format" dropdown in webhook configuration
   - Supported formats: SafeShare (default), Gotify, ntfy.sh, Discord
