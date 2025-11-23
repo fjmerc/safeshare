@@ -2139,6 +2139,7 @@ function showCreateWebhookModal() {
     document.getElementById('webhookId').value = '';
     document.getElementById('webhookForm').reset();
     document.getElementById('webhookEnabled').checked = true;
+    document.getElementById('webhookFormat').value = 'safeshare';
     document.getElementById('webhookMaxRetries').value = 5;
     document.getElementById('webhookTimeout').value = 30;
     document.getElementById('webhookModal').style.display = 'flex';
@@ -2183,6 +2184,7 @@ async function editWebhook(webhookId) {
         document.getElementById('webhookURL').value = webhook.url;
         document.getElementById('webhookSecret').value = webhook.secret;
         document.getElementById('webhookEnabled').checked = webhook.enabled;
+        document.getElementById('webhookFormat').value = webhook.format || 'safeshare';
         document.getElementById('webhookMaxRetries').value = webhook.max_retries;
         document.getElementById('webhookTimeout').value = webhook.timeout_seconds;
 
@@ -2204,6 +2206,7 @@ async function saveWebhook(formData) {
     const url = formData.get('url');
     const secret = formData.get('secret');
     const enabled = document.getElementById('webhookEnabled').checked;
+    const format = formData.get('format') || 'safeshare';
     const maxRetries = parseInt(formData.get('max_retries'));
     const timeoutSeconds = parseInt(formData.get('timeout_seconds'));
 
@@ -2221,6 +2224,7 @@ async function saveWebhook(formData) {
         secret,
         enabled,
         events,
+        format,
         max_retries: maxRetries,
         timeout_seconds: timeoutSeconds
     };

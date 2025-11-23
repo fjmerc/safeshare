@@ -955,6 +955,16 @@
                     </label>
                 </div>
                 <div class="form-group">
+                    <label for="webhookFormat">Webhook Format *</label>
+                    <select id="webhookFormat" name="format" required>
+                        <option value="safeshare">SafeShare (Default JSON)</option>
+                        <option value="gotify">Gotify</option>
+                        <option value="ntfy">ntfy.sh</option>
+                        <option value="discord">Discord</option>
+                    </select>
+                    <small>Select the payload format for this webhook</small>
+                </div>
+                <div class="form-group">
                     <label>Event Types *</label>
                     <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
                         <label style="display: flex; align-items: center; cursor: pointer;">

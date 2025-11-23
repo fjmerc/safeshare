@@ -47,13 +47,14 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			URL            string   `json:"url"`
-			Secret         string   `json:"secret"`
-			Enabled        bool     `json:"enabled"`
-			Events         []string `json:"events"`
-			MaxRetries     int      `json:"max_retries"`
-			TimeoutSeconds int      `json:"timeout_seconds"`
-		}
+		URL            string   `json:"url"`
+		Secret         string   `json:"secret"`
+		Enabled        bool     `json:"enabled"`
+		Events         []string `json:"events"`
+		Format         string   `json:"format"`
+		MaxRetries     int      `json:"max_retries"`
+		 TimeoutSeconds int      `json:"timeout_seconds"`
+	}
 
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
@@ -127,7 +128,20 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Validate format if provided
+		if req.Format != "" && !webhooks.ValidateFormat(req.Format) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid webhook format. Supported formats: safeshare, gotify, ntfy, discord",
+			})
+			return
+		}
+
 		// Set defaults
+		if req.Format == "" {
+			req.Format = "safeshare"
+		}
 		if req.MaxRetries == 0 {
 			req.MaxRetries = 5
 		}
@@ -140,6 +154,7 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			Secret:         req.Secret,
 			Enabled:        req.Enabled,
 			Events:         req.Events,
+			Format:         webhooks.WebhookFormat(req.Format),
 			MaxRetries:     req.MaxRetries,
 			TimeoutSeconds: req.TimeoutSeconds,
 		}
@@ -196,6 +211,7 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			Secret         string   `json:"secret"`
 			Enabled        bool     `json:"enabled"`
 			Events         []string `json:"events"`
+			Format         string   `json:"format"`
 			MaxRetries     int      `json:"max_retries"`
 			TimeoutSeconds int      `json:"timeout_seconds"`
 		}
@@ -272,12 +288,28 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Validate format if provided
+		if req.Format != "" && !webhooks.ValidateFormat(req.Format) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid webhook format. Supported formats: safeshare, gotify, ntfy, discord",
+			})
+			return
+		}
+
+		// Set default format if not provided
+		if req.Format == "" {
+			req.Format = "safeshare"
+		}
+
 		config := &webhooks.Config{
 			ID:             id,
 			URL:            req.URL,
 			Secret:         req.Secret,
 			Enabled:        req.Enabled,
 			Events:         req.Events,
+			Format:         webhooks.WebhookFormat(req.Format),
 			MaxRetries:     req.MaxRetries,
 			TimeoutSeconds: req.TimeoutSeconds,
 		}
@@ -401,9 +433,10 @@ func TestWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			},
 		}
 
-		payload, err := testEvent.ToJSON()
+		// Transform payload according to webhook format
+		payload, err := webhooks.TransformPayload(testEvent, config.Format)
 		if err != nil {
-			slog.Error("failed to create test payload", "error", err)
+			slog.Error("failed to create test payload", "error", err, "format", config.Format)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
