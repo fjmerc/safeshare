@@ -127,6 +127,7 @@
 [data-theme="dark"] input[type="password"],
 [data-theme="dark"] input[type="email"],
 [data-theme="dark"] input[type="number"],
+[data-theme="dark"] input[type="url"],
 [data-theme="dark"] textarea,
 [data-theme="dark"] select {
     color: var(--text-primary);
@@ -138,6 +139,7 @@
 [data-theme="dark"] input[type="password"]:focus,
 [data-theme="dark"] input[type="email"]:focus,
 [data-theme="dark"] input[type="number"]:focus,
+[data-theme="dark"] input[type="url"]:focus,
 [data-theme="dark"] textarea:focus,
 [data-theme="dark"] select:focus {
     background: #111827;
@@ -1914,7 +1916,7 @@ code {
 .actions {
     display: flex;
     gap: 6px;
-    justify-content: flex-start;
+    justify-content: center;
 }
 
 /* Badge Additional Styles */
@@ -2113,4 +2115,181 @@ code {
         max-width: none;
         width: 100%;
     }
+}
+
+/* ============ WEBHOOK-SPECIFIC STYLES ============ */
+
+/* Input with button (for webhook secret generation) */
+.input-with-button {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.input-with-button input {
+    flex: 1;
+}
+
+/* Badge for event types */
+.badge-info {
+    background-color: #3b82f6;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge-warning {
+    background-color: #f59e0b;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+[data-theme="dark"] .badge-info {
+    background-color: #2563eb;
+}
+
+[data-theme="dark"] .badge-warning {
+    background-color: #d97706;
+}
+
+/* Webhook modal adjustments */
+#webhookModal .modal-content {
+    max-width: 600px;
+}
+
+/* Delivery detail modal adjustments */
+#deliveryDetailModal .modal-content {
+    max-width: 700px;
+}
+
+/* Form control for filters */
+.form-control {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-white);
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="dark"] .form-control {
+    background-color: var(--bg-light);
+    border-color: #374151;
+}
+
+/* Webhook filter dropdowns */
+.webhook-filter {
+    padding: 8px 12px;
+    padding-right: 44px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-white);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 150px;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+}
+
+.webhook-filter:hover {
+    border-color: var(--primary-color);
+}
+
+.webhook-filter:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="dark"] .webhook-filter {
+    background-color: #1f2937;
+    border-color: #374151;
+    color: #f9fafb;
+    /* Override global dark mode select background to prevent double arrows */
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+}
+
+[data-theme="dark"] .webhook-filter option {
+    background-color: #1f2937;
+    color: #f9fafb;
+}
+
+/* ===== WEBHOOKS TAB UX/UI IMPROVEMENTS ===== */
+
+/* Add consistent padding to all webhook table containers */
+#webhooksTab .table-container {
+    padding: 16px;
+}
+
+/* Remove redundant h3 margins since container now has padding */
+#webhooksTab .table-container h3 {
+    margin-top: 0;
+}
+
+/* Add spacing between delivery filter controls and container edge */
+#webhooksTab .table-container > div[style*="display: flex"] {
+    margin-right: -4px; /* Compensate for visual alignment */
+}
+
+/* ===== WEBHOOK TABLES STYLING ===== */
+
+/* GLOBAL CENTERING: Override default left-alignment for ALL webhook tables */
+#webhooksTab .data-table th,
+#webhooksTab .data-table td {
+    text-align: center !important;
+    vertical-align: middle;
+    padding: 12px;
+}
+
+/* Prevent header text wrapping */
+#webhooksTab .data-table th {
+    white-space: nowrap;
+}
+
+/* EXCEPTIONS: Specific columns that need left-alignment */
+
+/* Webhook Configurations Table - URL column (2nd column) */
+#webhooksTab .table-container:first-child .data-table th:nth-child(2),
+#webhooksTab .table-container:first-child .data-table td:nth-child(2) {
+    text-align: left !important;
+    max-width: 350px;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+}
+
+/* Delivery History Table - Timestamp column (1st column) */
+/* Target by inline style since it has margin-top: 32px */
+#webhooksTab .table-container[style*="margin-top"] .data-table th:first-child,
+#webhooksTab .table-container[style*="margin-top"] .data-table td:first-child {
+    text-align: left !important;
+    white-space: nowrap;
+}
+
+
+
+/* Better pre formatting in modals */
+pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
