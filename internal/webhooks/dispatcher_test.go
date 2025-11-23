@@ -297,6 +297,7 @@ func TestDispatcher_ProcessEvent_WithSubscribedConfig(t *testing.T) {
 				Secret:         "test-secret",
 				Enabled:        true,
 				Events:         []string{"file.uploaded"},
+				Format:         FormatSafeShare,
 				MaxRetries:     3,
 				TimeoutSeconds: 10,
 			},
@@ -338,6 +339,7 @@ func TestDispatcher_ProcessEvent_NotSubscribed(t *testing.T) {
 				Secret:         "test-secret",
 				Enabled:        true,
 				Events:         []string{"file.downloaded"}, // Not subscribed to uploaded
+				Format:         FormatSafeShare,
 				MaxRetries:     3,
 				TimeoutSeconds: 10,
 			},

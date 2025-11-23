@@ -20,10 +20,15 @@ func CreateWebhookConfig(db *sql.DB, config *webhooks.Config) error {
 		enabled = 1
 	}
 
+	format := string(config.Format)
+	if format == "" {
+		format = "safeshare" // Default format
+	}
+
 	result, err := db.Exec(`
-		INSERT INTO webhook_configs (url, secret, enabled, events, max_retries, timeout_seconds, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, config.URL, config.Secret, enabled, eventsJSON, config.MaxRetries, config.TimeoutSeconds)
+		INSERT INTO webhook_configs (url, secret, enabled, events, format, max_retries, timeout_seconds, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, config.URL, config.Secret, enabled, eventsJSON, format, config.MaxRetries, config.TimeoutSeconds)
 	if err != nil {
 		return fmt.Errorf("failed to insert webhook config: %w", err)
 	}
@@ -45,12 +50,13 @@ func GetWebhookConfig(db *sql.DB, id int64) (*webhooks.Config, error) {
 	var config webhooks.Config
 	var enabled int
 	var eventsJSON string
+	var format string
 
 	err := db.QueryRow(`
-		SELECT id, url, secret, enabled, events, max_retries, timeout_seconds, created_at, updated_at
+		SELECT id, url, secret, enabled, events, format, max_retries, timeout_seconds, created_at, updated_at
 		FROM webhook_configs
 		WHERE id = ?
-	`, id).Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON, 
+	`, id).Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON, &format,
 		&config.MaxRetries, &config.TimeoutSeconds, &config.CreatedAt, &config.UpdatedAt)
 	
 	if err != nil {
@@ -61,6 +67,10 @@ func GetWebhookConfig(db *sql.DB, id int64) (*webhooks.Config, error) {
 	}
 
 	config.Enabled = enabled == 1
+	config.Format = webhooks.WebhookFormat(format)
+	if config.Format == "" {
+		config.Format = webhooks.FormatSafeShare // Default format
+	}
 
 	events, err := webhooks.ParseEventsJSON(eventsJSON)
 	if err != nil {
@@ -74,7 +84,7 @@ func GetWebhookConfig(db *sql.DB, id int64) (*webhooks.Config, error) {
 // GetAllWebhookConfigs retrieves all webhook configurations
 func GetAllWebhookConfigs(db *sql.DB) ([]*webhooks.Config, error) {
 	rows, err := db.Query(`
-		SELECT id, url, secret, enabled, events, max_retries, timeout_seconds, created_at, updated_at
+		SELECT id, url, secret, enabled, events, format, max_retries, timeout_seconds, created_at, updated_at
 		FROM webhook_configs
 		ORDER BY created_at DESC
 	`)
@@ -88,14 +98,19 @@ func GetAllWebhookConfigs(db *sql.DB) ([]*webhooks.Config, error) {
 		var config webhooks.Config
 		var enabled int
 		var eventsJSON string
+		var format string
 
-		err := rows.Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON,
+		err := rows.Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON, &format,
 			&config.MaxRetries, &config.TimeoutSeconds, &config.CreatedAt, &config.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook config: %w", err)
 		}
 
 		config.Enabled = enabled == 1
+		config.Format = webhooks.WebhookFormat(format)
+		if config.Format == "" {
+			config.Format = webhooks.FormatSafeShare
+		}
 
 		events, err := webhooks.ParseEventsJSON(eventsJSON)
 		if err != nil {
@@ -112,7 +127,7 @@ func GetAllWebhookConfigs(db *sql.DB) ([]*webhooks.Config, error) {
 // GetEnabledWebhookConfigs retrieves all enabled webhook configurations
 func GetEnabledWebhookConfigs(db *sql.DB) ([]*webhooks.Config, error) {
 	rows, err := db.Query(`
-		SELECT id, url, secret, enabled, events, max_retries, timeout_seconds, created_at, updated_at
+		SELECT id, url, secret, enabled, events, format, max_retries, timeout_seconds, created_at, updated_at
 		FROM webhook_configs
 		WHERE enabled = 1
 		ORDER BY created_at DESC
@@ -127,14 +142,19 @@ func GetEnabledWebhookConfigs(db *sql.DB) ([]*webhooks.Config, error) {
 		var config webhooks.Config
 		var enabled int
 		var eventsJSON string
+		var format string
 
-		err := rows.Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON,
+		err := rows.Scan(&config.ID, &config.URL, &config.Secret, &enabled, &eventsJSON, &format,
 			&config.MaxRetries, &config.TimeoutSeconds, &config.CreatedAt, &config.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan webhook config: %w", err)
 		}
 
 		config.Enabled = enabled == 1
+		config.Format = webhooks.WebhookFormat(format)
+		if config.Format == "" {
+			config.Format = webhooks.FormatSafeShare
+		}
 
 		events, err := webhooks.ParseEventsJSON(eventsJSON)
 		if err != nil {
@@ -160,11 +180,16 @@ func UpdateWebhookConfig(db *sql.DB, config *webhooks.Config) error {
 		enabled = 1
 	}
 
+	format := string(config.Format)
+	if format == "" {
+		format = "safeshare"
+	}
+
 	result, err := db.Exec(`
 		UPDATE webhook_configs
-		SET url = ?, secret = ?, enabled = ?, events = ?, max_retries = ?, timeout_seconds = ?, updated_at = CURRENT_TIMESTAMP
+		SET url = ?, secret = ?, enabled = ?, events = ?, format = ?, max_retries = ?, timeout_seconds = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, config.URL, config.Secret, enabled, eventsJSON, config.MaxRetries, config.TimeoutSeconds, config.ID)
+	`, config.URL, config.Secret, enabled, eventsJSON, format, config.MaxRetries, config.TimeoutSeconds, config.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update webhook config: %w", err)
 	}

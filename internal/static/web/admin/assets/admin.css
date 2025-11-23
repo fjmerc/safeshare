@@ -1334,6 +1334,8 @@ input[type="checkbox"] {
     border-radius: var(--radius-lg);
     max-width: 440px;
     width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
     box-shadow: var(--shadow-xl);
     animation: slideUp 0.3s ease;
 }

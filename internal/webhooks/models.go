@@ -15,17 +15,38 @@ const (
 	EventFileExpired    EventType = "file.expired"
 )
 
+// WebhookFormat represents the format/protocol for webhook payloads
+type WebhookFormat string
+
+const (
+	FormatSafeShare WebhookFormat = "safeshare" // Default SafeShare JSON format
+	FormatGotify    WebhookFormat = "gotify"    // Gotify notification format
+	FormatNtfy      WebhookFormat = "ntfy"      // ntfy.sh notification format
+	FormatDiscord   WebhookFormat = "discord"   // Discord webhook format
+)
+
+// ValidateFormat checks if a webhook format is valid
+func ValidateFormat(format string) bool {
+	switch WebhookFormat(format) {
+	case FormatSafeShare, FormatGotify, FormatNtfy, FormatDiscord:
+		return true
+	default:
+		return false
+	}
+}
+
 // Config represents a webhook configuration
 type Config struct {
-	ID             int64     `json:"id"`
-	URL            string    `json:"url"`
-	Secret         string    `json:"secret"`
-	Enabled        bool      `json:"enabled"`
-	Events         []string  `json:"events"`
-	MaxRetries     int       `json:"max_retries"`
-	TimeoutSeconds int       `json:"timeout_seconds"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64         `json:"id"`
+	URL            string        `json:"url"`
+	Secret         string        `json:"secret"`
+	Enabled        bool          `json:"enabled"`
+	Events         []string      `json:"events"`
+	Format         WebhookFormat `json:"format"`
+	MaxRetries     int           `json:"max_retries"`
+	TimeoutSeconds int           `json:"timeout_seconds"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
 // Delivery represents a webhook delivery attempt

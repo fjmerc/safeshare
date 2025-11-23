@@ -133,10 +133,10 @@ func (d *Dispatcher) processEvent(event *Event) {
 			continue
 		}
 
-		// Convert event to JSON payload
-		payload, err := event.ToJSON()
+		// Transform event to appropriate format
+		payload, err := TransformPayload(event, config.Format)
 		if err != nil {
-			slog.Error("failed to convert event to JSON", "error", err)
+			slog.Error("failed to transform event payload", "error", err, "format", config.Format)
 			continue
 		}
 

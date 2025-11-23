@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Webhook Format Presets**: Support for Gotify, ntfy.sh, and Discord webhook formats
+  - Admin dashboard now includes "Webhook Format" dropdown in webhook configuration
+  - Supported formats: SafeShare (default), Gotify, ntfy.sh, Discord
+  - Automatic payload transformation based on selected format
+  - Gotify format: Includes title, message, priority (0-10), and markdown support
+  - ntfy.sh format: Includes title, message, tags (emoji), and priority (1-5)
+  - Discord format: Rich embeds with color-coded events, fields, and timestamps
+  - Format validation ensures only valid formats are accepted
+  - Database migration adds `format` column with default value "safeshare"
+  - Test webhook functionality respects format setting
+  - Comprehensive unit tests for all format transformers (67.9% coverage for webhooks package)
+  - Overall test coverage: 63.2% (exceeds 60% threshold)
+
 ### Fixed
 - **Admin Dashboard - Webhook Tables UI**: Improved table alignment and styling in webhook management interface
   - Fixed table header and column alignment issues in both Webhook Configurations and Delivery History tables
@@ -16,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simplified CSS from 140+ lines to 35 lines using global centering with specific exceptions
   - Improved CSS selector reliability by replacing `:nth-of-type()` with `:first-child` and attribute selectors
 
-### Added
+### Changed
 - **Webhook System**: Real-time event notifications for file lifecycle events
   - Event types: `file.uploaded`, `file.downloaded`, `file.deleted`
   - Asynchronous delivery with goroutine pool (5 workers by default)
