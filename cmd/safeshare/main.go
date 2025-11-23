@@ -484,7 +484,7 @@ func run() error {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes)
+		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent)
 	}()
 
 	// Start partial upload cleanup worker (runs every 6 hours)

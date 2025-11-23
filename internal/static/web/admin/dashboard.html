@@ -306,12 +306,14 @@
                             <option value="file.uploaded">file.uploaded</option>
                             <option value="file.downloaded">file.downloaded</option>
                             <option value="file.deleted">file.deleted</option>
+                            <option value="file.expired">file.expired</option>
                         </select>
                         <select id="deliveryStatusFilter" class="webhook-filter">
                             <option value="">All Statuses</option>
                             <option value="success">Success</option>
                             <option value="failed">Failed</option>
                             <option value="retrying">Retrying</option>
+                            <option value="expired">Expired</option>
                         </select>
                     </div>
                 </div>
@@ -995,6 +997,10 @@
                         <label style="display: flex; align-items: center; cursor: pointer;">
                             <input type="checkbox" class="webhook-event" value="file.deleted" style="width: auto; margin-right: 8px;">
                             <span style="font-family: monospace; font-size: 14px;">file.deleted</span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" class="webhook-event" value="file.expired" style="width: auto; margin-right: 8px;">
+                            <span style="font-family: monospace; font-size: 14px;">file.expired</span>
                         </label>
                     </div>
                     <small>Select at least one event type</small>

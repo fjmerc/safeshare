@@ -66,7 +66,7 @@ func TestCleanupExpiredFiles(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestCleanupMissingPhysicalFiles(t *testing.T) {
 	// Don't create physical file (simulating missing file)
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestCleanupNoExpiredFiles(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}

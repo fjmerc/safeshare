@@ -489,7 +489,7 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, _ := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, _ := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 
 	if deleted != 3 {
 		t.Errorf("deleted = %d, want 3", deleted)

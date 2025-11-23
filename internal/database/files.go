@@ -353,13 +353,19 @@ func IncrementCompletedDownloads(db *sql.DB, id int64) error {
 	return nil
 }
 
+// ExpiredFileCallback is called for each successfully deleted expired file
+// Parameters: claimCode, filename, fileSize, mimeType, expiresAt
+type ExpiredFileCallback func(claimCode, filename string, fileSize int64, mimeType string, expiresAt time.Time)
+
 // DeleteExpiredFiles removes expired files from both database and filesystem
 // Returns the count of deleted files
-func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
+// onExpired callback is called for each file after successful deletion (optional, can be nil)
+func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallback) (int, error) {
 	// Find expired files with 1-hour grace period to prevent deletion during active downloads
 	// Files must be expired for at least 1 hour before cleanup
+	// Query includes webhook-relevant fields for event emission
 	query := `
-		SELECT id, stored_filename
+		SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type, expires_at
 		FROM files
 		WHERE expires_at <= datetime('now', '-1 hour')
 	`
@@ -370,21 +376,47 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	}
 	defer rows.Close()
 
-	var expiredFiles []struct {
+	type expiredFileData struct {
 		ID             int64
+		ClaimCode      string
+		OriginalFilename string
 		StoredFilename string
+		FileSize       int64
+		MimeType       string
+		ExpiresAt      time.Time
 	}
+	var expiredFiles []expiredFileData
 
 	for rows.Next() {
-		var f struct {
-			ID             int64
-			StoredFilename string
-		}
-		if err := rows.Scan(&f.ID, &f.StoredFilename); err != nil {
+		var expiresAtStr string
+		var id int64
+		var claimCode, originalFilename, storedFilename, mimeType string
+		var fileSize int64
+		
+		if err := rows.Scan(&id, &claimCode, &originalFilename, &storedFilename, &fileSize, &mimeType, &expiresAtStr); err != nil {
 			slog.Error("failed to scan expired file", "error", err)
 			continue
 		}
-		expiredFiles = append(expiredFiles, f)
+		
+		// Parse timestamp from SQLite RFC3339 string format
+		expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+		if err != nil {
+			slog.Error("failed to parse expires_at timestamp",
+				"file_id", id,
+				"error", err,
+			)
+			continue
+		}
+		
+		expiredFiles = append(expiredFiles, expiredFileData{
+			ID:             id,
+			ClaimCode:      claimCode,
+			OriginalFilename: originalFilename,
+			StoredFilename: storedFilename,
+			FileSize:       fileSize,
+			MimeType:       mimeType,
+			ExpiresAt:      expiresAt,
+		})
 	}
 
 	if err := rows.Err(); err != nil {
@@ -435,6 +467,18 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string) (int, error) {
 	deletedCount := 0
 	if len(deletedIDs) > 0 {
 		deletedCount = batchDeleteFiles(db, deletedIDs)
+	}
+
+	// Step 5: Invoke callback for each successfully deleted file (if provided)
+	// Callback is invoked AFTER successful database commit
+	if deletedCount > 0 && onExpired != nil {
+		for i := 0; i < deletedCount && i < len(expiredFiles); i++ {
+			f := expiredFiles[i]
+			// Verify this file ID was in the deleted list
+			if i < len(deletedIDs) && f.ID == deletedIDs[i] {
+				onExpired(f.ClaimCode, f.OriginalFilename, f.FileSize, f.MimeType, f.ExpiresAt)
+			}
+		}
 	}
 
 	// Update query planner statistics after bulk deletes
