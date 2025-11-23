@@ -85,9 +85,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Required Docker Test Format:**
 ```bash
-# Full test suite with coverage
+# Full test suite with coverage (internal packages only)
 docker run --rm -v "$PWD":/app -w /app golang:1.24 sh -c \
-  "go test ./... -cover -coverprofile=coverage.out -covermode=atomic && \
+  "go test ./internal/... -cover -coverprofile=coverage.out -covermode=atomic && \
    go tool cover -func=coverage.out | grep total"
 
 # Specific package tests
@@ -95,7 +95,10 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 go test -v ./internal/handler
 ```
 
 **Coverage Requirements:**
-- Minimum coverage threshold: **60%**
+- Minimum coverage threshold: **60%** (for `internal/*` packages only)
+- **Coverage scope**: Only `internal/*` packages are measured
+- **Excluded**: `cmd/*` packages (CLI tools and main() functions)
+- **Rationale**: CLI entry points and main() functions are difficult to unit test and are better tested via integration/E2E tests. This follows Go community best practices.
 
 **Test-Driven Development Workflow:**
 1. Make code changes

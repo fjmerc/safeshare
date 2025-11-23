@@ -146,3 +146,86 @@ func TestHTTPRequestMetrics(t *testing.T) {
 		t.Errorf("Expected at least %.0f POST /api/upload 201 requests, got %f", initialPostUpload201+1.0, postUpload201)
 	}
 }
+
+func TestErrorsTotal(t *testing.T) {
+	// Record initial values
+	initialDBErrors := testutil.ToFloat64(ErrorsTotal.WithLabelValues("database"))
+	initialValidationErrors := testutil.ToFloat64(ErrorsTotal.WithLabelValues("validation"))
+
+	// Simulate errors
+	ErrorsTotal.WithLabelValues("database").Inc()
+	ErrorsTotal.WithLabelValues("validation").Inc()
+	ErrorsTotal.WithLabelValues("validation").Inc()
+	ErrorsTotal.WithLabelValues("encryption").Inc()
+
+	// Verify counts increased
+	dbErrors := testutil.ToFloat64(ErrorsTotal.WithLabelValues("database"))
+	if dbErrors < initialDBErrors+1.0 {
+		t.Errorf("Expected at least %.0f database errors, got %f", initialDBErrors+1.0, dbErrors)
+	}
+
+	validationErrors := testutil.ToFloat64(ErrorsTotal.WithLabelValues("validation"))
+	if validationErrors < initialValidationErrors+2.0 {
+		t.Errorf("Expected at least %.0f validation errors, got %f", initialValidationErrors+2.0, validationErrors)
+	}
+}
+
+func TestHealthMetrics(t *testing.T) {
+	// Test HealthStatus gauge
+	initialStatus := testutil.ToFloat64(HealthStatus)
+
+	// Set different health statuses
+	HealthStatus.Set(2) // Healthy
+	healthyStatus := testutil.ToFloat64(HealthStatus)
+	if healthyStatus != 2.0 {
+		t.Errorf("Expected health status 2.0, got %f", healthyStatus)
+	}
+
+	HealthStatus.Set(1) // Degraded
+	degradedStatus := testutil.ToFloat64(HealthStatus)
+	if degradedStatus != 1.0 {
+		t.Errorf("Expected health status 1.0, got %f", degradedStatus)
+	}
+
+	HealthStatus.Set(0) // Unhealthy
+	unhealthyStatus := testutil.ToFloat64(HealthStatus)
+	if unhealthyStatus != 0.0 {
+		t.Errorf("Expected health status 0.0, got %f", unhealthyStatus)
+	}
+
+	// Restore initial status
+	HealthStatus.Set(initialStatus)
+}
+
+func TestHealthCheckMetrics(t *testing.T) {
+	// Record initial values
+	initialHealthChecks := testutil.ToFloat64(HealthChecksTotal.WithLabelValues("/health", "healthy"))
+
+	// Simulate health checks
+	HealthChecksTotal.WithLabelValues("/health", "healthy").Inc()
+	HealthChecksTotal.WithLabelValues("/health", "healthy").Inc()
+	HealthChecksTotal.WithLabelValues("/health", "degraded").Inc()
+	HealthChecksTotal.WithLabelValues("/readiness", "healthy").Inc()
+
+	// Verify counts increased
+	healthChecks := testutil.ToFloat64(HealthChecksTotal.WithLabelValues("/health", "healthy"))
+	if healthChecks < initialHealthChecks+2.0 {
+		t.Errorf("Expected at least %.0f health checks, got %f", initialHealthChecks+2.0, healthChecks)
+	}
+}
+
+func TestHealthCheckDuration(t *testing.T) {
+	// Test that histogram accepts observations without panicking
+	HealthCheckDuration.WithLabelValues("/health").Observe(0.001) // 1ms
+	HealthCheckDuration.WithLabelValues("/health").Observe(0.005) // 5ms
+	HealthCheckDuration.WithLabelValues("/readiness").Observe(0.010) // 10ms
+	// If we got here without panic, test passes
+}
+
+func TestHTTPRequestDuration(t *testing.T) {
+	// Test that histogram accepts observations without panicking
+	HTTPRequestDuration.WithLabelValues("GET", "/api/upload").Observe(0.1)
+	HTTPRequestDuration.WithLabelValues("POST", "/api/upload").Observe(0.5)
+	HTTPRequestDuration.WithLabelValues("GET", "/api/claim/:code").Observe(0.05)
+	// If we got here without panic, test passes
+}

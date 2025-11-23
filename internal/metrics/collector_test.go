@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	_ "modernc.org/sqlite" // SQLite driver
 )
 
@@ -222,5 +223,222 @@ func TestDatabaseMetricsCollector_UnlimitedQuota(t *testing.T) {
 
 	if quotaUsedPercent != 0 {
 		t.Errorf("Expected 0%% quota used for unlimited, got %.2f%%", quotaUsedPercent)
+	}
+}
+
+func TestDatabaseMetricsCollector_Describe(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	collector := NewDatabaseMetricsCollector(db, 100.0)
+
+	// Create channel to collect descriptors
+	descChan := make(chan *prometheus.Desc, 10)
+
+	// Call Describe in goroutine (as Prometheus does)
+	go func() {
+		collector.Describe(descChan)
+		close(descChan)
+	}()
+
+	// Collect all descriptors
+	var descs []*prometheus.Desc
+	for desc := range descChan {
+		descs = append(descs, desc)
+	}
+
+	// Verify we got exactly 5 metric descriptors
+	expectedCount := 5 // storageUsed, activeFiles, activePartialUploads, storageQuota, quotaUsedPercent
+	if len(descs) != expectedCount {
+		t.Errorf("Expected %d descriptors, got %d", expectedCount, len(descs))
+	}
+
+	// Verify none are nil
+	for i, desc := range descs {
+		if desc == nil {
+			t.Errorf("Descriptor at index %d is nil", i)
+		}
+	}
+}
+
+func TestDatabaseMetricsCollector_Collect_EmptyDB(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	collector := NewDatabaseMetricsCollector(db, 100.0)
+
+	// Create channel to collect metrics
+	metricChan := make(chan prometheus.Metric, 10)
+
+	// Call Collect in goroutine
+	go func() {
+		collector.Collect(metricChan)
+		close(metricChan)
+	}()
+
+	// Collect all metrics
+	var metrics []prometheus.Metric
+	for metric := range metricChan {
+		metrics = append(metrics, metric)
+	}
+
+	// Verify we got exactly 5 metrics
+	if len(metrics) != 5 {
+		t.Errorf("Expected 5 metrics, got %d", len(metrics))
+	}
+
+	// Verify none are nil
+	for i, metric := range metrics {
+		if metric == nil {
+			t.Errorf("Metric at index %d is nil", i)
+		}
+	}
+}
+
+func TestDatabaseMetricsCollector_Collect_WithData(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Insert test data
+	_, err := db.Exec(`
+		INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, uploader_ip, sha256_hash)
+		VALUES
+			('code1', 'file1.txt', 'uuid1.txt', 1024000, 'text/plain', datetime('now', '+1 day'), '127.0.0.1', 'hash1'),
+			('code2', 'file2.txt', 'uuid2.txt', 2048000, 'text/plain', datetime('now', '+1 day'), '127.0.0.1', 'hash2')
+	`)
+	if err != nil {
+		t.Fatalf("Failed to insert test data: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO partial_uploads (upload_id, filename, total_size, chunk_size, total_chunks, expires_in_hours, max_downloads, completed)
+		VALUES
+			('upload1', 'file.bin', 10485760, 1048576, 10, 24, 5, 0),
+			('upload2', 'file2.bin', 20971520, 1048576, 20, 24, 5, 0)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to insert partial upload data: %v", err)
+	}
+
+	collector := NewDatabaseMetricsCollector(db, 100.0)
+
+	// Create channel to collect metrics
+	metricChan := make(chan prometheus.Metric, 10)
+
+	// Call Collect
+	go func() {
+		collector.Collect(metricChan)
+		close(metricChan)
+	}()
+
+	// Collect all metrics
+	var metrics []prometheus.Metric
+	for metric := range metricChan {
+		metrics = append(metrics, metric)
+	}
+
+	// Verify we got 5 metrics
+	if len(metrics) != 5 {
+		t.Fatalf("Expected 5 metrics, got %d", len(metrics))
+	}
+
+	// All metrics should be valid
+	for i, metric := range metrics {
+		if metric == nil {
+			t.Errorf("Metric at index %d is nil", i)
+		}
+	}
+}
+
+func TestDatabaseMetricsCollector_PrometheusIntegration(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Insert test data with known values
+	_, err := db.Exec(`
+		INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, uploader_ip, sha256_hash)
+		VALUES
+			('code1', 'test1.txt', 'uuid1.txt', 5242880, 'text/plain', datetime('now', '+1 day'), '127.0.0.1', 'hash1'),
+			('code2', 'test2.txt', 'uuid2.txt', 10485760, 'text/plain', datetime('now', '+1 day'), '127.0.0.1', 'hash2')
+	`)
+	if err != nil {
+		t.Fatalf("Failed to insert files: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO partial_uploads (upload_id, filename, total_size, chunk_size, total_chunks, expires_in_hours, max_downloads, completed)
+		VALUES ('upload1', 'partial.bin', 104857600, 1048576, 100, 24, 5, 0)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to insert partial upload: %v", err)
+	}
+
+	// Create collector and register with Prometheus
+	collector := NewDatabaseMetricsCollector(db, 10.0) // 10 GB quota
+	registry := prometheus.NewRegistry()
+	err = registry.Register(collector)
+	if err != nil {
+		t.Fatalf("Failed to register collector: %v", err)
+	}
+
+	// Gather metrics (this calls Describe and Collect)
+	metricFamilies, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Failed to gather metrics: %v", err)
+	}
+
+	// Verify we got metric families back
+	if len(metricFamilies) != 5 {
+		t.Errorf("Expected 5 metric families, got %d", len(metricFamilies))
+	}
+
+	// Verify metric names are present
+	metricNames := make(map[string]bool)
+	for _, mf := range metricFamilies {
+		metricNames[*mf.Name] = true
+	}
+
+	expectedMetrics := []string{
+		"safeshare_storage_used_bytes",
+		"safeshare_active_files_count",
+		"safeshare_active_partial_uploads_count",
+		"safeshare_storage_quota_bytes",
+		"safeshare_storage_quota_used_percent",
+	}
+
+	for _, name := range expectedMetrics {
+		if !metricNames[name] {
+			t.Errorf("Missing expected metric: %s", name)
+		}
+	}
+}
+
+func TestDatabaseMetricsCollector_Collect_DBError(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	collector := NewDatabaseMetricsCollector(db, 100.0)
+
+	// Close database to force errors
+	db.Close()
+
+	// Create channel to collect metrics
+	metricChan := make(chan prometheus.Metric, 10)
+
+	// Collect should not panic even with DB errors
+	go func() {
+		collector.Collect(metricChan)
+		close(metricChan)
+	}()
+
+	// Collect metrics - should get zero values
+	var metrics []prometheus.Metric
+	for metric := range metricChan {
+		metrics = append(metrics, metric)
+	}
+
+	// Should still emit 5 metrics with zero/default values
+	if len(metrics) != 5 {
+		t.Errorf("Expected 5 metrics even on error, got %d", len(metrics))
 	}
 }
