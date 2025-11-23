@@ -226,13 +226,131 @@ curl -X POST -F "file=@test.txt" https://share.yourdomain.com/api/upload
 
 ## Security Considerations
 
+### Proxy Header Trust Configuration
+
+SafeShare v2.7.0+ includes configurable proxy header trust validation to prevent IP spoofing attacks.
+
+**Environment Variable**: `TRUST_PROXY_HEADERS`
+
+**Valid Values**:
+- `auto` (default, **recommended**) - Only trust headers from RFC1918 private IPs and localhost
+- `true` - Always trust proxy headers (**SECURITY WARNING: vulnerable to IP spoofing**)
+- `false` - Never trust proxy headers (use for direct internet exposure)
+
+**Trusted Proxy IPs**: `TRUSTED_PROXY_IPS` (comma-separated CIDR ranges)
+- Default: `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`
+- Used when `TRUST_PROXY_HEADERS=auto`
+
+#### Configuration Examples
+
+**Recommended (auto mode with default trusted IPs)**:
+```bash
+docker run -d \
+  -e TRUST_PROXY_HEADERS=auto \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+This configuration:
+- ✅ Trusts `X-Forwarded-For` from Traefik/nginx running on same host (127.0.0.1)
+- ✅ Trusts headers from private network reverse proxies (10.x.x.x, 192.168.x.x)
+- ❌ Rejects `X-Forwarded-For` from public internet IPs (prevents spoofing)
+
+**Custom Trusted Proxy IPs**:
+```bash
+docker run -d \
+  -e TRUST_PROXY_HEADERS=auto \
+  -e TRUSTED_PROXY_IPS="10.0.0.0/8,172.16.0.0/12,203.0.113.10" \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+**Always Trust (behind trusted reverse proxy only)**:
+```bash
+# ⚠️ SECURITY WARNING: Only use if SafeShare is NOT exposed to internet
+# Use when behind Cloudflare, AWS ALB, or other trusted CDN/load balancer
+docker run -d \
+  -e TRUST_PROXY_HEADERS=true \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+**Never Trust (direct internet exposure)**:
+```bash
+# Use when SafeShare is directly exposed to internet without reverse proxy
+docker run -d \
+  -e TRUST_PROXY_HEADERS=false \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+#### How It Works
+
+**auto mode** (recommended):
+1. Extract IP from `RemoteAddr` (direct connection source)
+2. Check if source IP matches `TRUSTED_PROXY_IPS` ranges
+3. If matched: Trust `X-Forwarded-For` and `X-Real-IP` headers
+4. If not matched: Ignore proxy headers, use `RemoteAddr` directly
+
+**true mode** (use with caution):
+- Always trusts `X-Forwarded-For` and `X-Real-IP` headers
+- **Vulnerable to IP spoofing** if exposed to untrusted networks
+- Logs security warning when accepting unvalidated headers
+
+**false mode**:
+- Never trusts proxy headers
+- Always uses `RemoteAddr` for rate limiting and IP blocking
+- Use when no reverse proxy is present
+
+#### Security Impact
+
+**Without proper configuration**, attackers can:
+- Bypass IP-based rate limiting by spoofing `X-Forwarded-For` header
+- Evade IP blocks by spoofing source IP
+- Exhaust rate limits for legitimate users
+
+**With auto mode**, SafeShare:
+- Only accepts `X-Forwarded-For` from trusted sources
+- Prevents IP spoofing from public internet
+- Maintains accurate rate limiting and IP blocking
+
+#### Deployment Scenarios
+
+**Scenario 1: Traefik/nginx on same host**
+```bash
+# Recommended: auto mode (default)
+TRUST_PROXY_HEADERS=auto
+# Traefik connects from 127.0.0.1 → trusted by default
+```
+
+**Scenario 2: Separate reverse proxy server**
+```bash
+# Reverse proxy at 10.0.1.5
+TRUST_PROXY_HEADERS=auto
+TRUSTED_PROXY_IPS="10.0.1.5,10.0.0.0/8"
+```
+
+**Scenario 3: Behind Cloudflare/CDN**
+```bash
+# ⚠️ SafeShare not exposed to internet, only Cloudflare can reach it
+TRUST_PROXY_HEADERS=true
+# OR: Add Cloudflare IP ranges to TRUSTED_PROXY_IPS
+```
+
+**Scenario 4: Direct internet exposure**
+```bash
+# No reverse proxy
+TRUST_PROXY_HEADERS=false
+```
+
 ### Header Validation
 
-SafeShare trusts `X-Forwarded-*` headers. Ensure your reverse proxy:
+Ensure your reverse proxy:
 
 1. **Strips incoming X-Forwarded headers** from clients
 2. **Sets its own X-Forwarded headers**
 3. **Only accepts connections from trusted sources**
+4. **Configure SafeShare's TRUST_PROXY_HEADERS appropriately**
 
 ### Example Traefik Security
 

@@ -61,7 +61,7 @@ SafeShare demonstrates a **strong security posture** with comprehensive enterpri
 
 **Affected Code**:
 ```go
-// internal/middleware/admin.go:186
+// internal/middleware/admin.go:185
 cookie := &http.Cookie{
     Name:     "csrf_token",
     Value:    token,
