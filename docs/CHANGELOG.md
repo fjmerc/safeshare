@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Webhook System**: Real-time event notifications for file lifecycle events
+  - Event types: `file.uploaded`, `file.downloaded`, `file.deleted`
+  - Asynchronous delivery with goroutine pool (5 workers by default)
+  - Exponential backoff retry logic (1s, 2s, 4s, 8s, 16s, max 60s)
+  - Configurable maximum retries (default: 5)
+  - HMAC-SHA256 signature verification for payload security
+  - Database-backed delivery tracking with status and error logging
+  - Prometheus metrics integration (events, deliveries, duration, queue size)
+  - Admin API endpoints for webhook CRUD operations:
+    - `GET /admin/api/webhooks` - List all webhook configurations
+    - `POST /admin/api/webhooks` - Create new webhook
+    - `PUT /admin/api/webhooks/update?id={id}` - Update webhook configuration
+    - `DELETE /admin/api/webhooks/delete?id={id}` - Delete webhook
+    - `POST /admin/api/webhooks/test?id={id}` - Test webhook delivery
+    - `GET /admin/api/webhook-deliveries` - List delivery history
+    - `GET /admin/api/webhook-deliveries/detail?id={id}` - Get delivery details
+  - Opt-in by default (100% backward compatible)
+  - Buffered channel (1000 events) with drop-on-full strategy to prevent blocking
+  - Automatic retry processor for failed deliveries (runs every 10 seconds)
+  - Graceful shutdown support with worker synchronization
+
 ## [2.8.3] - 2025-11-22
 
 ### Fixed

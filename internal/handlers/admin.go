@@ -17,6 +17,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // AdminLoginHandler handles admin login
@@ -487,6 +488,22 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
+		// Emit webhook event for file deletion
+		reason := "manually deleted by admin"
+		EmitWebhookEvent(&webhooks.Event{
+			Type:      webhooks.EventFileDeleted,
+			Timestamp: time.Now(),
+			File: webhooks.FileData{
+				ID:        file.ID,
+				ClaimCode: claimCode,
+				Filename:  file.OriginalFilename,
+				Size:      file.FileSize,
+				MimeType:  file.MimeType,
+				ExpiresAt: file.ExpiresAt,
+				Reason:    &reason,
+			},
+		})
+
 		slog.Info("admin deleted file",
 			"claim_code", redactClaimCode(claimCode),
 			"filename", file.OriginalFilename,
@@ -559,11 +576,28 @@ func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFun
 			if err := os.Remove(filePath); err != nil {
 				if !os.IsNotExist(err) {
 					slog.Error("failed to delete physical file",
-						"path", filePath,
-						"error", err,
+					"path", filePath,
+					"error", err,
 					)
-				}
-			}
+					}
+					}
+
+					 // Emit webhook event for file deletion
+			reason := "bulk deleted by admin"
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileDeleted,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ID:        file.ID,
+					ClaimCode: file.ClaimCode,
+					Filename:  file.OriginalFilename,
+					Size:      file.FileSize,
+					MimeType:  file.MimeType,
+					ExpiresAt: file.ExpiresAt,
+					Reason:    &reason,
+				},
+			})
+
 			deletedCount++
 		}
 

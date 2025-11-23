@@ -20,6 +20,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -99,6 +100,17 @@ func run() error {
 	}
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
+
+	// Initialize webhook dispatcher
+	webhookMetrics := webhooks.NewPrometheusMetrics()
+	webhookDB := database.NewWebhookDBAdapter(db)
+	webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
+	webhookDispatcher.Start()
+	defer webhookDispatcher.Shutdown()
+	slog.Info("webhook dispatcher started", "workers", 5, "buffer_size", 1000)
+
+	// Make webhook dispatcher available to handlers
+	handlers.SetWebhookDispatcher(webhookDispatcher)
 
 	// Record start time for health checks
 	startTime := time.Now()
@@ -358,6 +370,37 @@ func run() error {
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
+		})
+
+		// Webhook management routes
+		mux.HandleFunc("/admin/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "GET" {
+				adminAuth(http.HandlerFunc(handlers.ListWebhookConfigsHandler(db))).ServeHTTP(w, r)
+			} else if r.Method == "POST" {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.CreateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/update", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.UpdateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/delete", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.TestWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhook-deliveries", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.ListWebhookDeliveriesHandler(db))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhook-deliveries/detail", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(db))).ServeHTTP(w, r)
 		})
 
 		// Admin static assets
