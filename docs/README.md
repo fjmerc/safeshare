@@ -243,4 +243,4 @@ For issues and questions:
 ---
 
 **Last Updated:** November 2025
-**SafeShare Version:** 2.8.0
+**SafeShare Version:** 2.8.3
