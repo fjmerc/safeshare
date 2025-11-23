@@ -40,6 +40,7 @@ type Config struct {
 	ID             int64         `json:"id"`
 	URL            string        `json:"url"`
 	Secret         string        `json:"secret"`
+	ServiceToken   string        `json:"service_token,omitempty"` // Authentication token for services (Gotify, ntfy)
 	Enabled        bool          `json:"enabled"`
 	Events         []string      `json:"events"`
 	Format         WebhookFormat `json:"format"`

@@ -1202,6 +1202,11 @@ document.addEventListener('DOMContentLoaded', () => {
         saveWebhook(formData);
     });
 
+    // Webhook format change handler - show/hide service token field
+    document.getElementById('webhookFormat')?.addEventListener('change', (e) => {
+        updateServiceTokenVisibility(e.target.value);
+    });
+
     // Delivery filters
     document.getElementById('deliveryEventFilter')?.addEventListener('change', (e) => {
         currentDeliveryFilters.event = e.target.value;
@@ -2142,12 +2147,36 @@ function showCreateWebhookModal() {
     document.getElementById('webhookFormat').value = 'safeshare';
     document.getElementById('webhookMaxRetries').value = 5;
     document.getElementById('webhookTimeout').value = 30;
+    document.getElementById('webhookServiceToken').value = '';
+    
+    // Hide service token field by default (safeshare format doesn't need it)
+    updateServiceTokenVisibility('safeshare');
+    
     document.getElementById('webhookModal').style.display = 'flex';
 }
 
 // Hide webhook modal
 function hideWebhookModal() {
     document.getElementById('webhookModal').style.display = 'none';
+}
+
+// Update service token field visibility based on webhook format
+function updateServiceTokenVisibility(format) {
+    const serviceTokenGroup = document.getElementById('serviceTokenGroup');
+    const serviceTokenHelp = document.getElementById('serviceTokenHelp');
+    
+    if (format === 'gotify' || format === 'ntfy') {
+        serviceTokenGroup.style.display = 'block';
+        
+        // Update help text based on format
+        if (format === 'gotify') {
+            serviceTokenHelp.textContent = 'Gotify application token (will be appended to URL as ?token=...)';
+        } else if (format === 'ntfy') {
+            serviceTokenHelp.textContent = 'ntfy access token (sent as Authorization: Bearer header for private topics)';
+        }
+    } else {
+        serviceTokenGroup.style.display = 'none';
+    }
 }
 
 // Generate random webhook secret
@@ -2183,10 +2212,14 @@ async function editWebhook(webhookId) {
         document.getElementById('webhookId').value = webhook.id;
         document.getElementById('webhookURL').value = webhook.url;
         document.getElementById('webhookSecret').value = webhook.secret;
+        document.getElementById('webhookServiceToken').value = webhook.service_token || '';
         document.getElementById('webhookEnabled').checked = webhook.enabled;
         document.getElementById('webhookFormat').value = webhook.format || 'safeshare';
         document.getElementById('webhookMaxRetries').value = webhook.max_retries;
         document.getElementById('webhookTimeout').value = webhook.timeout_seconds;
+
+        // Update service token visibility based on format
+        updateServiceTokenVisibility(webhook.format || 'safeshare');
 
         // Check event checkboxes
         document.querySelectorAll('.webhook-event').forEach(cb => {
@@ -2205,6 +2238,7 @@ async function saveWebhook(formData) {
     const webhookId = document.getElementById('webhookId').value;
     const url = formData.get('url');
     const secret = formData.get('secret');
+    const serviceToken = formData.get('service_token') || '';
     const enabled = document.getElementById('webhookEnabled').checked;
     const format = formData.get('format') || 'safeshare';
     const maxRetries = parseInt(formData.get('max_retries'));
@@ -2222,6 +2256,7 @@ async function saveWebhook(formData) {
     const payload = {
         url,
         secret,
+        service_token: serviceToken,
         enabled,
         events,
         format,

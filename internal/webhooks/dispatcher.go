@@ -166,8 +166,8 @@ func (d *Dispatcher) attemptDelivery(config *Config, delivery *Delivery) {
 	// Increment attempt count
 	delivery.AttemptCount++
 
-	// Deliver webhook
-	result := DeliverWebhook(config.URL, config.Secret, delivery.Payload, config.TimeoutSeconds)
+	// Deliver webhook with full config (supports service tokens)
+	result := DeliverWebhookWithConfig(config, config.URL, config.Secret, delivery.Payload, config.TimeoutSeconds)
 
 	duration := time.Since(startTime)
 	d.metrics.RecordDeliveryDuration(delivery.EventType, duration)
