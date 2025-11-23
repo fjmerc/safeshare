@@ -495,9 +495,11 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 	}
 	database.CreatePartialUpload(db, partialUpload)
 
-	// Create all chunks on disk
+	// Create all chunks on disk using the actual upload directory from config
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
-	os.MkdirAll(partialDir, 0755)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("Failed to create partial dir: %v", err)
+	}
 
 	for i := 0; i < 2; i++ {
 		chunkPath := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))

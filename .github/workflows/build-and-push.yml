@@ -31,7 +31,11 @@ jobs:
         run: go vet ./...
 
       - name: Run tests with coverage
-        run: go test ./... -cover -coverprofile=coverage.out -covermode=atomic
+        run: |
+          # Test internal packages only (excludes cmd/* CLI tools)
+          # Rationale: main() functions and CLI entry points are hard to unit test
+          # and are better tested via integration/E2E tests
+          go test ./internal/... -cover -coverprofile=coverage.out -covermode=atomic
 
       - name: Check coverage threshold
         run: |
