@@ -9,18 +9,24 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
+
+// WebhookEmitter is a function that emits webhook events
+// This callback allows cleanup worker to emit events without importing handlers package
+type WebhookEmitter func(event *webhooks.Event)
 
 // StartCleanupWorker starts a background goroutine that periodically
 // deletes expired files from the database and filesystem
-func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, intervalMinutes int) {
+// emitWebhook callback is optional - if nil, webhook events will not be emitted
+func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, intervalMinutes int, emitWebhook WebhookEmitter) {
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
 	slog.Info("cleanup worker started", "interval_minutes", intervalMinutes)
 
 	// Run cleanup immediately on start
-	runCleanup(db, uploadDir)
+	runCleanup(db, uploadDir, emitWebhook)
 
 	for {
 		select {
@@ -28,15 +34,36 @@ func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, inter
 			slog.Info("cleanup worker shutting down")
 			return
 		case <-ticker.C:
-			runCleanup(db, uploadDir)
+			runCleanup(db, uploadDir, emitWebhook)
 		}
 	}
 }
 
 // runCleanup performs the actual cleanup operation
-func runCleanup(db *sql.DB, uploadDir string) {
+func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
 	start := time.Now()
-	deleted, err := database.DeleteExpiredFiles(db, uploadDir)
+	
+	// Define webhook callback for expired files (only if webhook emitter provided)
+	var onExpired database.ExpiredFileCallback
+	if emitWebhook != nil {
+		onExpired = func(claimCode, filename string, fileSize int64, mimeType string, expiresAt time.Time) {
+			reason := "automatic expiration"
+			emitWebhook(&webhooks.Event{
+				Type:      webhooks.EventFileExpired,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ClaimCode: claimCode,
+					Filename:  filename,
+					Size:      fileSize,
+					MimeType:  mimeType,
+					ExpiresAt: expiresAt,
+					Reason:    &reason,
+				},
+			})
+		}
+	}
+	
+	deleted, err := database.DeleteExpiredFiles(db, uploadDir, onExpired)
 	duration := time.Since(start)
 
 	if err != nil {

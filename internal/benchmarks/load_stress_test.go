@@ -248,7 +248,7 @@ func TestLoad_CleanupWorkerWithManyExpiredFiles(t *testing.T) {
 	t.Log("Running cleanup...")
 	startCleanup := time.Now()
 
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}

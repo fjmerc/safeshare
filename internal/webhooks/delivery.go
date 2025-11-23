@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -183,12 +184,17 @@ func ShouldRetry(attemptCount, maxRetries int) bool {
 func constructURLWithToken(baseURL, token string, format WebhookFormat) string {
 	switch format {
 	case FormatGotify:
-		// Gotify: Append token as query parameter with proper URL encoding
+		// Gotify: Append /message endpoint and token as query parameter
 		parsedURL, err := url.Parse(baseURL)
 		if err != nil {
 			// Return original URL on parse error (will fail later in request)
 			slog.Error("failed to parse webhook URL for token injection", "url", baseURL, "error", err)
 			return baseURL
+		}
+		
+		// Append /message endpoint if not already present
+		if !strings.HasSuffix(parsedURL.Path, "/message") {
+			parsedURL.Path = strings.TrimRight(parsedURL.Path, "/") + "/message"
 		}
 		
 		// Use url.Values for proper encoding (prevents injection)
