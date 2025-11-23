@@ -23,6 +23,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // UploadHandler handles file upload requests
@@ -378,6 +379,20 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Record metrics
 		metrics.UploadsTotal.WithLabelValues("success").Inc()
 		metrics.UploadSizeBytes.Observe(float64(written))
+
+		// Emit webhook event for file upload
+		EmitWebhookEvent(&webhooks.Event{
+			Type:      webhooks.EventFileUploaded,
+			Timestamp: time.Now(),
+			File: webhooks.FileData{
+				ID:        fileRecord.ID,
+				ClaimCode: claimCode,
+				Filename:  sanitizedFilename,
+				Size:      written,
+				MimeType:  detectedMimeType,
+				ExpiresAt: expiresAt,
+			},
+		})
 
 		slog.Info("file uploaded",
 			"claim_code", redactClaimCode(claimCode),
