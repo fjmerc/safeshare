@@ -162,8 +162,8 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 go test -v ./internal/handler
 
 1. **Create a feature/bugfix/docs branch FIRST**:
    ```bash
-   ./scripts/new-branch.sh
-   # Or manually: git checkout -b feature/your-feature-name
+   git checkout -b feature/your-feature-name
+   # Users can also use: ./scripts/new-branch.sh (interactive)
    ```
 
 2. **Make your changes** on the feature branch

@@ -92,11 +92,16 @@ func formatGotifyMessage(event *Event) string {
 			event.File.ClaimCode,
 			reason)
 	case EventFileExpired:
-		return fmt.Sprintf("**%s** (%s)\n\n**Claim Code:** `%s`\n**Expired:** %s",
+		reason := "Time-based expiration"
+		if event.File.Reason != nil {
+			reason = *event.File.Reason
+		}
+		return fmt.Sprintf("**%s** (%s)\n\n**Claim Code:** `%s`\n**Expired:** %s\n**Reason:** %s",
 			event.File.Filename,
 			size,
 			event.File.ClaimCode,
-			event.File.ExpiresAt.Format("2006-01-02 15:04 MST"))
+			event.File.ExpiresAt.Format("2006-01-02 15:04 MST"),
+			reason)
 	default:
 		return fmt.Sprintf("**%s** (%s)\n\n**Claim Code:** `%s`",
 			event.File.Filename,
@@ -182,10 +187,15 @@ func formatNtfyMessage(event *Event) string {
 			event.File.ClaimCode,
 			reason)
 	case EventFileExpired:
-		return fmt.Sprintf("%s (%s)\nClaim: %s",
+		reason := "Time-based expiration"
+		if event.File.Reason != nil {
+			reason = *event.File.Reason
+		}
+		return fmt.Sprintf("%s (%s)\nClaim: %s\nReason: %s",
 			event.File.Filename,
 			size,
-			event.File.ClaimCode)
+			event.File.ClaimCode,
+			reason)
 	default:
 		return fmt.Sprintf("%s (%s)",
 			event.File.Filename,
@@ -312,7 +322,7 @@ func getDiscordFields(event *Event) []map[string]interface{} {
 				"inline": true,
 			})
 		}
-	case EventFileDeleted:
+	case EventFileDeleted, EventFileExpired:
 		if event.File.Reason != nil {
 			fields = append(fields, map[string]interface{}{
 				"name":   "Reason",

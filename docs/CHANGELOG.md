@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Webhook Download Limit Notifications**: Files that reach their download limit now trigger `file.expired` webhook events
+  - Webhooks are now emitted when files become unavailable due to download exhaustion (e.g., 1/1 downloads used)
+  - Reason field included in webhook payload: "download_limit_reached" vs "Time-based expiration"
+  - All webhook formats (Gotify, ntfy, Discord) display the expiration reason in notifications
+  - Provides visibility when files expire due to download limits, not just time-based expiration
+  - Webhook delivery history records these events for audit trail
+
+### Fixed
+- **Webhook Service Token Masking**: Fixed bug where masked service tokens were saved to database when editing webhook configurations
+  - Service tokens are now properly preserved when updating webhook settings in admin dashboard
+  - Masked tokens (e.g., "Ay5***0Ma") are detected and original token is retained in database
+  - Prevents authentication failures (401 errors) from Gotify/ntfy when editing webhook URL or events
+  - Atomic SQL update prevents race conditions during concurrent webhook updates
+  - Webhook secret field masking also added for consistency
+
+### Added
 - **Webhook Service Token Authentication**: Dedicated authentication token field for webhook services
   - Separate "Service Token" field in webhook configuration for cleaner UX
   - Gotify: Token automatically appended to URL as query parameter (`?token=ABC123`)

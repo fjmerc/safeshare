@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // ClaimHandler handles file download requests using claim codes
@@ -122,6 +124,22 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"filename", file.OriginalFilename,
 				"client_ip", getClientIP(r),
 			)
+			
+			// Emit file.expired webhook event (download limit reached)
+			reason := "download_limit_reached"
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileExpired,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ClaimCode: claimCode,
+					Filename:  file.OriginalFilename,
+					Size:      file.FileSize,
+					MimeType:  file.MimeType,
+					ExpiresAt: file.ExpiresAt,
+					Reason:    &reason,
+				},
+			})
+			
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
 			return
 		}

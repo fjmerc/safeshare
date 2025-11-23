@@ -224,6 +224,59 @@ func UpdateWebhookConfig(db *sql.DB, config *webhooks.Config) error {
 	return nil
 }
 
+// UpdateWebhookConfigPreserveMasked atomically updates webhook config while preserving masked fields
+// This prevents TOCTOU race conditions by using conditional SQL updates
+// Pass sentinel value "***PRESERVE***" to preserve existing secret or service_token
+func UpdateWebhookConfigPreserveMasked(db *sql.DB, config *webhooks.Config, preserveSecret, preserveToken bool) error {
+	eventsJSON, err := webhooks.EncodeEventsJSON(config.Events)
+	if err != nil {
+		return fmt.Errorf("failed to encode events: %w", err)
+	}
+
+	enabled := 0
+	if config.Enabled {
+		enabled = 1
+	}
+
+	format := string(config.Format)
+	if format == "" {
+		format = "safeshare"
+	}
+
+	// Build conditional UPDATE query that preserves fields when requested
+	// Uses CASE WHEN to conditionally preserve secret and service_token
+	result, err := db.Exec(`
+		UPDATE webhook_configs
+		SET url = ?, 
+		    secret = CASE WHEN ? THEN secret ELSE ? END,
+		    service_token = CASE WHEN ? THEN service_token ELSE ? END,
+		    enabled = ?, events = ?, format = ?, 
+		    max_retries = ?, timeout_seconds = ?, 
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, config.URL, 
+	   preserveSecret, config.Secret,      // Conditional: preserve or update secret
+	   preserveToken, config.ServiceToken, // Conditional: preserve or update token
+	   enabled, eventsJSON, format, 
+	   config.MaxRetries, config.TimeoutSeconds, config.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update webhook config: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("webhook config not found")
+	}
+
+	config.UpdatedAt = time.Now()
+
+	return nil
+}
+
 // DeleteWebhookConfig deletes a webhook configuration
 func DeleteWebhookConfig(db *sql.DB, id int64) error {
 	result, err := db.Exec("DELETE FROM webhook_configs WHERE id = ?", id)

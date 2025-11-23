@@ -34,10 +34,13 @@ func ListWebhookConfigsHandler(db *sql.DB) http.HandlerFunc {
 		return
 		}
 
-		// Mask service tokens in response for security
+		// Mask sensitive credentials in response for security
 		for _, config := range configs {
 		if config.ServiceToken != "" {
 			config.ServiceToken = utils.MaskToken(config.ServiceToken)
+		}
+		if config.Secret != "" {
+			config.Secret = utils.MaskToken(config.Secret)
 		}
 	}
 
@@ -119,6 +122,7 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Secret is required (but can be masked to preserve existing)
 		if req.Secret == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -322,31 +326,36 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 		// Validate service token length (Gotify/ntfy tokens are typically 20-50 chars)
 		if len(req.ServiceToken) > 512 {
 		w.Header().Set("Content-Type", "application/json")
-		 w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{
-		  "error": "Service token exceeds maximum length of 512 characters",
+		"error": "Service token exceeds maximum length of 512 characters",
 		})
 		return
-	}
+}
 
-	// Set default format if not provided
-	if req.Format == "" {
+		// Check if secret or service token are masked and should be preserved
+		preserveSecret := utils.IsMaskedToken(req.Secret)
+		preserveToken := utils.IsMaskedToken(req.ServiceToken)
+
+		// Set default format if not provided
+		if req.Format == "" {
 		req.Format = "safeshare"
-	}
+		}
 
-	config := &webhooks.Config{
+		config := &webhooks.Config{
 		ID:             id,
 		URL:            req.URL,
-		Secret:         req.Secret,
-		ServiceToken:   req.ServiceToken,
+		 Secret:         req.Secret,         // Will be preserved if masked
+		ServiceToken:   req.ServiceToken,   // Will be preserved if masked
 		Enabled:        req.Enabled,
 		Events:         req.Events,
-		Format:         webhooks.WebhookFormat(req.Format),
+		 Format:         webhooks.WebhookFormat(req.Format),
 		MaxRetries:     req.MaxRetries,
-		 TimeoutSeconds: req.TimeoutSeconds,
-	}
+		  TimeoutSeconds: req.TimeoutSeconds,
+		}
 
-		if err := database.UpdateWebhookConfig(db, config); err != nil {
+		// Use atomic update that conditionally preserves masked fields (prevents TOCTOU)
+	if err := database.UpdateWebhookConfigPreserveMasked(db, config, preserveSecret, preserveToken); err != nil {
 			slog.Error("failed to update webhook config", "id", id, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
