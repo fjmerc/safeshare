@@ -549,6 +549,35 @@ func ListWebhookDeliveriesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ClearWebhookDeliveriesHandler deletes all webhook delivery history
+func ClearWebhookDeliveriesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		count, err := database.ClearAllWebhookDeliveries(db)
+		if err != nil {
+			slog.Error("failed to clear webhook deliveries", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to clear webhook delivery history",
+			})
+			return
+		}
+
+		slog.Info("webhook delivery history cleared", "deleted_count", count)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":       "Webhook delivery history cleared successfully",
+			"deleted_count": count,
+		})
+	}
+}
+
 // GetWebhookDeliveryHandler retrieves a single webhook delivery
 func GetWebhookDeliveryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

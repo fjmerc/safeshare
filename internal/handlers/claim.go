@@ -118,27 +118,15 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		} else if !success {
 			// Download limit reached (atomic check)
+			// Note: We do NOT emit a webhook here because the file.expired webhook
+			// was already sent when the last successful download completed.
+			// This path handles subsequent rejected requests after the limit was reached.
 			slog.Warn("file access denied",
 				"reason", "download_limit_reached",
 				"claim_code", redactClaimCode(claimCode),
 				"filename", file.OriginalFilename,
 				"client_ip", getClientIP(r),
 			)
-			
-			// Emit file.expired webhook event (download limit reached)
-			reason := "download_limit_reached"
-			EmitWebhookEvent(&webhooks.Event{
-				Type:      webhooks.EventFileExpired,
-				Timestamp: time.Now(),
-				File: webhooks.FileData{
-					ClaimCode: claimCode,
-					Filename:  file.OriginalFilename,
-					Size:      file.FileSize,
-					MimeType:  file.MimeType,
-					ExpiresAt: file.ExpiresAt,
-					Reason:    &reason,
-				},
-			})
 			
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
 			return
@@ -149,16 +137,40 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Calculate remaining downloads for logging
 		var remainingDownloads string
+		newDownloadCount := file.DownloadCount + 1
 		if file.MaxDownloads != nil {
-			remaining := *file.MaxDownloads - (file.DownloadCount + 1)
+			remaining := *file.MaxDownloads - newDownloadCount
 			remainingDownloads = fmt.Sprintf("%d", remaining)
+
+			// Check if this download caused the file to reach its limit
+			// Emit file.expired webhook when the last allowed download completes
+			if remaining == 0 {
+				reason := "download_limit_reached"
+				EmitWebhookEvent(&webhooks.Event{
+					Type:      webhooks.EventFileExpired,
+					Timestamp: time.Now(),
+					File: webhooks.FileData{
+						ClaimCode: claimCode,
+						Filename:  file.OriginalFilename,
+						Size:      file.FileSize,
+						MimeType:  file.MimeType,
+						ExpiresAt: file.ExpiresAt,
+						Reason:    &reason,
+					},
+				})
+				slog.Info("file expired due to download limit",
+					"claim_code", redactClaimCode(claimCode),
+					"filename", file.OriginalFilename,
+					"max_downloads", *file.MaxDownloads,
+				)
+			}
 		} else {
 			remainingDownloads = "unlimited"
 		}
 
 		slog.Debug("download completed",
 			"claim_code", redactClaimCode(claimCode),
-			"download_count", file.DownloadCount+1,
+			"download_count", newDownloadCount,
 			"remaining_downloads", remainingDownloads,
 		)
 	}
