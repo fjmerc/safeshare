@@ -65,12 +65,14 @@ func (c *DatabaseMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect fetches current metrics from database and sends to Prometheus
 func (c *DatabaseMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	// Query storage usage and file count
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	var storageUsed int64
 	var fileCount int64
 	err := c.db.QueryRow(`
 		SELECT COALESCE(SUM(file_size), 0), COUNT(*)
 		FROM files
-		WHERE expires_at > datetime('now')
+		WHERE datetime(expires_at) > datetime('now')
 	`).Scan(&storageUsed, &fileCount)
 
 	if err != nil {
