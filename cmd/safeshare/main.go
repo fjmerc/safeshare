@@ -403,6 +403,10 @@ func run() error {
 			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(db))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/webhook-deliveries/clear", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(db)))).ServeHTTP(w, r)
+		})
+
 		// Admin static assets
 		mux.Handle("/admin/assets/", http.StripPrefix("/", static.Handler()))
 	} else {

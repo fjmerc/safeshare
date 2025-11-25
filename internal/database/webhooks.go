@@ -396,6 +396,22 @@ func GetWebhookDeliveries(db *sql.DB, limit, offset int) ([]*webhooks.Delivery, 
 	return deliveries, rows.Err()
 }
 
+// ClearAllWebhookDeliveries deletes all webhook delivery records
+// Returns the number of records deleted
+func ClearAllWebhookDeliveries(db *sql.DB) (int64, error) {
+	result, err := db.Exec("DELETE FROM webhook_deliveries")
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear webhook deliveries: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rows, nil
+}
+
 // GetPendingRetries retrieves webhook deliveries that are due for retry
 func GetPendingRetries(db *sql.DB) ([]*webhooks.Delivery, error) {
 	rows, err := db.Query(`

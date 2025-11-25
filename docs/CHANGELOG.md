@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Clear Webhook Delivery History**: Admin dashboard now includes a "Clear All" button in the Delivery History section
+  - Allows administrators to clear all webhook delivery records with a single click
+  - Includes confirmation dialog to prevent accidental deletion
+  - Displays count of deleted records in success message
+  - Button positioned at end of filter controls following standard UI patterns
 - **Webhook Download Limit Notifications**: Files that reach their download limit now trigger `file.expired` webhook events
   - Webhooks are now emitted when files become unavailable due to download exhaustion (e.g., 1/1 downloads used)
   - Reason field included in webhook payload: "download_limit_reached" vs "Time-based expiration"
@@ -16,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Webhook delivery history records these events for audit trail
 
 ### Fixed
+- **Webhook Download Limit Timing**: Fixed bug where `file.expired` webhook was not triggered when a file reached its download limit
+  - Previously, webhook only fired when subsequent download attempts were rejected
+  - Now correctly fires immediately when the last allowed download completes
+  - Prevents duplicate webhook emissions (was firing twice in some race conditions)
 - **Webhook Service Token Masking**: Fixed bug where masked service tokens were saved to database when editing webhook configurations
   - Service tokens are now properly preserved when updating webhook settings in admin dashboard
   - Masked tokens (e.g., "Ay5***0Ma") are detected and original token is retained in database

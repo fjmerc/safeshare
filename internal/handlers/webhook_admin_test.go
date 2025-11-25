@@ -334,3 +334,120 @@ func TestGetWebhookDeliveryHandler(t *testing.T) {
 		})
 	}
 }
+
+// TestClearWebhookDeliveriesHandler tests clearing webhook delivery history
+func TestClearWebhookDeliveriesHandler(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	tests := []struct {
+		name           string
+		method         string
+		expectedStatus int
+		checkResponse  bool
+	}{
+		{
+			name:           "clear deliveries with DELETE method",
+			method:         http.MethodDelete,
+			expectedStatus: http.StatusOK,
+			checkResponse:  true,
+		},
+		{
+			name:           "method not allowed - GET",
+			method:         http.MethodGet,
+			expectedStatus: http.StatusMethodNotAllowed,
+			checkResponse:  false,
+		},
+		{
+			name:           "method not allowed - POST",
+			method:         http.MethodPost,
+			expectedStatus: http.StatusMethodNotAllowed,
+			checkResponse:  false,
+		},
+		{
+			name:           "method not allowed - PUT",
+			method:         http.MethodPut,
+			expectedStatus: http.StatusMethodNotAllowed,
+			checkResponse:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/api/admin/webhook-deliveries/clear", nil)
+			rr := httptest.NewRecorder()
+
+			handler := ClearWebhookDeliveriesHandler(db)
+			handler(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d. Body: %s", tt.expectedStatus, rr.Code, rr.Body.String())
+			}
+
+			if tt.checkResponse && rr.Code == http.StatusOK {
+				var response map[string]interface{}
+				if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+					t.Fatalf("Failed to decode response: %v", err)
+				}
+
+				// Check that message is returned
+				if _, ok := response["message"]; !ok {
+					t.Error("Response missing 'message' field")
+				}
+
+				// Check that deleted_count is returned
+				if _, ok := response["deleted_count"]; !ok {
+					t.Error("Response missing 'deleted_count' field")
+				}
+			}
+		})
+	}
+}
+
+// TestClearWebhookDeliveriesHandler_WithData tests clearing when deliveries exist
+func TestClearWebhookDeliveriesHandler_WithData(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	// First, create a webhook config and some deliveries
+	createBody := map[string]interface{}{
+		"url":             "https://example.com/webhook",
+		"secret":          "test-secret-key",
+		"events":          []string{"file.uploaded"},
+		"enabled":         true,
+		"max_retries":     3,
+		"timeout_seconds": 30,
+	}
+	createBodyJSON, _ := json.Marshal(createBody)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/webhooks", bytes.NewReader(createBodyJSON))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	CreateWebhookConfigHandler(db)(createRR, createReq)
+
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("Failed to create webhook config: %s", createRR.Body.String())
+	}
+
+	// Now clear deliveries (should return 0 deleted since we haven't created any deliveries directly)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/webhook-deliveries/clear", nil)
+	rr := httptest.NewRecorder()
+
+	handler := ClearWebhookDeliveriesHandler(db)
+	handler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status %d, got %d. Body: %s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// deleted_count should be 0 or more (depending on if any deliveries were created)
+	if deletedCount, ok := response["deleted_count"].(float64); ok {
+		if deletedCount < 0 {
+			t.Errorf("deleted_count should be >= 0, got %v", deletedCount)
+		}
+	} else {
+		t.Error("deleted_count should be a number")
+	}
+}

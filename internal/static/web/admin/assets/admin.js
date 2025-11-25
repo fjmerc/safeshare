@@ -1221,6 +1221,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auto-refresh checkbox
     document.getElementById('autoRefreshDeliveries')?.addEventListener('change', toggleAutoRefresh);
 
+    // Clear delivery history button
+    document.getElementById('clearDeliveryHistoryBtn')?.addEventListener('click', clearDeliveryHistory);
+
     // Add input event listeners for Settings tab fields to detect changes
     const settingsFields = [
         'storageQuota',
@@ -2528,5 +2531,33 @@ function toggleAutoRefresh() {
             clearInterval(autoRefreshInterval);
             autoRefreshInterval = null;
         }
+    }
+}
+
+// Clear all delivery history
+async function clearDeliveryHistory() {
+    const confirmed = await confirm('Are you sure you want to clear all webhook delivery history? This action cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch('/admin/api/webhook-deliveries/clear', {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            const count = data.deleted_count || 0;
+            showSuccess(`Cleared ${count} delivery record${count !== 1 ? 's' : ''}`);
+            loadDeliveries();
+        } else {
+            showError(data.error || 'Failed to clear delivery history');
+        }
+    } catch (error) {
+        console.error('Error clearing delivery history:', error);
+        showError('Failed to clear delivery history');
     }
 }
