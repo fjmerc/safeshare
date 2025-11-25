@@ -7,6 +7,7 @@ cmd/import-file/import-file
 
 # Claude Code configuration (local only)
 .claude/agents/
+.claude/scripts
 CLAUDE.md
 
 # Deployment-specific scripts (local only)

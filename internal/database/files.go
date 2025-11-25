@@ -43,6 +43,8 @@ func validateStoredFilename(filename string) error {
 }
 
 // CreateFile inserts a new file record into the database
+// Note: ExpiresAt is formatted as RFC3339 to ensure SQLite datetime() can parse it.
+// Go's time.Time when passed directly includes monotonic clock that SQLite cannot parse.
 func CreateFile(db *sql.DB, file *models.File) error {
 	query := `
 		INSERT INTO files (
@@ -51,6 +53,9 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
+	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
+	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
+
 	result, err := db.Exec(
 		query,
 		file.ClaimCode,
@@ -58,7 +63,7 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		file.StoredFilename,
 		file.FileSize,
 		file.MimeType,
-		file.ExpiresAt,
+		expiresAtRFC3339,
 		file.MaxDownloads,
 		file.UploaderIP,
 		file.PasswordHash,
@@ -98,12 +103,14 @@ func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int
 	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
 	// This prevents quota leakage when uploads fail partway through
 	var currentUsage int64
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
-		WHERE expires_at > datetime('now')
+		WHERE datetime(expires_at) > datetime('now')
 	`
 	if err := tx.QueryRow(query).Scan(&currentUsage); err != nil {
 		return fmt.Errorf("failed to get current usage: %w", err)
@@ -123,6 +130,9 @@ func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
+	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
+	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
+
 	result, err := tx.Exec(
 		insertQuery,
 		file.ClaimCode,
@@ -130,7 +140,7 @@ func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int
 		file.StoredFilename,
 		file.FileSize,
 		file.MimeType,
-		file.ExpiresAt,
+		expiresAtRFC3339,
 		file.MaxDownloads,
 		file.UploaderIP,
 		file.PasswordHash,
@@ -364,10 +374,12 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 	// Find expired files with 1-hour grace period to prevent deletion during active downloads
 	// Files must be expired for at least 1 hour before cleanup
 	// Query includes webhook-relevant fields for event emission
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	query := `
 		SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type, expires_at
 		FROM files
-		WHERE expires_at <= datetime('now', '-1 hour')
+		WHERE datetime(expires_at) <= datetime('now', '-1 hour')
 	`
 
 	rows, err := db.Query(query)
@@ -471,11 +483,18 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 
 	// Step 5: Invoke callback for each successfully deleted file (if provided)
 	// Callback is invoked AFTER successful database commit
+	// Uses a map lookup to correctly match expired files with their deletion status,
+	// regardless of any skipped entries during physical file deletion.
 	if deletedCount > 0 && onExpired != nil {
-		for i := 0; i < deletedCount && i < len(expiredFiles); i++ {
-			f := expiredFiles[i]
-			// Verify this file ID was in the deleted list
-			if i < len(deletedIDs) && f.ID == deletedIDs[i] {
+		// Create a set of deleted IDs for O(1) lookup
+		deletedIDSet := make(map[int64]bool)
+		for _, id := range deletedIDs {
+			deletedIDSet[id] = true
+		}
+
+		// Iterate through ALL expired files and emit webhook only for those that were deleted
+		for _, f := range expiredFiles {
+			if deletedIDSet[f.ID] {
 				onExpired(f.ClaimCode, f.OriginalFilename, f.FileSize, f.MimeType, f.ExpiresAt)
 			}
 		}
@@ -571,12 +590,14 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 // This includes both completed files and incomplete chunked uploads for accurate quota tracking
 // Note: Uses total_size for partial uploads (not received_bytes) since quota is reserved upfront
 func GetTotalUsage(db *sql.DB) (int64, error) {
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
-		WHERE expires_at > datetime('now')
+		WHERE datetime(expires_at) > datetime('now')
 	`
 
 	var totalUsage int64
@@ -591,10 +612,12 @@ func GetTotalUsage(db *sql.DB) (int64, error) {
 // GetStats returns statistics about the file storage
 func GetStats(db *sql.DB, uploadDir string) (totalFiles int, storageUsed int64, err error) {
 	// Count active files (not expired)
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	query := `
 		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
 		FROM files
-		WHERE expires_at > datetime('now')
+		WHERE datetime(expires_at) > datetime('now')
 	`
 
 	err = db.QueryRow(query).Scan(&totalFiles, &storageUsed)

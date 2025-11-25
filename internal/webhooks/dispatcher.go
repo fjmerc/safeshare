@@ -17,12 +17,13 @@ type DatabaseOperations interface {
 
 // Dispatcher handles asynchronous webhook delivery
 type Dispatcher struct {
-	db          DatabaseOperations
-	eventChan   chan *Event
-	workerCount int
-	shutdown    chan struct{}
-	wg          sync.WaitGroup
-	metrics     MetricsRecorder
+	db           DatabaseOperations
+	eventChan    chan *Event
+	workerCount  int
+	shutdown     chan struct{}
+	wg           sync.WaitGroup
+	metrics      MetricsRecorder
+	shutdownOnce sync.Once
 }
 
 // MetricsRecorder is an interface for recording webhook metrics
@@ -61,18 +62,23 @@ func (d *Dispatcher) Start() {
 }
 
 // Shutdown gracefully shuts down the dispatcher
+// Uses sync.Once to ensure safe shutdown even if called multiple times
 func (d *Dispatcher) Shutdown() {
-	slog.Info("shutting down webhook dispatcher")
-	
-	// Signal workers to stop
-	close(d.shutdown)
-	
-	// Close event channel to prevent new events and unblock workers
-	close(d.eventChan)
-	
-	// Wait for all workers to finish processing
+	d.shutdownOnce.Do(func() {
+		slog.Info("shutting down webhook dispatcher")
+
+		// Signal workers to stop first
+		close(d.shutdown)
+
+		// Close event channel to prevent new events and unblock workers
+		// This is safe because shutdown channel is closed first, preventing
+		// any new sends to eventChan via the Emit() method
+		close(d.eventChan)
+	})
+
+	// Wait for all workers to finish processing (outside Once to allow multiple waiters)
 	d.wg.Wait()
-	
+
 	slog.Info("webhook dispatcher shutdown complete")
 }
 
@@ -110,7 +116,17 @@ func (d *Dispatcher) worker(id int) {
 		case <-d.shutdown:
 			slog.Debug("webhook worker shutting down", "worker_id", id)
 			return
-		case event := <-d.eventChan:
+		case event, ok := <-d.eventChan:
+			// Check if channel is closed
+			if !ok {
+				slog.Debug("webhook worker event channel closed", "worker_id", id)
+				return
+			}
+			// Skip nil events (defensive check)
+			if event == nil {
+				slog.Warn("webhook worker received nil event", "worker_id", id)
+				continue
+			}
 			d.processEvent(event)
 			// Update queue size metric after processing
 			d.metrics.SetQueueSize(len(d.eventChan))

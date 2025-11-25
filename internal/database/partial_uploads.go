@@ -62,12 +62,14 @@ func CreatePartialUploadWithQuotaCheck(db *sql.DB, upload *models.PartialUpload,
 	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
 	// This prevents quota leakage when uploads fail partway through
 	var currentUsage int64
+	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
+	// for proper comparison. Without this, string comparison fails due to 'T' vs ' ' difference.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
-		WHERE expires_at > datetime('now')
+		WHERE datetime(expires_at) > datetime('now')
 	`
 	if err := tx.QueryRow(query).Scan(&currentUsage); err != nil {
 		return fmt.Errorf("failed to get current usage: %w", err)

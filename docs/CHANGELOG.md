@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Webhook delivery history records these events for audit trail
 
 ### Fixed
+- **file.expired Webhooks Not Triggering**: Fixed critical bug where `file.expired` webhooks were never sent for time-based expiration
+  - Root cause: SQLite datetime format mismatch - Go stores RFC3339 (`2025-11-25T16:50:36Z`) but SQLite `datetime()` returns space-separated format (`2025-11-25 16:50:36`)
+  - String comparison failed because `'T'` > `' '` in ASCII, causing cleanup query to never find expired files
+  - Fixed by wrapping `expires_at` column with `datetime()` function to normalize format before comparison
+  - Affects: file cleanup, quota calculation, storage stats, metrics collection
+- **Webhook Callback Loop Bug**: Fixed bug where webhooks were silently skipped when files failed to delete during cleanup
+  - Index-based loop assumed 1:1 correspondence between expired files and deleted IDs
+  - When files were skipped (validation/filesystem errors), subsequent webhooks were incorrectly skipped
+  - Fixed by using map lookup instead of index matching
+- **Webhook Dispatcher Race Conditions**: Fixed potential race conditions during dispatcher shutdown
+  - Added `sync.Once` to prevent double-close panic on shutdown channel
+  - Added nil event check to prevent panic when processing after channel close
+  - Added proper channel close detection in worker loop
 - **Webhook Download Limit Timing**: Fixed bug where `file.expired` webhook was not triggered when a file reached its download limit
   - Previously, webhook only fired when subsequent download attempts were rejected
   - Now correctly fires immediately when the last allowed download completes
