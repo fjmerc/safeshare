@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Webhook delivery history records these events for audit trail
 
 ### Fixed
+- **Timezone Support in Docker Container**: Fixed bug where TZ environment variable was ignored in Alpine container
+  - Root cause: Alpine container was missing `tzdata` package, causing Go to fall back to UTC regardless of TZ setting
+  - This caused file expiration times to be stored and displayed in UTC instead of the configured timezone
+  - When TZ=Europe/Berlin was set, expiration notifications would appear 1-2 hours off from expected times
+  - Fixed by adding `tzdata` package to the runtime container image
 - **file.expired Webhooks Not Triggering**: Fixed critical bug where `file.expired` webhooks were never sent for time-based expiration
   - Root cause: SQLite datetime format mismatch - Go stores RFC3339 (`2025-11-25T16:50:36Z`) but SQLite `datetime()` returns space-separated format (`2025-11-25 16:50:36`)
   - String comparison failed because `'T'` > `' '` in ASCII, causing cleanup query to never find expired files
