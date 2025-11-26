@@ -24,7 +24,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a \
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates
+# tzdata is required for Go to properly handle TZ environment variable
+# Without it, time.Now() falls back to UTC regardless of TZ setting
+RUN apk --no-cache add ca-certificates tzdata
 
 # Create non-root user
 RUN addgroup -g 1000 safeshare && \
