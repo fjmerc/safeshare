@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Test coverage: 62.6% (handlers: 61.4%, utils: 66.3%)
 
 ### Fixed
+- **Revoked Tokens Still Visible**: Fixed bug where revoked API tokens remained visible on the dashboard after deletion
+  - Root cause: `GetAPITokensByUserID` query was missing `AND is_active = 1` filter, returning all tokens including revoked ones
+  - Tokens are now properly filtered to show only active tokens
+
 - **Dashboard Authentication Loop**: Fixed critical bug causing user dashboard to continuously refresh/flicker
   - Root cause: API token authentication commit introduced typed context keys (`contextKey("user")`) in middleware, but handlers used plain string keys (`"user"`) for user lookup
   - Go context compares both type and value, so lookups always failed causing repeated 401 responses
