@@ -34,8 +34,8 @@ func TestUserAuth_ValidSession(t *testing.T) {
 	}
 
 	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that user is in context
-		ctxUser := r.Context().Value("user")
+		// Check that user is in context using typed key
+		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
 			t.Error("expected user in context")
 		}
@@ -187,7 +187,8 @@ func TestUserAuth_InactiveUser(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusForbidden)
 	}
 
-	// Test HTML request (should redirect)
+	// Test HTML request (inactive users get 403 Forbidden, not redirect)
+	// This is intentional security behavior - disabled accounts should not be redirected to login
 	req = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Header.Set("Accept", "text/html")
 	req.AddCookie(&http.Cookie{Name: "user_session", Value: token})
@@ -195,8 +196,8 @@ func TestUserAuth_InactiveUser(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusFound {
-		t.Errorf("HTML request status = %d, want %d", rr.Code, http.StatusFound)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("HTML request status = %d, want %d", rr.Code, http.StatusForbidden)
 	}
 }
 
@@ -223,8 +224,8 @@ func TestOptionalUserAuth_ValidSession(t *testing.T) {
 	}
 
 	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check that user is in context
-		ctxUser := r.Context().Value("user")
+		// Check that user is in context using typed key
+		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
 			t.Error("expected user in context")
 		}
@@ -248,8 +249,8 @@ func TestOptionalUserAuth_NoSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 
 	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// User should not be in context
-		ctxUser := r.Context().Value("user")
+		// User should not be in context using typed key
+		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
 			t.Error("expected no user in context")
 		}
@@ -272,8 +273,8 @@ func TestOptionalUserAuth_InvalidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 
 	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// User should not be in context
-		ctxUser := r.Context().Value("user")
+		// User should not be in context using typed key
+		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
 			t.Error("expected no user in context")
 		}
@@ -321,8 +322,8 @@ func TestOptionalUserAuth_InactiveUser(t *testing.T) {
 	}
 
 	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// User should not be in context (inactive)
-		ctxUser := r.Context().Value("user")
+		// User should not be in context (inactive) using typed key
+		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
 			t.Error("expected no user in context for inactive user")
 		}
