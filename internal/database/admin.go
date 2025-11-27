@@ -93,7 +93,10 @@ func CreateSession(db *sql.DB, token string, expiresAt time.Time, ipAddress, use
 	query := `INSERT INTO admin_sessions (session_token, expires_at, ip_address, user_agent)
 		VALUES (?, ?, ?, ?)`
 
-	_, err := db.Exec(query, token, expiresAt, ipAddress, userAgent)
+	// Format as RFC3339 for consistent SQLite datetime parsing
+	expiresAtRFC3339 := expiresAt.Format(time.RFC3339)
+
+	_, err := db.Exec(query, token, expiresAtRFC3339, ipAddress, userAgent)
 	if err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
@@ -103,8 +106,9 @@ func CreateSession(db *sql.DB, token string, expiresAt time.Time, ipAddress, use
 
 // GetSession retrieves a session by token
 func GetSession(db *sql.DB, token string) (*AdminSession, error) {
+	// Note: datetime(expires_at) normalizes RFC3339 format for proper comparison
 	query := `SELECT id, session_token, created_at, expires_at, last_activity, ip_address, user_agent
-		FROM admin_sessions WHERE session_token = ? AND expires_at > CURRENT_TIMESTAMP`
+		FROM admin_sessions WHERE session_token = ? AND datetime(expires_at) > datetime('now')`
 
 	var session AdminSession
 	err := db.QueryRow(query, token).Scan(
@@ -153,7 +157,8 @@ func DeleteSession(db *sql.DB, token string) error {
 
 // CleanupExpiredSessions removes expired sessions
 func CleanupExpiredSessions(db *sql.DB) error {
-	query := `DELETE FROM admin_sessions WHERE expires_at < CURRENT_TIMESTAMP`
+	// Note: datetime(expires_at) normalizes RFC3339 format for proper comparison
+	query := `DELETE FROM admin_sessions WHERE datetime(expires_at) < datetime('now')`
 
 	_, err := db.Exec(query)
 	if err != nil {
