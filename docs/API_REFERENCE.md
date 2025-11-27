@@ -9,6 +9,52 @@ Complete API documentation for SafeShare file sharing service.
 
 **Version**: 2.8.3
 
+## OpenAPI Specification
+
+SafeShare provides a machine-readable OpenAPI 3.0 specification for programmatic API access:
+
+- **OpenAPI Spec File**: [`api/openapi.yaml`](../api/openapi.yaml)
+- **Alternative JSON Format**: [`api/openapi.json`](../api/openapi.json) (generated from YAML)
+
+### Using the OpenAPI Specification
+
+The OpenAPI specification enables:
+
+1. **SDK Generation**: Use tools like `openapi-generator` to create client libraries:
+   ```bash
+   # Generate Python SDK
+   openapi-generator generate -i api/openapi.yaml -g python -o sdk/python
+   
+   # Generate TypeScript SDK  
+   openapi-generator generate -i api/openapi.yaml -g typescript-fetch -o sdk/typescript
+   
+   # Generate Go SDK
+   openapi-generator generate -i api/openapi.yaml -g go -o sdk/go
+   ```
+
+2. **API Testing**: Import into Postman, Insomnia, or other API testing tools
+
+3. **Documentation**: Generate interactive API docs with Swagger UI or ReDoc:
+   ```bash
+   # Using Docker to serve Swagger UI
+   docker run -p 8081:8080 -e SWAGGER_JSON=/api/openapi.yaml \
+     -v $(pwd)/api:/api swaggerapi/swagger-ui
+   ```
+
+4. **Validation**: Validate request/response schemas during development
+
+### Official SDKs
+
+Pre-built SDKs are available for common languages:
+
+| Language | Location | Installation |
+|----------|----------|-------------|
+| Python | [`sdk/python`](../sdk/python/) | `pip install safeshare-sdk` |
+| TypeScript/JavaScript | [`sdk/typescript`](../sdk/typescript/) | `npm install safeshare-sdk` |
+| Go | [`sdk/go`](../sdk/go/) | `go get github.com/fjmerc/safeshare/sdk/go` |
+
+See individual SDK README files for detailed usage examples and advanced patterns.
+
 ---
 
 ## Table of Contents

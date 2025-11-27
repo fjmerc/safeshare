@@ -3,6 +3,7 @@
 This document provides detailed technical documentation about SafeShare's architecture, components, and implementation details.
 
 ## Table of Contents
+- [Architecture Diagrams](#architecture-diagrams)
 - [User Authentication Architecture](#user-authentication-architecture)
 - [Admin Dashboard Architecture](#admin-dashboard-architecture)
 - [Core Architecture Overview](#core-architecture-overview)
@@ -12,6 +13,348 @@ This document provides detailed technical documentation about SafeShare's archit
 - [Chunked Upload Architecture](#chunked-upload-architecture)
 - [Webhook Architecture](#webhook-architecture)
 - [Key Dependencies](#key-dependencies)
+
+---
+
+## Architecture Diagrams
+
+This section provides visual representations of SafeShare's key architectural flows.
+
+### High-Level System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients
+        Browser[Web Browser]
+        SDK[SDK / CLI]
+        API[API Client]
+    end
+
+    subgraph CDN["Cloudflare CDN (Optional)"]
+        CF[Cloudflare Proxy]
+    end
+
+    subgraph "Reverse Proxy"
+        RP[Traefik / nginx]
+    end
+
+    subgraph SafeShare
+        HTTP[HTTP Server]
+        MW[Middleware Chain]
+        H[Handlers]
+        DB[(SQLite Database)]
+        FS[(File Storage)]
+        WH[Webhook Dispatcher]
+    end
+
+    subgraph External
+        WE[Webhook Endpoints]
+    end
+
+    Browser --> CF
+    SDK --> CF
+    API --> CF
+    CF --> RP
+    RP --> HTTP
+    HTTP --> MW
+    MW --> H
+    H --> DB
+    H --> FS
+    H --> WH
+    WH --> WE
+```
+
+### Request Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant RP as Reverse Proxy
+    participant MW as Middleware
+    participant H as Handler
+    participant DB as Database
+    participant FS as File Storage
+
+    C->>RP: HTTP Request
+    RP->>MW: Forward Request
+    
+    Note over MW: Recovery Middleware
+    Note over MW: Logging Middleware
+    Note over MW: Security Headers
+    Note over MW: Rate Limiting
+    Note over MW: Authentication (if required)
+    
+    MW->>H: Processed Request
+    H->>DB: Query/Update
+    DB-->>H: Result
+    H->>FS: Read/Write File
+    FS-->>H: File Data
+    H-->>MW: Response
+    MW-->>RP: Response with Headers
+    RP-->>C: HTTP Response
+```
+
+### File Upload Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+    participant FS as File Storage
+    participant ENC as Encryption
+
+    alt Simple Upload (< 100MB)
+        C->>S: POST /api/upload (file)
+        S->>S: Validate (size, extension)
+        S->>S: Detect MIME type
+        S->>ENC: Encrypt file (if key set)
+        ENC-->>S: Encrypted data
+        S->>FS: Store file
+        S->>DB: Create file record
+        S-->>C: {claim_code, download_url}
+    else Chunked Upload (>= 100MB)
+        C->>S: POST /api/upload/init
+        S->>DB: Create partial_upload
+        S-->>C: {upload_id, chunk_size}
+        
+        loop For each chunk
+            C->>S: POST /api/upload/chunk/:id/:num
+            S->>FS: Store chunk
+            S->>DB: Update progress
+            S-->>C: {success}
+        end
+        
+        C->>S: POST /api/upload/complete/:id
+        S->>FS: Assemble chunks
+        S->>ENC: Encrypt assembled file
+        S->>DB: Create file record
+        S->>FS: Delete temp chunks
+        S-->>C: {claim_code, download_url}
+    end
+```
+
+### File Download Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+    participant FS as File Storage
+    participant DEC as Decryption
+
+    C->>S: GET /api/claim/:code/info
+    S->>DB: Lookup file by claim_code
+    DB-->>S: File metadata
+    S-->>C: {filename, size, password_required}
+
+    C->>S: GET /api/claim/:code [?password=xxx]
+    S->>DB: Validate claim_code
+    S->>S: Check expiration
+    S->>S: Check download limit
+    
+    alt Password Protected
+        S->>S: Verify password (bcrypt)
+    end
+    
+    alt Range Request
+        S->>DEC: Decrypt specific chunks
+        DEC->>FS: Read required chunks
+        DEC-->>S: Decrypted range
+        S-->>C: 206 Partial Content
+    else Full Download
+        S->>DEC: Stream decrypt
+        DEC->>FS: Read file
+        DEC-->>S: Decrypted stream
+        S-->>C: 200 OK (streaming)
+    end
+    
+    S->>DB: Increment download_count
+```
+
+### Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+
+    C->>S: POST /api/auth/login {username, password}
+    S->>DB: Lookup user by username
+    DB-->>S: User record (with hash)
+    S->>S: bcrypt.Compare(password, hash)
+    
+    alt Valid Credentials
+        S->>S: Generate session token (32 bytes)
+        S->>DB: Store session
+        S-->>C: Set-Cookie: user_session=token
+        S-->>C: {user: {...}}
+    else Invalid Credentials
+        S-->>C: 401 Unauthorized
+    end
+
+    Note over C,S: Subsequent Requests
+    
+    C->>S: GET /api/user/files (Cookie: user_session)
+    S->>DB: Validate session token
+    S->>DB: Update last_activity
+    DB-->>S: User info
+    S->>S: Add user to request context
+    S->>DB: Query user's files
+    S-->>C: {files: [...]}
+```
+
+### Webhook Delivery Flow
+
+```mermaid
+sequenceDiagram
+    participant H as Handler
+    participant D as Dispatcher
+    participant W as Worker Pool
+    participant DB as Database
+    participant E as External Endpoint
+
+    H->>D: EmitEvent(file.uploaded)
+    D->>D: Queue event (buffered channel)
+    D-->>H: Return immediately (non-blocking)
+    
+    W->>D: Pick up event
+    W->>DB: Get matching webhook configs
+    
+    loop For each webhook
+        W->>W: Transform payload (format)
+        W->>W: Sign payload (HMAC)
+        W->>DB: Create delivery record
+        W->>E: HTTP POST (webhook URL)
+        
+        alt Success (2xx)
+            E-->>W: 200 OK
+            W->>DB: Update status=success
+        else Failure
+            E-->>W: Error/Timeout
+            W->>DB: Update status=retrying
+            W->>W: Schedule retry (exponential backoff)
+        end
+    end
+```
+
+### Database Schema Overview
+
+```mermaid
+erDiagram
+    users ||--o{ files : uploads
+    users ||--o{ user_sessions : has
+    users ||--o{ api_tokens : owns
+    files ||--o{ webhook_deliveries : triggers
+    webhook_configs ||--o{ webhook_deliveries : sends
+
+    users {
+        int id PK
+        string username UK
+        string email UK
+        string password_hash
+        string role
+        bool is_active
+        datetime created_at
+    }
+
+    files {
+        int id PK
+        string claim_code UK
+        string original_filename
+        string stored_filename
+        int file_size
+        string mime_type
+        datetime expires_at
+        int max_downloads
+        int download_count
+        int user_id FK
+        string sha256_hash
+    }
+
+    user_sessions {
+        int id PK
+        string session_token UK
+        int user_id FK
+        datetime expires_at
+        datetime last_activity
+    }
+
+    api_tokens {
+        int id PK
+        string token_hash UK
+        int user_id FK
+        string name
+        string scopes
+        datetime expires_at
+    }
+
+    webhook_configs {
+        int id PK
+        string url
+        string secret
+        string events
+        string format
+        bool enabled
+    }
+
+    webhook_deliveries {
+        int id PK
+        int webhook_config_id FK
+        string event_type
+        string status
+        int attempt_count
+    }
+```
+
+### Encryption Architecture (SFSE1)
+
+```mermaid
+flowchart LR
+    subgraph Input
+        F["Original File"]
+    end
+
+    subgraph Processing
+        direction TB
+        C1["Chunk 1 (10MB)"]
+        C2["Chunk 2 (10MB)"]
+        C3["Chunk 3 (10MB)"]
+        CN["Chunk N"]
+    end
+
+    subgraph Encryption
+        direction TB
+        E1["AES-256-GCM\n+ Nonce + Tag"]
+        E2["AES-256-GCM\n+ Nonce + Tag"]
+        E3["AES-256-GCM\n+ Nonce + Tag"]
+        EN["AES-256-GCM\n+ Nonce + Tag"]
+    end
+
+    subgraph Output
+        H["SFSE1 Header"]
+        EC1["Encrypted Chunk 1"]
+        EC2["Encrypted Chunk 2"]
+        EC3["Encrypted Chunk 3"]
+        ECN["Encrypted Chunk N"]
+    end
+
+    F --> C1 & C2 & C3 & CN
+    C1 --> E1 --> EC1
+    C2 --> E2 --> EC2
+    C3 --> E3 --> EC3
+    CN --> EN --> ECN
+
+    H --- EC1 --- EC2 --- EC3 --- ECN
+```
+
+**SFSE1 Format Benefits:**
+- Streaming encryption/decryption
+- HTTP Range requests only decrypt needed chunks
+- Constant memory usage (~10MB buffer)
+- Each chunk independently authenticated
 
 ---
 

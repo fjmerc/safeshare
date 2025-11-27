@@ -956,14 +956,112 @@ docker run --rm -v safeshare-data:/data -v $(pwd):/backup alpine tar czf /backup
 
 ---
 
-## 📞 Security Reporting
+## 📞 Security Vulnerability Disclosure Policy
 
-If you discover a security vulnerability, please email:
-- **Email**: security@yourcompany.com
-- **PGP Key**: (include if available)
-- **Response Time**: Within 48 hours
+### Responsible Disclosure
 
-Do NOT create public GitHub issues for security vulnerabilities.
+We take security seriously at SafeShare. If you discover a security vulnerability, we appreciate your help in disclosing it to us responsibly.
+
+### How to Report
+
+**Do NOT create public GitHub issues for security vulnerabilities.**
+
+1. **Email:** security@yourcompany.com
+2. **Subject:** `[SECURITY] Brief description of issue`
+3. **Include:**
+   - Description of the vulnerability
+   - Steps to reproduce
+   - Potential impact
+   - Any proof-of-concept code
+   - Your suggested fix (if any)
+
+### What to Expect
+
+| Timeline | Action |
+|----------|--------|
+| Within 48 hours | Acknowledgment of your report |
+| Within 7 days | Initial assessment and severity rating |
+| Within 30 days | Fix developed and tested |
+| Within 45 days | Security patch released |
+| After patch release | Public disclosure (coordinated with reporter) |
+
+### Severity Ratings
+
+We use CVSS v3.1 for severity assessment:
+
+| Severity | CVSS Score | Response Time |
+|----------|------------|---------------|
+| Critical | 9.0 - 10.0 | 24-48 hours |
+| High | 7.0 - 8.9 | 7 days |
+| Medium | 4.0 - 6.9 | 30 days |
+| Low | 0.1 - 3.9 | Next release |
+
+### Scope
+
+**In Scope:**
+- Authentication and authorization bypasses
+- SQL injection, XSS, CSRF vulnerabilities
+- Remote code execution
+- Encryption weaknesses
+- Data exposure or leakage
+- Denial of service vulnerabilities
+- Path traversal attacks
+- Session management issues
+
+**Out of Scope:**
+- Social engineering attacks
+- Physical security issues
+- Vulnerabilities in third-party dependencies (report to upstream)
+- Issues in outdated versions (please test on latest)
+- Theoretical vulnerabilities without proof-of-concept
+
+### Safe Harbor
+
+We will not take legal action against researchers who:
+- Make a good faith effort to avoid privacy violations and data destruction
+- Do not access, modify, or delete data belonging to others
+- Stop testing and report immediately upon discovering a vulnerability
+- Do not publicly disclose until we've had reasonable time to fix
+
+### Recognition
+
+We believe in recognizing security researchers for their contributions:
+
+- Acknowledgment in security advisories (with permission)
+- Mention in CHANGELOG.md security fixes (with permission)
+- Potential inclusion in a future security hall of fame
+
+### Security Advisories
+
+Security advisories are published via:
+- GitHub Security Advisories
+- CHANGELOG.md with `[Security]` tag
+- Version release notes
+
+### Past Security Fixes
+
+Notable security improvements:
+
+| Version | Fix | Severity |
+|---------|-----|----------|
+| v2.8.2 | Constant-time token comparison | Medium |
+| v2.8.2 | Session invalidation on password change | High |
+| v2.8.2 | SQL LIKE wildcard injection fix | Medium |
+| v2.8.2 | Integer overflow in chunk calculations | High |
+| v2.7.0 | Trusted proxy header validation | High |
+| v2.7.0 | Defense-in-depth filename validation | Medium |
+| v2.1.0 | Streaming encryption (memory exhaustion fix) | High |
+
+### Security Update Policy
+
+- **Supported versions:** Current major version and previous major version
+- **Critical fixes:** Backported to all supported versions
+- **EOL versions:** Not patched; please upgrade
+
+| Version | Status | Support Until |
+|---------|--------|---------------|
+| 2.x | Active | Current |
+| 1.x | EOL | Security fixes only until Dec 2025 |
 
 ---
 

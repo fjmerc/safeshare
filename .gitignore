@@ -1,4 +1,5 @@
 uploads/
+data/
 *.db
 *.db-journal
 cmd/safeshare/safeshare

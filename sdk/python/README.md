@@ -300,6 +300,279 @@ ruff check .
 mypy safeshare
 ```
 
+## Advanced Usage
+
+### Async/Await Support
+
+For async applications, use the async client:
+
+```python
+import asyncio
+from safeshare import AsyncSafeShareClient
+
+async def main():
+    async with AsyncSafeShareClient(
+        base_url="https://share.example.com",
+        api_token="safeshare_..."
+    ) as client:
+        # Async upload
+        result = await client.upload("document.pdf")
+        print(f"Claim code: {result.claim_code}")
+        
+        # Async download
+        await client.download("ABC123", "output.pdf")
+
+asyncio.run(main())
+```
+
+### Retry Logic with Exponential Backoff
+
+```python
+import time
+from safeshare import SafeShareClient
+from safeshare.exceptions import RateLimitError, SafeShareError
+
+def upload_with_retry(client, filepath, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return client.upload(filepath)
+        except RateLimitError as e:
+            if attempt < max_retries - 1:
+                wait_time = e.retry_after or (2 ** attempt * 10)
+                print(f"Rate limited. Waiting {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                raise
+        except SafeShareError as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt * 5  # 5s, 10s, 20s
+                print(f"Error: {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                raise
+```
+
+### Custom HTTP Client
+
+```python
+import httpx
+from safeshare import SafeShareClient
+
+# Custom client with proxy and custom timeout
+custom_transport = httpx.HTTPTransport(
+    proxy="http://proxy.example.com:8080",
+    retries=3
+)
+
+client = SafeShareClient(
+    base_url="https://share.example.com",
+    api_token="safeshare_...",
+    timeout=600.0,
+    transport=custom_transport
+)
+```
+
+### Django Integration
+
+```python
+# settings.py
+SAFESHARE_URL = "https://share.example.com"
+SAFESHARE_TOKEN = "safeshare_..."
+
+# views.py
+from django.conf import settings
+from django.http import JsonResponse
+from safeshare import SafeShareClient
+
+def upload_file(request):
+    if request.method == "POST":
+        file = request.FILES["file"]
+        
+        with SafeShareClient(
+            base_url=settings.SAFESHARE_URL,
+            api_token=settings.SAFESHARE_TOKEN
+        ) as client:
+            # Save temp file and upload
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                for chunk in file.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+            
+            result = client.upload(
+                tmp_path,
+                filename=file.name,
+                expires_in_hours=24
+            )
+            
+            return JsonResponse({
+                "claim_code": result.claim_code,
+                "download_url": result.download_url
+            })
+```
+
+### FastAPI Integration
+
+```python
+from fastapi import FastAPI, UploadFile, HTTPException
+from safeshare import SafeShareClient
+from safeshare.exceptions import SafeShareError
+import tempfile
+import os
+
+app = FastAPI()
+
+# Singleton client
+safeshare_client = SafeShareClient(
+    base_url=os.getenv("SAFESHARE_URL"),
+    api_token=os.getenv("SAFESHARE_TOKEN")
+)
+
+@app.post("/upload")
+async def upload_file(file: UploadFile):
+    try:
+        # Save uploaded file to temp location
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        try:
+            result = safeshare_client.upload(
+                tmp_path,
+                filename=file.filename,
+                expires_in_hours=24
+            )
+            return {
+                "claim_code": result.claim_code,
+                "download_url": result.download_url
+            }
+        finally:
+            os.unlink(tmp_path)  # Clean up temp file
+            
+    except SafeShareError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("shutdown")
+def shutdown():
+    safeshare_client.close()
+```
+
+### Testing with Mock Client
+
+```python
+import pytest
+from unittest.mock import Mock, patch
+from safeshare import SafeShareClient
+from safeshare.models import UploadResult
+
+@pytest.fixture
+def mock_client():
+    with patch.object(SafeShareClient, "upload") as mock_upload:
+        mock_upload.return_value = UploadResult(
+            claim_code="TEST123",
+            download_url="https://share.example.com/api/claim/TEST123",
+            original_filename="test.pdf",
+            file_size=1024,
+            expires_at="2025-12-01T00:00:00Z"
+        )
+        yield SafeShareClient(
+            base_url="https://share.example.com",
+            api_token="test_token"
+        )
+
+def test_upload(mock_client):
+    result = mock_client.upload("test.pdf")
+    assert result.claim_code == "TEST123"
+```
+
+### Batch Operations
+
+```python
+import concurrent.futures
+from pathlib import Path
+from safeshare import SafeShareClient
+
+def batch_upload(client: SafeShareClient, directory: str, max_workers: int = 3):
+    """Upload all files in a directory."""
+    files = list(Path(directory).glob("*"))
+    results = []
+    
+    def upload_file(filepath):
+        if filepath.is_file():
+            return client.upload(str(filepath), expires_in_hours=24)
+        return None
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {
+            executor.submit(upload_file, f): f for f in files
+        }
+        
+        for future in concurrent.futures.as_completed(future_to_file):
+            filepath = future_to_file[future]
+            try:
+                result = future.result()
+                if result:
+                    results.append((filepath.name, result.claim_code))
+                    print(f"Uploaded: {filepath.name} -> {result.claim_code}")
+            except Exception as e:
+                print(f"Failed: {filepath.name} - {e}")
+    
+    return results
+```
+
+### Connection Pooling
+
+```python
+import httpx
+from safeshare import SafeShareClient
+
+# Configure connection pool for high-throughput scenarios
+limits = httpx.Limits(
+    max_keepalive_connections=10,
+    max_connections=20,
+    keepalive_expiry=30.0
+)
+
+client = SafeShareClient(
+    base_url="https://share.example.com",
+    api_token="safeshare_...",
+    limits=limits
+)
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**SSL Certificate Errors:**
+```python
+# Development only - not recommended for production
+client = SafeShareClient(
+    base_url="https://share.example.com",
+    verify_ssl=False  # Disables certificate verification
+)
+```
+
+**Timeout on Large Files:**
+```python
+client = SafeShareClient(
+    base_url="https://share.example.com",
+    api_token="safeshare_...",
+    timeout=1800.0  # 30 minutes for very large files
+)
+```
+
+**Debug Logging:**
+```python
+import logging
+
+# Enable debug logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("safeshare")
+logger.setLevel(logging.DEBUG)
+```
+
 ## API Reference
 
 See the [OpenAPI specification](../../docs/openapi.yaml) for complete API documentation.
