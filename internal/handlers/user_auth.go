@@ -10,6 +10,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -205,10 +206,14 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Get user from context (set by middleware)
-		user := r.Context().Value("user").(*models.User)
-// Limit JSON request body size to prevent memory exhaustion
-r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse request
 		var req models.ChangePasswordRequest
@@ -312,7 +317,11 @@ func UserGetCurrentHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Get user from context (set by middleware)
-		contextUser := r.Context().Value("user").(*models.User)
+		contextUser := middleware.GetUserFromContext(r)
+		if contextUser == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Reload user from database to get fresh data (e.g., after password change)
 		user, err := database.GetUserByID(db, contextUser.ID)

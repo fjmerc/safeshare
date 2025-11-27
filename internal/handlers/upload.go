@@ -21,6 +21,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
@@ -302,7 +303,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Get user ID if authenticated (optional)
 		var userID *int64
-		if user, ok := r.Context().Value("user").(*models.User); ok && user != nil {
+		if user := middleware.GetUserFromContext(r); user != nil {
 			userID = &user.ID
 		}
 

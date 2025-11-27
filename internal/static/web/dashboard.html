@@ -1602,6 +1602,338 @@
             border-color: #991b1b;
             color: #fca5a5;
         }
+
+        /* ===== API TOKEN MANAGEMENT STYLES ===== */
+
+        /* Scope Badge Styles */
+        .scope-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-right: 4px;
+            margin-bottom: 2px;
+        }
+
+        .scope-badge-upload {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .scope-badge-download {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .scope-badge-manage {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .scope-badge-admin {
+            background: #fce7f3;
+            color: #9d174d;
+        }
+
+        /* Token Table Specific Styles */
+        .tokens-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .tokens-table th {
+            text-align: left;
+            padding: 14px 12px;
+            background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+            color: #64748b;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #e2e8f0;
+            white-space: nowrap;
+        }
+
+        .tokens-table td {
+            padding: 14px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+            vertical-align: middle;
+        }
+
+        .tokens-table tbody tr:hover {
+            background: #f8fafc;
+        }
+
+        .token-name {
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .token-date {
+            color: #64748b;
+            font-size: 13px;
+        }
+
+        .token-never {
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        .scopes-cell {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            max-width: 200px;
+        }
+
+        /* Create Token Modal - Scope Checkboxes */
+        .scope-checkbox-container {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 8px;
+        }
+
+        .scope-checkbox-container:hover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .scope-checkbox-container.selected {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .scope-checkbox-container input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            cursor: pointer;
+            accent-color: #3b82f6;
+        }
+
+        .scope-checkbox-label {
+            flex: 1;
+        }
+
+        .scope-checkbox-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .scope-checkbox-desc {
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.4;
+        }
+
+        /* Token Created Modal - Secret Display */
+        .token-secret-container {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+        }
+
+        .token-secret-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #94a3b8;
+            margin-bottom: 8px;
+        }
+
+        .token-secret-value {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #22c55e;
+            word-break: break-all;
+            line-height: 1.5;
+        }
+
+        .token-warning {
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .token-warning svg {
+            flex-shrink: 0;
+            color: #f59e0b;
+        }
+
+        .token-warning-text {
+            font-size: 13px;
+            color: #92400e;
+            line-height: 1.5;
+        }
+
+        /* Expiration Presets for Tokens */
+        .token-expiration-presets {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .token-preset-btn {
+            padding: 8px 12px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #374151;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .token-preset-btn:hover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .token-preset-btn.selected {
+            border-color: #3b82f6;
+            background: #3b82f6;
+            color: white;
+        }
+
+        /* Dark mode - Token Management */
+        [data-theme="dark"] .scope-badge-upload {
+            background: #1e3a5f;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .scope-badge-download {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .scope-badge-manage {
+            background: #78350f;
+            color: #fde68a;
+        }
+
+        [data-theme="dark"] .scope-badge-admin {
+            background: #831843;
+            color: #fbcfe8;
+        }
+
+        [data-theme="dark"] .tokens-table th {
+            background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
+            color: #9ca3af;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .tokens-table td {
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .tokens-table tbody tr:hover {
+            background: #1e3a5f;
+        }
+
+        [data-theme="dark"] .token-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .token-date {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .scope-checkbox-container {
+            background: #374151;
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .scope-checkbox-container:hover,
+        [data-theme="dark"] .scope-checkbox-container.selected {
+            border-color: #3b82f6;
+            background: #1e3a5f;
+        }
+
+        [data-theme="dark"] .scope-checkbox-title {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .scope-checkbox-desc {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .token-secret-container {
+            background: #0f172a;
+        }
+
+        [data-theme="dark"] .token-warning {
+            background: #78350f;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .token-warning-text {
+            color: #fde68a;
+        }
+
+        [data-theme="dark"] .token-preset-btn {
+            background: #374151;
+            border-color: #4b5563;
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .token-preset-btn:hover {
+            border-color: #3b82f6;
+            background: #1e3a5f;
+            color: #93c5fd;
+        }
+
+        [data-theme="dark"] .token-preset-btn.selected {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        /* Responsive - Token Management */
+        @media (max-width: 768px) {
+            .tokens-table th,
+            .tokens-table td {
+                padding: 10px 8px;
+                font-size: 12px;
+            }
+
+            .scopes-cell {
+                max-width: 120px;
+            }
+
+            .token-expiration-presets {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .tokens-table th:nth-child(3),
+            .tokens-table td:nth-child(3),
+            .tokens-table th:nth-child(4),
+            .tokens-table td:nth-child(4) {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1684,6 +2016,34 @@
 
             <div id="filesContainer">
                 <!-- Files will be loaded here -->
+            </div>
+        </div>
+
+        <!-- API Tokens Section -->
+        <div class="content-section" id="tokensSection">
+            <div class="section-header">
+                <h2>API Tokens</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button id="refreshTokensBtn" class="btn btn-secondary" onclick="refreshTokens()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                    <button class="btn btn-primary" onclick="showCreateTokenModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Create Token
+                    </button>
+                </div>
+            </div>
+
+            <div id="tokensContainer">
+                <!-- Tokens will be loaded here -->
             </div>
         </div>
     </div>
@@ -1898,6 +2258,7 @@
 
                     loadConfig();
                     loadFiles();
+                    loadTokens();
                 } else {
                     // Not authenticated, redirect to login
                     window.location.href = '/login';
@@ -2827,6 +3188,338 @@
 
         // ========== End Share Functions ==========
 
+        // ========== API Token Management Functions ==========
+
+        let tokenToRevoke = null;
+        let createdTokenSecret = null;
+
+        // Load tokens
+        async function loadTokens() {
+            try {
+                const response = await fetch('/api/tokens', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    displayTokens(data.tokens || []);
+                } else {
+                    console.error('Failed to load tokens:', response.status);
+                    displayTokens([]);
+                }
+            } catch (error) {
+                console.error('Failed to load tokens:', error);
+                displayTokens([]);
+            }
+        }
+
+        // Display tokens in table
+        function displayTokens(tokens) {
+            const container = document.getElementById('tokensContainer');
+
+            if (!tokens || tokens.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <h3>No API Tokens</h3>
+                        <p>Create your first token to enable programmatic access</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let tableHTML = `
+                <div class="files-table-wrapper">
+                    <table class="tokens-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Scopes</th>
+                                <th>Created</th>
+                                <th>Expires</th>
+                                <th>Last Used</th>
+                                <th style="text-align: center;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            tokens.forEach(token => {
+                const createdDate = formatCompactDate(token.created_at);
+                const expiresDate = token.expires_at ? formatCompactDate(token.expires_at) : '<span class="token-never">Never</span>';
+                const lastUsed = token.last_used_at ? formatCompactDate(token.last_used_at) : '<span class="token-date">Never</span>';
+
+                // Build scope badges with validation and escaping
+                let scopesBadges = '';
+                const validScopes = ['upload', 'download', 'manage', 'admin'];
+                if (token.scopes && token.scopes.length > 0) {
+                    token.scopes.forEach(scope => {
+                        // Escape scope for both CSS class and content
+                        const escapedScope = escapeHtml(scope);
+                        // Only render known scopes with specific styling
+                        if (validScopes.includes(scope)) {
+                            scopesBadges += `<span class="scope-badge scope-badge-${escapedScope}">${escapedScope}</span>`;
+                        } else {
+                            // Unknown scope - render safely with generic styling
+                            scopesBadges += `<span class="scope-badge">${escapedScope}</span>`;
+                        }
+                    });
+                } else {
+                    scopesBadges = '<span class="token-date">None</span>';
+                }
+
+                tableHTML += `
+                    <tr>
+                        <td><span class="token-name">${escapeHtml(token.name)}</span></td>
+                        <td><div class="scopes-cell">${scopesBadges}</div></td>
+                        <td><span class="token-date">${createdDate}</span></td>
+                        <td>${expiresDate}</td>
+                        <td>${lastUsed}</td>
+                        <td style="text-align: center;">
+                            <button class="btn-icon btn-danger" onclick="revokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                </svg>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            container.innerHTML = tableHTML;
+        }
+
+        // Refresh tokens with animation
+        function refreshTokens() {
+            const btn = document.getElementById('refreshTokensBtn');
+            btn.classList.add('btn-refreshing');
+            setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+            loadTokens();
+        }
+
+        // Show create token modal
+        function showCreateTokenModal() {
+            // Reset form
+            document.getElementById('tokenName').value = '';
+            document.getElementById('scopeUpload').checked = false;
+            document.getElementById('scopeDownload').checked = false;
+            document.getElementById('scopeManage').checked = false;
+            document.getElementById('tokenExpirationDays').value = '90';
+
+            // Reset scope checkbox visual states
+            document.querySelectorAll('.scope-checkbox-container').forEach(container => {
+                container.classList.remove('selected');
+            });
+
+            // Reset expiration preset buttons
+            document.querySelectorAll('.token-preset-btn').forEach(btn => {
+                btn.classList.remove('selected');
+                if (btn.getAttribute('data-days') === '90') {
+                    btn.classList.add('selected');
+                }
+            });
+
+            // Setup expiration preset handlers
+            setupTokenExpirationPresets();
+
+            document.getElementById('createTokenModal').classList.add('show');
+            setTimeout(() => document.getElementById('tokenName').focus(), 100);
+        }
+
+        // Hide create token modal
+        function hideCreateTokenModal() {
+            document.getElementById('createTokenModal').classList.remove('show');
+        }
+
+        // Setup expiration preset button handlers
+        function setupTokenExpirationPresets() {
+            document.querySelectorAll('.token-preset-btn').forEach(btn => {
+                btn.onclick = function(e) {
+                    e.preventDefault();
+                    const days = this.getAttribute('data-days');
+                    document.getElementById('tokenExpirationDays').value = days;
+
+                    // Update UI
+                    document.querySelectorAll('.token-preset-btn').forEach(b => b.classList.remove('selected'));
+                    this.classList.add('selected');
+                };
+            });
+        }
+
+        // Toggle scope checkbox visual state
+        function toggleScopeCheckbox(container) {
+            const checkbox = container.querySelector('input[type="checkbox"]');
+            // Toggle is handled by the label click, update visual state
+            setTimeout(() => {
+                if (checkbox.checked) {
+                    container.classList.add('selected');
+                } else {
+                    container.classList.remove('selected');
+                }
+            }, 0);
+        }
+
+        // Create token
+        async function createToken() {
+            const name = document.getElementById('tokenName').value.trim();
+            if (!name) {
+                showToast('Token name is required', 'error');
+                return;
+            }
+
+            // Collect selected scopes
+            const scopes = [];
+            if (document.getElementById('scopeUpload').checked) scopes.push('upload');
+            if (document.getElementById('scopeDownload').checked) scopes.push('download');
+            if (document.getElementById('scopeManage').checked) scopes.push('manage');
+
+            if (scopes.length === 0) {
+                showToast('Please select at least one permission', 'error');
+                return;
+            }
+
+            const expirationDays = parseInt(document.getElementById('tokenExpirationDays').value);
+
+            const createBtn = document.getElementById('createTokenBtn');
+            const originalText = createBtn.textContent;
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+
+            try {
+                const requestBody = {
+                    name: name,
+                    scopes: scopes
+                };
+
+                // Only add expires_in_days if not "never" (0)
+                if (expirationDays > 0) {
+                    requestBody.expires_in_days = expirationDays;
+                }
+
+                const response = await fetch('/api/tokens', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify(requestBody),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    hideCreateTokenModal();
+                    showTokenCreatedModal(data);
+                    loadTokens();
+                } else {
+                    showToast(data.error || 'Failed to create token', 'error');
+                }
+            } catch (error) {
+                console.error('Create token failed:', error);
+                showToast('Network error creating token', 'error');
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = originalText;
+            }
+        }
+
+        // Show token created modal
+        function showTokenCreatedModal(tokenData) {
+            createdTokenSecret = tokenData.token;
+            document.getElementById('createdTokenName').textContent = tokenData.name;
+            document.getElementById('createdTokenValue').textContent = tokenData.token;
+            document.getElementById('tokenCreatedModal').classList.add('show');
+        }
+
+        // Hide token created modal
+        function hideTokenCreatedModal() {
+            document.getElementById('tokenCreatedModal').classList.remove('show');
+            createdTokenSecret = null;
+        }
+
+        // Copy created token to clipboard
+        async function copyCreatedToken() {
+            if (!createdTokenSecret) return;
+
+            try {
+                await navigator.clipboard.writeText(createdTokenSecret);
+                showToast('Token copied to clipboard!', 'success');
+            } catch (error) {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = createdTokenSecret;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+
+                try {
+                    document.execCommand('copy');
+                    showToast('Token copied to clipboard!', 'success');
+                } catch (fallbackError) {
+                    showToast('Failed to copy token', 'error');
+                }
+
+                document.body.removeChild(textarea);
+            }
+        }
+
+        // Revoke token - show confirmation modal
+        function revokeToken(tokenId, tokenName) {
+            tokenToRevoke = { id: tokenId, name: tokenName };
+            document.getElementById('revokeTokenName').textContent = tokenName;
+            document.getElementById('revokeTokenModal').classList.add('show');
+        }
+
+        // Hide revoke token modal
+        function hideRevokeTokenModal() {
+            document.getElementById('revokeTokenModal').classList.remove('show');
+            tokenToRevoke = null;
+        }
+
+        // Confirm revoke token
+        async function confirmRevokeToken() {
+            if (!tokenToRevoke) return;
+
+            const confirmBtn = document.getElementById('confirmRevokeBtn');
+            const originalText = confirmBtn.textContent;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Revoking...';
+
+            try {
+                const response = await fetch(`/api/tokens/${tokenToRevoke.id}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                });
+
+                if (response.ok) {
+                    hideRevokeTokenModal();
+                    showToast('Token revoked successfully', 'success');
+                    loadTokens();
+                } else {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to revoke token', 'error');
+                }
+            } catch (error) {
+                console.error('Revoke token failed:', error);
+                showToast('Network error revoking token', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = originalText;
+            }
+        }
+
+        // ========== End API Token Management Functions ==========
+
         // Initialize theme icons on load
         document.addEventListener('DOMContentLoaded', () => {
             const theme = document.documentElement.getAttribute('data-theme');
@@ -2888,6 +3581,126 @@
         // Initialize
         checkAuth();
     </script>
+
+    <!-- Create Token Modal -->
+    <div id="createTokenModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">Create API Token</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Token Name</label>
+                    <input type="text" id="tokenName" placeholder="e.g., CI/CD Pipeline, Backup Script" maxlength="100" required>
+                </div>
+
+                <div class="form-group">
+                    <label style="margin-bottom: 12px;">Permissions</label>
+                    <label class="scope-checkbox-container" onclick="toggleScopeCheckbox(this)">
+                        <input type="checkbox" id="scopeUpload" value="upload">
+                        <div class="scope-checkbox-label">
+                            <span class="scope-checkbox-title">Upload</span>
+                            <span class="scope-checkbox-desc">Upload new files to SafeShare</span>
+                        </div>
+                    </label>
+                    <label class="scope-checkbox-container" onclick="toggleScopeCheckbox(this)">
+                        <input type="checkbox" id="scopeDownload" value="download">
+                        <div class="scope-checkbox-label">
+                            <span class="scope-checkbox-title">Download</span>
+                            <span class="scope-checkbox-desc">Download files using claim codes</span>
+                        </div>
+                    </label>
+                    <label class="scope-checkbox-container" onclick="toggleScopeCheckbox(this)">
+                        <input type="checkbox" id="scopeManage" value="manage">
+                        <div class="scope-checkbox-label">
+                            <span class="scope-checkbox-title">Manage</span>
+                            <span class="scope-checkbox-desc">List, rename, delete your files</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>Expiration</label>
+                    <div class="token-expiration-presets" id="tokenExpirationPresets">
+                        <button type="button" class="token-preset-btn" data-days="7">7 days</button>
+                        <button type="button" class="token-preset-btn" data-days="30">30 days</button>
+                        <button type="button" class="token-preset-btn selected" data-days="90">90 days</button>
+                        <button type="button" class="token-preset-btn" data-days="365">1 year</button>
+                        <button type="button" class="token-preset-btn" data-days="0">Never</button>
+                    </div>
+                    <input type="hidden" id="tokenExpirationDays" value="90">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideCreateTokenModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createToken()" id="createTokenBtn">Create Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Created Modal -->
+    <div id="tokenCreatedModal" class="modal">
+        <div class="modal-content" style="max-width: 550px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+                <span>Token Created Successfully</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: #374151;">Your new API token <strong id="createdTokenName"></strong> has been created.</p>
+
+                <div class="token-secret-container">
+                    <div class="token-secret-label">Your Token (copy it now)</div>
+                    <div class="token-secret-value" id="createdTokenValue"></div>
+                </div>
+
+                <button class="btn btn-primary" onclick="copyCreatedToken()" style="width: 100%; margin-top: 12px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    Copy Token to Clipboard
+                </button>
+
+                <div class="token-warning">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <div class="token-warning-text">
+                        <strong>This is the only time you'll see this token.</strong><br>
+                        Copy it now and store it securely. You won't be able to see it again.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideTokenCreatedModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Revoke Token Confirmation Modal -->
+    <div id="revokeTokenModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                <span>Revoke API Token?</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px;">Are you sure you want to revoke the token <strong id="revokeTokenName"></strong>?</p>
+                <p style="color: #6b7280;">This action cannot be undone. Any applications using this token will immediately lose access.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideRevokeTokenModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmRevokeToken()" id="confirmRevokeBtn">Revoke Token</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Share Modal -->
     <div id="shareModal" class="share-modal hidden">
