@@ -365,6 +365,153 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host $host;
 ```
 
+## Cloudflare Configuration
+
+Cloudflare is a popular CDN that works well with SafeShare, but requires special configuration for large files.
+
+### Basic Setup
+
+Cloudflare acts as both CDN and reverse proxy. SafeShare is compatible with Cloudflare when properly configured.
+
+**DNS Configuration:**
+```
+share.example.com     A    your-server-ip   (Proxied - orange cloud)
+downloads.example.com A    your-server-ip   (DNS only - grey cloud)
+```
+
+**SafeShare Configuration:**
+```bash
+docker run -d \
+  -e PUBLIC_URL=https://share.example.com \
+  -e DOWNLOAD_URL=https://downloads.example.com \
+  -e TRUST_PROXY_HEADERS=true \
+  safeshare:latest
+```
+
+### Handling Large Files
+
+Cloudflare has timeout limits that affect large file downloads:
+
+| Plan | Timeout | Max File Impact |
+|------|---------|----------------|
+| Free/Pro | 100s | ~500MB @ 5MB/s |
+| Business | 600s (configurable) | ~3GB @ 5MB/s |
+| Enterprise | 6000s | Very large files |
+
+**Solution: Bypass Cloudflare for Downloads**
+
+1. Create `downloads.example.com` pointing to same server
+2. Set to "DNS Only" (grey cloud) in Cloudflare
+3. Configure `DOWNLOAD_URL` in SafeShare
+
+Downloads will go directly to your server, bypassing Cloudflare's timeout.
+
+### Upload Limits
+
+| Cloudflare Plan | Max Upload Size |
+|-----------------|----------------|
+| Free | 100MB |
+| Pro | 100MB |
+| Business | 200MB |
+| Enterprise | 500MB+ |
+
+For larger uploads, either:
+- Upgrade Cloudflare plan
+- Create upload domain with DNS-only (bypasses Cloudflare)
+- Use chunked uploads (works within limits)
+
+### SSL/TLS Configuration
+
+**Cloudflare SSL Settings:**
+1. SSL/TLS mode: **Full (Strict)** (recommended)
+2. Minimum TLS: **1.2**
+3. Always Use HTTPS: **On**
+
+**Origin Server:**
+- Install SSL certificate on your server (Let's Encrypt)
+- Or use Cloudflare Origin Certificate
+
+### Cloudflare Page Rules
+
+**Recommended Rules:**
+
+1. **Cache Static Assets:**
+   - URL: `share.example.com/assets/*`
+   - Cache Level: Cache Everything
+   - Edge Cache TTL: 1 day
+
+2. **Bypass Cache for API:**
+   - URL: `share.example.com/api/*`
+   - Cache Level: Bypass
+
+3. **Bypass Cache for Admin:**
+   - URL: `share.example.com/admin/*`
+   - Cache Level: Bypass
+   - Security Level: High
+
+### Real IP Configuration
+
+Cloudflare sends the real client IP in `CF-Connecting-IP` header. SafeShare supports this via `X-Real-IP` and `X-Forwarded-For`.
+
+**Important:** When behind Cloudflare:
+```bash
+-e TRUST_PROXY_HEADERS=true
+```
+
+Cloudflare IPs are trusted by default in auto mode, but explicit `true` ensures headers are always trusted.
+
+### Cache Purging
+
+After deploying updates, purge Cloudflare's cache:
+
+**Manual:**
+1. Cloudflare Dashboard → Caching → Configuration
+2. Purge Cache → Purge Everything (or specific URLs)
+
+**API:**
+```bash
+curl -X POST "https://api.cloudflare.com/client/v4/zones/ZONE_ID/purge_cache" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"files": ["https://share.example.com/assets/app.js"]}'
+```
+
+**Verify Cache Status:**
+```bash
+curl -sI https://share.example.com/assets/app.js | grep cf-cache-status
+# HIT = cached, MISS = fresh from origin
+```
+
+### Security Features to Enable
+
+| Feature | Setting | Purpose |
+|---------|---------|--------|
+| WAF | Managed Rules | Block common attacks |
+| Bot Fight Mode | On | Protect against bots |
+| Rate Limiting | Custom rules | Additional DoS protection |
+| Browser Integrity Check | On | Block bad browsers |
+| Challenge Passage | 30 minutes | Reduce friction |
+
+### Troubleshooting
+
+**524 Origin Timeout:**
+- Download taking too long
+- Solution: Use `DOWNLOAD_URL` with DNS-only subdomain
+
+**Error 520:**
+- Origin returned empty response
+- Check SafeShare logs and health endpoint
+
+**Error 522:**
+- Connection timed out
+- Verify server is running and firewall allows Cloudflare IPs
+
+**Stale Assets:**
+- Purge Cloudflare cache
+- Try hard refresh (Ctrl+Shift+R)
+
+---
+
 ## Complete Production Example (Traefik)
 
 ```yaml

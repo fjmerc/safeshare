@@ -1023,6 +1023,145 @@ docker logs safeshare | tail -50
 
 ---
 
+## Cloudflare CDN Integration
+
+SafeShare works well behind Cloudflare CDN, but large file downloads require special configuration.
+
+### Understanding Cloudflare Timeouts
+
+Cloudflare has specific timeout limits:
+- **Free/Pro plans:** 100 seconds
+- **Business plan:** 100 seconds (customizable to 600s)
+- **Enterprise plan:** Configurable up to 6000 seconds
+
+Large file downloads that take longer than these limits will fail with a **524 timeout error**.
+
+### Recommended Configuration
+
+**Option 1: Separate Download Domain (Recommended)**
+
+Create a subdomain that bypasses Cloudflare proxy for downloads:
+
+```bash
+# SafeShare configuration
+docker run -d \
+  -e PUBLIC_URL=https://share.example.com \
+  -e DOWNLOAD_URL=https://downloads.example.com \
+  safeshare:latest
+```
+
+**DNS Configuration:**
+1. `share.example.com` → Cloudflare Proxied (orange cloud)
+2. `downloads.example.com` → DNS Only (grey cloud), same server IP
+
+This allows:
+- Cloudflare protection for the web interface
+- Direct server connection for large downloads
+- No timeout issues for any file size
+
+**Option 2: Cloudflare Workers (Advanced)**
+
+For enterprise deployments, use Cloudflare Workers to handle streaming:
+
+```javascript
+// worker.js - Stream large files
+export default {
+  async fetch(request, env) {
+    // Add custom timeout handling
+    const response = await fetch(request.url.replace(
+      'share.example.com', 
+      'origin.example.com'
+    ), {
+      cf: { cacheTtl: 0 } // Disable caching for downloads
+    });
+    return response;
+  }
+}
+```
+
+### Cache Configuration
+
+**Recommended Page Rules:**
+
+1. **Cache static assets:**
+   - URL: `share.example.com/assets/*`
+   - Cache Level: Cache Everything
+   - Edge Cache TTL: 1 day
+
+2. **Don't cache API responses:**
+   - URL: `share.example.com/api/*`
+   - Cache Level: Bypass
+
+3. **Don't cache downloads:**
+   - URL: `share.example.com/api/claim/*`
+   - Cache Level: Bypass
+
+### Cache Purging After Deployments
+
+After deploying frontend updates, purge the Cloudflare cache:
+
+**Manual Purge:**
+1. Cloudflare Dashboard → Your Domain → Caching → Configuration
+2. Click "Purge Cache" → "Custom Purge"
+3. Enter URLs:
+   - `https://share.example.com/assets/*`
+   - `https://share.example.com/`
+
+**Verification:**
+```bash
+# Check cache status
+curl -sI https://share.example.com/assets/app.js | grep cf-cache-status
+# MISS = fresh from origin
+# HIT = served from cache
+```
+
+**API Purge (Automation):**
+```bash
+curl -X POST "https://api.cloudflare.com/client/v4/zones/ZONE_ID/purge_cache" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"purge_everything": true}'
+```
+
+### Security Settings
+
+**Recommended Cloudflare Settings:**
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| SSL/TLS | Full (Strict) | End-to-end encryption |
+| Minimum TLS | 1.2 | Security compliance |
+| Always Use HTTPS | On | Prevent HTTP access |
+| Automatic HTTPS Rewrites | On | Fix mixed content |
+| HSTS | On (with Preload) | Strict transport security |
+| WAF | Enabled | Web application firewall |
+| Bot Fight Mode | On | Protect against bots |
+| Upload Size | 100MB+ | Match MAX_FILE_SIZE |
+
+**Important:** Cloudflare's free plan limits uploads to 100MB. For larger uploads:
+- Use Business or Enterprise plan
+- Or bypass Cloudflare for uploads (separate upload domain)
+
+### Troubleshooting Cloudflare Issues
+
+**524 Timeout Error:**
+- Large file download taking too long
+- Solution: Use `DOWNLOAD_URL` with DNS-only subdomain
+
+**520 Web Server Error:**
+- Origin server returned unexpected response
+- Check SafeShare logs: `docker logs safeshare`
+
+**Error 1015: Rate Limited:**
+- Cloudflare rate limiting triggered
+- Review Rate Limiting rules in Cloudflare
+
+**Stale Content After Deploy:**
+- Browser cache or Cloudflare cache
+- Purge Cloudflare cache and hard refresh browser
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
