@@ -14,12 +14,13 @@ Complete API documentation for SafeShare file sharing service.
 ## Table of Contents
 
 1. [Authentication](#authentication)
-2. [File Sharing](#file-sharing)
-3. [User Management](#user-management)
-4. [Admin Operations](#admin-operations)
-5. [Health & Monitoring](#health--monitoring)
-6. [Webhooks](#webhooks)
-7. [Error Responses](#error-responses)
+2. [API Token Authentication](#api-token-authentication)
+3. [File Sharing](#file-sharing)
+4. [User Management](#user-management)
+5. [Admin Operations](#admin-operations)
+6. [Health & Monitoring](#health--monitoring)
+7. [Webhooks](#webhooks)
+8. [Error Responses](#error-responses)
 
 ---
 
@@ -109,6 +110,272 @@ Update the current user's password.
 **Error Responses**:
 - 400 Bad Request: Password validation failed
 - 401 Unauthorized: Current password incorrect
+
+---
+
+## API Token Authentication
+
+API tokens provide programmatic access to SafeShare for SDKs, CLIs, and automation scripts. Tokens use Bearer authentication and support granular scope-based permissions.
+
+### Token Format
+
+```
+safeshare_<64 hex characters>
+```
+
+- **Total length**: 74 characters
+- **Entropy**: 256 bits (64 hex characters = 32 bytes)
+- **Prefix**: `safeshare_` for easy identification by secret scanning tools
+
+**Example**: `safeshare_a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd`
+
+### Authentication
+
+Include the token in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer safeshare_<your-token>" \
+  https://your-domain.com/api/user/files
+```
+
+**Authentication Priority**:
+1. Bearer token in `Authorization` header (checked first)
+2. Session cookie `user_session` (fallback)
+
+### Available Scopes
+
+| Scope | Description | Typical Use Case |
+|-------|-------------|------------------|
+| `upload` | Upload files via `/api/upload` | Backup scripts, CI/CD |
+| `download` | Download files via `/api/claim/:code` | Automated retrievals |
+| `manage` | List, rename, delete own files | File management apps |
+| `admin` | Admin operations (admin users only) | Admin automation |
+
+**Scope Restrictions**:
+- Users can only request scopes matching their role
+- Regular users cannot request `admin` scope
+- Admin users can request any scope
+
+### Security Considerations
+
+- **Tokens shown once**: The full token is only returned at creation. Store it securely.
+- **Hashed storage**: Tokens are stored as SHA-256 hashes (never in plaintext)
+- **Timing attack protection**: Authentication responses have normalized timing
+- **Session-only operations**: Token creation and revocation require session auth (not API tokens)
+- **Maximum 50 tokens per user**: Prevents abuse
+- **Maximum 365-day expiration**: Tokens cannot be created with unlimited lifetime
+
+---
+
+### Create API Token
+
+Create a new API token for the authenticated user.
+
+**Endpoint**: `POST /api/tokens`
+
+**Authentication**: Required (session cookie only - API tokens cannot create other tokens)
+
+**Request Body** (JSON):
+```json
+{
+  "name": "My Backup Script",
+  "scopes": ["upload", "download"],
+  "expires_in_days": 90
+}
+```
+
+**Parameters**:
+- `name` (required): Human-readable token name (1-100 characters)
+- `scopes` (required): Array of permission scopes (at least one required)
+- `expires_in_days` (optional): Days until expiration (1-365, null for no expiration)
+
+**Response** (201 Created):
+```json
+{
+  "id": 1,
+  "name": "My Backup Script",
+  "token": "safeshare_a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd",
+  "scopes": ["upload", "download"],
+  "expires_at": "2026-02-25T10:00:00Z",
+  "created_at": "2025-11-27T10:00:00Z"
+}
+```
+
+**Important**: The `token` field is only included in the creation response. Save it immediately - it cannot be retrieved later.
+
+**Error Responses**:
+- 400 Bad Request: Missing name, invalid scopes, or validation failed
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: 
+  - `SESSION_REQUIRED`: API tokens cannot create other tokens
+  - `SCOPE_EXCEEDS_ROLE`: Requested scopes exceed user's role
+  - `MAX_TOKENS_REACHED`: User has 50 tokens already
+
+**Error Response Format**:
+```json
+{
+  "error": "API tokens cannot create other tokens. Please use web session.",
+  "code": "SESSION_REQUIRED"
+}
+```
+
+---
+
+### List API Tokens
+
+Retrieve all API tokens for the authenticated user.
+
+**Endpoint**: `GET /api/tokens`
+
+**Authentication**: Required (session cookie or API token with `manage` scope)
+
+**Response** (200 OK):
+```json
+{
+  "tokens": [
+    {
+      "id": 1,
+      "name": "My Backup Script",
+      "token_prefix": "safeshare_a1b***bcd",
+      "scopes": ["upload", "download"],
+      "last_used_at": "2025-11-27T15:30:00Z",
+      "expires_at": "2026-02-25T10:00:00Z",
+      "created_at": "2025-11-27T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "CI/CD Pipeline",
+      "token_prefix": "safeshare_x9y***z12",
+      "scopes": ["upload"],
+      "last_used_at": null,
+      "expires_at": null,
+      "created_at": "2025-11-20T08:00:00Z"
+    }
+  ]
+}
+```
+
+**Note**: The full token value is never returned in list operations. Only the masked `token_prefix` is shown for identification.
+
+---
+
+### Revoke API Token
+
+Revoke (delete) an API token.
+
+**Endpoint**: `DELETE /api/tokens/:id`
+
+**Authentication**: Required (session cookie only - API tokens cannot revoke tokens)
+
+**Response** (200 OK):
+```json
+{
+  "message": "Token revoked successfully"
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Invalid token ID format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden:
+  - `SESSION_REQUIRED`: API tokens cannot revoke other tokens
+- 404 Not Found: Token doesn't exist or not owned by user
+
+---
+
+### Admin: List All Tokens
+
+List all API tokens in the system (admin only).
+
+**Endpoint**: `GET /admin/api/tokens`
+
+**Authentication**: Required (admin session)
+
+**Query Parameters**:
+- `limit` (optional): Results per page (default: 50, max: 100)
+- `offset` (optional): Pagination offset (default: 0)
+- `user_id` (optional): Filter by user ID
+
+**Response** (200 OK):
+```json
+{
+  "tokens": [
+    {
+      "id": 1,
+      "user_id": 5,
+      "username": "john",
+      "name": "Backup Script",
+      "token_prefix": "safeshare_a1b***bcd",
+      "scopes": ["upload", "download"],
+      "last_used_at": "2025-11-27T15:30:00Z",
+      "expires_at": "2026-02-25T10:00:00Z",
+      "created_at": "2025-11-27T10:00:00Z"
+    }
+  ],
+  "total": 42
+}
+```
+
+---
+
+### Admin: Revoke Any Token
+
+Revoke any user's API token (admin only).
+
+**Endpoint**: `DELETE /admin/api/tokens/revoke?id=:id`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Response** (200 OK):
+```json
+{
+  "message": "Token revoked successfully"
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Missing or invalid token ID
+- 404 Not Found: Token doesn't exist
+
+---
+
+### Using API Tokens with Endpoints
+
+API tokens can authenticate most user endpoints. Here are examples:
+
+**Upload a file**:
+```bash
+curl -X POST \
+  -H "Authorization: Bearer safeshare_<token>" \
+  -F "file=@document.pdf" \
+  -F "expires_in_hours=48" \
+  http://localhost:8080/api/upload
+```
+
+**List your files**:
+```bash
+curl -H "Authorization: Bearer safeshare_<token>" \
+  http://localhost:8080/api/user/files
+```
+
+**Download a file**:
+```bash
+curl -H "Authorization: Bearer safeshare_<token>" \
+  -O http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
+```
+
+**Note**: Download endpoint authentication is optional. API tokens are only needed if `REQUIRE_AUTH_FOR_UPLOAD` is enabled or for accessing file management endpoints.
+
+---
+
+### Token Lifecycle
+
+1. **Creation**: User creates token via web session (POST /api/tokens)
+2. **Usage**: Token used in `Authorization: Bearer` header
+3. **Tracking**: `last_used_at` updated on each successful authentication
+4. **Expiration**: Tokens automatically expire at `expires_at` (if set)
+5. **Revocation**: User revokes via web session (DELETE /api/tokens/:id)
+6. **Cleanup**: Expired tokens automatically deleted by background worker
 
 ---
 
@@ -1397,7 +1664,9 @@ else:
 
 ## SDK / Client Libraries
 
-No official SDKs are currently provided. The API follows REST principles and can be used with any HTTP client library.
+Official SDKs are planned for Python, TypeScript/JavaScript, and Go. See the [SDK Integration Roadmap](SDK_INTEGRATION_ROADMAP.md) for progress.
+
+In the meantime, the API follows REST principles and can be used with any HTTP client library.
 
 **Recommended Libraries**:
 - JavaScript/Node.js: `axios`, `fetch`
@@ -1425,5 +1694,5 @@ Current API compatibility: SafeShare 2.0.0+
 
 ---
 
-**Last Updated**: 2025-11-24
-**Version**: 2.8.3
+**Last Updated**: 2025-11-27
+**Version**: 2.8.4
