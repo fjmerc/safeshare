@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -246,7 +247,7 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 
 	// Add user to context (simulating authentication middleware)
 	ctx := req.Context()
-	ctx = context.WithValue(ctx, "user", user)
+	ctx = context.WithValue(ctx, middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -293,7 +294,7 @@ func TestChangePasswordHandler_InvalidCurrentPassword(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -329,7 +330,7 @@ func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -350,7 +351,7 @@ func TestGetCurrentUserHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/user", nil)
 
 	// Add user to context
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -390,7 +391,7 @@ func TestUserDashboardHandler_ListFiles(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -618,7 +619,7 @@ func TestUserChangePasswordHandler_WeakPassword(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), "user", user)
+			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 			req = req.WithContext(ctx)
 
 			rr := httptest.NewRecorder()

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -55,7 +56,7 @@ func TestUserDeleteFileHandler_Success(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user to context
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -111,7 +112,7 @@ func TestUserDeleteFileHandler_NotOwner(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user2 to context
-	ctx := context.WithValue(req.Context(), "user", user2)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -152,7 +153,7 @@ func TestUserDeleteFileHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -188,7 +189,7 @@ func TestUserDeleteFileHandler_InvalidFileID(t *testing.T) {
 			req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), "user", user)
+			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 			req = req.WithContext(ctx)
 
 			rr := httptest.NewRecorder()
@@ -218,7 +219,7 @@ func TestUserDeleteFileHandler_InvalidJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -273,7 +274,7 @@ func TestUserDeleteFileHandler_PhysicalFileMissing(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -339,7 +340,7 @@ func TestUserDashboardDataHandler_Pagination(t *testing.T) {
 			}
 
 			req := httptest.NewRequest(http.MethodGet, url, nil)
-			ctx := context.WithValue(req.Context(), "user", user)
+			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 			req = req.WithContext(ctx)
 
 			rr := httptest.NewRecorder()
@@ -373,7 +374,7 @@ func TestUserDashboardDataHandler_EmptyFileList(t *testing.T) {
 	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -434,7 +435,7 @@ func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 	database.CreateFile(db, file)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -514,7 +515,7 @@ func TestUserRenameFileHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -568,7 +569,7 @@ func TestUserRenameFileHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user2)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -608,7 +609,7 @@ func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -645,7 +646,7 @@ func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), "user", user)
+			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 			req = req.WithContext(ctx)
 
 			rr := httptest.NewRecorder()
@@ -681,7 +682,7 @@ func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -709,7 +710,7 @@ func TestUserRenameFileHandler_InvalidJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -764,7 +765,7 @@ func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -820,7 +821,7 @@ func TestUserEditExpirationHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -871,7 +872,7 @@ func TestUserEditExpirationHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user2)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -907,7 +908,7 @@ func TestUserEditExpirationHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -949,7 +950,7 @@ func TestUserEditExpirationHandler_InvalidDate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -992,7 +993,7 @@ func TestUserEditExpirationHandler_PastDate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1036,7 +1037,7 @@ func TestUserEditExpirationHandler_ExceedsMax(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1079,7 +1080,7 @@ func TestUserEditExpirationHandler_EmptyExpiration(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1123,7 +1124,7 @@ func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1180,7 +1181,7 @@ func TestUserRegenerateClaimCodeHandler_MethodNotAllowed(t *testing.T) {
 
 	// Try GET method (should fail)
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files/regenerate-claim-code", nil)
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1203,7 +1204,7 @@ func TestUserRegenerateClaimCodeHandler_InvalidJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader([]byte("{invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1238,7 +1239,7 @@ func TestUserRegenerateClaimCodeHandler_InvalidFileID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1273,7 +1274,7 @@ func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1316,7 +1317,7 @@ func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), "user", user2)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
