@@ -355,7 +355,10 @@ func CreateUserSession(db *sql.DB, userID int64, token string, expiresAt time.Ti
 	query := `INSERT INTO user_sessions (user_id, session_token, expires_at, ip_address, user_agent)
 		VALUES (?, ?, ?, ?, ?)`
 
-	_, err := db.Exec(query, userID, token, expiresAt, ipAddress, userAgent)
+	// Format as RFC3339 for consistent SQLite datetime parsing
+	expiresAtRFC3339 := expiresAt.Format(time.RFC3339)
+
+	_, err := db.Exec(query, userID, token, expiresAtRFC3339, ipAddress, userAgent)
 	if err != nil {
 		return fmt.Errorf("failed to create user session: %w", err)
 	}
@@ -365,8 +368,9 @@ func CreateUserSession(db *sql.DB, userID int64, token string, expiresAt time.Ti
 
 // GetUserSession retrieves a user session by token
 func GetUserSession(db *sql.DB, token string) (*models.UserSession, error) {
+	// Note: datetime(expires_at) normalizes RFC3339 format for proper comparison
 	query := `SELECT id, user_id, session_token, created_at, expires_at, last_activity, ip_address, user_agent
-		FROM user_sessions WHERE session_token = ? AND expires_at > CURRENT_TIMESTAMP`
+		FROM user_sessions WHERE session_token = ? AND datetime(expires_at) > datetime('now')`
 
 	var session models.UserSession
 	var createdAt, expiresAt, lastActivity string
@@ -453,7 +457,8 @@ func DeleteUserSessionsByUserID(db *sql.DB, userID int64) error {
 
 // CleanupExpiredUserSessions removes expired user sessions
 func CleanupExpiredUserSessions(db *sql.DB) error {
-	query := `DELETE FROM user_sessions WHERE expires_at < CURRENT_TIMESTAMP`
+	// Note: datetime(expires_at) normalizes RFC3339 format for proper comparison
+	query := `DELETE FROM user_sessions WHERE datetime(expires_at) < datetime('now')`
 
 	_, err := db.Exec(query)
 	if err != nil {
@@ -645,7 +650,11 @@ func UpdateFileNameByIDAndUserID(db *sql.DB, fileID, userID int64, newFilename s
 func UpdateFileExpirationByIDAndUserID(db *sql.DB, fileID, userID int64, newExpiration time.Time) error {
 	query := `UPDATE files SET expires_at = ? WHERE id = ? AND user_id = ?`
 
-	result, err := db.Exec(query, newExpiration, fileID, userID)
+	// Format as RFC3339 for consistent SQLite datetime() parsing
+	// Raw time.Time includes format that SQLite datetime() cannot parse
+	expiresAtRFC3339 := newExpiration.Format(time.RFC3339)
+
+	result, err := db.Exec(query, expiresAtRFC3339, fileID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update expiration: %w", err)
 	}

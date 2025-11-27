@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Admin Dashboard Stats Showing Zero**: Fixed bug where Total Files, Storage Used, and other stats cards showed 0 despite files existing
+  - Root cause: Several functions passed `time.Time` directly to SQLite, storing Go's default format (`2025-11-20 22:10:00 +0000 UTC`) which `datetime()` cannot parse
+  - Fixed `CreateSession`, `CreateUserSession`, and `UpdateFileExpirationByIDAndUserID` to format timestamps as RFC3339 before storing
+  - Updated session validation queries (`GetSession`, `GetUserSession`) to use `datetime(expires_at) > datetime('now')` instead of `CURRENT_TIMESTAMP`
+  - Updated session cleanup queries to use `datetime()` wrapper for consistent comparison
+  - This bug was introduced in the file.expired webhook fix (commit 41355cd) which added `datetime()` wrappers to file queries but not session queries
+
 ### Added
 - **Clear Webhook Delivery History**: Admin dashboard now includes a "Clear All" button in the Delivery History section
   - Allows administrators to clear all webhook delivery records with a single click
