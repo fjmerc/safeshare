@@ -16,16 +16,18 @@
 **Branch**: `feature/api-token-auth` (merged)
 
 ### Phase 2: OpenAPI Specification ✅
-**Status**: 🟢 Complete
+**Status**: 🟢 Complete - Merged to develop (PR #133)
 
 **Why**: Single source of truth for SDK generation.
 
-**Branch**: `feature/openapi-spec`
+**Branch**: `feature/openapi-spec` (merged)
 
-### Phase 3: Python SDK
-**Status**: ⚪ Not Started
+### Phase 3: Python SDK ✅
+**Status**: 🟢 Complete
 
 **Why**: Most requested language for automation/scripting.
+
+**Branch**: `feature/python-sdk`
 
 ### Phase 4: TypeScript/JavaScript SDK
 **Status**: ⚪ Not Started
@@ -130,6 +132,55 @@
 
 ---
 
+## Phase 3: Python SDK - Detailed Checklist
+
+### 3.1 SDK Structure
+- [x] Create `sdk/python/` directory structure
+- [x] Setup `pyproject.toml` with dependencies (httpx, pydantic)
+- [x] Configure package metadata
+
+### 3.2 Client Implementation
+- [x] Create base client class with auth support (`safeshare/client.py`)
+- [x] Implement file upload methods (simple + chunked)
+- [x] Implement file download methods with streaming
+- [x] Implement file management methods (list, delete, rename, update expiration)
+- [x] Add progress callbacks for uploads/downloads
+- [x] Implement API token management methods
+
+### 3.3 Models & Exceptions
+- [x] Create Pydantic models (`safeshare/models.py`)
+- [x] Create exception hierarchy (`safeshare/exceptions.py`)
+- [x] Add UploadProgress and DownloadProgress models
+
+### 3.4 Security Audit & Fixes
+- [x] Run bug-hunter security audit
+- [x] Fix MEDIUM: Add input validation for claim codes, upload IDs, filenames
+- [x] Fix MEDIUM: Add `__repr__` to redact API token
+- [x] Fix MEDIUM: Add warning when SSL verification disabled
+- [x] Fix MEDIUM: Use `resolve()` for download destination paths
+- [x] Acknowledged: Password in URL query params (server API design)
+
+### 3.5 Testing
+- [x] Create unit tests (`tests/test_client.py`)
+- [x] Test client initialization
+- [x] Test upload/download operations
+- [x] Test file management
+- [x] Test error handling
+
+### 3.6 Documentation
+- [x] Add README with examples
+- [x] Create usage examples:
+  - `examples/simple_upload.py`
+  - `examples/chunked_upload.py`
+  - `examples/download_file.py`
+  - `examples/file_management.py`
+
+### 3.7 Publishing
+- [ ] Publish to PyPI - FUTURE
+- [ ] Update SafeShare README - FUTURE
+
+---
+
 ## Session Progress
 
 ### Session 1: 2025-11-27 (Initial Implementation)
@@ -188,13 +239,36 @@
 - Defined 3 security schemes (sessionAuth, bearerAuth, adminAuth)
 - Validated with openapi-generator-cli: "No validation issues detected"
 
-**Outcome:** Phase 2 complete!
+**Outcome:** Phase 2 complete! (PR #133 merged)
+
+### Session 5: 2025-11-27 (Python SDK)
+**Completed:**
+- Created Python SDK package structure (`sdk/python/`)
+- Implemented `SafeShareClient` class with:
+  - API token authentication
+  - Simple and chunked file uploads
+  - Streaming file downloads
+  - Progress callbacks for uploads/downloads
+  - File management (list, delete, rename, update expiration, regenerate claim code)
+  - API token management
+- Created Pydantic models for all API responses
+- Created exception hierarchy with appropriate error mapping
+- Ran bug-hunter security audit and fixed issues:
+  - Added input validation for claim codes, upload IDs, filenames
+  - Added `__repr__` method to redact API token from logs
+  - Added warning when SSL verification is disabled
+  - Used `resolve()` for download paths
+- Created comprehensive test suite
+- Created usage examples (4 example scripts)
+- Created README documentation
+
+**Outcome:** Phase 3 complete!
 
 ---
 
-## Security Audit Results (Bug Hunter)
+## Security Audit Results
 
-### Issues Found and Fixed:
+### Phase 1: API Token Authentication
 
 | Severity | Issue | Fix |
 |----------|-------|-----|
@@ -203,10 +277,15 @@
 | MEDIUM | Empty scope handling in StringToScopes | Filter empty strings after split |
 | MEDIUM | Token revocation via API token | Restricted to session auth only |
 
-### Issues Acknowledged (Acceptable Risk):
-- Race condition in last_used update (async, non-critical)
-- Token prefix in logs (intentional for debugging)
-- No rate limiting on creation (has 50-token limit per user)
+### Phase 3: Python SDK
+
+| Severity | Issue | Fix |
+|----------|-------|-----|
+| HIGH | Password exposed in URL query string | Acknowledged - server API design; HTTPS protects in transit |
+| MEDIUM | SSL verification can be disabled | Added runtime warning when disabled |
+| MEDIUM | No input validation | Added validation for claim codes, upload IDs, filenames |
+| MEDIUM | Token could be exposed in __repr__ | Added `__repr__` with redacted token |
+| MEDIUM | Potential path traversal in download | Used `resolve()` for destination paths |
 
 ---
 
@@ -252,6 +331,14 @@ safeshare_<64 hex characters>
 - CSRF token parameter for admin write operations
 - Pagination support documented where applicable
 
+### Python SDK Design
+- Uses `httpx` for HTTP/2 support and async compatibility
+- Uses `pydantic` for data validation and serialization
+- Automatic chunked upload for files above threshold
+- Progress callbacks using dataclass models
+- Context manager support for resource cleanup
+- Comprehensive exception hierarchy
+
 ---
 
 ## Files Created/Modified
@@ -276,71 +363,55 @@ safeshare_<64 hex characters>
 | `docs/API_REFERENCE.md` | ✅ Complete |
 | `docs/CHANGELOG.md` | ✅ Complete |
 
-#### New Test Files
-| File | Status |
-|------|--------|
-| `internal/utils/api_token_test.go` | ✅ Complete |
-| `internal/handlers/api_tokens_test.go` | ✅ Complete |
-
 ### Phase 2 Files
 
-#### New Files
 | File | Status |
 |------|--------|
 | `docs/openapi.yaml` | ✅ Complete (2000+ lines) |
 
----
+### Phase 3 Files
 
-## API Endpoints Added
-
-### Phase 1: API Token Endpoints
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| POST | `/api/tokens` | Create API token | Session only |
-| GET | `/api/tokens` | List user's tokens | Session or Token |
-| DELETE | `/api/tokens/:id` | Revoke token | Session only |
-| GET | `/admin/api/tokens` | List all tokens (admin) | Admin session |
-| DELETE | `/admin/api/tokens/revoke?id=X` | Revoke any token (admin) | Admin session |
-
-### Phase 2: OpenAPI Documentation
-All existing endpoints documented in `docs/openapi.yaml`:
-- 4 Health endpoints
-- 2 Configuration endpoints
-- 5 Authentication endpoints
-- 7 File upload/download endpoints
-- 5 User file management endpoints
-- 3 User token endpoints
-- 15+ Admin endpoints
-- 6 Webhook endpoints
+| File | Status |
+|------|--------|
+| `sdk/python/pyproject.toml` | ✅ Complete |
+| `sdk/python/README.md` | ✅ Complete |
+| `sdk/python/safeshare/__init__.py` | ✅ Complete |
+| `sdk/python/safeshare/client.py` | ✅ Complete |
+| `sdk/python/safeshare/models.py` | ✅ Complete |
+| `sdk/python/safeshare/exceptions.py` | ✅ Complete |
+| `sdk/python/tests/__init__.py` | ✅ Complete |
+| `sdk/python/tests/test_client.py` | ✅ Complete |
+| `sdk/python/examples/simple_upload.py` | ✅ Complete |
+| `sdk/python/examples/chunked_upload.py` | ✅ Complete |
+| `sdk/python/examples/download_file.py` | ✅ Complete |
+| `sdk/python/examples/file_management.py` | ✅ Complete |
 
 ---
 
-## Phase 3: Python SDK - Detailed Checklist (Next)
+## Phase 4: TypeScript/JavaScript SDK - Detailed Checklist (Next)
 
-### 3.1 SDK Structure
-- [ ] Create `sdk/python/` directory structure
-- [ ] Setup `pyproject.toml` with dependencies
-- [ ] Configure package metadata
+### 4.1 SDK Structure
+- [ ] Create `sdk/typescript/` directory structure
+- [ ] Setup `package.json` with dependencies
+- [ ] Configure TypeScript compilation
 
-### 3.2 Client Implementation
+### 4.2 Client Implementation
 - [ ] Create base client class with auth support
 - [ ] Implement file upload methods (simple + chunked)
 - [ ] Implement file download methods
 - [ ] Implement file management methods
 - [ ] Add progress callbacks for uploads/downloads
 
-### 3.3 Testing
+### 4.3 Testing
 - [ ] Create unit tests
-- [ ] Create integration tests against running SafeShare
-- [ ] Test chunked upload edge cases
+- [ ] Test against running SafeShare
 
-### 3.4 Documentation
+### 4.4 Documentation
 - [ ] Add README with examples
-- [ ] Generate API docs from docstrings
 - [ ] Add usage examples
 
-### 3.5 Publishing
-- [ ] Publish to PyPI
+### 4.5 Publishing
+- [ ] Publish to npm
 - [ ] Update SafeShare README
 
 ---
@@ -352,7 +423,7 @@ When starting a new session, reference this document:
 ```
 I'm continuing work on SafeShare SDK integration. 
 Please read docs/SDK_INTEGRATION_ROADMAP.md to see current progress.
-Currently on Phase 3: Python SDK.
+Currently on Phase 4: TypeScript/JavaScript SDK.
 ```
 
 The document will show:
