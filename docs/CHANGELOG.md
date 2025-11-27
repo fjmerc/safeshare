@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Token Management UI**: User dashboard now includes a dedicated API Tokens section for managing programmatic access
+  - Create new tokens with custom names, scopes (upload, download, manage, admin), and expiration dates
+  - View all tokens with masked values, scopes, and last used information
+  - Revoke tokens with confirmation dialog
+  - Secure token display modal shows full token only once after creation
+  - Full dark mode support with scope badges and responsive design
+
 - **API Token Authentication**: Programmatic access to SafeShare via Bearer tokens for SDK/CLI integration
   - Token format: `safeshare_<64 hex chars>` (256-bit entropy, 74 characters total)
   - Secure token storage using SHA-256 hashing (tokens never stored in plaintext)
@@ -25,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Test coverage: 62.6% (handlers: 61.4%, utils: 66.3%)
 
 ### Fixed
+- **Dashboard Authentication Loop**: Fixed critical bug causing user dashboard to continuously refresh/flicker
+  - Root cause: API token authentication commit introduced typed context keys (`contextKey("user")`) in middleware, but handlers used plain string keys (`"user"`) for user lookup
+  - Go context compares both type and value, so lookups always failed causing repeated 401 responses
+  - Updated all handlers to use `middleware.GetUserFromContext(r)` which uses the correct typed key
+
 - **Admin Dashboard Stats Showing Zero**: Fixed bug where Total Files, Storage Used, and other stats cards showed 0 despite files existing
   - Root cause: Several functions passed `time.Time` directly to SQLite, storing Go's default format (`2025-11-20 22:10:00 +0000 UTC`) which `datetime()` cannot parse
   - Fixed `CreateSession`, `CreateUserSession`, and `UpdateFileExpirationByIDAndUserID` to format timestamps as RFC3339 before storing
