@@ -109,10 +109,10 @@ func UpdateAPITokenLastUsed(db *sql.DB, tokenID int64, ip string) error {
 	return nil
 }
 
-// GetAPITokensByUserID retrieves all tokens for a user
+// GetAPITokensByUserID retrieves all active tokens for a user
 func GetAPITokensByUserID(db *sql.DB, userID int64) ([]models.APITokenListItem, error) {
 	query := `SELECT id, name, token_prefix, scopes, expires_at, last_used_at, created_at, is_active
-		FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`
+		FROM api_tokens WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC`
 
 	rows, err := db.Query(query, userID)
 	if err != nil {
