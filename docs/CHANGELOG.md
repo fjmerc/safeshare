@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **API Token Authentication**: Programmatic access to SafeShare via Bearer tokens for SDK/CLI integration
+  - Token format: `safeshare_<64 hex chars>` (256-bit entropy, 74 characters total)
+  - Secure token storage using SHA-256 hashing (tokens never stored in plaintext)
+  - Granular scope-based permissions: `upload`, `download`, `manage`, `admin`
+  - Optional token expiration (up to 365 days) with automatic cleanup
+  - API endpoints for token management:
+    - `POST /api/tokens` - Create new token (session auth required, scopes must not exceed user's role)
+    - `GET /api/tokens` - List user's tokens (token values masked for security)
+    - `DELETE /api/tokens/:id` - Revoke token (session auth required for security)
+  - Bearer token authentication: `Authorization: Bearer safeshare_<token>`
+  - Timing-attack resistant authentication with normalized response times
+  - Token masking in API responses (`safeshare_abc***xyz`) for security
+  - Session-only restriction for sensitive operations (token creation/revocation) prevents token escalation attacks
+  - Database migration 006_api_tokens.sql adds token storage with proper indexes
+  - Test coverage: 62.6% (handlers: 61.4%, utils: 66.3%)
+
 ### Fixed
 - **Admin Dashboard Stats Showing Zero**: Fixed bug where Total Files, Storage Used, and other stats cards showed 0 despite files existing
   - Root cause: Several functions passed `time.Time` directly to SQLite, storing Go's default format (`2025-11-20 22:10:00 +0000 UTC`) which `datetime()` cannot parse

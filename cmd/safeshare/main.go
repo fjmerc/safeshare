@@ -235,6 +235,29 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
 	})
 
+	// API Token management routes
+	// Note: Token creation requires session auth (cannot create tokens using tokens)
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// Create token - requires session auth only
+			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(db, cfg))).ServeHTTP(w, r)
+		} else if r.Method == http.MethodGet {
+			// List tokens - allows both session and token auth
+			userAuth(http.HandlerFunc(handlers.ListAPITokensHandler(db))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			// Revoke token - allows both session and token auth
+			userAuth(http.HandlerFunc(handlers.RevokeAPITokenHandler(db))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Admin routes (only enabled if admin credentials are configured)
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)
@@ -407,6 +430,19 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(db)))).ServeHTTP(w, r)
 		})
 
+		// Admin API Token management routes
+		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensHandler(db))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(db)))).ServeHTTP(w, r)
+		})
+
 		// Admin static assets
 		mux.Handle("/admin/assets/", http.StripPrefix("/", static.Handler()))
 	} else {
@@ -535,6 +571,13 @@ func run() error {
 						slog.Error("failed to cleanup expired user sessions", "error", err)
 					} else {
 						slog.Debug("cleaned up expired user sessions")
+					}
+
+					// Cleanup expired API tokens
+					if count, err := database.CleanupExpiredAPITokens(db); err != nil {
+						slog.Error("failed to cleanup expired API tokens", "error", err)
+					} else if count > 0 {
+						slog.Info("cleaned up expired API tokens", "count", count)
 					}
 				}()
 			}
