@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -1182,7 +1183,7 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user to context
-	ctx := context.WithValue(req.Context(), "user", testUser)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, testUser)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -1198,7 +1199,7 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 	// Verify user_id was set in partial upload
 	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
 	if partialUpload.UserID == nil {
-		t.Error("user_id should be set for authenticated upload")
+		t.Fatal("user_id should be set for authenticated upload")
 	}
 
 	if *partialUpload.UserID != testUser.ID {

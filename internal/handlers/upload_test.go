@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
 )
@@ -880,7 +881,7 @@ func TestUploadHandler_WithUserAuthentication(t *testing.T) {
 	req.Header.Set("Content-Type", contentType)
 
 	// Add user to request context
-	ctx := context.WithValue(req.Context(), "user", testUser)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, testUser)
 	req = req.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -896,7 +897,7 @@ func TestUploadHandler_WithUserAuthentication(t *testing.T) {
 	// Verify file record has user_id set
 	file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
 	if file.UserID == nil {
-		t.Error("user_id should be set for authenticated upload")
+		t.Fatal("user_id should be set for authenticated upload")
 	}
 
 	if *file.UserID != testUser.ID {
