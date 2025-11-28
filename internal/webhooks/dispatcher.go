@@ -92,7 +92,7 @@ func (d *Dispatcher) Emit(event *Event) {
 		return
 	default:
 	}
-	
+
 	select {
 	case d.eventChan <- event:
 		d.metrics.RecordEvent(string(event.Type))
@@ -178,7 +178,7 @@ func (d *Dispatcher) processEvent(event *Event) {
 // attemptDelivery attempts to deliver a webhook
 func (d *Dispatcher) attemptDelivery(config *Config, delivery *Delivery) {
 	startTime := time.Now()
-	
+
 	// Increment attempt count
 	delivery.AttemptCount++
 

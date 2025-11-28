@@ -60,8 +60,8 @@ func createEncryptedFile(t *testing.T, dir, name, content, encKey string, chunkS
 
 	// Create SFSE1 header manually
 	header := make([]byte, 10)
-	copy(header[0:5], []byte("SFSE1"))           // Magic
-	header[5] = 1                                  // Version
+	copy(header[0:5], []byte("SFSE1"))                     // Magic
+	header[5] = 1                                          // Version
 	binary.LittleEndian.PutUint32(header[6:10], chunkSize) // Chunk size
 
 	// For testing, just write header + some encrypted data

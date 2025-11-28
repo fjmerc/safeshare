@@ -326,15 +326,15 @@ func (c *Client) GetUploadStatus(ctx context.Context, uploadID string) (*UploadS
 	}
 
 	var apiResp struct {
-		UploadID       string  `json:"upload_id"`
-		Filename       string  `json:"filename"`
-		TotalSize      int64   `json:"total_size"`
-		UploadedSize   int64   `json:"uploaded_size"`
-		UploadedChunks []int   `json:"uploaded_chunks"`
-		TotalChunks    int     `json:"total_chunks"`
-		ChunkSize      int64   `json:"chunk_size"`
-		ExpiresAt      string  `json:"expires_at"`
-		Complete       bool    `json:"complete"`
+		UploadID       string `json:"upload_id"`
+		Filename       string `json:"filename"`
+		TotalSize      int64  `json:"total_size"`
+		UploadedSize   int64  `json:"uploaded_size"`
+		UploadedChunks []int  `json:"uploaded_chunks"`
+		TotalChunks    int    `json:"total_chunks"`
+		ChunkSize      int64  `json:"chunk_size"`
+		ExpiresAt      string `json:"expires_at"`
+		Complete       bool   `json:"complete"`
 	}
 
 	if err := handleResponse(resp, &apiResp); err != nil {

@@ -25,10 +25,10 @@ func TestTransformPayload(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		format      WebhookFormat
-		wantErr     bool
-		validateFn  func(*testing.T, string)
+		name       string
+		format     WebhookFormat
+		wantErr    bool
+		validateFn func(*testing.T, string)
 	}{
 		{
 			name:    "SafeShare format",

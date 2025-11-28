@@ -410,8 +410,8 @@ func TestClaimHandler_MimeType(t *testing.T) {
 	handler := ClaimHandler(db, cfg)
 
 	tests := []struct {
-		filename         string
-		mimeType         string
+		filename            string
+		mimeType            string
 		expectedContentType string
 	}{
 		{"document.pdf", "application/pdf", "application/pdf"},

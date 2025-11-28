@@ -142,19 +142,19 @@ func Initialize(dbPath string) (*sql.DB, error) {
 
 	// Configure connection pool to prevent resource exhaustion
 	// SQLite with WAL mode benefits from connection pool limits
-	db.SetMaxOpenConns(25)              // Maximum 25 concurrent connections
-	db.SetMaxIdleConns(5)               // Keep 5 idle connections for reuse
+	db.SetMaxOpenConns(25)                 // Maximum 25 concurrent connections
+	db.SetMaxIdleConns(5)                  // Keep 5 idle connections for reuse
 	db.SetConnMaxLifetime(5 * time.Minute) // Recycle connections every 5 minutes
 
 	// Enable foreign keys and WAL mode for better concurrency
 	pragmas := []string{
-		"PRAGMA foreign_keys = ON",           // Enable foreign key constraints
-		"PRAGMA journal_mode = WAL",          // Write-Ahead Logging for concurrency
-		"PRAGMA synchronous = NORMAL",        // Balance durability/performance
-		"PRAGMA cache_size = -64000",         // 64MB page cache
-		"PRAGMA busy_timeout = 5000",         // 5 second busy timeout
-		"PRAGMA temp_store = MEMORY",         // Store temp tables in RAM (faster JOINs)
-		"PRAGMA wal_autocheckpoint = 4000",   // Checkpoint every 16MB (less frequent)
+		"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
+		"PRAGMA journal_mode = WAL",        // Write-Ahead Logging for concurrency
+		"PRAGMA synchronous = NORMAL",      // Balance durability/performance
+		"PRAGMA cache_size = -64000",       // 64MB page cache
+		"PRAGMA busy_timeout = 5000",       // 5 second busy timeout
+		"PRAGMA temp_store = MEMORY",       // Store temp tables in RAM (faster JOINs)
+		"PRAGMA wal_autocheckpoint = 4000", // Checkpoint every 16MB (less frequent)
 	}
 
 	for _, pragma := range pragmas {

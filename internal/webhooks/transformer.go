@@ -63,7 +63,7 @@ func formatGotifyTitle(event *Event) string {
 // formatGotifyMessage creates a message body for Gotify notifications
 func formatGotifyMessage(event *Event) string {
 	size := formatFileSize(event.File.Size)
-	
+
 	switch event.Type {
 	case EventFileUploaded:
 		return fmt.Sprintf("**%s** (%s)\n\n**Claim Code:** `%s`\n**Expires:** %s",
@@ -163,7 +163,7 @@ func formatNtfyTitle(event *Event) string {
 // formatNtfyMessage creates a message body for ntfy notifications
 func formatNtfyMessage(event *Event) string {
 	size := formatFileSize(event.File.Size)
-	
+
 	switch event.Type {
 	case EventFileUploaded:
 		return fmt.Sprintf("%s (%s)\nClaim: %s\nExpires: %s",

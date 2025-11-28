@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gabriel-vasile/mimetype"
-	"github.com/google/uuid"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
@@ -25,6 +23,8 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/google/uuid"
 )
 
 // UploadHandler handles file upload requests
@@ -143,17 +143,17 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			maxDownloads = &maxDl
 		}
 
-	// Parse optional password for password protection
-	var passwordHash string
-	if password := r.FormValue("password"); password != "" {
-		hash, err := utils.HashPassword(password)
-		if err != nil {
-			slog.Error("failed to hash password", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Parse optional password for password protection
+		var passwordHash string
+		if password := r.FormValue("password"); password != "" {
+			hash, err := utils.HashPassword(password)
+			if err != nil {
+				slog.Error("failed to hash password", "error", err)
+				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			passwordHash = hash
 		}
-		passwordHash = hash
-	}
 
 		// Generate unique claim code (with retry on collision)
 		var claimCode string
@@ -326,7 +326,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			ExpiresAt:        expiresAt,
 			MaxDownloads:     maxDownloads,
 			UploaderIP:       clientIP,
-		PasswordHash:     passwordHash,
+			PasswordHash:     passwordHash,
 			UserID:           userID,
 			SHA256Hash:       sha256Hash,
 		}
@@ -402,7 +402,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"size", written,
 			"expires_at", expiresAt,
 			"max_downloads", maxDownloads,
-		"password_protected", passwordHash != "",
+			"password_protected", passwordHash != "",
 			"client_ip", clientIP,
 			"user_agent", getUserAgent(r),
 		)

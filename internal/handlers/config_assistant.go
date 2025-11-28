@@ -11,50 +11,50 @@ import (
 
 // ConfigAssistantRequest represents the user's environment input
 type ConfigAssistantRequest struct {
-	UploadSpeed        float64 `json:"upload_speed"`        // Mbps
-	DownloadSpeed      float64 `json:"download_speed"`      // Mbps
-	NetworkLatency     string  `json:"network_latency"`     // local, low, medium, high
-	TypicalFileSize    string  `json:"typical_file_size"`   // small, medium, large, huge
-	DeploymentType     string  `json:"deployment_type"`     // LAN, WAN, Internet
-	UserLoad           string  `json:"user_load"`           // light, moderate, heavy, very_heavy
-	StorageCapacity    int64   `json:"storage_capacity"`    // GB (0 = unlimited)
-	UsingCDN           bool    `json:"using_cdn"`           // Behind a CDN?
-	CDNTimeout         int     `json:"cdn_timeout"`         // CDN timeout in seconds (0 = unknown)
-	EncryptionEnabled  bool    `json:"encryption_enabled"`  // AES-256-GCM encryption active?
+	UploadSpeed       float64 `json:"upload_speed"`       // Mbps
+	DownloadSpeed     float64 `json:"download_speed"`     // Mbps
+	NetworkLatency    string  `json:"network_latency"`    // local, low, medium, high
+	TypicalFileSize   string  `json:"typical_file_size"`  // small, medium, large, huge
+	DeploymentType    string  `json:"deployment_type"`    // LAN, WAN, Internet
+	UserLoad          string  `json:"user_load"`          // light, moderate, heavy, very_heavy
+	StorageCapacity   int64   `json:"storage_capacity"`   // GB (0 = unlimited)
+	UsingCDN          bool    `json:"using_cdn"`          // Behind a CDN?
+	CDNTimeout        int     `json:"cdn_timeout"`        // CDN timeout in seconds (0 = unknown)
+	EncryptionEnabled bool    `json:"encryption_enabled"` // AES-256-GCM encryption active?
 }
 
 // ConfigRecommendations represents the recommended configuration
 type ConfigRecommendations struct {
 	// Immediate settings (can be applied without restart)
-	MaxFileSize             int64    `json:"max_file_size"`              // bytes
-	QuotaLimitGB            int64    `json:"quota_limit_gb"`             // GB
-	DefaultExpirationHours  int      `json:"default_expiration_hours"`   // hours
-	MaxExpirationHours      int      `json:"max_expiration_hours"`       // hours
-	RateLimitUpload         int      `json:"rate_limit_upload"`          // per hour
-	RateLimitDownload       int      `json:"rate_limit_download"`        // per hour
-	BlockedExtensions       []string `json:"blocked_extensions"`         // list of extensions
+	MaxFileSize            int64    `json:"max_file_size"`            // bytes
+	QuotaLimitGB           int64    `json:"quota_limit_gb"`           // GB
+	DefaultExpirationHours int      `json:"default_expiration_hours"` // hours
+	MaxExpirationHours     int      `json:"max_expiration_hours"`     // hours
+	RateLimitUpload        int      `json:"rate_limit_upload"`        // per hour
+	RateLimitDownload      int      `json:"rate_limit_download"`      // per hour
+	BlockedExtensions      []string `json:"blocked_extensions"`       // list of extensions
 
 	// Performance settings (require restart)
 	ChunkSize                int64 `json:"chunk_size"`                  // bytes
 	ReadTimeout              int   `json:"read_timeout"`                // seconds
 	WriteTimeout             int   `json:"write_timeout"`               // seconds
-	ChunkedUploadThreshold   int64 `json:"chunked_upload_threshold"`   // bytes
+	ChunkedUploadThreshold   int64 `json:"chunked_upload_threshold"`    // bytes
 	PartialUploadExpiryHours int   `json:"partial_upload_expiry_hours"` // hours
 
 	// Operational settings (require restart)
-	SessionExpiryHours     int  `json:"session_expiry_hours"`      // hours
-	CleanupIntervalMinutes int  `json:"cleanup_interval_minutes"`  // minutes
-	RequireAuthForUpload   bool `json:"require_auth_for_upload"`   // boolean
-	HTTPSEnabled           bool `json:"https_enabled"`             // boolean
-	ChunkedUploadEnabled   bool `json:"chunked_upload_enabled"`    // boolean
-	PublicURL              string `json:"public_url"`              // URL string
+	SessionExpiryHours     int    `json:"session_expiry_hours"`     // hours
+	CleanupIntervalMinutes int    `json:"cleanup_interval_minutes"` // minutes
+	RequireAuthForUpload   bool   `json:"require_auth_for_upload"`  // boolean
+	HTTPSEnabled           bool   `json:"https_enabled"`            // boolean
+	ChunkedUploadEnabled   bool   `json:"chunked_upload_enabled"`   // boolean
+	PublicURL              string `json:"public_url"`               // URL string
 }
 
 // ConfigAssistantResponse represents the full response with analysis
 type ConfigAssistantResponse struct {
-	Recommendations       ConfigRecommendations     `json:"recommendations"`
-	CurrentConfig         ConfigRecommendations     `json:"current_config"`
-	Analysis              ConfigAnalysis            `json:"analysis"`
+	Recommendations ConfigRecommendations `json:"recommendations"`
+	CurrentConfig   ConfigRecommendations `json:"current_config"`
+	Analysis        ConfigAnalysis        `json:"analysis"`
 }
 
 // ConfigAnalysis provides context about the recommendations
@@ -186,12 +186,12 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	switch req.DeploymentType {
 	case "LAN":
 		// LAN deployments typically have shorter retention needs
-		rec.DefaultExpirationHours = 24  // 1 day
-		rec.MaxExpirationHours = 168     // 7 days
+		rec.DefaultExpirationHours = 24 // 1 day
+		rec.MaxExpirationHours = 168    // 7 days
 	case "WAN":
 		// WAN deployments need moderate retention
-		rec.DefaultExpirationHours = 72  // 3 days
-		rec.MaxExpirationHours = 336     // 14 days
+		rec.DefaultExpirationHours = 72 // 3 days
+		rec.MaxExpirationHours = 336    // 14 days
 	case "Internet":
 		// Internet deployments benefit from longer retention
 		rec.DefaultExpirationHours = 168 // 7 days

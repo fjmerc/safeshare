@@ -127,7 +127,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				"filename", file.OriginalFilename,
 				"client_ip", getClientIP(r),
 			)
-			
+
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
 			return
 		}
@@ -238,7 +238,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"expires_at":             file.ExpiresAt,
 			"max_downloads":          file.MaxDownloads,
 			"download_count":         file.DownloadCount,
-		"completed_downloads":    file.CompletedDownloads,
+			"completed_downloads":    file.CompletedDownloads,
 			"download_limit_reached": downloadLimitReached,
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,

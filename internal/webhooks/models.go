@@ -70,10 +70,10 @@ type Delivery struct {
 type DeliveryStatus string
 
 const (
-	DeliveryStatusPending   DeliveryStatus = "pending"
-	DeliveryStatusSuccess   DeliveryStatus = "success"
-	DeliveryStatusFailed    DeliveryStatus = "failed"
-	DeliveryStatusRetrying  DeliveryStatus = "retrying"
+	DeliveryStatusPending  DeliveryStatus = "pending"
+	DeliveryStatusSuccess  DeliveryStatus = "success"
+	DeliveryStatusFailed   DeliveryStatus = "failed"
+	DeliveryStatusRetrying DeliveryStatus = "retrying"
 )
 
 // Event represents a webhook event to be delivered

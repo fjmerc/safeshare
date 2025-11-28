@@ -135,10 +135,10 @@ func TestValidateClaimCode(t *testing.T) {
 		{"abc12345", false},
 		{"ABCD1234EFGH5678", false},
 		{"a1234567890123456789012345678901", false}, // 32 chars
-		{"ab", true},       // too short
-		{"", true},         // empty
-		{"abc!@#$", true},  // invalid chars
-		{"abc/def", true},  // path separator
+		{"ab", true},                                // too short
+		{"", true},                                  // empty
+		{"abc!@#$", true},                           // invalid chars
+		{"abc/def", true},                           // path separator
 		{"a1234567890123456789012345678901X", true}, // 33 chars, too long
 	}
 
@@ -159,9 +159,9 @@ func TestValidateUploadID(t *testing.T) {
 	}{
 		{"12345678-1234-1234-1234-123456789012", false}, // valid UUID
 		{"abcdef12-3456-7890-abcd-ef1234567890", false}, // valid UUID lowercase
-		{"", true},                             // empty
-		{"not-a-uuid", true},                   // invalid format
-		{"12345678-1234-1234-1234", true},      // incomplete
+		{"", true},                                     // empty
+		{"not-a-uuid", true},                           // invalid format
+		{"12345678-1234-1234-1234", true},              // incomplete
 		{"------------------------------------", true}, // all dashes
 	}
 
@@ -183,10 +183,10 @@ func TestValidateFilename(t *testing.T) {
 		{"file.txt", false},
 		{"my-document.pdf", false},
 		{"image_2024.png", false},
-		{"", true},                // empty
-		{"../etc/passwd", true},   // path traversal
-		{"file/name.txt", true},   // forward slash
-		{"file\\name.txt", true},  // backslash
+		{"", true},               // empty
+		{"../etc/passwd", true},  // path traversal
+		{"file/name.txt", true},  // forward slash
+		{"file\\name.txt", true}, // backslash
 	}
 
 	for _, tt := range tests {
@@ -209,11 +209,11 @@ func TestValidatePagination(t *testing.T) {
 		{1, 1, false},
 		{1, 100, false},
 		{10, 50, false},
-		{0, 20, true},   // page < 1
-		{-1, 20, true},  // negative page
-		{1, 0, true},    // perPage < 1
-		{1, -1, true},   // negative perPage
-		{1, 101, true},  // perPage > 100
+		{0, 20, true},  // page < 1
+		{-1, 20, true}, // negative page
+		{1, 0, true},   // perPage < 1
+		{1, -1, true},  // negative perPage
+		{1, 101, true}, // perPage > 100
 	}
 
 	for _, tt := range tests {

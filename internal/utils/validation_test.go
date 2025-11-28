@@ -10,12 +10,12 @@ func TestIsFileAllowed_EdgeCases(t *testing.T) {
 	blockedExts := []string{".exe", ".bat", ".sh", ".ps1"}
 
 	tests := []struct {
-		name           string
-		filename       string
-		blocked        []string
-		expectAllowed  bool
-		expectMatched  string
-		expectError    bool
+		name          string
+		filename      string
+		blocked       []string
+		expectAllowed bool
+		expectMatched string
+		expectError   bool
 	}{
 		{
 			name:          "empty filename",
@@ -361,4 +361,3 @@ func TestValidateStoredFilename(t *testing.T) {
 		})
 	}
 }
-

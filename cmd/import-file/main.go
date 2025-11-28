@@ -23,8 +23,8 @@ import (
 	// External dependencies
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 // Version information
@@ -48,11 +48,11 @@ type ImportOptions struct {
 	UserID       int // Optional user_id for authenticated imports
 
 	// Database and storage
-	DBPath      string
-	UploadsDir  string
-	EncryptKey  string
-	PublicURL   string
-	UploaderIP  string
+	DBPath     string
+	UploadsDir string
+	EncryptKey string
+	PublicURL  string
+	UploaderIP string
 
 	// Behavior flags
 	DryRun   bool
@@ -85,15 +85,15 @@ type ImportResult struct {
 
 // BatchSummary represents the overall results of a batch import
 type BatchSummary struct {
-	TotalFiles       int                `json:"total_files"`
-	Successful       int                `json:"successful"`
-	Failed           int                `json:"failed"`
-	Skipped          int                `json:"skipped"`
-	TotalTime        string             `json:"total_time"`
-	TotalSize        int64              `json:"total_size"`
-	TotalEncrypted   int64              `json:"total_encrypted"`
-	Results          []*ImportResult    `json:"results"`
-	FailedFiles      []string           `json:"failed_files,omitempty"`
+	TotalFiles     int             `json:"total_files"`
+	Successful     int             `json:"successful"`
+	Failed         int             `json:"failed"`
+	Skipped        int             `json:"skipped"`
+	TotalTime      string          `json:"total_time"`
+	TotalSize      int64           `json:"total_size"`
+	TotalEncrypted int64           `json:"total_encrypted"`
+	Results        []*ImportResult `json:"results"`
+	FailedFiles    []string        `json:"failed_files,omitempty"`
 }
 
 func main() {

@@ -32,31 +32,31 @@ func TestMigrationTool(t *testing.T) {
 
 	// Create test files
 	tests := []struct {
-		name           string
-		data           []byte
-		encrypted      bool
-		useLegacy      bool
+		name            string
+		data            []byte
+		encrypted       bool
+		useLegacy       bool
 		expectedMigrate bool
 	}{
 		{
-			name:           "legacy_encrypted_file",
-			data:           []byte("This is a test file for legacy encryption"),
-			encrypted:      true,
-			useLegacy:      true,
+			name:            "legacy_encrypted_file",
+			data:            []byte("This is a test file for legacy encryption"),
+			encrypted:       true,
+			useLegacy:       true,
 			expectedMigrate: true,
 		},
 		{
-			name:           "sfse1_encrypted_file",
-			data:           []byte("This is a test file for SFSE1 encryption"),
-			encrypted:      true,
-			useLegacy:      false,
+			name:            "sfse1_encrypted_file",
+			data:            []byte("This is a test file for SFSE1 encryption"),
+			encrypted:       true,
+			useLegacy:       false,
 			expectedMigrate: false,
 		},
 		{
-			name:           "unencrypted_file",
-			data:           []byte("This is an unencrypted test file"),
-			encrypted:      false,
-			useLegacy:      false,
+			name:            "unencrypted_file",
+			data:            []byte("This is an unencrypted test file"),
+			encrypted:       false,
+			useLegacy:       false,
 			expectedMigrate: false,
 		},
 	}

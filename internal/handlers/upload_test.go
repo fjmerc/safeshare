@@ -244,28 +244,28 @@ func TestUploadHandler_InvalidExpiration(t *testing.T) {
 	handler := UploadHandler(db, cfg)
 
 	tests := []struct {
-		name           string
+		name            string
 		expirationHours string
-		wantStatus     int
-		wantErrorCode  string
+		wantStatus      int
+		wantErrorCode   string
 	}{
 		{
-			name:           "exceeds maximum",
+			name:            "exceeds maximum",
 			expirationHours: "1000",
-			wantStatus:     http.StatusBadRequest,
-			wantErrorCode:  "EXPIRATION_TOO_LONG",
+			wantStatus:      http.StatusBadRequest,
+			wantErrorCode:   "EXPIRATION_TOO_LONG",
 		},
 		{
-			name:           "invalid format",
+			name:            "invalid format",
 			expirationHours: "abc",
-			wantStatus:     http.StatusBadRequest,
-			wantErrorCode:  "INVALID_PARAMETER",
+			wantStatus:      http.StatusBadRequest,
+			wantErrorCode:   "INVALID_PARAMETER",
 		},
 		{
-			name:           "negative value",
+			name:            "negative value",
 			expirationHours: "-5",
-			wantStatus:     http.StatusBadRequest,
-			wantErrorCode:  "INVALID_PARAMETER",
+			wantStatus:      http.StatusBadRequest,
+			wantErrorCode:   "INVALID_PARAMETER",
 		},
 	}
 

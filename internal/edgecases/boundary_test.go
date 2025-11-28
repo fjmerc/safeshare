@@ -223,10 +223,10 @@ func TestMaxDownloadsBoundaries(t *testing.T) {
 		maxDownloads string
 		wantCode     int
 	}{
-		{"zero (unlimited)", "0", 400},   // Rejected - handler requires maxDl > 0
-		{"one", "1", 201},                // Returns 201 Created
-		{"very large", "999999", 201},    // Returns 201 Created
-		{"negative", "-1", 400},          // Rejected - handler requires maxDl > 0
+		{"zero (unlimited)", "0", 400}, // Rejected - handler requires maxDl > 0
+		{"one", "1", 201},              // Returns 201 Created
+		{"very large", "999999", 201},  // Returns 201 Created
+		{"negative", "-1", 400},        // Rejected - handler requires maxDl > 0
 	}
 
 	for _, tt := range tests {
@@ -260,13 +260,13 @@ func TestClaimCodeEdgeCases(t *testing.T) {
 		claimCode string
 		wantCode  int
 	}{
-		{"empty", "", 400},                        // Empty claim code returns 400 Bad Request
-		{"too short", "abc", 404},                // Not found
-		{"with spaces", "claim code 123", 404},   // Not found
-		{"with special chars", "claim@code!", 404}, // Not found
-		{"SQL injection attempt", "' OR '1'='1", 404}, // Not found
+		{"empty", "", 400},                             // Empty claim code returns 400 Bad Request
+		{"too short", "abc", 404},                      // Not found
+		{"with spaces", "claim code 123", 404},         // Not found
+		{"with special chars", "claim@code!", 404},     // Not found
+		{"SQL injection attempt", "' OR '1'='1", 404},  // Not found
 		{"path traversal", "../../../etc/passwd", 404}, // Not found
-		{"null byte", "claim\x00code", 404},      // Not found
+		{"null byte", "claim\x00code", 404},            // Not found
 	}
 
 	for _, tt := range tests {
@@ -294,11 +294,11 @@ func TestUnicodeFilenames(t *testing.T) {
 	fileContent := []byte("test")
 
 	unicodeFilenames := []string{
-		"文件.txt",          // Chinese
-		"файл.txt",         // Russian
-		"ملف.txt",          // Arabic
-		"📄🚀.txt",         // Emoji
-		"café.txt",         // Accented characters
+		"文件.txt",   // Chinese
+		"файл.txt", // Russian
+		"ملف.txt",  // Arabic
+		"📄🚀.txt",   // Emoji
+		"café.txt", // Accented characters
 		// Note: null byte test removed - causes multipart form parsing to fail with 413
 	}
 

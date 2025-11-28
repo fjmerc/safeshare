@@ -25,8 +25,8 @@ func TestChunkedUploadCleanupWorker_DeletesAbandonedUploads(t *testing.T) {
 		TotalSize:    5242880, // 5MB
 		ChunkSize:    1048576, // 1MB
 		TotalChunks:  5,
-		CreatedAt:    time.Now().Add(-48 * time.Hour),      // Created 2 days ago
-		LastActivity: time.Now().Add(-25 * time.Hour),      // Last activity 25 hours ago
+		CreatedAt:    time.Now().Add(-48 * time.Hour), // Created 2 days ago
+		LastActivity: time.Now().Add(-25 * time.Hour), // Last activity 25 hours ago
 		Completed:    false,
 	}
 
@@ -81,7 +81,7 @@ func TestChunkedUploadCleanupWorker_PreservesActiveUploads(t *testing.T) {
 		TotalSize:    2097152, // 2MB
 		ChunkSize:    1048576, // 1MB
 		TotalChunks:  2,
-		CreatedAt:    time.Now().Add(-1 * time.Hour),  // Created 1 hour ago
+		CreatedAt:    time.Now().Add(-1 * time.Hour),    // Created 1 hour ago
 		LastActivity: time.Now().Add(-10 * time.Minute), // Last activity 10 minutes ago
 		Completed:    false,
 	}
@@ -132,7 +132,7 @@ func TestChunkedUploadCleanupWorker_PreservesCompletedUploads(t *testing.T) {
 		TotalChunks:  1,
 		CreatedAt:    time.Now().Add(-48 * time.Hour),
 		LastActivity: time.Now().Add(-25 * time.Hour), // Old activity
-		Completed:    true,                             // But completed
+		Completed:    true,                            // But completed
 		ClaimCode:    &claimCode,
 	}
 

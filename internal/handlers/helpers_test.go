@@ -433,10 +433,10 @@ func TestIsHTMLRequest(t *testing.T) {
 
 func TestShouldRetryError(t *testing.T) {
 	tests := []struct {
-		name            string
-		errorCode       string
-		wantRetry       bool
-		wantRetryAfter  int
+		name           string
+		errorCode      string
+		wantRetry      bool
+		wantRetryAfter int
 	}{
 		// Retryable errors
 		{
@@ -536,7 +536,7 @@ func TestShouldRetryError(t *testing.T) {
 		{
 			name:           "QUOTA_EXCEEDED",
 			errorCode:      "QUOTA_EXCEEDED",
-			wantRetry:      true,  // Production code has QUOTA_EXCEEDED in retryableErrors map
+			wantRetry:      true, // Production code has QUOTA_EXCEEDED in retryableErrors map
 			wantRetryAfter: 0,
 		},
 

@@ -79,9 +79,9 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 			// Check if user exists, password matches, has admin role, and is active
 			if userErr == nil && user != nil &&
-			   utils.VerifyPassword(user.PasswordHash, password) &&
-			   user.Role == "admin" &&
-			   user.IsActive {
+				utils.VerifyPassword(user.PasswordHash, password) &&
+				user.Role == "admin" &&
+				user.IsActive {
 				// User authenticated successfully with admin role
 				authenticatedUser = user
 				slog.Info("admin login successful via users table",
@@ -194,12 +194,12 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// Return user info response (similar to UserLoginHandler)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":                true,
-				"csrf_token":             csrfToken,
-				"id":                     authenticatedUser.ID,
-				"username":               authenticatedUser.Username,
-				"email":                  authenticatedUser.Email,
-				"role":                   authenticatedUser.Role,
+				"success":                 true,
+				"csrf_token":              csrfToken,
+				"id":                      authenticatedUser.ID,
+				"username":                authenticatedUser.Username,
+				"email":                   authenticatedUser.Email,
+				"role":                    authenticatedUser.Role,
 				"require_password_change": authenticatedUser.RequirePasswordChange,
 			})
 		}
@@ -371,46 +371,46 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		// Prepare response with file details
 		type FileResponse struct {
-			ID                int64     `json:"id"`
-			ClaimCode         string    `json:"claim_code"`
-			OriginalFilename  string    `json:"original_filename"`
-			FileSize          int64     `json:"file_size"`
-			MimeType          string    `json:"mime_type"`
-			CreatedAt         time.Time `json:"created_at"`
-			ExpiresAt         time.Time `json:"expires_at"`
-			MaxDownloads      *int      `json:"max_downloads"`
-			DownloadCount     int       `json:"download_count"`
-		CompletedDownloads int       `json:"completed_downloads"`
-			Username          *string   `json:"username"`           // nullable - nil for anonymous uploads
-			UploaderIP        string    `json:"uploader_ip"`
-			PasswordProtected bool      `json:"password_protected"`
+			ID                 int64     `json:"id"`
+			ClaimCode          string    `json:"claim_code"`
+			OriginalFilename   string    `json:"original_filename"`
+			FileSize           int64     `json:"file_size"`
+			MimeType           string    `json:"mime_type"`
+			CreatedAt          time.Time `json:"created_at"`
+			ExpiresAt          time.Time `json:"expires_at"`
+			MaxDownloads       *int      `json:"max_downloads"`
+			DownloadCount      int       `json:"download_count"`
+			CompletedDownloads int       `json:"completed_downloads"`
+			Username           *string   `json:"username"` // nullable - nil for anonymous uploads
+			UploaderIP         string    `json:"uploader_ip"`
+			PasswordProtected  bool      `json:"password_protected"`
 		}
 
 		fileResponses := make([]FileResponse, len(files))
 		for i, file := range files {
 			fileResponses[i] = FileResponse{
-				ID:                file.ID,
-				ClaimCode:         file.ClaimCode,
-				OriginalFilename:  file.OriginalFilename,
-				FileSize:          file.FileSize,
-				MimeType:          file.MimeType,
-				CreatedAt:         file.CreatedAt,
-				ExpiresAt:         file.ExpiresAt,
-				MaxDownloads:      file.MaxDownloads,
-				DownloadCount:     file.DownloadCount,
-			CompletedDownloads: file.CompletedDownloads,
-				Username:          file.Username,
-				UploaderIP:        file.UploaderIP,
-				PasswordProtected: file.PasswordHash != "",
+				ID:                 file.ID,
+				ClaimCode:          file.ClaimCode,
+				OriginalFilename:   file.OriginalFilename,
+				FileSize:           file.FileSize,
+				MimeType:           file.MimeType,
+				CreatedAt:          file.CreatedAt,
+				ExpiresAt:          file.ExpiresAt,
+				MaxDownloads:       file.MaxDownloads,
+				DownloadCount:      file.DownloadCount,
+				CompletedDownloads: file.CompletedDownloads,
+				Username:           file.Username,
+				UploaderIP:         file.UploaderIP,
+				PasswordProtected:  file.PasswordHash != "",
 			}
 		}
 
 		response := map[string]interface{}{
-			"files":              fileResponses,
+			"files": fileResponses,
 			"pagination": map[string]interface{}{
-				"page":       page,
-				"page_size":  pageSize,
-				"total":      total,
+				"page":        page,
+				"page_size":   pageSize,
+				"total":       total,
 				"total_pages": (total + pageSize - 1) / pageSize,
 			},
 			"stats": map[string]interface{}{
@@ -576,13 +576,13 @@ func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFun
 			if err := os.Remove(filePath); err != nil {
 				if !os.IsNotExist(err) {
 					slog.Error("failed to delete physical file",
-					"path", filePath,
-					"error", err,
+						"path", filePath,
+						"error", err,
 					)
-					}
-					}
+				}
+			}
 
-					 // Emit webhook event for file deletion
+			// Emit webhook event for file deletion
 			reason := "bulk deleted by admin"
 			EmitWebhookEvent(&webhooks.Event{
 				Type:      webhooks.EventFileDeleted,
@@ -1145,13 +1145,13 @@ func AdminGetConfigHandler(cfg *config.Config) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"max_file_size_bytes":       cfg.GetMaxFileSize(),
-			"default_expiration_hours":  cfg.GetDefaultExpirationHours(),
-			"max_expiration_hours":      cfg.GetMaxExpirationHours(),
-			"rate_limit_upload":         cfg.GetRateLimitUpload(),
-			"rate_limit_download":       cfg.GetRateLimitDownload(),
-			"blocked_extensions":        cfg.GetBlockedExtensions(),
-			"quota_limit_gb":            cfg.GetQuotaLimitGB(),
+			"max_file_size_bytes":      cfg.GetMaxFileSize(),
+			"default_expiration_hours": cfg.GetDefaultExpirationHours(),
+			"max_expiration_hours":     cfg.GetMaxExpirationHours(),
+			"rate_limit_upload":        cfg.GetRateLimitUpload(),
+			"rate_limit_download":      cfg.GetRateLimitDownload(),
+			"blocked_extensions":       cfg.GetBlockedExtensions(),
+			"quota_limit_gb":           cfg.GetQuotaLimitGB(),
 		})
 	}
 }

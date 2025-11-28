@@ -42,7 +42,7 @@ func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, inter
 // runCleanup performs the actual cleanup operation
 func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
 	start := time.Now()
-	
+
 	// Define webhook callback for expired files (only if webhook emitter provided)
 	var onExpired database.ExpiredFileCallback
 	if emitWebhook != nil {
@@ -62,7 +62,7 @@ func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
 			})
 		}
 	}
-	
+
 	deleted, err := database.DeleteExpiredFiles(db, uploadDir, onExpired)
 	duration := time.Since(start)
 
@@ -105,18 +105,18 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 
 // CleanupResult contains statistics about a cleanup operation
 type CleanupResult struct {
-	DeletedCount     int   // Total uploads deleted (database-tracked + orphaned)
-	BytesReclaimed   int64 // Total bytes reclaimed
-	AbandonedCount   int   // Database-tracked abandoned uploads
-	OrphanedCount    int   // Orphaned chunks without database records
-	OrphanedBytes    int64 // Bytes reclaimed from orphaned chunks
+	DeletedCount   int   // Total uploads deleted (database-tracked + orphaned)
+	BytesReclaimed int64 // Total bytes reclaimed
+	AbandonedCount int   // Database-tracked abandoned uploads
+	OrphanedCount  int   // Orphaned chunks without database records
+	OrphanedBytes  int64 // Bytes reclaimed from orphaned chunks
 }
 
 // CleanupAbandonedUploads removes abandoned partial uploads and returns statistics
 // This function is reusable by both the background worker and API endpoints
 func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*CleanupResult, error) {
 	result := &CleanupResult{
-		DeletedCount:  0,
+		DeletedCount:   0,
 		BytesReclaimed: 0,
 	}
 

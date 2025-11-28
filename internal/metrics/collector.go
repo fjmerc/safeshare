@@ -9,7 +9,7 @@ import (
 
 // DatabaseMetricsCollector collects metrics from the database on each scrape
 type DatabaseMetricsCollector struct {
-	db          *sql.DB
+	db           *sql.DB
 	quotaLimitGB float64
 
 	// Metric descriptors
