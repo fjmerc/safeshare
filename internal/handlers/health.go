@@ -221,7 +221,7 @@ func getComprehensiveHealth(db *sql.DB, cfg *config.Config, startTime time.Time)
 	}
 
 	// Determine overall health status based on all checks
-	status := determineHealthStatus(diskInfo, response.QuotaUsedPercent, details)
+	status := determineHealthStatus(diskInfo, response.QuotaUsedPercent, &details)
 	response.Status = status
 
 	// Only include status_details if there are issues
@@ -239,16 +239,17 @@ func getComprehensiveHealth(db *sql.DB, cfg *config.Config, startTime time.Time)
 }
 
 // determineHealthStatus analyzes all health metrics and returns status with details
-func determineHealthStatus(diskInfo *utils.DiskSpaceInfo, quotaUsedPercent float64, details []string) string {
+// Note: details is passed as a pointer so appended messages are visible to the caller
+func determineHealthStatus(diskInfo *utils.DiskSpaceInfo, quotaUsedPercent float64, details *[]string) string {
 	// Check for unhealthy conditions (critical failures)
 	if diskInfo.AvailableBytes < criticalDiskFreeBytes {
-		details = append(details, fmt.Sprintf("critical: disk space < 500MB (%s remaining)",
+		*details = append(*details, fmt.Sprintf("critical: disk space < 500MB (%s remaining)",
 			utils.FormatBytes(diskInfo.AvailableBytes)))
 		return "unhealthy"
 	}
 
 	if diskInfo.UsedPercent > criticalDiskUsedPercent {
-		details = append(details, fmt.Sprintf("critical: disk usage > 98%% (%.1f%% used)",
+		*details = append(*details, fmt.Sprintf("critical: disk usage > 98%% (%.1f%% used)",
 			diskInfo.UsedPercent))
 		return "unhealthy"
 	}
@@ -257,19 +258,19 @@ func determineHealthStatus(diskInfo *utils.DiskSpaceInfo, quotaUsedPercent float
 	degraded := false
 
 	if diskInfo.AvailableBytes < warningDiskFreeBytes {
-		details = append(details, fmt.Sprintf("warning: disk space low (%s remaining)",
+		*details = append(*details, fmt.Sprintf("warning: disk space low (%s remaining)",
 			utils.FormatBytes(diskInfo.AvailableBytes)))
 		degraded = true
 	}
 
 	if diskInfo.UsedPercent > warningDiskUsedPercent {
-		details = append(details, fmt.Sprintf("warning: disk usage high (%.1f%% used)",
+		*details = append(*details, fmt.Sprintf("warning: disk usage high (%.1f%% used)",
 			diskInfo.UsedPercent))
 		degraded = true
 	}
 
 	if quotaUsedPercent > warningQuotaUsedPercent {
-		details = append(details, fmt.Sprintf("warning: quota usage high (%.1f%%)",
+		*details = append(*details, fmt.Sprintf("warning: quota usage high (%.1f%%)",
 			quotaUsedPercent))
 		degraded = true
 	}

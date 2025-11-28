@@ -45,7 +45,7 @@ func redactPathClaimCodes(path string) string {
 		claimCode := submatches[2] // The actual claim code
 
 		// Redact the claim code (show first 3 and last 2 chars)
-		redacted := claimCode
+		var redacted string
 		if len(claimCode) > 5 {
 			redacted = claimCode[:3] + "..." + claimCode[len(claimCode)-2:]
 		} else {
