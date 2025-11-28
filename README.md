@@ -5,7 +5,7 @@
 
 A self-hosted secure file sharing service for temporary transfers with automatic expiration, cryptographically secure claim codes, and enterprise-grade security features.
 
-**Version**: 2.8.0
+**Version**: 1.4.0
 
 ## Screenshots
 
@@ -445,10 +445,10 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 See [docs/CHANGELOG.md](docs/CHANGELOG.md) for complete version history.
 
-**Latest Release (v2.8.0)**:
-- Progressive Web App (PWA) support - installable app with offline capabilities
-- Dashboard share modal with Web Share API integration
-- Import tool expiration fix (--expires 0 now works correctly)
+**Latest Release (v1.4.0)**:
+- Code quality improvements: reduced cyclomatic complexity in key functions
+- Applied gofmt -s simplifications across 57 Go files
+- All features from previous versions preserved (see CHANGELOG for version reset notice)
 
 ---
 
