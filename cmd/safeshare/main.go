@@ -20,6 +20,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -99,6 +100,17 @@ func run() error {
 	}
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
+
+	// Initialize webhook dispatcher
+	webhookMetrics := webhooks.NewPrometheusMetrics()
+	webhookDB := database.NewWebhookDBAdapter(db)
+	webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
+	webhookDispatcher.Start()
+	defer webhookDispatcher.Shutdown()
+	slog.Info("webhook dispatcher started", "workers", 5, "buffer_size", 1000)
+
+	// Make webhook dispatcher available to handlers
+	handlers.SetWebhookDispatcher(webhookDispatcher)
 
 	// Record start time for health checks
 	startTime := time.Now()
@@ -221,6 +233,29 @@ func run() error {
 	})
 	mux.HandleFunc("/api/user/files/regenerate-claim-code", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+	})
+
+	// API Token management routes
+	// Note: Token creation requires session auth (cannot create tokens using tokens)
+	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// Create token - requires session auth only
+			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(db, cfg))).ServeHTTP(w, r)
+		} else if r.Method == http.MethodGet {
+			// List tokens - allows both session and token auth
+			userAuth(http.HandlerFunc(handlers.ListAPITokensHandler(db))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			// Revoke token - allows both session and token auth
+			userAuth(http.HandlerFunc(handlers.RevokeAPITokenHandler(db))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	// Admin routes (only enabled if admin credentials are configured)
@@ -360,6 +395,54 @@ func run() error {
 			}
 		})
 
+		// Webhook management routes
+		mux.HandleFunc("/admin/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "GET" {
+				adminAuth(http.HandlerFunc(handlers.ListWebhookConfigsHandler(db))).ServeHTTP(w, r)
+			} else if r.Method == "POST" {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.CreateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/update", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.UpdateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/delete", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.TestWebhookConfigHandler(db)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhook-deliveries", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.ListWebhookDeliveriesHandler(db))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhook-deliveries/detail", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(db))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/webhook-deliveries/clear", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(db)))).ServeHTTP(w, r)
+		})
+
+		// Admin API Token management routes
+		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensHandler(db))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(db)))).ServeHTTP(w, r)
+		})
+
 		// Admin static assets
 		mux.Handle("/admin/assets/", http.StripPrefix("/", static.Handler()))
 	} else {
@@ -441,7 +524,7 @@ func run() error {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes)
+		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent)
 	}()
 
 	// Start partial upload cleanup worker (runs every 6 hours)
@@ -488,6 +571,13 @@ func run() error {
 						slog.Error("failed to cleanup expired user sessions", "error", err)
 					} else {
 						slog.Debug("cleaned up expired user sessions")
+					}
+
+					// Cleanup expired API tokens
+					if count, err := database.CleanupExpiredAPITokens(db); err != nil {
+						slog.Error("failed to cleanup expired API tokens", "error", err)
+					} else if count > 0 {
+						slog.Info("cleaned up expired API tokens", "count", count)
 					}
 				}()
 			}

@@ -226,13 +226,131 @@ curl -X POST -F "file=@test.txt" https://share.yourdomain.com/api/upload
 
 ## Security Considerations
 
+### Proxy Header Trust Configuration
+
+SafeShare v2.7.0+ includes configurable proxy header trust validation to prevent IP spoofing attacks.
+
+**Environment Variable**: `TRUST_PROXY_HEADERS`
+
+**Valid Values**:
+- `auto` (default, **recommended**) - Only trust headers from RFC1918 private IPs and localhost
+- `true` - Always trust proxy headers (**SECURITY WARNING: vulnerable to IP spoofing**)
+- `false` - Never trust proxy headers (use for direct internet exposure)
+
+**Trusted Proxy IPs**: `TRUSTED_PROXY_IPS` (comma-separated CIDR ranges)
+- Default: `127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`
+- Used when `TRUST_PROXY_HEADERS=auto`
+
+#### Configuration Examples
+
+**Recommended (auto mode with default trusted IPs)**:
+```bash
+docker run -d \
+  -e TRUST_PROXY_HEADERS=auto \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+This configuration:
+- ✅ Trusts `X-Forwarded-For` from Traefik/nginx running on same host (127.0.0.1)
+- ✅ Trusts headers from private network reverse proxies (10.x.x.x, 192.168.x.x)
+- ❌ Rejects `X-Forwarded-For` from public internet IPs (prevents spoofing)
+
+**Custom Trusted Proxy IPs**:
+```bash
+docker run -d \
+  -e TRUST_PROXY_HEADERS=auto \
+  -e TRUSTED_PROXY_IPS="10.0.0.0/8,172.16.0.0/12,203.0.113.10" \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+**Always Trust (behind trusted reverse proxy only)**:
+```bash
+# ⚠️ SECURITY WARNING: Only use if SafeShare is NOT exposed to internet
+# Use when behind Cloudflare, AWS ALB, or other trusted CDN/load balancer
+docker run -d \
+  -e TRUST_PROXY_HEADERS=true \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+**Never Trust (direct internet exposure)**:
+```bash
+# Use when SafeShare is directly exposed to internet without reverse proxy
+docker run -d \
+  -e TRUST_PROXY_HEADERS=false \
+  -p 8080:8080 \
+  safeshare:latest
+```
+
+#### How It Works
+
+**auto mode** (recommended):
+1. Extract IP from `RemoteAddr` (direct connection source)
+2. Check if source IP matches `TRUSTED_PROXY_IPS` ranges
+3. If matched: Trust `X-Forwarded-For` and `X-Real-IP` headers
+4. If not matched: Ignore proxy headers, use `RemoteAddr` directly
+
+**true mode** (use with caution):
+- Always trusts `X-Forwarded-For` and `X-Real-IP` headers
+- **Vulnerable to IP spoofing** if exposed to untrusted networks
+- Logs security warning when accepting unvalidated headers
+
+**false mode**:
+- Never trusts proxy headers
+- Always uses `RemoteAddr` for rate limiting and IP blocking
+- Use when no reverse proxy is present
+
+#### Security Impact
+
+**Without proper configuration**, attackers can:
+- Bypass IP-based rate limiting by spoofing `X-Forwarded-For` header
+- Evade IP blocks by spoofing source IP
+- Exhaust rate limits for legitimate users
+
+**With auto mode**, SafeShare:
+- Only accepts `X-Forwarded-For` from trusted sources
+- Prevents IP spoofing from public internet
+- Maintains accurate rate limiting and IP blocking
+
+#### Deployment Scenarios
+
+**Scenario 1: Traefik/nginx on same host**
+```bash
+# Recommended: auto mode (default)
+TRUST_PROXY_HEADERS=auto
+# Traefik connects from 127.0.0.1 → trusted by default
+```
+
+**Scenario 2: Separate reverse proxy server**
+```bash
+# Reverse proxy at 10.0.1.5
+TRUST_PROXY_HEADERS=auto
+TRUSTED_PROXY_IPS="10.0.1.5,10.0.0.0/8"
+```
+
+**Scenario 3: Behind Cloudflare/CDN**
+```bash
+# ⚠️ SafeShare not exposed to internet, only Cloudflare can reach it
+TRUST_PROXY_HEADERS=true
+# OR: Add Cloudflare IP ranges to TRUSTED_PROXY_IPS
+```
+
+**Scenario 4: Direct internet exposure**
+```bash
+# No reverse proxy
+TRUST_PROXY_HEADERS=false
+```
+
 ### Header Validation
 
-SafeShare trusts `X-Forwarded-*` headers. Ensure your reverse proxy:
+Ensure your reverse proxy:
 
 1. **Strips incoming X-Forwarded headers** from clients
 2. **Sets its own X-Forwarded headers**
 3. **Only accepts connections from trusted sources**
+4. **Configure SafeShare's TRUST_PROXY_HEADERS appropriately**
 
 ### Example Traefik Security
 
@@ -246,6 +364,153 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-Host $host;
 ```
+
+## Cloudflare Configuration
+
+Cloudflare is a popular CDN that works well with SafeShare, but requires special configuration for large files.
+
+### Basic Setup
+
+Cloudflare acts as both CDN and reverse proxy. SafeShare is compatible with Cloudflare when properly configured.
+
+**DNS Configuration:**
+```
+share.example.com     A    your-server-ip   (Proxied - orange cloud)
+downloads.example.com A    your-server-ip   (DNS only - grey cloud)
+```
+
+**SafeShare Configuration:**
+```bash
+docker run -d \
+  -e PUBLIC_URL=https://share.example.com \
+  -e DOWNLOAD_URL=https://downloads.example.com \
+  -e TRUST_PROXY_HEADERS=true \
+  safeshare:latest
+```
+
+### Handling Large Files
+
+Cloudflare has timeout limits that affect large file downloads:
+
+| Plan | Timeout | Max File Impact |
+|------|---------|----------------|
+| Free/Pro | 100s | ~500MB @ 5MB/s |
+| Business | 600s (configurable) | ~3GB @ 5MB/s |
+| Enterprise | 6000s | Very large files |
+
+**Solution: Bypass Cloudflare for Downloads**
+
+1. Create `downloads.example.com` pointing to same server
+2. Set to "DNS Only" (grey cloud) in Cloudflare
+3. Configure `DOWNLOAD_URL` in SafeShare
+
+Downloads will go directly to your server, bypassing Cloudflare's timeout.
+
+### Upload Limits
+
+| Cloudflare Plan | Max Upload Size |
+|-----------------|----------------|
+| Free | 100MB |
+| Pro | 100MB |
+| Business | 200MB |
+| Enterprise | 500MB+ |
+
+For larger uploads, either:
+- Upgrade Cloudflare plan
+- Create upload domain with DNS-only (bypasses Cloudflare)
+- Use chunked uploads (works within limits)
+
+### SSL/TLS Configuration
+
+**Cloudflare SSL Settings:**
+1. SSL/TLS mode: **Full (Strict)** (recommended)
+2. Minimum TLS: **1.2**
+3. Always Use HTTPS: **On**
+
+**Origin Server:**
+- Install SSL certificate on your server (Let's Encrypt)
+- Or use Cloudflare Origin Certificate
+
+### Cloudflare Page Rules
+
+**Recommended Rules:**
+
+1. **Cache Static Assets:**
+   - URL: `share.example.com/assets/*`
+   - Cache Level: Cache Everything
+   - Edge Cache TTL: 1 day
+
+2. **Bypass Cache for API:**
+   - URL: `share.example.com/api/*`
+   - Cache Level: Bypass
+
+3. **Bypass Cache for Admin:**
+   - URL: `share.example.com/admin/*`
+   - Cache Level: Bypass
+   - Security Level: High
+
+### Real IP Configuration
+
+Cloudflare sends the real client IP in `CF-Connecting-IP` header. SafeShare supports this via `X-Real-IP` and `X-Forwarded-For`.
+
+**Important:** When behind Cloudflare:
+```bash
+-e TRUST_PROXY_HEADERS=true
+```
+
+Cloudflare IPs are trusted by default in auto mode, but explicit `true` ensures headers are always trusted.
+
+### Cache Purging
+
+After deploying updates, purge Cloudflare's cache:
+
+**Manual:**
+1. Cloudflare Dashboard → Caching → Configuration
+2. Purge Cache → Purge Everything (or specific URLs)
+
+**API:**
+```bash
+curl -X POST "https://api.cloudflare.com/client/v4/zones/ZONE_ID/purge_cache" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"files": ["https://share.example.com/assets/app.js"]}'
+```
+
+**Verify Cache Status:**
+```bash
+curl -sI https://share.example.com/assets/app.js | grep cf-cache-status
+# HIT = cached, MISS = fresh from origin
+```
+
+### Security Features to Enable
+
+| Feature | Setting | Purpose |
+|---------|---------|--------|
+| WAF | Managed Rules | Block common attacks |
+| Bot Fight Mode | On | Protect against bots |
+| Rate Limiting | Custom rules | Additional DoS protection |
+| Browser Integrity Check | On | Block bad browsers |
+| Challenge Passage | 30 minutes | Reduce friction |
+
+### Troubleshooting
+
+**524 Origin Timeout:**
+- Download taking too long
+- Solution: Use `DOWNLOAD_URL` with DNS-only subdomain
+
+**Error 520:**
+- Origin returned empty response
+- Check SafeShare logs and health endpoint
+
+**Error 522:**
+- Connection timed out
+- Verify server is running and firewall allows Cloudflare IPs
+
+**Stale Assets:**
+- Purge Cloudflare cache
+- Try hard refresh (Ctrl+Shift+R)
+
+---
 
 ## Complete Production Example (Traefik)
 

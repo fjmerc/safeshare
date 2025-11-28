@@ -14,6 +14,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // serveFileWithRangeSupport handles serving a file with HTTP Range request support.
@@ -197,6 +198,22 @@ func serveEntireFile(
 		slog.Error("failed to increment completed downloads", "file_id", file.ID, "error", err)
 		// Don't fail the response - file was already successfully sent
 	}
+
+	// Emit webhook event for file download
+	now := time.Now()
+	EmitWebhookEvent(&webhooks.Event{
+		Type:      webhooks.EventFileDownloaded,
+		Timestamp: now,
+		File: webhooks.FileData{
+			ID:           file.ID,
+			ClaimCode:    file.ClaimCode,
+			Filename:     file.OriginalFilename,
+			Size:         file.FileSize,
+			MimeType:     file.MimeType,
+			ExpiresAt:    file.ExpiresAt,
+			DownloadedAt: &now,
+		},
+	})
 
 	slog.Info("file downloaded (full)",
 		"claim_code", redactClaimCode(file.ClaimCode),

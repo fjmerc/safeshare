@@ -483,13 +483,16 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 	}
 
 	// Manually expire some files (2 hours ago to account for 1-hour grace period)
+	// IMPORTANT: Must format as RFC3339 to match SQLite datetime() format expectations.
+	// Raw Go time.Time includes monotonic clock that SQLite cannot parse.
+	expiredAt := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
 	for i := 0; i < 3; i++ {
 		db.Exec("UPDATE files SET expires_at = ? WHERE claim_code = ?",
-			time.Now().Add(-2*time.Hour), claimCodes[i])
+			expiredAt, claimCodes[i])
 	}
 
 	// Run cleanup
-	deleted, _ := database.DeleteExpiredFiles(db, cfg.UploadDir)
+	deleted, _ := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
 
 	if deleted != 3 {
 		t.Errorf("deleted = %d, want 3", deleted)

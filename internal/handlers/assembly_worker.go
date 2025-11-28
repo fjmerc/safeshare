@@ -13,6 +13,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/google/uuid"
 )
 
@@ -223,6 +224,20 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		slog.Error("failed to delete chunks", "error", err, "upload_id", uploadID)
 		// Don't fail - chunks will be cleaned up later by cleanup worker
 	}
+
+	// Emit webhook event for file upload completion
+	EmitWebhookEvent(&webhooks.Event{
+		Type:      webhooks.EventFileUploaded,
+		Timestamp: time.Now(),
+		File: webhooks.FileData{
+			ID:        fileRecord.ID,
+			ClaimCode: claimCode,
+			Filename:  partialUpload.Filename,
+			Size:      partialUpload.TotalSize,
+			MimeType:  mimeType,
+			ExpiresAt: expiresAt,
+		},
+	})
 
 	slog.Info("async assembly completed successfully",
 		"upload_id", uploadID,

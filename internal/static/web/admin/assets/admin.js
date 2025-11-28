@@ -1040,7 +1040,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('blockIPForm')?.addEventListener('submit', (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
-        blockIP(formData.get('ip_address'), formData.get('reason') || 'Blocked by admin');
+        const ipAddress = formData.get('ip_address');
+        
+        // Validate IP address is not empty
+        if (!ipAddress || ipAddress.trim() === '') {
+            showError('IP address is required');
+            return;
+        }
+        
+        blockIP(ipAddress, formData.get('reason') || 'Blocked by admin');
         e.target.reset();
     });
 
@@ -1170,9 +1178,51 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadUsers();
             } else if (btn.dataset.tab === 'settings') {
                 loadConfigValues();
+            } else if (btn.dataset.tab === 'webhooks') {
+                loadWebhooks();
+                loadDeliveries();
             }
         });
     });
+
+    // Webhook event listeners
+    document.getElementById('createWebhookBtn')?.addEventListener('click', showCreateWebhookModal);
+    document.getElementById('refreshWebhooksBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadWebhooks();
+        loadDeliveries();
+    });
+
+    // Webhook form submission
+    document.getElementById('webhookForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        saveWebhook(formData);
+    });
+
+    // Webhook format change handler - show/hide service token field
+    document.getElementById('webhookFormat')?.addEventListener('change', (e) => {
+        updateServiceTokenVisibility(e.target.value);
+    });
+
+    // Delivery filters
+    document.getElementById('deliveryEventFilter')?.addEventListener('change', (e) => {
+        currentDeliveryFilters.event = e.target.value;
+        loadDeliveries();
+    });
+
+    document.getElementById('deliveryStatusFilter')?.addEventListener('change', (e) => {
+        currentDeliveryFilters.status = e.target.value;
+        loadDeliveries();
+    });
+
+    // Auto-refresh checkbox
+    document.getElementById('autoRefreshDeliveries')?.addEventListener('change', toggleAutoRefresh);
+
+    // Clear delivery history button
+    document.getElementById('clearDeliveryHistoryBtn')?.addEventListener('click', clearDeliveryHistory);
 
     // Add input event listeners for Settings tab fields to detect changes
     const settingsFields = [
@@ -2020,5 +2070,494 @@ async function deleteUser(userId) {
     } catch (error) {
         console.error('Delete user error:', error);
         showToast(error.message, 'error');
+    }
+}
+
+// ============ WEBHOOK MANAGEMENT FUNCTIONS ============
+
+let autoRefreshInterval = null;
+
+// Load webhook configurations
+async function loadWebhooks() {
+    try {
+        const response = await fetch('/admin/api/webhooks');
+
+        if (!response.ok) {
+            throw new Error('Failed to load webhooks');
+        }
+
+        const webhooks = await response.json();
+        updateWebhooksTable(webhooks || []);
+    } catch (error) {
+        console.error('Error loading webhooks:', error);
+        showError('Failed to load webhook configurations');
+    }
+}
+
+// Update webhooks table
+function updateWebhooksTable(webhooks) {
+    const tbody = document.getElementById('webhooksTableBody');
+
+    if (webhooks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No webhooks configured</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = webhooks.map(webhook => {
+        const truncatedURL = webhook.url.length > 50 ? webhook.url.substring(0, 50) + '...' : webhook.url;
+        const eventBadges = webhook.events.map(event => 
+            `<span class="badge badge-info" style="margin: 2px; font-size: 11px;">${escapeHtml(event)}</span>`
+        ).join('');
+
+        return `
+            <tr>
+                <td>${webhook.id}</td>
+                <td title="${escapeHtml(webhook.url)}">${escapeHtml(truncatedURL)}</td>
+                <td><span class="badge ${webhook.enabled ? 'badge-yes' : 'badge-no'}">${webhook.enabled ? 'Yes' : 'No'}</span></td>
+                <td>${eventBadges}</td>
+                <td>${webhook.max_retries}</td>
+                <td>${webhook.timeout_seconds}s</td>
+                <td class="actions">
+                    <button class="btn-icon btn-primary" onclick="editWebhook(${webhook.id})" title="Edit webhook">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-warning" onclick="testWebhook(${webhook.id})" title="Test webhook">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger" onclick="deleteWebhook(${webhook.id})" title="Delete webhook">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Show create webhook modal
+function showCreateWebhookModal() {
+    document.getElementById('webhookModalTitle').textContent = 'Add Webhook';
+    document.getElementById('webhookId').value = '';
+    document.getElementById('webhookForm').reset();
+    document.getElementById('webhookEnabled').checked = true;
+    document.getElementById('webhookFormat').value = 'safeshare';
+    document.getElementById('webhookMaxRetries').value = 5;
+    document.getElementById('webhookTimeout').value = 30;
+    document.getElementById('webhookServiceToken').value = '';
+    
+    // Hide service token field by default (safeshare format doesn't need it)
+    updateServiceTokenVisibility('safeshare');
+    
+    document.getElementById('webhookModal').style.display = 'flex';
+}
+
+// Hide webhook modal
+function hideWebhookModal() {
+    document.getElementById('webhookModal').style.display = 'none';
+}
+
+// Update service token field visibility based on webhook format
+function updateServiceTokenVisibility(format) {
+    const serviceTokenGroup = document.getElementById('serviceTokenGroup');
+    const serviceTokenHelp = document.getElementById('serviceTokenHelp');
+    
+    if (format === 'gotify' || format === 'ntfy') {
+        serviceTokenGroup.style.display = 'block';
+        
+        // Update help text based on format
+        if (format === 'gotify') {
+            serviceTokenHelp.textContent = 'Gotify application token (will be appended to URL as ?token=...)';
+        } else if (format === 'ntfy') {
+            serviceTokenHelp.textContent = 'ntfy access token (sent as Authorization: Bearer header for private topics)';
+        }
+    } else {
+        serviceTokenGroup.style.display = 'none';
+    }
+}
+
+// Generate random webhook secret
+function generateWebhookSecret() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let secret = '';
+    for (let i = 0; i < 32; i++) {
+        secret += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    const secretInput = document.getElementById('webhookSecret');
+    secretInput.type = 'text';
+    secretInput.value = secret;
+    showSuccess('Secret generated successfully');
+}
+
+// Edit webhook
+async function editWebhook(webhookId) {
+    try {
+        const response = await fetch('/admin/api/webhooks');
+        if (!response.ok) {
+            throw new Error('Failed to load webhook');
+        }
+
+        const webhooks = await response.json();
+        const webhook = webhooks.find(w => w.id === webhookId);
+
+        if (!webhook) {
+            throw new Error('Webhook not found');
+        }
+
+        // Populate form
+        document.getElementById('webhookModalTitle').textContent = 'Edit Webhook';
+        document.getElementById('webhookId').value = webhook.id;
+        document.getElementById('webhookURL').value = webhook.url;
+        document.getElementById('webhookSecret').value = webhook.secret;
+        document.getElementById('webhookServiceToken').value = webhook.service_token || '';
+        document.getElementById('webhookEnabled').checked = webhook.enabled;
+        document.getElementById('webhookFormat').value = webhook.format || 'safeshare';
+        document.getElementById('webhookMaxRetries').value = webhook.max_retries;
+        document.getElementById('webhookTimeout').value = webhook.timeout_seconds;
+
+        // Update service token visibility based on format
+        updateServiceTokenVisibility(webhook.format || 'safeshare');
+
+        // Check event checkboxes
+        document.querySelectorAll('.webhook-event').forEach(cb => {
+            cb.checked = webhook.events.includes(cb.value);
+        });
+
+        document.getElementById('webhookModal').style.display = 'flex';
+    } catch (error) {
+        console.error('Error loading webhook:', error);
+        showError(error.message);
+    }
+}
+
+// Save webhook (create or update)
+async function saveWebhook(formData) {
+    const webhookId = document.getElementById('webhookId').value;
+    const url = formData.get('url');
+    const secret = formData.get('secret');
+    const serviceToken = formData.get('service_token') || '';
+    const enabled = document.getElementById('webhookEnabled').checked;
+    const format = formData.get('format') || 'safeshare';
+    const maxRetries = parseInt(formData.get('max_retries'));
+    const timeoutSeconds = parseInt(formData.get('timeout_seconds'));
+
+    // Get selected events
+    const events = Array.from(document.querySelectorAll('.webhook-event:checked'))
+        .map(cb => cb.value);
+
+    if (events.length === 0) {
+        showError('Please select at least one event type');
+        return;
+    }
+
+    const payload = {
+        url,
+        secret,
+        service_token: serviceToken,
+        enabled,
+        events,
+        format,
+        max_retries: maxRetries,
+        timeout_seconds: timeoutSeconds
+    };
+
+    try {
+        let response;
+        if (webhookId) {
+            // Update existing webhook
+            response = await fetch(`/admin/api/webhooks/update?id=${webhookId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            // Create new webhook
+            response = await fetch('/admin/api/webhooks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save webhook');
+        }
+
+        hideWebhookModal();
+        loadWebhooks();
+        showSuccess(webhookId ? 'Webhook updated successfully' : 'Webhook created successfully');
+    } catch (error) {
+        console.error('Error saving webhook:', error);
+        showError(error.message);
+    }
+}
+
+// Delete webhook
+async function deleteWebhook(webhookId) {
+    if (!await confirm('Delete this webhook configuration?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/api/webhooks/delete?id=${webhookId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to delete webhook');
+        }
+
+        loadWebhooks();
+        showSuccess('Webhook deleted successfully');
+    } catch (error) {
+        console.error('Error deleting webhook:', error);
+        showError(error.message);
+    }
+}
+
+// Test webhook
+async function testWebhook(webhookId) {
+    try {
+        const response = await fetch(`/admin/api/webhooks/test?id=${webhookId}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showSuccess(`Test webhook sent successfully. Response: ${data.response_code}`);
+        } else {
+            showWarning(`Test webhook failed: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error testing webhook:', error);
+        showError('Failed to send test webhook');
+    }
+}
+
+// Load webhook deliveries
+let currentDeliveryFilters = { event: '', status: '' };
+
+async function loadDeliveries() {
+    try {
+        const response = await fetch('/admin/api/webhook-deliveries?limit=50&offset=0');
+
+        if (!response.ok) {
+            throw new Error('Failed to load deliveries');
+        }
+
+        const deliveries = await response.json();
+        updateDeliveriesTable(deliveries || []);
+    } catch (error) {
+        console.error('Error loading deliveries:', error);
+        showError('Failed to load webhook deliveries');
+    }
+}
+
+// Update deliveries table
+function updateDeliveriesTable(deliveries) {
+    const tbody = document.getElementById('deliveriesTableBody');
+
+    // Apply filters
+    let filteredDeliveries = deliveries;
+    if (currentDeliveryFilters.event) {
+        filteredDeliveries = filteredDeliveries.filter(d => d.event_type === currentDeliveryFilters.event);
+    }
+    if (currentDeliveryFilters.status) {
+        filteredDeliveries = filteredDeliveries.filter(d => d.status === currentDeliveryFilters.status);
+    }
+
+    if (filteredDeliveries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No deliveries found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = filteredDeliveries.map(delivery => {
+        let statusBadge;
+        switch (delivery.status) {
+            case 'success':
+                statusBadge = '<span class="badge badge-yes">Success</span>';
+                break;
+            case 'failed':
+                statusBadge = '<span class="badge badge-no">Failed</span>';
+                break;
+            case 'retrying':
+                statusBadge = '<span class="badge badge-warning">Retrying</span>';
+                break;
+            default:
+                statusBadge = '<span class="badge badge-info">Unknown</span>';
+        }
+
+        return `
+            <tr>
+                <td>${formatDate(delivery.created_at)}</td>
+                <td><span class="badge badge-info" style="font-size: 11px;">${escapeHtml(delivery.event_type)}</span></td>
+                <td>${statusBadge}</td>
+                <td>${delivery.response_code || '-'}</td>
+                <td>${delivery.attempt_count}</td>
+                <td>
+                    <button class="btn-small btn-action" onclick="viewDeliveryDetails(${delivery.id})" title="View details">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        Details
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// View delivery details
+async function viewDeliveryDetails(deliveryId) {
+    try {
+        const response = await fetch(`/admin/api/webhook-deliveries/detail?id=${deliveryId}`);
+
+        if (!response.ok) {
+            throw new Error('Failed to load delivery details');
+        }
+
+        const delivery = await response.json();
+        displayDeliveryDetails(delivery);
+    } catch (error) {
+        console.error('Error loading delivery details:', error);
+        showError('Failed to load delivery details');
+    }
+}
+
+// Display delivery details in modal
+function displayDeliveryDetails(delivery) {
+    const content = document.getElementById('deliveryDetailContent');
+    
+    let statusBadge;
+    switch (delivery.status) {
+        case 'success':
+            statusBadge = '<span class="badge badge-yes">Success</span>';
+            break;
+        case 'failed':
+            statusBadge = '<span class="badge badge-no">Failed</span>';
+            break;
+        case 'retrying':
+            statusBadge = '<span class="badge badge-warning">Retrying</span>';
+            break;
+        default:
+            statusBadge = '<span class="badge badge-info">Unknown</span>';
+    }
+
+    content.innerHTML = `
+        <div style="display: grid; gap: 16px;">
+            <div>
+                <strong>Delivery ID:</strong> ${delivery.id}
+            </div>
+            <div>
+                <strong>Webhook Config ID:</strong> ${delivery.webhook_config_id}
+            </div>
+            <div>
+                <strong>Event Type:</strong> <span class="badge badge-info" style="font-size: 11px;">${escapeHtml(delivery.event_type)}</span>
+            </div>
+            <div>
+                <strong>Status:</strong> ${statusBadge}
+            </div>
+            <div>
+                <strong>Attempt Count:</strong> ${delivery.attempt_count}
+            </div>
+            <div>
+                <strong>Response Code:</strong> ${delivery.response_code || '-'}
+            </div>
+            <div>
+                <strong>Created At:</strong> ${formatDate(delivery.created_at)}
+            </div>
+            ${delivery.completed_at ? `<div><strong>Completed At:</strong> ${formatDate(delivery.completed_at)}</div>` : ''}
+            ${delivery.next_retry_at ? `<div><strong>Next Retry:</strong> ${formatDate(delivery.next_retry_at)}</div>` : ''}
+            <div>
+                <strong>Payload:</strong>
+                <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px;">${escapeHtml(delivery.payload)}</pre>
+            </div>
+            ${delivery.response_body ? `
+                <div>
+                    <strong>Response Body:</strong>
+                    <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px;">${escapeHtml(delivery.response_body)}</pre>
+                </div>
+            ` : ''}
+            ${delivery.error_message ? `
+                <div>
+                    <strong>Error Message:</strong>
+                    <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px; color: var(--danger-color);">${escapeHtml(delivery.error_message)}</pre>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    document.getElementById('deliveryDetailModal').style.display = 'flex';
+}
+
+// Hide delivery detail modal
+function hideDeliveryDetailModal() {
+    document.getElementById('deliveryDetailModal').style.display = 'none';
+}
+
+// Handle auto-refresh
+function toggleAutoRefresh() {
+    const checkbox = document.getElementById('autoRefreshDeliveries');
+    if (checkbox.checked) {
+        // Start auto-refresh
+        autoRefreshInterval = setInterval(() => {
+            loadDeliveries();
+        }, 10000); // 10 seconds
+    } else {
+        // Stop auto-refresh
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+        }
+    }
+}
+
+// Clear all delivery history
+async function clearDeliveryHistory() {
+    const confirmed = await confirm('Are you sure you want to clear all webhook delivery history? This action cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch('/admin/api/webhook-deliveries/clear', {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            const count = data.deleted_count || 0;
+            showSuccess(`Cleared ${count} delivery record${count !== 1 ? 's' : ''}`);
+            loadDeliveries();
+        } else {
+            showError(data.error || 'Failed to clear delivery history');
+        }
+    } catch (error) {
+        console.error('Error clearing delivery history:', error);
+        showError('Failed to clear delivery history');
     }
 }

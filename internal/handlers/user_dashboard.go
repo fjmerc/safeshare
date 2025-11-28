@@ -13,7 +13,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
-	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -26,7 +26,11 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get user from context (set by middleware)
-		user := r.Context().Value("user").(*models.User)
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Parse pagination parameters
 		limitStr := r.URL.Query().Get("limit")
@@ -112,7 +116,11 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get user from context
-		user := r.Context().Value("user").(*models.User)
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Parse request
 		var req struct {
@@ -210,7 +218,11 @@ func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get user from context
-		user := r.Context().Value("user").(*models.User)
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Limit JSON request body size to prevent memory exhaustion
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
@@ -300,7 +312,11 @@ func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		}
 
 		// Get user from context
-		user := r.Context().Value("user").(*models.User)
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Limit JSON request body size to prevent memory exhaustion
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
@@ -417,7 +433,11 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 		}
 
 		// Get user from context
-		user := r.Context().Value("user").(*models.User)
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		// Limit JSON request body size to prevent memory exhaustion
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit

@@ -227,7 +227,7 @@ func TestDeleteExpiredFiles(t *testing.T) {
 	}
 
 	// Delete expired files
-	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestDeleteExpiredFiles_FileAlreadyDeleted(t *testing.T) {
 	// Don't create physical file - simulating already deleted file
 
 	// Delete expired files
-	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestDeleteExpiredFiles_FileDeletionFails(t *testing.T) {
 	}()
 
 	// Call DeleteExpiredFiles with the readonly directory as upload dir
-	deletedCount, err := DeleteExpiredFiles(db, readOnlyDir)
+	deletedCount, err := DeleteExpiredFiles(db, readOnlyDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}
@@ -436,7 +436,7 @@ func TestDeleteExpiredFiles_ValidationFails(t *testing.T) {
 	}
 
 	// Delete expired files
-	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestDeleteExpiredFiles_MultipleFiles(t *testing.T) {
 	}
 
 	// Delete expired files
-	deletedCount, err := DeleteExpiredFiles(db, tmpDir)
+	deletedCount, err := DeleteExpiredFiles(db, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}

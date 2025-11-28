@@ -2,20 +2,71 @@
 
 Complete API documentation for SafeShare file sharing service.
 
-**Base URL**: `http://localhost:8080` (or your configured domain)
+**Base URL (Development)**: `http://localhost:8080`  
+**Base URL (Production)**: `https://your-domain.com`
 
-**Version**: 2.8.0+
+⚠️ **Production Warning:** SafeShare MUST be deployed behind HTTPS in production. Set `HTTPS_ENABLED=true` when using a reverse proxy. See [PRODUCTION.md](PRODUCTION.md) for details.
+
+**Version**: 2.8.3
+
+## OpenAPI Specification
+
+SafeShare provides a machine-readable OpenAPI 3.0 specification for programmatic API access:
+
+- **OpenAPI Spec File**: [`api/openapi.yaml`](../api/openapi.yaml)
+- **Alternative JSON Format**: [`api/openapi.json`](../api/openapi.json) (generated from YAML)
+
+### Using the OpenAPI Specification
+
+The OpenAPI specification enables:
+
+1. **SDK Generation**: Use tools like `openapi-generator` to create client libraries:
+   ```bash
+   # Generate Python SDK
+   openapi-generator generate -i api/openapi.yaml -g python -o sdk/python
+   
+   # Generate TypeScript SDK  
+   openapi-generator generate -i api/openapi.yaml -g typescript-fetch -o sdk/typescript
+   
+   # Generate Go SDK
+   openapi-generator generate -i api/openapi.yaml -g go -o sdk/go
+   ```
+
+2. **API Testing**: Import into Postman, Insomnia, or other API testing tools
+
+3. **Documentation**: Generate interactive API docs with Swagger UI or ReDoc:
+   ```bash
+   # Using Docker to serve Swagger UI
+   docker run -p 8081:8080 -e SWAGGER_JSON=/api/openapi.yaml \
+     -v $(pwd)/api:/api swaggerapi/swagger-ui
+   ```
+
+4. **Validation**: Validate request/response schemas during development
+
+### Official SDKs
+
+Pre-built SDKs are available for common languages:
+
+| Language | Location | Installation |
+|----------|----------|-------------|
+| Python | [`sdk/python`](../sdk/python/) | `pip install safeshare-sdk` |
+| TypeScript/JavaScript | [`sdk/typescript`](../sdk/typescript/) | `npm install safeshare-sdk` |
+| Go | [`sdk/go`](../sdk/go/) | `go get github.com/fjmerc/safeshare/sdk/go` |
+
+See individual SDK README files for detailed usage examples and advanced patterns.
 
 ---
 
 ## Table of Contents
 
 1. [Authentication](#authentication)
-2. [File Sharing](#file-sharing)
-3. [User Management](#user-management)
-4. [Admin Operations](#admin-operations)
-5. [Health & Monitoring](#health--monitoring)
-6. [Error Responses](#error-responses)
+2. [API Token Authentication](#api-token-authentication)
+3. [File Sharing](#file-sharing)
+4. [User Management](#user-management)
+5. [Admin Operations](#admin-operations)
+6. [Health & Monitoring](#health--monitoring)
+7. [Webhooks](#webhooks)
+8. [Error Responses](#error-responses)
 
 ---
 
@@ -105,6 +156,272 @@ Update the current user's password.
 **Error Responses**:
 - 400 Bad Request: Password validation failed
 - 401 Unauthorized: Current password incorrect
+
+---
+
+## API Token Authentication
+
+API tokens provide programmatic access to SafeShare for SDKs, CLIs, and automation scripts. Tokens use Bearer authentication and support granular scope-based permissions.
+
+### Token Format
+
+```
+safeshare_<64 hex characters>
+```
+
+- **Total length**: 74 characters
+- **Entropy**: 256 bits (64 hex characters = 32 bytes)
+- **Prefix**: `safeshare_` for easy identification by secret scanning tools
+
+**Example**: `safeshare_a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd`
+
+### Authentication
+
+Include the token in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer safeshare_<your-token>" \
+  https://your-domain.com/api/user/files
+```
+
+**Authentication Priority**:
+1. Bearer token in `Authorization` header (checked first)
+2. Session cookie `user_session` (fallback)
+
+### Available Scopes
+
+| Scope | Description | Typical Use Case |
+|-------|-------------|------------------|
+| `upload` | Upload files via `/api/upload` | Backup scripts, CI/CD |
+| `download` | Download files via `/api/claim/:code` | Automated retrievals |
+| `manage` | List, rename, delete own files | File management apps |
+| `admin` | Admin operations (admin users only) | Admin automation |
+
+**Scope Restrictions**:
+- Users can only request scopes matching their role
+- Regular users cannot request `admin` scope
+- Admin users can request any scope
+
+### Security Considerations
+
+- **Tokens shown once**: The full token is only returned at creation. Store it securely.
+- **Hashed storage**: Tokens are stored as SHA-256 hashes (never in plaintext)
+- **Timing attack protection**: Authentication responses have normalized timing
+- **Session-only operations**: Token creation and revocation require session auth (not API tokens)
+- **Maximum 50 tokens per user**: Prevents abuse
+- **Maximum 365-day expiration**: Tokens cannot be created with unlimited lifetime
+
+---
+
+### Create API Token
+
+Create a new API token for the authenticated user.
+
+**Endpoint**: `POST /api/tokens`
+
+**Authentication**: Required (session cookie only - API tokens cannot create other tokens)
+
+**Request Body** (JSON):
+```json
+{
+  "name": "My Backup Script",
+  "scopes": ["upload", "download"],
+  "expires_in_days": 90
+}
+```
+
+**Parameters**:
+- `name` (required): Human-readable token name (1-100 characters)
+- `scopes` (required): Array of permission scopes (at least one required)
+- `expires_in_days` (optional): Days until expiration (1-365, null for no expiration)
+
+**Response** (201 Created):
+```json
+{
+  "id": 1,
+  "name": "My Backup Script",
+  "token": "safeshare_a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd",
+  "scopes": ["upload", "download"],
+  "expires_at": "2026-02-25T10:00:00Z",
+  "created_at": "2025-11-27T10:00:00Z"
+}
+```
+
+**Important**: The `token` field is only included in the creation response. Save it immediately - it cannot be retrieved later.
+
+**Error Responses**:
+- 400 Bad Request: Missing name, invalid scopes, or validation failed
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: 
+  - `SESSION_REQUIRED`: API tokens cannot create other tokens
+  - `SCOPE_EXCEEDS_ROLE`: Requested scopes exceed user's role
+  - `MAX_TOKENS_REACHED`: User has 50 tokens already
+
+**Error Response Format**:
+```json
+{
+  "error": "API tokens cannot create other tokens. Please use web session.",
+  "code": "SESSION_REQUIRED"
+}
+```
+
+---
+
+### List API Tokens
+
+Retrieve all API tokens for the authenticated user.
+
+**Endpoint**: `GET /api/tokens`
+
+**Authentication**: Required (session cookie or API token with `manage` scope)
+
+**Response** (200 OK):
+```json
+{
+  "tokens": [
+    {
+      "id": 1,
+      "name": "My Backup Script",
+      "token_prefix": "safeshare_a1b***bcd",
+      "scopes": ["upload", "download"],
+      "last_used_at": "2025-11-27T15:30:00Z",
+      "expires_at": "2026-02-25T10:00:00Z",
+      "created_at": "2025-11-27T10:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "CI/CD Pipeline",
+      "token_prefix": "safeshare_x9y***z12",
+      "scopes": ["upload"],
+      "last_used_at": null,
+      "expires_at": null,
+      "created_at": "2025-11-20T08:00:00Z"
+    }
+  ]
+}
+```
+
+**Note**: The full token value is never returned in list operations. Only the masked `token_prefix` is shown for identification.
+
+---
+
+### Revoke API Token
+
+Revoke (delete) an API token.
+
+**Endpoint**: `DELETE /api/tokens/:id`
+
+**Authentication**: Required (session cookie only - API tokens cannot revoke tokens)
+
+**Response** (200 OK):
+```json
+{
+  "message": "Token revoked successfully"
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Invalid token ID format
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden:
+  - `SESSION_REQUIRED`: API tokens cannot revoke other tokens
+- 404 Not Found: Token doesn't exist or not owned by user
+
+---
+
+### Admin: List All Tokens
+
+List all API tokens in the system (admin only).
+
+**Endpoint**: `GET /admin/api/tokens`
+
+**Authentication**: Required (admin session)
+
+**Query Parameters**:
+- `limit` (optional): Results per page (default: 50, max: 100)
+- `offset` (optional): Pagination offset (default: 0)
+- `user_id` (optional): Filter by user ID
+
+**Response** (200 OK):
+```json
+{
+  "tokens": [
+    {
+      "id": 1,
+      "user_id": 5,
+      "username": "john",
+      "name": "Backup Script",
+      "token_prefix": "safeshare_a1b***bcd",
+      "scopes": ["upload", "download"],
+      "last_used_at": "2025-11-27T15:30:00Z",
+      "expires_at": "2026-02-25T10:00:00Z",
+      "created_at": "2025-11-27T10:00:00Z"
+    }
+  ],
+  "total": 42
+}
+```
+
+---
+
+### Admin: Revoke Any Token
+
+Revoke any user's API token (admin only).
+
+**Endpoint**: `DELETE /admin/api/tokens/revoke?id=:id`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Response** (200 OK):
+```json
+{
+  "message": "Token revoked successfully"
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Missing or invalid token ID
+- 404 Not Found: Token doesn't exist
+
+---
+
+### Using API Tokens with Endpoints
+
+API tokens can authenticate most user endpoints. Here are examples:
+
+**Upload a file**:
+```bash
+curl -X POST \
+  -H "Authorization: Bearer safeshare_<token>" \
+  -F "file=@document.pdf" \
+  -F "expires_in_hours=48" \
+  http://localhost:8080/api/upload
+```
+
+**List your files**:
+```bash
+curl -H "Authorization: Bearer safeshare_<token>" \
+  http://localhost:8080/api/user/files
+```
+
+**Download a file**:
+```bash
+curl -H "Authorization: Bearer safeshare_<token>" \
+  -O http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
+```
+
+**Note**: Download endpoint authentication is optional. API tokens are only needed if `REQUIRE_AUTH_FOR_UPLOAD` is enabled or for accessing file management endpoints.
+
+---
+
+### Token Lifecycle
+
+1. **Creation**: User creates token via web session (POST /api/tokens)
+2. **Usage**: Token used in `Authorization: Bearer` header
+3. **Tracking**: `last_used_at` updated on each successful authentication
+4. **Expiration**: Tokens automatically expire at `expires_at` (if set)
+5. **Revocation**: User revokes via web session (DELETE /api/tokens/:id)
+6. **Cleanup**: Expired tokens automatically deleted by background worker
 
 ---
 
@@ -1008,13 +1325,394 @@ SafeShare does not include CORS headers by default. If you need cross-origin acc
 
 ## Webhooks
 
-SafeShare does not currently support webhooks. File events are logged to structured JSON logs for integration with log aggregation tools (ELK, Splunk, Datadog).
+SafeShare supports webhook notifications for file lifecycle events. Configure webhooks via the admin dashboard to receive real-time notifications when files are uploaded, downloaded, deleted, or expired.
+
+### List Webhook Configurations
+
+Retrieve all configured webhooks.
+
+**Endpoint**: `GET /admin/api/webhooks`
+
+**Authentication**: Required (admin session)
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": 1,
+    "url": "https://your-server.com/webhook",
+    "secret": "••••••••••••••••",
+    "service_token": "",
+    "enabled": true,
+    "events": ["file.uploaded", "file.downloaded", "file.deleted", "file.expired"],
+    "format": "safeshare",
+    "max_retries": 5,
+    "timeout_seconds": 30,
+    "created_at": "2025-11-20T10:00:00Z",
+    "updated_at": "2025-11-20T10:00:00Z"
+  }
+]
+```
+
+**Note**: Secrets and service tokens are masked (`••••••••`) in list responses for security.
+
+---
+
+### Create Webhook Configuration
+
+Create a new webhook endpoint.
+
+**Endpoint**: `POST /admin/api/webhooks`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Request Body** (JSON):
+```json
+{
+  "url": "https://your-server.com/webhook",
+  "secret": "your-webhook-secret-key",
+  "service_token": "optional-gotify-or-ntfy-token",
+  "enabled": true,
+  "events": ["file.uploaded", "file.downloaded", "file.deleted", "file.expired"],
+  "format": "safeshare",
+  "max_retries": 5,
+  "timeout_seconds": 30
+}
+```
+
+**Parameters**:
+- `url` (required): Webhook endpoint URL (HTTP/HTTPS only)
+- `secret` (required): Secret key for HMAC signature verification
+- `service_token` (optional): Authentication token for Gotify/ntfy services
+- `enabled` (required): Enable/disable webhook
+- `events` (required): Array of event types to subscribe to
+- `format` (optional): Payload format (default: `safeshare`)
+- `max_retries` (optional): Max retry attempts (default: 5)
+- `timeout_seconds` (optional): Request timeout (default: 30)
+
+**Supported Event Types**:
+- `file.uploaded` - File successfully uploaded
+- `file.downloaded` - File downloaded by user
+- `file.deleted` - File deleted by user or admin
+- `file.expired` - File expired (time-based or download limit)
+
+**Supported Formats**:
+- `safeshare` (default) - SafeShare JSON format
+- `gotify` - Gotify notification format
+- `ntfy` - ntfy.sh notification format
+- `discord` - Discord webhook format
+
+**Response** (201 Created):
+```json
+{
+  "id": 1,
+  "url": "https://your-server.com/webhook",
+  "secret": "your-webhook-secret-key",
+  "service_token": "optional-token",
+  "enabled": true,
+  "events": ["file.uploaded", "file.downloaded", "file.deleted", "file.expired"],
+  "format": "safeshare",
+  "max_retries": 5,
+  "timeout_seconds": 30,
+  "created_at": "2025-11-20T10:00:00Z",
+  "updated_at": "2025-11-20T10:00:00Z"
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Invalid URL, missing required fields, or invalid format
+- 403 Forbidden: CSRF token validation failed
+
+---
+
+### Update Webhook Configuration
+
+Update an existing webhook endpoint.
+
+**Endpoint**: `PUT /admin/api/webhooks/update?id=:id`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Request Body** (JSON):
+```json
+{
+  "url": "https://updated-server.com/webhook",
+  "secret": "updated-secret",
+  "service_token": "••••••••••••••••",
+  "enabled": false,
+  "events": ["file.uploaded"],
+  "format": "gotify",
+  "max_retries": 3,
+  "timeout_seconds": 20
+}
+```
+
+**Note**: To preserve existing secret or service_token without changing it, send the masked value (`••••••••••••••••`) received from the GET endpoint. SafeShare will automatically preserve the existing value.
+
+**Response**: 200 OK (same as create response)
+
+**Error Responses**:
+- 400 Bad Request: Invalid webhook ID or parameters
+- 404 Not Found: Webhook doesn't exist
+
+---
+
+### Delete Webhook Configuration
+
+Delete a webhook endpoint.
+
+**Endpoint**: `DELETE /admin/api/webhooks/delete?id=:id`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Response** (200 OK):
+```json
+{
+  "message": "Webhook configuration deleted successfully"
+}
+```
+
+**Error Responses**:
+- 404 Not Found: Webhook doesn't exist
+
+---
+
+### Test Webhook
+
+Send a test event to verify webhook configuration.
+
+**Endpoint**: `POST /admin/api/webhooks/test?id=:id`
+
+**Authentication**: Required (admin session + CSRF token)
+
+**Response** (200 OK - Success):
+```json
+{
+  "success": true,
+  "response_code": 200,
+  "response_body": "OK"
+}
+```
+
+**Response** (200 OK - Failure):
+```json
+{
+  "success": false,
+  "response_code": 500,
+  "response_body": "Internal Server Error",
+  "error": "connection timeout"
+}
+```
+
+**Test Event Payload**:
+The test sends a `file.uploaded` event with dummy data:
+```json
+{
+  "event": "file.uploaded",
+  "timestamp": "2025-11-20T10:00:00Z",
+  "file": {
+    "claim_code": "TEST123",
+    "filename": "test-file.txt",
+    "size": 1024,
+    "mime_type": "text/plain",
+    "expires_at": "2025-11-21T10:00:00Z"
+  }
+}
+```
+
+---
+
+### List Webhook Deliveries
+
+Retrieve webhook delivery history with pagination.
+
+**Endpoint**: `GET /admin/api/webhook-deliveries`
+
+**Authentication**: Required (admin session)
+
+**Query Parameters**:
+- `limit` (optional): Results per page (default: 50, max: 1000)
+- `offset` (optional): Pagination offset (default: 0)
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": 1,
+    "webhook_config_id": 1,
+    "event_type": "file.uploaded",
+    "payload": "{...}",
+    "attempt_count": 1,
+    "status": "success",
+    "response_code": 200,
+    "response_body": "OK",
+    "error_message": null,
+    "created_at": "2025-11-20T10:00:00Z",
+    "completed_at": "2025-11-20T10:00:01Z",
+    "next_retry_at": null
+  }
+]
+```
+
+**Status Values**:
+- `pending` - Queued for delivery
+- `success` - Delivered successfully (HTTP 2xx)
+- `failed` - Failed after max retries
+- `retrying` - Scheduled for retry
+
+---
+
+### Get Webhook Delivery Details
+
+Retrieve details of a specific webhook delivery.
+
+**Endpoint**: `GET /admin/api/webhook-deliveries/detail?id=:id`
+
+**Authentication**: Required (admin session)
+
+**Response** (200 OK):
+```json
+{
+  "id": 1,
+  "webhook_config_id": 1,
+  "event_type": "file.uploaded",
+  "payload": "{\"event\":\"file.uploaded\",\"timestamp\":\"2025-11-20T10:00:00Z\",\"file\":{...}}",
+  "attempt_count": 3,
+  "status": "retrying",
+  "response_code": 503,
+  "response_body": "Service Unavailable",
+  "error_message": "connection timeout",
+  "created_at": "2025-11-20T10:00:00Z",
+  "completed_at": null,
+  "next_retry_at": "2025-11-20T10:05:00Z"
+}
+```
+
+---
+
+### Webhook Payload Formats
+
+#### SafeShare Format (Default)
+
+```json
+{
+  "event": "file.uploaded",
+  "timestamp": "2025-11-20T10:00:00Z",
+  "file": {
+    "id": 123,
+    "claim_code": "Xy9kLm8pQz4vDwE",
+    "filename": "document.pdf",
+    "size": 1048576,
+    "mime_type": "application/pdf",
+    "expires_at": "2025-11-22T10:00:00Z"
+  }
+}
+```
+
+**HMAC Signature**: Sent in `X-Webhook-Signature` header using SHA-256 HMAC of the JSON payload.
+
+#### Gotify Format
+
+```json
+{
+  "title": "File Uploaded",
+  "message": "document.pdf (1.00 MB)",
+  "priority": 5,
+  "extras": {
+    "client::display": {
+      "contentType": "text/markdown"
+    },
+    "safeshare": {
+      "event": "file.uploaded",
+      "claim_code": "Xy9kLm8pQz4vDwE",
+      "filename": "document.pdf",
+      "size": 1048576
+    }
+  }
+}
+```
+
+**Authentication**: Uses `service_token` in URL query parameter (`?token=xxx`) or `X-Gotify-Key` header.
+
+#### ntfy Format
+
+POST body (plain text):
+```
+File Uploaded: document.pdf (1.00 MB)
+```
+
+Headers:
+- `Title: File Uploaded`
+- `Tags: file,upload`
+- `Priority: 3`
+- `Authorization: Bearer <service_token>` (if service_token configured)
+
+#### Discord Format
+
+```json
+{
+  "content": null,
+  "embeds": [
+    {
+      "title": "File Uploaded",
+      "description": "**Filename:** document.pdf\n**Size:** 1.00 MB\n**Claim Code:** `Xy9kLm8pQz4vDwE`",
+      "color": 5814783,
+      "timestamp": "2025-11-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### Webhook Security
+
+**HMAC Signature Verification** (SafeShare format):
+
+```python
+import hmac
+import hashlib
+
+def verify_webhook(secret, payload, signature):
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+# Example usage
+secret = "your-webhook-secret-key"
+payload = request.body  # Raw JSON string
+signature = request.headers.get('X-Webhook-Signature')
+
+if verify_webhook(secret, payload, signature):
+    # Process webhook
+    pass
+else:
+    # Reject webhook
+    return 403
+```
+
+**Retry Logic**:
+- Exponential backoff: 1s, 2s, 4s, 8s, 16s
+- Max retries: Configurable (default: 5)
+- HTTP 5xx and network errors trigger retries
+- HTTP 4xx errors do not trigger retries (client error)
+
+**Timeout**:
+- Configurable per webhook (default: 30 seconds)
+- Prevents slow webhook endpoints from blocking workers
+
+---
 
 ---
 
 ## SDK / Client Libraries
 
-No official SDKs are currently provided. The API follows REST principles and can be used with any HTTP client library.
+Official SDKs are planned for Python, TypeScript/JavaScript, and Go. See the [SDK Integration Roadmap](SDK_INTEGRATION_ROADMAP.md) for progress.
+
+In the meantime, the API follows REST principles and can be used with any HTTP client library.
 
 **Recommended Libraries**:
 - JavaScript/Node.js: `axios`, `fetch`
@@ -1042,5 +1740,5 @@ Current API compatibility: SafeShare 2.0.0+
 
 ---
 
-**Last Updated**: 2025-11-21
-**Version**: 2.8.0
+**Last Updated**: 2025-11-27
+**Version**: 2.8.4

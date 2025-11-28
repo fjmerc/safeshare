@@ -5,7 +5,186 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## Version Reset Notice (November 2025)
+
+> **SafeShare version was reset from v2.8.3 to v1.0.0**
+
+### Why?
+
+Go's module system requires that any module at v2.0.0 or higher must have `/v2` appended to its module path (e.g., `github.com/example/project/v2`). Our module path was `github.com/fjmerc/safeshare` without the `/v2` suffix, which caused:
+
+- Go Report Card showing outdated/cached versions
+- Go module proxy indexing issues
+- LICENSE file appearing missing in Go tooling
+
+### What Changed?
+
+- **Version reset**: v2.8.3 → v1.0.0
+- **All features preserved**: v1.0.0 contains all functionality from v2.8.3
+- **Historical entries below**: Previous v2.x and v1.x entries are preserved for reference
+
+### Why This Doesn't Affect You
+
+SafeShare is an **application**, not a library. You interact with it via Docker images, binaries, or SDKs (which have independent versioning). The Go module version is an internal detail.
+
+See `docs/VERSION_STRATEGY.md` for full explanation.
+
+---
+
 ## [Unreleased]
+
+### Added
+- **Token Management UI**: User dashboard now includes a dedicated API Tokens section for managing programmatic access
+  - Create new tokens with custom names, scopes (upload, download, manage, admin), and expiration dates
+  - View all tokens with masked values, scopes, and last used information
+  - Revoke tokens with confirmation dialog
+  - Secure token display modal shows full token only once after creation
+  - Full dark mode support with scope badges and responsive design
+
+- **API Token Authentication**: Programmatic access to SafeShare via Bearer tokens for SDK/CLI integration
+  - Token format: `safeshare_<64 hex chars>` (256-bit entropy, 74 characters total)
+  - Secure token storage using SHA-256 hashing (tokens never stored in plaintext)
+  - Granular scope-based permissions: `upload`, `download`, `manage`, `admin`
+  - Optional token expiration (up to 365 days) with automatic cleanup
+  - API endpoints for token management:
+    - `POST /api/tokens` - Create new token (session auth required, scopes must not exceed user's role)
+    - `GET /api/tokens` - List user's tokens (token values masked for security)
+    - `DELETE /api/tokens/:id` - Revoke token (session auth required for security)
+  - Bearer token authentication: `Authorization: Bearer safeshare_<token>`
+  - Timing-attack resistant authentication with normalized response times
+  - Token masking in API responses (`safeshare_abc***xyz`) for security
+  - Session-only restriction for sensitive operations (token creation/revocation) prevents token escalation attacks
+  - Database migration 006_api_tokens.sql adds token storage with proper indexes
+  - Test coverage: 62.6% (handlers: 61.4%, utils: 66.3%)
+
+### Fixed
+- **Revoked Tokens Still Visible**: Fixed bug where revoked API tokens remained visible on the dashboard after deletion
+  - Root cause: `GetAPITokensByUserID` query was missing `AND is_active = 1` filter, returning all tokens including revoked ones
+  - Tokens are now properly filtered to show only active tokens
+
+- **Dashboard Authentication Loop**: Fixed critical bug causing user dashboard to continuously refresh/flicker
+  - Root cause: API token authentication commit introduced typed context keys (`contextKey("user")`) in middleware, but handlers used plain string keys (`"user"`) for user lookup
+  - Go context compares both type and value, so lookups always failed causing repeated 401 responses
+  - Updated all handlers to use `middleware.GetUserFromContext(r)` which uses the correct typed key
+
+- **Admin Dashboard Stats Showing Zero**: Fixed bug where Total Files, Storage Used, and other stats cards showed 0 despite files existing
+  - Root cause: Several functions passed `time.Time` directly to SQLite, storing Go's default format (`2025-11-20 22:10:00 +0000 UTC`) which `datetime()` cannot parse
+  - Fixed `CreateSession`, `CreateUserSession`, and `UpdateFileExpirationByIDAndUserID` to format timestamps as RFC3339 before storing
+  - Updated session validation queries (`GetSession`, `GetUserSession`) to use `datetime(expires_at) > datetime('now')` instead of `CURRENT_TIMESTAMP`
+  - Updated session cleanup queries to use `datetime()` wrapper for consistent comparison
+  - This bug was introduced in the file.expired webhook fix (commit 41355cd) which added `datetime()` wrappers to file queries but not session queries
+
+### Added
+- **Clear Webhook Delivery History**: Admin dashboard now includes a "Clear All" button in the Delivery History section
+  - Allows administrators to clear all webhook delivery records with a single click
+  - Includes confirmation dialog to prevent accidental deletion
+  - Displays count of deleted records in success message
+  - Button positioned at end of filter controls following standard UI patterns
+- **Webhook Download Limit Notifications**: Files that reach their download limit now trigger `file.expired` webhook events
+  - Webhooks are now emitted when files become unavailable due to download exhaustion (e.g., 1/1 downloads used)
+  - Reason field included in webhook payload: "download_limit_reached" vs "Time-based expiration"
+  - All webhook formats (Gotify, ntfy, Discord) display the expiration reason in notifications
+  - Provides visibility when files expire due to download limits, not just time-based expiration
+  - Webhook delivery history records these events for audit trail
+
+### Fixed
+- **Timezone Support in Docker Container**: Fixed bug where TZ environment variable was ignored in Alpine container
+  - Root cause: Alpine container was missing `tzdata` package, causing Go to fall back to UTC regardless of TZ setting
+  - This caused file expiration times to be stored and displayed in UTC instead of the configured timezone
+  - When TZ=Europe/Berlin was set, expiration notifications would appear 1-2 hours off from expected times
+  - Fixed by adding `tzdata` package to the runtime container image
+- **file.expired Webhooks Not Triggering**: Fixed critical bug where `file.expired` webhooks were never sent for time-based expiration
+  - Root cause: SQLite datetime format mismatch - Go stores RFC3339 (`2025-11-25T16:50:36Z`) but SQLite `datetime()` returns space-separated format (`2025-11-25 16:50:36`)
+  - String comparison failed because `'T'` > `' '` in ASCII, causing cleanup query to never find expired files
+  - Fixed by wrapping `expires_at` column with `datetime()` function to normalize format before comparison
+  - Affects: file cleanup, quota calculation, storage stats, metrics collection
+- **Webhook Callback Loop Bug**: Fixed bug where webhooks were silently skipped when files failed to delete during cleanup
+  - Index-based loop assumed 1:1 correspondence between expired files and deleted IDs
+  - When files were skipped (validation/filesystem errors), subsequent webhooks were incorrectly skipped
+  - Fixed by using map lookup instead of index matching
+- **Webhook Dispatcher Race Conditions**: Fixed potential race conditions during dispatcher shutdown
+  - Added `sync.Once` to prevent double-close panic on shutdown channel
+  - Added nil event check to prevent panic when processing after channel close
+  - Added proper channel close detection in worker loop
+- **Webhook Download Limit Timing**: Fixed bug where `file.expired` webhook was not triggered when a file reached its download limit
+  - Previously, webhook only fired when subsequent download attempts were rejected
+  - Now correctly fires immediately when the last allowed download completes
+  - Prevents duplicate webhook emissions (was firing twice in some race conditions)
+- **Webhook Service Token Masking**: Fixed bug where masked service tokens were saved to database when editing webhook configurations
+  - Service tokens are now properly preserved when updating webhook settings in admin dashboard
+  - Masked tokens (e.g., "Ay5***0Ma") are detected and original token is retained in database
+  - Prevents authentication failures (401 errors) from Gotify/ntfy when editing webhook URL or events
+  - Atomic SQL update prevents race conditions during concurrent webhook updates
+  - Webhook secret field masking also added for consistency
+
+### Added
+- **Webhook Service Token Authentication**: Dedicated authentication token field for webhook services
+  - Separate "Service Token" field in webhook configuration for cleaner UX
+  - Gotify: Token automatically appended to URL as query parameter (`?token=ABC123`)
+  - ntfy.sh: Token sent as `Authorization: Bearer` header for private topics
+  - Discord/SafeShare: No service token needed (unchanged behavior)
+  - Token field visibility automatically shown/hidden based on selected webhook format
+  - Service tokens are masked in API responses (`abc***xyz`) for security
+  - Password field with show/hide toggle for secure token entry
+  - Context-sensitive help text explains token usage for each service
+  - Database migration adds `service_token` column (nullable)
+  - Backward compatible: existing webhooks without tokens continue working
+- **Webhook Format Presets**: Support for Gotify, ntfy.sh, and Discord webhook formats
+  - Admin dashboard now includes "Webhook Format" dropdown in webhook configuration
+  - Supported formats: SafeShare (default), Gotify, ntfy.sh, Discord
+  - Automatic payload transformation based on selected format
+  - Gotify format: Includes title, message, priority (0-10), and markdown support
+  - ntfy.sh format: Includes title, message, tags (emoji), and priority (1-5)
+  - Discord format: Rich embeds with color-coded events, fields, and timestamps
+  - Format validation ensures only valid formats are accepted
+  - Database migration adds `format` column with default value "safeshare"
+  - Test webhook functionality respects format setting
+  - Comprehensive unit tests for all format transformers (67.9% coverage for webhooks package)
+  - Overall test coverage: 63.2% (exceeds 60% threshold)
+
+### Fixed
+- **Admin Dashboard - Webhook Tables UI**: Improved table alignment and styling in webhook management interface
+  - Fixed table header and column alignment issues in both Webhook Configurations and Delivery History tables
+  - Centered all columns except URL (Webhook Configurations) and Timestamp (Delivery History) which remain left-aligned
+  - Fixed action button centering in both tables
+  - Fixed dark mode visibility issue for URL input field in Edit Webhook modal
+  - Simplified CSS from 140+ lines to 35 lines using global centering with specific exceptions
+  - Improved CSS selector reliability by replacing `:nth-of-type()` with `:first-child` and attribute selectors
+
+### Changed
+- **Webhook System**: Real-time event notifications for file lifecycle events
+  - Event types: `file.uploaded`, `file.downloaded`, `file.deleted`
+  - Asynchronous delivery with goroutine pool (5 workers by default)
+  - Exponential backoff retry logic (1s, 2s, 4s, 8s, 16s, max 60s)
+  - Configurable maximum retries (default: 5)
+  - HMAC-SHA256 signature verification for payload security
+  - Database-backed delivery tracking with status and error logging
+  - Prometheus metrics integration (events, deliveries, duration, queue size)
+  - Admin API endpoints for webhook CRUD operations:
+    - `GET /admin/api/webhooks` - List all webhook configurations
+    - `POST /admin/api/webhooks` - Create new webhook
+    - `PUT /admin/api/webhooks/update?id={id}` - Update webhook configuration
+    - `DELETE /admin/api/webhooks/delete?id={id}` - Delete webhook
+    - `POST /admin/api/webhooks/test?id={id}` - Test webhook delivery
+    - `GET /admin/api/webhook-deliveries` - List delivery history
+    - `GET /admin/api/webhook-deliveries/detail?id={id}` - Get delivery details
+  - **Admin Dashboard UI**: Complete webhook management interface
+    - New "Webhooks" tab in admin dashboard
+    - Webhook configuration management (create, edit, delete, test)
+    - Secret generator for HMAC signature keys
+    - Event type multi-select (file.uploaded, file.downloaded, file.deleted)
+    - Configurable retry and timeout settings
+    - Real-time delivery history with filtering by event type and status
+    - Detailed delivery view with full payload, response, and error information
+    - Auto-refresh option for delivery monitoring (10-second interval)
+    - Dark mode support
+    - Mobile responsive design
+  - Opt-in by default (100% backward compatible)
+  - Buffered channel (1000 events) with drop-on-full strategy to prevent blocking
+  - Automatic retry processor for failed deliveries (runs every 10 seconds)
+  - Graceful shutdown support with worker synchronization
 
 ## [2.8.3] - 2025-11-22
 
@@ -76,7 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Pickup Tab Download Failures**: Fixed downloads failing at ~60% when initiated through Pickup tab
   - Root cause: Service Worker was intercepting cross-origin fetch() requests from ResumableDownloader
-  - Added cross-origin detection in handleDownload() - bypasses ResumableDownloader for downloads.mercitlabs.com
+  - Added cross-origin detection in handleDownload()
   - Uses native browser download (`<a>` tag) for cross-origin downloads to avoid Service Worker interference
   - Fixed Service Worker bug: Removed unnecessary `event.respondWith()` for API routes (was causing memory/streaming issues)
   - Direct URL downloads always worked; issue only occurred when using Pickup tab claim code flow
@@ -931,22 +1110,7 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.1...HEAD
-[2.8.1]: https://github.com/fjmerc/safeshare/compare/v2.8.0...v2.8.1
-[2.8.0]: https://github.com/fjmerc/safeshare/compare/v2.7.0...v2.8.0
-[2.7.0]: https://github.com/fjmerc/safeshare/compare/v2.6.0...v2.7.0
-[2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
-[2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1
-[2.5.0]: https://github.com/fjmerc/safeshare/compare/v2.4.0...v2.5.0
-[2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
-[2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
-[2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
-[2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
-[2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
-[2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0
-[1.2.0]: https://github.com/fjmerc/safeshare/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/fjmerc/safeshare/compare/v1.0.0...v1.1.0
+<!-- Note: Historical version links below reference old v2.x tags that have been deleted.
+     They are preserved for documentation purposes. The current release is v1.0.0. -->
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.0.0

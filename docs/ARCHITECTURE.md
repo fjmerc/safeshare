@@ -3,6 +3,7 @@
 This document provides detailed technical documentation about SafeShare's architecture, components, and implementation details.
 
 ## Table of Contents
+- [Architecture Diagrams](#architecture-diagrams)
 - [User Authentication Architecture](#user-authentication-architecture)
 - [Admin Dashboard Architecture](#admin-dashboard-architecture)
 - [Core Architecture Overview](#core-architecture-overview)
@@ -10,7 +11,350 @@ This document provides detailed technical documentation about SafeShare's archit
 - [Settings Persistence](#settings-persistence)
 - [Frontend Architecture](#frontend-architecture)
 - [Chunked Upload Architecture](#chunked-upload-architecture)
+- [Webhook Architecture](#webhook-architecture)
 - [Key Dependencies](#key-dependencies)
+
+---
+
+## Architecture Diagrams
+
+This section provides visual representations of SafeShare's key architectural flows.
+
+### High-Level System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Clients
+        Browser[Web Browser]
+        SDK[SDK / CLI]
+        API[API Client]
+    end
+
+    subgraph CDN["Cloudflare CDN (Optional)"]
+        CF[Cloudflare Proxy]
+    end
+
+    subgraph "Reverse Proxy"
+        RP[Traefik / nginx]
+    end
+
+    subgraph SafeShare
+        HTTP[HTTP Server]
+        MW[Middleware Chain]
+        H[Handlers]
+        DB[(SQLite Database)]
+        FS[(File Storage)]
+        WH[Webhook Dispatcher]
+    end
+
+    subgraph External
+        WE[Webhook Endpoints]
+    end
+
+    Browser --> CF
+    SDK --> CF
+    API --> CF
+    CF --> RP
+    RP --> HTTP
+    HTTP --> MW
+    MW --> H
+    H --> DB
+    H --> FS
+    H --> WH
+    WH --> WE
+```
+
+### Request Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant RP as Reverse Proxy
+    participant MW as Middleware
+    participant H as Handler
+    participant DB as Database
+    participant FS as File Storage
+
+    C->>RP: HTTP Request
+    RP->>MW: Forward Request
+    
+    Note over MW: Recovery Middleware
+    Note over MW: Logging Middleware
+    Note over MW: Security Headers
+    Note over MW: Rate Limiting
+    Note over MW: Authentication (if required)
+    
+    MW->>H: Processed Request
+    H->>DB: Query/Update
+    DB-->>H: Result
+    H->>FS: Read/Write File
+    FS-->>H: File Data
+    H-->>MW: Response
+    MW-->>RP: Response with Headers
+    RP-->>C: HTTP Response
+```
+
+### File Upload Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+    participant FS as File Storage
+    participant ENC as Encryption
+
+    alt Simple Upload (< 100MB)
+        C->>S: POST /api/upload (file)
+        S->>S: Validate (size, extension)
+        S->>S: Detect MIME type
+        S->>ENC: Encrypt file (if key set)
+        ENC-->>S: Encrypted data
+        S->>FS: Store file
+        S->>DB: Create file record
+        S-->>C: {claim_code, download_url}
+    else Chunked Upload (>= 100MB)
+        C->>S: POST /api/upload/init
+        S->>DB: Create partial_upload
+        S-->>C: {upload_id, chunk_size}
+        
+        loop For each chunk
+            C->>S: POST /api/upload/chunk/:id/:num
+            S->>FS: Store chunk
+            S->>DB: Update progress
+            S-->>C: {success}
+        end
+        
+        C->>S: POST /api/upload/complete/:id
+        S->>FS: Assemble chunks
+        S->>ENC: Encrypt assembled file
+        S->>DB: Create file record
+        S->>FS: Delete temp chunks
+        S-->>C: {claim_code, download_url}
+    end
+```
+
+### File Download Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+    participant FS as File Storage
+    participant DEC as Decryption
+
+    C->>S: GET /api/claim/:code/info
+    S->>DB: Lookup file by claim_code
+    DB-->>S: File metadata
+    S-->>C: {filename, size, password_required}
+
+    C->>S: GET /api/claim/:code [?password=xxx]
+    S->>DB: Validate claim_code
+    S->>S: Check expiration
+    S->>S: Check download limit
+    
+    alt Password Protected
+        S->>S: Verify password (bcrypt)
+    end
+    
+    alt Range Request
+        S->>DEC: Decrypt specific chunks
+        DEC->>FS: Read required chunks
+        DEC-->>S: Decrypted range
+        S-->>C: 206 Partial Content
+    else Full Download
+        S->>DEC: Stream decrypt
+        DEC->>FS: Read file
+        DEC-->>S: Decrypted stream
+        S-->>C: 200 OK (streaming)
+    end
+    
+    S->>DB: Increment download_count
+```
+
+### Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as SafeShare
+    participant DB as Database
+
+    C->>S: POST /api/auth/login {username, password}
+    S->>DB: Lookup user by username
+    DB-->>S: User record (with hash)
+    S->>S: bcrypt.Compare(password, hash)
+    
+    alt Valid Credentials
+        S->>S: Generate session token (32 bytes)
+        S->>DB: Store session
+        S-->>C: Set-Cookie: user_session=token
+        S-->>C: {user: {...}}
+    else Invalid Credentials
+        S-->>C: 401 Unauthorized
+    end
+
+    Note over C,S: Subsequent Requests
+    
+    C->>S: GET /api/user/files (Cookie: user_session)
+    S->>DB: Validate session token
+    S->>DB: Update last_activity
+    DB-->>S: User info
+    S->>S: Add user to request context
+    S->>DB: Query user's files
+    S-->>C: {files: [...]}
+```
+
+### Webhook Delivery Flow
+
+```mermaid
+sequenceDiagram
+    participant H as Handler
+    participant D as Dispatcher
+    participant W as Worker Pool
+    participant DB as Database
+    participant E as External Endpoint
+
+    H->>D: EmitEvent(file.uploaded)
+    D->>D: Queue event (buffered channel)
+    D-->>H: Return immediately (non-blocking)
+    
+    W->>D: Pick up event
+    W->>DB: Get matching webhook configs
+    
+    loop For each webhook
+        W->>W: Transform payload (format)
+        W->>W: Sign payload (HMAC)
+        W->>DB: Create delivery record
+        W->>E: HTTP POST (webhook URL)
+        
+        alt Success (2xx)
+            E-->>W: 200 OK
+            W->>DB: Update status=success
+        else Failure
+            E-->>W: Error/Timeout
+            W->>DB: Update status=retrying
+            W->>W: Schedule retry (exponential backoff)
+        end
+    end
+```
+
+### Database Schema Overview
+
+```mermaid
+erDiagram
+    users ||--o{ files : uploads
+    users ||--o{ user_sessions : has
+    users ||--o{ api_tokens : owns
+    files ||--o{ webhook_deliveries : triggers
+    webhook_configs ||--o{ webhook_deliveries : sends
+
+    users {
+        int id PK
+        string username UK
+        string email UK
+        string password_hash
+        string role
+        bool is_active
+        datetime created_at
+    }
+
+    files {
+        int id PK
+        string claim_code UK
+        string original_filename
+        string stored_filename
+        int file_size
+        string mime_type
+        datetime expires_at
+        int max_downloads
+        int download_count
+        int user_id FK
+        string sha256_hash
+    }
+
+    user_sessions {
+        int id PK
+        string session_token UK
+        int user_id FK
+        datetime expires_at
+        datetime last_activity
+    }
+
+    api_tokens {
+        int id PK
+        string token_hash UK
+        int user_id FK
+        string name
+        string scopes
+        datetime expires_at
+    }
+
+    webhook_configs {
+        int id PK
+        string url
+        string secret
+        string events
+        string format
+        bool enabled
+    }
+
+    webhook_deliveries {
+        int id PK
+        int webhook_config_id FK
+        string event_type
+        string status
+        int attempt_count
+    }
+```
+
+### Encryption Architecture (SFSE1)
+
+```mermaid
+flowchart LR
+    subgraph Input
+        F["Original File"]
+    end
+
+    subgraph Processing
+        direction TB
+        C1["Chunk 1 (10MB)"]
+        C2["Chunk 2 (10MB)"]
+        C3["Chunk 3 (10MB)"]
+        CN["Chunk N"]
+    end
+
+    subgraph Encryption
+        direction TB
+        E1["AES-256-GCM\n+ Nonce + Tag"]
+        E2["AES-256-GCM\n+ Nonce + Tag"]
+        E3["AES-256-GCM\n+ Nonce + Tag"]
+        EN["AES-256-GCM\n+ Nonce + Tag"]
+    end
+
+    subgraph Output
+        H["SFSE1 Header"]
+        EC1["Encrypted Chunk 1"]
+        EC2["Encrypted Chunk 2"]
+        EC3["Encrypted Chunk 3"]
+        ECN["Encrypted Chunk N"]
+    end
+
+    F --> C1 & C2 & C3 & CN
+    C1 --> E1 --> EC1
+    C2 --> E2 --> EC2
+    C3 --> E3 --> EC3
+    CN --> EN --> ECN
+
+    H --- EC1 --- EC2 --- EC3 --- ECN
+```
+
+**SFSE1 Format Benefits:**
+- Streaming encryption/decryption
+- HTTP Range requests only decrypt needed chunks
+- Constant memory usage (~10MB buffer)
+- Each chunk independently authenticated
 
 ---
 
@@ -456,6 +800,250 @@ Comprehensive error codes: 400, 404, 409, 410, 413, 503, 507
 - Chunk assembly: ~3 seconds for 5000 chunks (25GB file)
 - Concurrent chunk uploads: 3 parallel by default (configurable)
 - Memory usage during assembly: ~64KB buffer (not entire file in memory)
+
+---
+
+## Webhook Architecture
+
+SafeShare v2.8.0 introduces an event-driven webhook notification system for real-time file lifecycle monitoring.
+
+### Overview
+**Problem Solved**: External systems need real-time notifications when files are uploaded, downloaded, deleted, or expired for integration with monitoring tools, notification services, and automated workflows.
+
+**Solution**: Event dispatcher with worker pool architecture that delivers webhooks asynchronously with retry logic, multiple payload formats, and comprehensive delivery tracking.
+
+### Components
+
+**Database Schema** (`internal/database/db.go`, `internal/database/webhooks.go`):
+
+*webhook_configs table:* Stores webhook endpoint configurations
+- `id`: Primary key
+- `url`: Webhook endpoint URL (HTTP/HTTPS only)
+- `secret`: HMAC secret for signature verification
+- `service_token`: Optional authentication token for Gotify/ntfy services
+- `enabled`: Boolean flag to enable/disable webhook
+- `events`: JSON array of subscribed event types
+- `format`: Webhook payload format (safeshare/gotify/ntfy/discord)
+- `max_retries`: Maximum retry attempts (default: 5)
+- `timeout_seconds`: Request timeout (default: 30)
+- `created_at`, `updated_at`: Timestamps
+
+*webhook_deliveries table:* Tracks delivery attempts and history
+- `id`: Primary key
+- `webhook_config_id`: Foreign key to webhook_configs
+- `event_type`: Event type (file.uploaded, etc.)
+- `payload`: JSON payload sent
+- `attempt_count`: Number of delivery attempts
+- `status`: Delivery status (pending/success/failed/retrying)
+- `response_code`: HTTP response code
+- `response_body`: HTTP response body (truncated to 1000 chars)
+- `error_message`: Error message if delivery failed
+- `created_at`: When delivery was queued
+- `completed_at`: When delivery succeeded or exhausted retries
+- `next_retry_at`: Scheduled retry time for failed deliveries
+
+**Event Types** (`internal/webhooks/models.go`):
+- `file.uploaded` - File successfully uploaded and ready for download
+- `file.downloaded` - File downloaded by user (tracks each download)
+- `file.deleted` - File deleted by user or admin
+- `file.expired` - File expired due to time limit or download limit reached
+
+**Payload Formats** (`internal/webhooks/transformer.go`):
+1. **safeshare** (default): Full JSON event with HMAC signature
+2. **gotify**: Gotify notification format with service token auth
+3. **ntfy**: ntfy.sh plain text format with headers
+4. **discord**: Discord webhook embed format
+
+**Webhook Dispatcher** (`internal/webhooks/dispatcher.go`):
+- Worker pool architecture with configurable workers (default: 5)
+- Buffered event channel (default: 1000 events)
+- Async event emission (non-blocking for HTTP handlers)
+- Graceful shutdown with in-flight request completion
+- Metrics collection via Prometheus
+
+**Delivery Service** (`internal/webhooks/delivery.go`):
+- HTTP client with configurable timeout
+- HMAC signature generation (SHA-256)
+- Exponential backoff retry: 1s, 2s, 4s, 8s, 16s
+- Service token injection for Gotify/ntfy
+- Response body truncation (max 1000 chars)
+
+**Webhook Handlers** (`internal/handlers/webhook_admin.go`):
+- `ListWebhookConfigsHandler`: Get all webhook configs (masks secrets)
+- `CreateWebhookConfigHandler`: Create new webhook endpoint
+- `UpdateWebhookConfigHandler`: Update webhook (preserves masked secrets)
+- `DeleteWebhookConfigHandler`: Delete webhook
+- `TestWebhookConfigHandler`: Send test event
+- `ListWebhookDeliveriesHandler`: Get delivery history with pagination
+- `GetWebhookDeliveryHandler`: Get single delivery details
+
+**Event Emitter** (`internal/handlers/webhook_emitter.go`):
+- Global dispatcher instance set by main.go
+- `EmitWebhookEvent()`: Helper function called by handlers
+- Emits events for file upload, download, delete, expiration
+
+### Webhook Flow
+
+**Event Emission**:
+```go
+// Handler emits event (non-blocking)
+webhooks.EmitWebhookEvent(&webhooks.Event{
+    Type: webhooks.EventFileUploaded,
+    Timestamp: time.Now(),
+    File: webhooks.FileData{
+        ClaimCode: "ABC123",
+        Filename: "document.pdf",
+        Size: 1048576,
+        // ...
+    },
+})
+```
+
+**Dispatcher Processing**:
+```
+1. Event received in buffered channel
+2. Worker picks up event from channel
+3. Query enabled webhook configs subscribed to event type
+4. For each config:
+   a. Transform payload to configured format
+   b. Create delivery record (status: pending)
+   c. Attempt HTTP POST delivery
+   d. If successful: Update status to success
+   e. If failed: Schedule retry with exponential backoff
+5. Worker returns to pool for next event
+```
+
+**Retry Logic**:
+```
+Attempt 1: Immediate
+Attempt 2: +1 second
+Attempt 3: +2 seconds
+Attempt 4: +4 seconds
+Attempt 5: +8 seconds
+Attempt 6: +16 seconds (if max_retries >= 6)
+
+HTTP 5xx and network errors → retry
+HTTP 4xx → mark failed (no retry)
+HTTP 2xx → mark success
+```
+
+### Security Features
+
+1. **HMAC Signature Verification** (SafeShare format):
+   - `X-Webhook-Signature` header contains SHA-256 HMAC of payload
+   - Webhook endpoint must verify signature to prevent spoofing
+
+2. **Service Token Masking**:
+   - Secrets and service tokens masked in list responses
+   - Update endpoint preserves existing values when masked token sent
+   - Prevents accidental secret exposure in logs/UI
+
+3. **URL Validation**:
+   - Only HTTP/HTTPS schemes allowed (prevents SSRF to file://, etc.)
+   - Hostname validation (prevents empty host)
+
+4. **CSRF Protection**:
+   - All webhook management endpoints require CSRF token
+
+5. **Request Timeout**:
+   - Configurable timeout prevents slow endpoints from blocking workers
+
+6. **Worker Pool Isolation**:
+   - Failed webhooks don't impact other webhooks
+   - Buffered channel prevents memory exhaustion
+
+### Performance Characteristics
+
+**Event Emission**:
+- Non-blocking (handler doesn't wait for delivery)
+- Channel write ~microseconds
+- No impact on upload/download latency
+
+**Worker Pool**:
+- 5 workers handle ~100-500 events/second
+- Each worker processes events sequentially
+- Configurable workers for high-volume deployments
+
+**Delivery Latency**:
+- Immediate delivery attempt
+- Typical delivery: 10-100ms (depends on webhook endpoint)
+- Retry delays: Exponential backoff (1s to 16s)
+
+**Memory Usage**:
+- Buffered channel: 1000 events * ~1KB/event = ~1MB
+- Worker goroutines: 5 * ~2KB = ~10KB
+- Minimal overhead
+
+### Integration Examples
+
+**Gotify Integration**:
+```json
+{
+  "url": "https://gotify.example.com/message",
+  "service_token": "Aabcd1234efgh",
+  "format": "gotify",
+  "events": ["file.uploaded", "file.downloaded"]
+}
+```
+
+**ntfy Integration**:
+```json
+{
+  "url": "https://ntfy.sh/safeshare-alerts",
+  "service_token": "optional-bearer-token",
+  "format": "ntfy",
+  "events": ["file.expired", "file.deleted"]
+}
+```
+
+**Discord Integration**:
+```json
+{
+  "url": "https://discord.com/api/webhooks/.../...",
+  "secret": "unused-for-discord",
+  "format": "discord",
+  "events": ["file.uploaded"]
+}
+```
+
+**Custom Webhook** (with HMAC verification):
+```json
+{
+  "url": "https://your-app.com/webhooks/safeshare",
+  "secret": "your-secret-key-for-hmac",
+  "format": "safeshare",
+  "events": ["file.uploaded", "file.downloaded", "file.deleted", "file.expired"]
+}
+```
+
+### Admin Dashboard Integration
+
+The admin dashboard includes a Webhooks tab with:
+- Webhook configuration table (URL, events, format, enabled status)
+- Create webhook modal with format presets
+- Edit webhook with masked secret preservation
+- Delete webhook with confirmation
+- Test webhook button (sends test event)
+- Delivery history table (status, attempts, timestamps)
+- Delivery detail modal (full payload, response, errors)
+
+### Monitoring & Observability
+
+**Prometheus Metrics** (`internal/webhooks/metrics.go`):
+- `safeshare_webhook_events_total{event_type}` - Events emitted
+- `safeshare_webhook_deliveries_total{status}` - Delivery outcomes
+- `safeshare_webhook_delivery_duration_seconds` - Delivery latency
+- `safeshare_webhook_retries_total{webhook_id}` - Retry attempts
+
+**Structured Logging**:
+- Event emissions logged with event_type and claim_code
+- Delivery attempts logged with webhook_id, status, response_code
+- Retry scheduling logged with next_retry_at
+
+**Delivery History**:
+- Admin dashboard shows last 50 deliveries (paginated)
+- Full payload, response body, and error messages stored
+- Useful for debugging webhook integration issues
 
 ---
 
