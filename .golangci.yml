@@ -1,0 +1,90 @@
+# golangci-lint configuration for SafeShare
+# Run: golangci-lint run
+# Or via Docker: docker run --rm -v "$PWD":/app -w /app golangci/golangci-lint:latest golangci-lint run
+
+version: "2"
+
+linters:
+  # Only enable linters that catch real bugs, not style issues
+  enable:
+    - errcheck       # Checks unchecked errors
+    - ineffassign    # Detects ineffectual assignments
+    - staticcheck    # Static analysis
+    - unused         # Finds unused code
+
+  settings:
+    errcheck:
+      # Don't check errors on these functions (common patterns)
+      exclude-functions:
+        # Database cleanup
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        # File operations
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (*bufio.Writer).Flush
+        - io.Copy
+        - os.Remove
+        - os.RemoveAll
+        - os.Rename
+        - os.Setenv
+        - os.Unsetenv
+        - os.Chmod
+        # HTTP responses (client may disconnect)
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - fmt.Fprintf
+        - fmt.Fprint
+        # Config setters (validation happens at call site)
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetQuotaLimitGB
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetMaxFileSize
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetDefaultExpirationHours
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetMaxExpirationHours
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetRateLimitUpload
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetRateLimitDownload
+        - (*github.com/fjmerc/safeshare/internal/config.Config).SetBlockedExtensions
+        # Database operations in error paths
+        - github.com/fjmerc/safeshare/internal/database.DeleteSession
+        - github.com/fjmerc/safeshare/internal/database.DeleteUserSession
+        - github.com/fjmerc/safeshare/internal/database.SetAssemblyFailed
+
+    staticcheck:
+      checks:
+        - all
+        - "-QF*"      # Disable all "quick fix" style suggestions  
+        - "-S1039"    # Disable "unnecessary use of fmt.Sprintf"
+        - "-ST*"      # Disable style checks
+        - "-SA9003"   # Disable "empty branch" (often intentional)
+        - "-SA4006"   # Disable "value never used" for test setup
+        - "-SA5011"   # Disable nil pointer warnings (handled by tests)
+
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+    rules:
+      # Exclude test files from errcheck and ineffassign
+      - path: _test\.go
+        linters:
+          - errcheck
+          - ineffassign
+      - path: testutil/
+        linters:
+          - errcheck
+      - path: benchmarks/
+        linters:
+          - errcheck
+          - ineffassign
+          - staticcheck
+      # Exclude cmd/ CLI tools from stricter checks
+      - path: cmd/
+        linters:
+          - errcheck
+      # Exclude intentional silent migrations in db.go (SQLite doesn't support IF NOT EXISTS for ALTER)
+      - path: internal/database/db\.go
+        text: "db.Exec"
+
+run:
+  timeout: 5m
+  tests: true
