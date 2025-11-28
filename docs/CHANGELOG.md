@@ -1112,5 +1112,5 @@ Initial production release.
 
 <!-- Note: Historical version links below reference old v2.x tags that have been deleted.
      They are preserved for documentation purposes. The current release is v1.0.0. -->
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.0.0
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.0
