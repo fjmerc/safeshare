@@ -6,14 +6,75 @@ This guide defines the versioning, tagging, branching, and release strategy for 
 
 ## Table of Contents
 
-1. [Semantic Versioning](#semantic-versioning)
-2. [Git Branching Strategy](#git-branching-strategy)
-3. [Version Tagging](#version-tagging)
-4. [Release Process](#release-process)
-5. [Changelog Management](#changelog-management)
-6. [Docker Image Tagging](#docker-image-tagging)
-7. [Hotfix Process](#hotfix-process)
-8. [Deprecation Policy](#deprecation-policy)
+1. [Go Module Versioning (CRITICAL)](#go-module-versioning-critical)
+2. [Semantic Versioning](#semantic-versioning)
+3. [Git Branching Strategy](#git-branching-strategy)
+4. [Version Tagging](#version-tagging)
+5. [Release Process](#release-process)
+6. [Changelog Management](#changelog-management)
+7. [Docker Image Tagging](#docker-image-tagging)
+8. [Hotfix Process](#hotfix-process)
+9. [Deprecation Policy](#deprecation-policy)
+
+---
+
+## Go Module Versioning (CRITICAL)
+
+### The v2+ Module Path Requirement
+
+> **IMPORTANT**: Go modules at v2.0.0 or higher MUST have `/v2` (or `/vN`) appended to their module path. This is a **hard requirement** of the Go module system, not a convention.
+
+**Example:**
+```
+v1.x.x: module github.com/example/project      Valid
+v2.x.x: module github.com/example/project/v2   Valid (REQUIRED for v2+)
+v2.x.x: module github.com/example/project      BROKEN - Go tooling won't work
+```
+
+### Consequences of NOT Following This Rule
+
+If you tag v2.0.0+ without updating the module path:
+- `go get` and `go mod tidy` won't find v2+ versions
+- Go Report Card will show old/cached versions
+- Go module proxy indexes the module incorrectly
+- Users can't import the correct version
+- LICENSE and other files appear missing in Go tooling
+
+### Why SafeShare Stays on v1.x.x
+
+SafeShare is an **application**, not a library. Users interact with it via:
+- Docker images (version is a tag, not module path)
+- Binary downloads
+- SDKs (which have their own independent versioning)
+- Web UI (version displayed is cosmetic)
+
+The Go module version number is an internal implementation detail. Staying on v1.x.x:
+1. Avoids the `/v2` module path complexity
+2. Keeps `go.mod` and all imports simple
+3. Has zero user impact (displayed version can be anything)
+4. Prevents tooling/indexing issues
+
+**The version shown in the UI (e.g., "v1.5.0") is independent of the Go module version.**
+
+### If v2.x.x Is Ever Needed
+
+If breaking changes absolutely require a major version bump:
+
+1. **Update go.mod**:
+   ```
+   module github.com/fjmerc/safeshare/v2
+   ```
+
+2. **Update ALL internal imports** (100+ files):
+   ```go
+   import "github.com/fjmerc/safeshare/v2/internal/handlers"
+   ```
+
+3. **Update SDK references** if they import main module
+
+4. **This is a significant refactor** - avoid unless absolutely necessary
+
+**Recommendation**: Use semantic versioning for user-facing changes, but keep the Go module at v1.x.x. Increment MINOR for new features, PATCH for fixes. The "version" shown to users is just a string constant.
 
 ---
 
