@@ -25,27 +25,27 @@ func ListWebhookConfigsHandler(db *sql.DB) http.HandlerFunc {
 
 		configs, err := database.GetAllWebhookConfigs(db)
 		if err != nil {
-		slog.Error("failed to get webhook configs", "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-		"error": "Failed to retrieve webhook configurations",
-		})
-		return
+			slog.Error("failed to get webhook configs", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to retrieve webhook configurations",
+			})
+			return
 		}
 
 		// Mask sensitive credentials in response for security
 		for _, config := range configs {
-		if config.ServiceToken != "" {
-			config.ServiceToken = utils.MaskToken(config.ServiceToken)
+			if config.ServiceToken != "" {
+				config.ServiceToken = utils.MaskToken(config.ServiceToken)
+			}
+			if config.Secret != "" {
+				config.Secret = utils.MaskToken(config.Secret)
+			}
 		}
-		if config.Secret != "" {
-			config.Secret = utils.MaskToken(config.Secret)
-		}
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(configs)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(configs)
 	}
 }
 
@@ -58,15 +58,15 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-		URL            string   `json:"url"`
-		Secret         string   `json:"secret"`
-		ServiceToken   string   `json:"service_token,omitempty"`
-		Enabled        bool     `json:"enabled"`
-		Events         []string `json:"events"`
-		Format         string   `json:"format"`
-		MaxRetries     int      `json:"max_retries"`
-		TimeoutSeconds int      `json:"timeout_seconds"`
-	}
+			URL            string   `json:"url"`
+			Secret         string   `json:"secret"`
+			ServiceToken   string   `json:"service_token,omitempty"`
+			Enabled        bool     `json:"enabled"`
+			Events         []string `json:"events"`
+			Format         string   `json:"format"`
+			MaxRetries     int      `json:"max_retries"`
+			TimeoutSeconds int      `json:"timeout_seconds"`
+		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
@@ -153,35 +153,35 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 
 		// Validate service token length (Gotify/ntfy tokens are typically 20-50 chars)
 		if len(req.ServiceToken) > 512 {
-		w.Header().Set("Content-Type", "application/json")
-		 w.WriteHeader(http.StatusBadRequest)
-		 json.NewEncoder(w).Encode(map[string]string{
-		 "error": "Service token exceeds maximum length of 512 characters",
-		 })
-		 return
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Service token exceeds maximum length of 512 characters",
+			})
+			return
 		}
 
-	// Set defaults
-	if req.Format == "" {
-		req.Format = "safeshare"
-	}
-	if req.MaxRetries == 0 {
-		req.MaxRetries = 5
-	}
-	if req.TimeoutSeconds == 0 {
-		req.TimeoutSeconds = 30
-	}
+		// Set defaults
+		if req.Format == "" {
+			req.Format = "safeshare"
+		}
+		if req.MaxRetries == 0 {
+			req.MaxRetries = 5
+		}
+		if req.TimeoutSeconds == 0 {
+			req.TimeoutSeconds = 30
+		}
 
 		config := &webhooks.Config{
-		URL:            req.URL,
-		Secret:         req.Secret,
-		ServiceToken:   req.ServiceToken,
-		Enabled:        req.Enabled,
-		Events:         req.Events,
-		Format:         webhooks.WebhookFormat(req.Format),
-		MaxRetries:     req.MaxRetries,
-		 TimeoutSeconds: req.TimeoutSeconds,
-	}
+			URL:            req.URL,
+			Secret:         req.Secret,
+			ServiceToken:   req.ServiceToken,
+			Enabled:        req.Enabled,
+			Events:         req.Events,
+			Format:         webhooks.WebhookFormat(req.Format),
+			MaxRetries:     req.MaxRetries,
+			TimeoutSeconds: req.TimeoutSeconds,
+		}
 
 		if err := database.CreateWebhookConfig(db, config); err != nil {
 			slog.Error("failed to create webhook config", "error", err)
@@ -231,15 +231,15 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-		URL            string   `json:"url"`
-		Secret         string   `json:"secret"`
-		ServiceToken   string   `json:"service_token,omitempty"`
-		Enabled        bool     `json:"enabled"`
-		Events         []string `json:"events"`
-		Format         string   `json:"format"`
-		MaxRetries     int      `json:"max_retries"`
-		 TimeoutSeconds int      `json:"timeout_seconds"`
-	}
+			URL            string   `json:"url"`
+			Secret         string   `json:"secret"`
+			ServiceToken   string   `json:"service_token,omitempty"`
+			Enabled        bool     `json:"enabled"`
+			Events         []string `json:"events"`
+			Format         string   `json:"format"`
+			MaxRetries     int      `json:"max_retries"`
+			TimeoutSeconds int      `json:"timeout_seconds"`
+		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
@@ -325,13 +325,13 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 
 		// Validate service token length (Gotify/ntfy tokens are typically 20-50 chars)
 		if len(req.ServiceToken) > 512 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-		"error": "Service token exceeds maximum length of 512 characters",
-		})
-		return
-}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Service token exceeds maximum length of 512 characters",
+			})
+			return
+		}
 
 		// Check if secret or service token are masked and should be preserved
 		preserveSecret := utils.IsMaskedToken(req.Secret)
@@ -339,23 +339,23 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 
 		// Set default format if not provided
 		if req.Format == "" {
-		req.Format = "safeshare"
+			req.Format = "safeshare"
 		}
 
 		config := &webhooks.Config{
-		ID:             id,
-		URL:            req.URL,
-		 Secret:         req.Secret,         // Will be preserved if masked
-		ServiceToken:   req.ServiceToken,   // Will be preserved if masked
-		Enabled:        req.Enabled,
-		Events:         req.Events,
-		 Format:         webhooks.WebhookFormat(req.Format),
-		MaxRetries:     req.MaxRetries,
-		  TimeoutSeconds: req.TimeoutSeconds,
+			ID:             id,
+			URL:            req.URL,
+			Secret:         req.Secret,       // Will be preserved if masked
+			ServiceToken:   req.ServiceToken, // Will be preserved if masked
+			Enabled:        req.Enabled,
+			Events:         req.Events,
+			Format:         webhooks.WebhookFormat(req.Format),
+			MaxRetries:     req.MaxRetries,
+			TimeoutSeconds: req.TimeoutSeconds,
 		}
 
 		// Use atomic update that conditionally preserves masked fields (prevents TOCTOU)
-	if err := database.UpdateWebhookConfigPreserveMasked(db, config, preserveSecret, preserveToken); err != nil {
+		if err := database.UpdateWebhookConfigPreserveMasked(db, config, preserveSecret, preserveToken); err != nil {
 			slog.Error("failed to update webhook config", "id", id, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)

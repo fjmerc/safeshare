@@ -12,11 +12,11 @@ import (
 
 // BlockedIP represents a blocked IP address
 type BlockedIP struct {
-	ID         int64
-	IPAddress  string
-	Reason     string
-	BlockedAt  time.Time
-	BlockedBy  string
+	ID        int64
+	IPAddress string
+	Reason    string
+	BlockedAt time.Time
+	BlockedBy string
 }
 
 // AdminSession represents an admin session
@@ -286,7 +286,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-						&file.DownloadCount,
+			&file.DownloadCount,
 			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
@@ -393,7 +393,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-						&file.DownloadCount,
+			&file.DownloadCount,
 			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,
@@ -467,8 +467,8 @@ func DeleteFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&createdAt,
 		&expiresAt,
 		&maxDownloads,
-					&file.DownloadCount,
-			&file.CompletedDownloads,
+		&file.DownloadCount,
+		&file.CompletedDownloads,
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
@@ -550,7 +550,7 @@ func DeleteFilesByClaimCodes(db *sql.DB, claimCodes []string) ([]*models.File, e
 			&createdAt,
 			&expiresAt,
 			&maxDownloads,
-						&file.DownloadCount,
+			&file.DownloadCount,
 			&file.CompletedDownloads,
 			&file.UploaderIP,
 			&passwordHash,

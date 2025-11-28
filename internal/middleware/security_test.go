@@ -25,7 +25,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 
 	// Test all security headers
 	tests := []struct {
-		name  string
+		name   string
 		header string
 		want   string
 	}{

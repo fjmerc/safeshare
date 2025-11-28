@@ -91,7 +91,7 @@ func TestLoad_QuotaEnforcementUnderLoad(t *testing.T) {
 
 	handler := handlers.UploadHandler(db, cfg)
 
-	numUploads := 600 // Attempt more than quota allows
+	numUploads := 600                                 // Attempt more than quota allows
 	fileContent := bytes.Repeat([]byte("Q"), 10*1024) // 10KB files
 
 	var successCount, quotaExceededCount, otherFailCount int64

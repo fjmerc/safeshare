@@ -191,7 +191,7 @@ func TestRateLimiter_XForwardedFor(t *testing.T) {
 	// Test X-Forwarded-For header
 	for i := 1; i <= 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
-		req.RemoteAddr = "10.0.0.1:12345" // Proxy IP
+		req.RemoteAddr = "10.0.0.1:12345"                // Proxy IP
 		req.Header.Set("X-Forwarded-For", "203.0.113.1") // Real client IP
 		rr := httptest.NewRecorder()
 
@@ -413,7 +413,7 @@ func TestRateLimiter_Stop(t *testing.T) {
 
 func TestRateLimiter_EdgeCases(t *testing.T) {
 	cfg := &mockConfigProvider{
-		uploadLimit:   0, // Zero limit
+		uploadLimit:   0,  // Zero limit
 		downloadLimit: -1, // Negative limit
 	}
 

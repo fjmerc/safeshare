@@ -124,10 +124,10 @@ func TestValidateAPITokenFormat(t *testing.T) {
 
 func TestValidateScopes(t *testing.T) {
 	tests := []struct {
-		name           string
-		scopes         []string
-		wantInvalid    []string
-		wantErr        bool
+		name        string
+		scopes      []string
+		wantInvalid []string
+		wantErr     bool
 	}{
 		{
 			name:        "all valid scopes",

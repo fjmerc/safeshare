@@ -34,10 +34,10 @@ func getHTTPClient(timeoutSeconds int) *http.Client {
 			},
 		}
 	})
-	
+
 	// Update timeout if different from current
 	httpClient.Timeout = time.Duration(timeoutSeconds) * time.Second
-	
+
 	return httpClient
 }
 
@@ -113,14 +113,14 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	// Read response body (limit to 10KB for logging, 1KB for storage)
 	const maxStoredResponseSize = 1024      // 1KB stored in DB
 	const maxLoggedResponseSize = 10 * 1024 // 10KB for logs
-	
+
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxLoggedResponseSize))
 	responseBody := string(bodyBytes)
 	if err != nil {
 		slog.Warn("failed to read webhook response body", "url", url, "error", err)
 		responseBody = fmt.Sprintf("failed to read response: %v", err)
 	}
-	
+
 	// Truncate for database storage to prevent bloat
 	storedResponseBody := responseBody
 	if len(storedResponseBody) > maxStoredResponseSize {
@@ -131,14 +131,14 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	success := resp.StatusCode >= 200 && resp.StatusCode < 300
 
 	if success {
-		slog.Info("webhook delivered successfully", 
-			"url", url, 
-			"status_code", resp.StatusCode, 
+		slog.Info("webhook delivered successfully",
+			"url", url,
+			"status_code", resp.StatusCode,
 			"duration", duration)
 	} else {
-		slog.Warn("webhook delivery received non-2xx status", 
-			"url", url, 
-			"status_code", resp.StatusCode, 
+		slog.Warn("webhook delivery received non-2xx status",
+			"url", url,
+			"status_code", resp.StatusCode,
 			"duration", duration,
 			"response_body", responseBody)
 	}
@@ -157,21 +157,21 @@ func CalculateRetryDelay(attemptCount int) time.Duration {
 	if attemptCount < 0 {
 		return 1 * time.Second // Default to minimum delay
 	}
-	
+
 	// Cap attempt count to prevent overflow
 	// 1<<30 = 1073741824 seconds = ~34 years (safe on 32-bit and 64-bit)
 	if attemptCount > 30 {
 		attemptCount = 30
 	}
-	
+
 	// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, ...
 	delay := time.Second * time.Duration(1<<uint(attemptCount))
-	
+
 	// Cap at 60 seconds maximum
 	if delay > 60*time.Second {
 		delay = 60 * time.Second
 	}
-	
+
 	return delay
 }
 
@@ -191,17 +191,17 @@ func constructURLWithToken(baseURL, token string, format WebhookFormat) string {
 			slog.Error("failed to parse webhook URL for token injection", "url", baseURL, "error", err)
 			return baseURL
 		}
-		
+
 		// Append /message endpoint if not already present
 		if !strings.HasSuffix(parsedURL.Path, "/message") {
 			parsedURL.Path = strings.TrimRight(parsedURL.Path, "/") + "/message"
 		}
-		
+
 		// Use url.Values for proper encoding (prevents injection)
 		query := parsedURL.Query()
 		query.Set("token", token) // Properly encodes special characters
 		parsedURL.RawQuery = query.Encode()
-		
+
 		return parsedURL.String()
 	case FormatNtfy, FormatDiscord, FormatSafeShare:
 		// No URL modification needed for these formats

@@ -4,16 +4,16 @@ import "time"
 
 // User represents a user account in the system
 type User struct {
-	ID           int64
-	Username     string
-	Email        string
-	PasswordHash string
-	Role         string // 'user' or 'admin'
-	IsApproved   bool
-	IsActive     bool // For soft disable functionality
+	ID                    int64
+	Username              string
+	Email                 string
+	PasswordHash          string
+	Role                  string // 'user' or 'admin'
+	IsApproved            bool
+	IsActive              bool // For soft disable functionality
 	RequirePasswordChange bool // Flag for temporary passwords
-	CreatedAt    time.Time
-	LastLogin    *time.Time // nullable
+	CreatedAt             time.Time
+	LastLogin             *time.Time // nullable
 }
 
 // UserSession represents a user session
@@ -30,16 +30,16 @@ type UserSession struct {
 
 // CreateUserRequest is the request body for creating a new user (admin only)
 type CreateUserRequest struct {
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	Password     string `json:"password"` // Optional: if empty, auto-generate
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"` // Optional: if empty, auto-generate
 }
 
 // CreateUserResponse is the response after creating a new user
 type CreateUserResponse struct {
-	ID               int64  `json:"id"`
-	Username         string `json:"username"`
-	Email            string `json:"email"`
+	ID                int64  `json:"id"`
+	Username          string `json:"username"`
+	Email             string `json:"email"`
 	TemporaryPassword string `json:"temporary_password,omitempty"` // Only returned on creation
 }
 
@@ -74,12 +74,12 @@ type ChangePasswordRequest struct {
 
 // UserListItem represents a user in the admin user list
 type UserListItem struct {
-	ID          int64      `json:"id"`
-	Username    string     `json:"username"`
-	Email       string     `json:"email"`
-	Role        string     `json:"role"`
-	IsActive    bool       `json:"is_active"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastLogin   *time.Time `json:"last_login"`
-	FileCount   int        `json:"file_count"`
+	ID        int64      `json:"id"`
+	Username  string     `json:"username"`
+	Email     string     `json:"email"`
+	Role      string     `json:"role"`
+	IsActive  bool       `json:"is_active"`
+	CreatedAt time.Time  `json:"created_at"`
+	LastLogin *time.Time `json:"last_login"`
+	FileCount int        `json:"file_count"`
 }

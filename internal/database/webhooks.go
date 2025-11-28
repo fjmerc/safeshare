@@ -60,7 +60,7 @@ func GetWebhookConfig(db *sql.DB, id int64) (*webhooks.Config, error) {
 		WHERE id = ?
 	`, id).Scan(&config.ID, &config.URL, &config.Secret, &serviceToken, &enabled, &eventsJSON, &format,
 		&config.MaxRetries, &config.TimeoutSeconds, &config.CreatedAt, &config.UpdatedAt)
-	
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("webhook config not found")
@@ -254,11 +254,11 @@ func UpdateWebhookConfigPreserveMasked(db *sql.DB, config *webhooks.Config, pres
 		    max_retries = ?, timeout_seconds = ?, 
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, config.URL, 
-	   preserveSecret, config.Secret,      // Conditional: preserve or update secret
-	   preserveToken, config.ServiceToken, // Conditional: preserve or update token
-	   enabled, eventsJSON, format, 
-	   config.MaxRetries, config.TimeoutSeconds, config.ID)
+	`, config.URL,
+		preserveSecret, config.Secret, // Conditional: preserve or update secret
+		preserveToken, config.ServiceToken, // Conditional: preserve or update token
+		enabled, eventsJSON, format,
+		config.MaxRetries, config.TimeoutSeconds, config.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update webhook config: %w", err)
 	}

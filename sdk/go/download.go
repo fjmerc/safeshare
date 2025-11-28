@@ -91,9 +91,9 @@ func (c *Client) Download(ctx context.Context, claimCode, destination string, op
 	var reader io.Reader = resp.Body
 	if opts.OnProgress != nil {
 		reader = &progressDownloadReader{
-			reader:        resp.Body,
-			totalBytes:    contentLength,
-			onProgress:    opts.OnProgress,
+			reader:     resp.Body,
+			totalBytes: contentLength,
+			onProgress: opts.OnProgress,
 		}
 	}
 
@@ -147,9 +147,9 @@ func (c *Client) DownloadToWriter(ctx context.Context, claimCode string, w io.Wr
 	var reader io.Reader = resp.Body
 	if opts.OnProgress != nil {
 		reader = &progressDownloadReader{
-			reader:        resp.Body,
-			totalBytes:    contentLength,
-			onProgress:    opts.OnProgress,
+			reader:     resp.Body,
+			totalBytes: contentLength,
+			onProgress: opts.OnProgress,
 		}
 	}
 
@@ -199,10 +199,10 @@ func (c *Client) GetFileInfo(ctx context.Context, claimCode string) (*FileInfo, 
 
 // progressDownloadReader wraps an io.Reader to track download progress.
 type progressDownloadReader struct {
-	reader      io.Reader
-	totalBytes  int64
-	downloaded  int64
-	onProgress  func(DownloadProgress)
+	reader     io.Reader
+	totalBytes int64
+	downloaded int64
+	onProgress func(DownloadProgress)
 }
 
 func (pr *progressDownloadReader) Read(p []byte) (int, error) {

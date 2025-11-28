@@ -389,13 +389,13 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 	defer rows.Close()
 
 	type expiredFileData struct {
-		ID             int64
-		ClaimCode      string
+		ID               int64
+		ClaimCode        string
 		OriginalFilename string
-		StoredFilename string
-		FileSize       int64
-		MimeType       string
-		ExpiresAt      time.Time
+		StoredFilename   string
+		FileSize         int64
+		MimeType         string
+		ExpiresAt        time.Time
 	}
 	var expiredFiles []expiredFileData
 
@@ -404,12 +404,12 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 		var id int64
 		var claimCode, originalFilename, storedFilename, mimeType string
 		var fileSize int64
-		
+
 		if err := rows.Scan(&id, &claimCode, &originalFilename, &storedFilename, &fileSize, &mimeType, &expiresAtStr); err != nil {
 			slog.Error("failed to scan expired file", "error", err)
 			continue
 		}
-		
+
 		// Parse timestamp from SQLite RFC3339 string format
 		expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
 		if err != nil {
@@ -419,15 +419,15 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 			)
 			continue
 		}
-		
+
 		expiredFiles = append(expiredFiles, expiredFileData{
-			ID:             id,
-			ClaimCode:      claimCode,
+			ID:               id,
+			ClaimCode:        claimCode,
 			OriginalFilename: originalFilename,
-			StoredFilename: storedFilename,
-			FileSize:       fileSize,
-			MimeType:       mimeType,
-			ExpiresAt:      expiresAt,
+			StoredFilename:   storedFilename,
+			FileSize:         fileSize,
+			MimeType:         mimeType,
+			ExpiresAt:        expiresAt,
 		})
 	}
 

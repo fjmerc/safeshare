@@ -73,8 +73,8 @@ var (
 	// HTTPRequestDuration tracks HTTP request latency by method and path
 	HTTPRequestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "safeshare_http_request_duration_seconds",
-			Help: "HTTP request latency in seconds",
+			Name:    "safeshare_http_request_duration_seconds",
+			Help:    "HTTP request latency in seconds",
 			Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		},
 		[]string{"method", "path"},
@@ -86,15 +86,15 @@ var (
 			Name: "safeshare_upload_size_bytes",
 			Help: "Distribution of uploaded file sizes in bytes",
 			Buckets: []float64{
-				1024,           // 1 KB
-				10240,          // 10 KB
-				102400,         // 100 KB
-				1048576,        // 1 MB
-				10485760,       // 10 MB
-				104857600,      // 100 MB
-				1073741824,     // 1 GB
-				10737418240,    // 10 GB
-				107374182400,   // 100 GB
+				1024,         // 1 KB
+				10240,        // 10 KB
+				102400,       // 100 KB
+				1048576,      // 1 MB
+				10485760,     // 10 MB
+				104857600,    // 100 MB
+				1073741824,   // 1 GB
+				10737418240,  // 10 GB
+				107374182400, // 100 GB
 			},
 		},
 	)
@@ -105,15 +105,15 @@ var (
 			Name: "safeshare_download_size_bytes",
 			Help: "Distribution of downloaded file sizes in bytes",
 			Buckets: []float64{
-				1024,           // 1 KB
-				10240,          // 10 KB
-				102400,         // 100 KB
-				1048576,        // 1 MB
-				10485760,       // 10 MB
-				104857600,      // 100 MB
-				1073741824,     // 1 GB
-				10737418240,    // 10 GB
-				107374182400,   // 100 GB
+				1024,         // 1 KB
+				10240,        // 10 KB
+				102400,       // 100 KB
+				1048576,      // 1 MB
+				10485760,     // 10 MB
+				104857600,    // 100 MB
+				1073741824,   // 1 GB
+				10737418240,  // 10 GB
+				107374182400, // 100 GB
 			},
 		},
 	)
@@ -135,8 +135,8 @@ var (
 	// HealthCheckDuration tracks health check execution time by endpoint
 	HealthCheckDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "safeshare_health_check_duration_seconds",
-			Help: "Health check execution time in seconds",
+			Name:    "safeshare_health_check_duration_seconds",
+			Help:    "Health check execution time in seconds",
 			Buckets: []float64{.001, .002, .005, .01, .025, .05, .1},
 		},
 		[]string{"endpoint"},

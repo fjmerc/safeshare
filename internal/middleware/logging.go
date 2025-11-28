@@ -41,7 +41,7 @@ func redactPathClaimCodes(path string) string {
 		if len(submatches) < 3 {
 			return match
 		}
-		prefix := submatches[1]  // "/api/claim/"
+		prefix := submatches[1]    // "/api/claim/"
 		claimCode := submatches[2] // The actual claim code
 
 		// Redact the claim code (show first 3 and last 2 chars)

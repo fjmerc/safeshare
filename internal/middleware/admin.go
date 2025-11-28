@@ -172,25 +172,25 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 				// Get CSRF token from cookie
 				csrfCookie, err := r.Cookie("csrf_token")
 				if err != nil || csrfToken == "" || csrfCookie == nil {
-				slog.Warn("CSRF validation failed - missing token",
-				"path", r.URL.Path,
-				"ip", getClientIP(r),
-				"has_csrf_header", csrfToken != "",
-				"has_csrf_cookie", csrfCookie != nil,
-				)
-				http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
-				return
+					slog.Warn("CSRF validation failed - missing token",
+						"path", r.URL.Path,
+						"ip", getClientIP(r),
+						"has_csrf_header", csrfToken != "",
+						"has_csrf_cookie", csrfCookie != nil,
+					)
+					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
+					return
 				}
 
-			// Use constant-time comparison to prevent timing attacks
-			if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
-				slog.Warn("CSRF validation failed - token mismatch",
-					"path", r.URL.Path,
-					"ip", getClientIP(r),
-				)
-				http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
-				return
-			}
+				// Use constant-time comparison to prevent timing attacks
+				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
+					slog.Warn("CSRF validation failed - token mismatch",
+						"path", r.URL.Path,
+						"ip", getClientIP(r),
+					)
+					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
+					return
+				}
 			}
 
 			next.ServeHTTP(w, r)
@@ -222,7 +222,7 @@ func SetCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error) {
 // RateLimitAdminLogin rate limits admin login attempts
 func RateLimitAdminLogin() func(http.Handler) http.Handler {
 	type loginAttempt struct {
-		count      int
+		count       int
 		lastAttempt time.Time
 	}
 
@@ -276,7 +276,7 @@ func RateLimitAdminLogin() func(http.Handler) http.Handler {
 // RateLimitUserLogin rate limits user login attempts
 func RateLimitUserLogin() func(http.Handler) http.Handler {
 	type loginAttempt struct {
-		count      int
+		count       int
 		lastAttempt time.Time
 	}
 

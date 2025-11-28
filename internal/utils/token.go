@@ -26,12 +26,12 @@ func IsMaskedToken(token string) bool {
 	if token == "" {
 		return false
 	}
-	
+
 	// Exact match for fully masked short tokens (≤6 chars)
 	if token == "***" {
 		return true
 	}
-	
+
 	// Check for pattern: "ABC***XYZ" (3 chars + *** + 3 chars = 9 chars total)
 	// This matches the exact format produced by MaskToken()
 	if len(token) == 9 && token[3:6] == "***" {
@@ -41,6 +41,6 @@ func IsMaskedToken(token string) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }

@@ -50,7 +50,7 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 		// Validate username (alphanumeric, underscore, dash only)
 		for _, c := range req.Username {
 			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-				 (c >= '0' && c <= '9') || c == '_' || c == '-') {
+				(c >= '0' && c <= '9') || c == '_' || c == '-') {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]string{
@@ -132,9 +132,9 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 
 		// Return user info with temporary password
 		response := models.CreateUserResponse{
-			ID:               user.ID,
-			Username:         user.Username,
-			Email:            user.Email,
+			ID:                user.ID,
+			Username:          user.Username,
+			Email:             user.Email,
 			TemporaryPassword: temporaryPassword,
 		}
 
@@ -211,9 +211,8 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
-// Limit JSON request body size to prevent memory exhaustion
-r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
-
+		// Limit JSON request body size to prevent memory exhaustion
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
 		// Parse request
 		var req models.UpdateUserRequest

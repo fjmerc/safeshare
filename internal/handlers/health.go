@@ -19,7 +19,7 @@ import (
 
 const (
 	// Health status thresholds
-	criticalDiskFreeBytes   = 500 * 1024 * 1024   // 500MB
+	criticalDiskFreeBytes   = 500 * 1024 * 1024      // 500MB
 	warningDiskFreeBytes    = 2 * 1024 * 1024 * 1024 // 2GB
 	criticalDiskUsedPercent = 98.0
 	warningDiskUsedPercent  = 90.0
@@ -166,10 +166,10 @@ func getComprehensiveHealth(db *sql.DB, cfg *config.Config, startTime time.Time)
 		details = append(details, "disk space check failed")
 		// This is a critical failure
 		return &models.HealthResponse{
-			Status:        "unhealthy",
-			StatusDetails: details,
-			UptimeSeconds: int64(uptime.Seconds()),
-			TotalFiles:    totalFiles,
+			Status:           "unhealthy",
+			StatusDetails:    details,
+			UptimeSeconds:    int64(uptime.Seconds()),
+			TotalFiles:       totalFiles,
 			StorageUsedBytes: totalStorageUsed,
 		}, "unhealthy", http.StatusServiceUnavailable
 	}
@@ -178,24 +178,24 @@ func getComprehensiveHealth(db *sql.DB, cfg *config.Config, startTime time.Time)
 	if !isDirectoryWritable(cfg.UploadDir) {
 		details = append(details, "upload directory not writable")
 		return &models.HealthResponse{
-			Status:        "unhealthy",
-			StatusDetails: details,
-			UptimeSeconds: int64(uptime.Seconds()),
-			TotalFiles:    totalFiles,
+			Status:           "unhealthy",
+			StatusDetails:    details,
+			UptimeSeconds:    int64(uptime.Seconds()),
+			TotalFiles:       totalFiles,
 			StorageUsedBytes: totalStorageUsed,
 		}, "unhealthy", http.StatusServiceUnavailable
 	}
 
 	// Build response
 	response := &models.HealthResponse{
-		Status:           "healthy",
-		UptimeSeconds:    int64(uptime.Seconds()),
-		TotalFiles:       totalFiles,
-		StorageUsedBytes: totalStorageUsed,
-		DiskTotalBytes:   diskInfo.TotalBytes,
-		DiskFreeBytes:    diskInfo.FreeBytes,
+		Status:             "healthy",
+		UptimeSeconds:      int64(uptime.Seconds()),
+		TotalFiles:         totalFiles,
+		StorageUsedBytes:   totalStorageUsed,
+		DiskTotalBytes:     diskInfo.TotalBytes,
+		DiskFreeBytes:      diskInfo.FreeBytes,
 		DiskAvailableBytes: diskInfo.AvailableBytes,
-		DiskUsedPercent:  diskInfo.UsedPercent,
+		DiskUsedPercent:    diskInfo.UsedPercent,
 	}
 
 	// Add quota info if configured

@@ -79,7 +79,7 @@ func TestIPBlockCheck_XForwardedFor(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/upload", nil)
-	req.RemoteAddr = "10.0.0.1:12345" // Proxy IP
+	req.RemoteAddr = "10.0.0.1:12345"                // Proxy IP
 	req.Header.Set("X-Forwarded-For", "203.0.113.1") // Real client IP
 
 	rr := httptest.NewRecorder()
