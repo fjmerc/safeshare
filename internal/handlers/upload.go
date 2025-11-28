@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +28,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// uploadParams holds parsed upload request parameters
+type uploadParams struct {
+	expiresInMinutes int
+	neverExpire      bool
+	maxDownloads     *int
+	passwordHash     string
+}
+
+// fileProcessingResult holds the result of file processing and storage
+type fileProcessingResult struct {
+	storedFilename   string
+	filePath         string
+	written          int64
+	sha256Hash       string
+	detectedMimeType string
+}
+
 // UploadHandler handles file upload requests
 func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,377 +54,452 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Parse multipart form with size limit
-		r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
-		if err := r.ParseMultipartForm(cfg.GetMaxFileSize()); err != nil {
-			sendError(w, "File too large or invalid form data", "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
-			return
-		}
-
-		// Get the file from the form
-		file, header, err := r.FormFile("file")
+		// Validate and retrieve uploaded file
+		file, header, err := validateAndGetUploadedFile(w, r, cfg)
 		if err != nil {
-			sendError(w, "No file provided", "NO_FILE", http.StatusBadRequest)
-			return
+			return // Error already sent to client
 		}
 		defer file.Close()
 
-		// Validate file extension
-		allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
-		if err != nil {
-			slog.Error("failed to validate file extension", "error", err)
-			sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
-			return
-		}
-		if !allowed {
-			clientIP := getClientIP(r)
-			slog.Warn("blocked file extension",
-				"filename", header.Filename,
-				"extension", blockedExt,
-				"client_ip", clientIP,
-			)
-			sendError(w,
-				fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
-				"BLOCKED_EXTENSION",
-				http.StatusBadRequest,
-			)
-			return
-		}
-
-		// Validate file size
-		if header.Size > cfg.GetMaxFileSize() {
-			sendError(w, fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.GetMaxFileSize()), "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
-			return
-		}
-
-		// Check disk space before accepting upload
-		// Skip percentage check if quota is configured (quota takes precedence)
+		// Check storage availability
 		quotaConfigured := cfg.GetQuotaLimitGB() > 0
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, header.Size, quotaConfigured)
+		if err := checkStorageAvailability(w, r, cfg, header.Size, quotaConfigured); err != nil {
+			return // Error already sent to client
+		}
+
+		// Parse request parameters
+		params, err := parseUploadParameters(w, r, cfg)
 		if err != nil {
-			slog.Error("failed to check disk space", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-		if !hasSpace {
-			slog.Warn("insufficient disk space",
-				"file_size", header.Size,
-				"client_ip", getClientIP(r),
-				"reason", errMsg,
-			)
-			sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
-			return
+			return // Error already sent to client
 		}
 
-		// Note: Quota check moved to transactional CreateFileWithQuotaCheck() to prevent race conditions
-
-		// Parse optional parameters
-		expiresInHours := cfg.GetDefaultExpirationHours()
-		neverExpire := false
-		if hoursStr := r.FormValue("expires_in_hours"); hoursStr != "" {
-			hours, err := strconv.ParseFloat(hoursStr, 64)
-			if err != nil || hours < 0 {
-				sendError(w, "Invalid expires_in_hours parameter", "INVALID_PARAMETER", http.StatusBadRequest)
-				return
-			}
-
-			// Special case: 0 means "never expire"
-			if hours == 0 {
-				neverExpire = true
-			} else {
-				// Validate against maximum expiration time (security: prevent disk space abuse)
-				if int(hours) > cfg.GetMaxExpirationHours() {
-					sendError(w,
-						fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Use 0 for files that never expire.", cfg.GetMaxExpirationHours()),
-						"EXPIRATION_TOO_LONG",
-						http.StatusBadRequest,
-					)
-					return
-				}
-
-				expiresInHours = int(hours * 60) // Convert to minutes for precision
-				if expiresInHours < 1 {
-					expiresInHours = 1 // Minimum 1 minute
-				}
-			}
-		} else {
-			expiresInHours = cfg.GetDefaultExpirationHours() * 60 // Convert to minutes
-		}
-
-		var maxDownloads *int
-		if maxDownloadsStr := r.FormValue("max_downloads"); maxDownloadsStr != "" {
-			maxDl, err := strconv.Atoi(maxDownloadsStr)
-			if err != nil || maxDl <= 0 {
-				sendError(w, "Invalid max_downloads parameter", "INVALID_PARAMETER", http.StatusBadRequest)
-				return
-			}
-			maxDownloads = &maxDl
-		}
-
-		// Parse optional password for password protection
-		var passwordHash string
-		if password := r.FormValue("password"); password != "" {
-			hash, err := utils.HashPassword(password)
-			if err != nil {
-				slog.Error("failed to hash password", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			passwordHash = hash
-		}
-
-		// Generate unique claim code (with retry on collision)
-		var claimCode string
-		maxRetries := 5
-		for i := 0; i < maxRetries; i++ {
-			claimCode, err = utils.GenerateClaimCode()
-			if err != nil {
-				slog.Error("failed to generate claim code", "error", err)
-				sendError(w, "Failed to generate claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			// Check if code already exists
-			existing, err := database.GetFileByClaimCode(db, claimCode)
-			if err != nil {
-				slog.Error("failed to check claim code", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-
-			if existing == nil {
-				break // Code is unique
-			}
-
-			if i == maxRetries-1 {
-				sendError(w, "Failed to generate unique claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-		}
-
-		// Generate unique filename for storage
-		storedFilename := uuid.New().String() + filepath.Ext(header.Filename)
-
-		// Create upload directory if it doesn't exist
-		if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
-			slog.Error("failed to create upload directory", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// MIME type detection: Read first 512 bytes to detect file type without loading entire file into memory.
-		// This buffer will be prepended back to the stream for processing.
-		mimeBuffer := make([]byte, 512)
-		n, err := io.ReadFull(file, mimeBuffer)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			slog.Error("failed to read file for MIME detection", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-		// Handle files smaller than 512 bytes (n will be less than 512, err will be EOF or ErrUnexpectedEOF)
-		mimeBuffer = mimeBuffer[:n]
-
-		// Detect MIME type from file content (don't trust user-provided Content-Type)
-		// This prevents attackers from uploading malicious files with fake MIME types
-		mtype := mimetype.Detect(mimeBuffer)
-		detectedMimeType := mtype.String()
-		slog.Debug("MIME type detected",
-			"filename", header.Filename,
-			"detected", detectedMimeType,
-			"user_provided", header.Header.Get("Content-Type"),
-			"bytes_analyzed", n,
-		)
-
-		// Reconstruct full file stream by combining MIME buffer with remaining content
-		fullReader := io.MultiReader(bytes.NewReader(mimeBuffer), file)
-
-		// Compute SHA256 hash of original file (before encryption) using TeeReader
-		// This allows us to hash the file as we stream it, with zero extra I/O
-		hasher := sha256.New()
-		hashedReader := io.TeeReader(fullReader, hasher)
-
-		// Atomic write pattern: Write to temp file, then rename to final path
-		// This prevents partial files on disk if upload/encryption fails mid-stream
-		filePath := filepath.Join(cfg.UploadDir, storedFilename)
-		tempPath := filePath + ".tmp"
-
-		// Create temp file for atomic write
-		tempFile, err := os.Create(tempPath)
+		// Generate unique claim code
+		claimCode, err := generateUniqueClaimCode(w, db)
 		if err != nil {
-			slog.Error("failed to create temp file", "path", tempPath, "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+			return // Error already sent to client
 		}
 
-		// Track success for cleanup
-		var succeeded bool
-		defer func() {
-			tempFile.Close()
-			if !succeeded {
-				// Clean up temp file if anything failed
-				os.Remove(tempPath)
-			}
-		}()
-
-		// Stream file to disk with optional encryption
-		// This approach uses constant memory (~10MB) regardless of file size
-		// The hashedReader computes SHA256 as we stream (zero extra I/O)
-		var written int64
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			// Stream encrypt: Read chunks from upload → hash → encrypt → write to temp file
-			// Uses SFSE1 format (compatible with existing decryption)
-			err = utils.EncryptFileStreamingFromReader(tempFile, hashedReader, cfg.EncryptionKey)
-			if err != nil {
-				slog.Error("failed to encrypt file stream", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			written = header.Size // Use original size for storage accounting (not encrypted size)
-			slog.Debug("file encrypted with streaming encryption",
-				"original_size", header.Size,
-				"filename", header.Filename,
-			)
-		} else {
-			// Direct stream copy: Read from upload → hash → write to temp file
-			written, err = io.Copy(tempFile, hashedReader)
-			if err != nil {
-				slog.Error("failed to write file stream", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-			slog.Debug("file written without encryption", "size", written)
+		// Process and store file
+		result, err := processAndStoreFile(w, file, header, cfg)
+		if err != nil {
+			return // Error already sent to client
 		}
 
-		// Finalize SHA256 hash (computed during streaming above)
-		sha256Hash := hex.EncodeToString(hasher.Sum(nil))
-
-		// Close temp file before rename (required on Windows)
-		if err := tempFile.Close(); err != nil {
-			slog.Error("failed to close temp file", "path", tempPath, "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// Atomic rename: Move temp file to final path
-		// This is atomic on most filesystems (POSIX guarantees this)
-		if err := os.Rename(tempPath, filePath); err != nil {
-			slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// Mark success so defer doesn't delete temp file
-		succeeded = true
-
-		// Get client IP
-		clientIP := getClientIP(r)
-
-		// Get user ID if authenticated (optional)
-		var userID *int64
-		if user := middleware.GetUserFromContext(r); user != nil {
-			userID = &user.ID
-		}
-
-		// Create database record
-		// Sanitize original filename to prevent log injection and display issues
-		sanitizedFilename := utils.SanitizeFilename(header.Filename)
-		var expiresAt time.Time
-		if neverExpire {
-			// Set expiration to 100 years in the future (effectively "never")
-			expiresAt = time.Now().Add(time.Duration(100*365*24) * time.Hour)
-		} else {
-			expiresAt = time.Now().Add(time.Duration(expiresInHours) * time.Minute)
-		}
-		fileRecord := &models.File{
-			ClaimCode:        claimCode,
-			OriginalFilename: sanitizedFilename,
-			StoredFilename:   storedFilename,
-			FileSize:         written,
-			MimeType:         detectedMimeType, // Use detected MIME type, not user-provided
-			ExpiresAt:        expiresAt,
-			MaxDownloads:     maxDownloads,
-			UploaderIP:       clientIP,
-			PasswordHash:     passwordHash,
-			UserID:           userID,
-			SHA256Hash:       sha256Hash,
-		}
-
-		// Use transactional quota check to prevent race conditions (P0 fix)
-		if quotaConfigured {
-			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-			if err := database.CreateFileWithQuotaCheck(db, fileRecord, quotaBytes); err != nil {
-				os.Remove(filePath) // Clean up on error
-				if strings.Contains(err.Error(), "quota exceeded") {
-					slog.Warn("quota exceeded (transactional check)",
-						"file_size", written,
-						"quota_limit_gb", cfg.GetQuotaLimitGB(),
-						"client_ip", clientIP,
-					)
-					sendError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
-					return
-				}
-				slog.Error("failed to create file record", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// No quota configured - use regular CreateFile
-			if err := database.CreateFile(db, fileRecord); err != nil {
-				os.Remove(filePath) // Clean up on error
-				slog.Error("failed to create file record", "error", err)
-				sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
-			}
-		}
-
-		// Build download URL (respects reverse proxy headers and PUBLIC_URL config)
-		downloadURL := buildDownloadURL(r, cfg, claimCode)
-
-		// Send success response
-		response := models.UploadResponse{
-			ClaimCode:          claimCode,
-			ExpiresAt:          expiresAt,
-			DownloadURL:        downloadURL,
-			MaxDownloads:       maxDownloads,
-			CompletedDownloads: 0, // New uploads have 0 downloads
-			FileSize:           written,
-			OriginalFilename:   sanitizedFilename,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
-
-		// Record metrics
-		metrics.UploadsTotal.WithLabelValues("success").Inc()
-		metrics.UploadSizeBytes.Observe(float64(written))
-
-		// Emit webhook event for file upload
-		EmitWebhookEvent(&webhooks.Event{
-			Type:      webhooks.EventFileUploaded,
-			Timestamp: time.Now(),
-			File: webhooks.FileData{
-				ID:        fileRecord.ID,
-				ClaimCode: claimCode,
-				Filename:  sanitizedFilename,
-				Size:      written,
-				MimeType:  detectedMimeType,
-				ExpiresAt: expiresAt,
-			},
-		})
-
-		slog.Info("file uploaded",
-			"claim_code", redactClaimCode(claimCode),
-			"filename", header.Filename,
-			"file_extension", utils.GetFileExtension(header.Filename),
-			"size", written,
-			"expires_at", expiresAt,
-			"max_downloads", maxDownloads,
-			"password_protected", passwordHash != "",
-			"client_ip", clientIP,
-			"user_agent", getUserAgent(r),
-		)
+		// Create database record and handle response
+		createRecordAndRespond(w, r, db, cfg, header, params, claimCode, result, quotaConfigured)
 	}
+}
+
+// validateAndGetUploadedFile validates the request and retrieves the uploaded file
+func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *config.Config) (multipart.File, *multipart.FileHeader, error) {
+	// Parse multipart form with size limit
+	r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
+	if err := r.ParseMultipartForm(cfg.GetMaxFileSize()); err != nil {
+		sendError(w, "File too large or invalid form data", "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
+		return nil, nil, err
+	}
+
+	// Get the file from the form
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		sendError(w, "No file provided", "NO_FILE", http.StatusBadRequest)
+		return nil, nil, err
+	}
+
+	// Validate file extension
+	allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
+	if err != nil {
+		slog.Error("failed to validate file extension", "error", err)
+		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
+		return nil, nil, err
+	}
+	if !allowed {
+		clientIP := getClientIP(r)
+		slog.Warn("blocked file extension",
+			"filename", header.Filename,
+			"extension", blockedExt,
+			"client_ip", clientIP,
+		)
+		sendError(w,
+			fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
+			"BLOCKED_EXTENSION",
+			http.StatusBadRequest,
+		)
+		return nil, nil, fmt.Errorf("blocked extension: %s", blockedExt)
+	}
+
+	// Validate file size
+	if header.Size > cfg.GetMaxFileSize() {
+		sendError(w, fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.GetMaxFileSize()), "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
+		return nil, nil, fmt.Errorf("file too large")
+	}
+
+	return file, header, nil
+}
+
+// checkStorageAvailability verifies there is sufficient storage space
+func checkStorageAvailability(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileSize int64, quotaConfigured bool) error {
+	// Skip percentage check if quota is configured (quota takes precedence)
+	hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, fileSize, quotaConfigured)
+	if err != nil {
+		slog.Error("failed to check disk space", "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return err
+	}
+	if !hasSpace {
+		slog.Warn("insufficient disk space",
+			"file_size", fileSize,
+			"client_ip", getClientIP(r),
+			"reason", errMsg,
+		)
+		sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+		return fmt.Errorf("insufficient storage")
+	}
+	return nil
+}
+
+// parseUploadParameters extracts and validates upload parameters from request
+func parseUploadParameters(w http.ResponseWriter, r *http.Request, cfg *config.Config) (*uploadParams, error) {
+	params := &uploadParams{
+		expiresInMinutes: cfg.GetDefaultExpirationHours() * 60,
+		neverExpire:      false,
+	}
+
+	// Parse expiration parameter
+	if hoursStr := r.FormValue("expires_in_hours"); hoursStr != "" {
+		hours, err := strconv.ParseFloat(hoursStr, 64)
+		if err != nil || hours < 0 {
+			sendError(w, "Invalid expires_in_hours parameter", "INVALID_PARAMETER", http.StatusBadRequest)
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("negative expiration value")
+		}
+
+		if hours == 0 {
+			params.neverExpire = true
+		} else {
+			if int(hours) > cfg.GetMaxExpirationHours() {
+				sendError(w,
+					fmt.Sprintf("Expiration time exceeds maximum allowed (%d hours). Use 0 for files that never expire.", cfg.GetMaxExpirationHours()),
+					"EXPIRATION_TOO_LONG",
+					http.StatusBadRequest,
+				)
+				return nil, fmt.Errorf("expiration too long")
+			}
+			params.expiresInMinutes = int(hours * 60)
+			if params.expiresInMinutes < 1 {
+				params.expiresInMinutes = 1
+			}
+		}
+	}
+
+	// Parse max downloads parameter
+	if maxDownloadsStr := r.FormValue("max_downloads"); maxDownloadsStr != "" {
+		maxDl, err := strconv.Atoi(maxDownloadsStr)
+		if err != nil || maxDl <= 0 {
+			sendError(w, "Invalid max_downloads parameter", "INVALID_PARAMETER", http.StatusBadRequest)
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("invalid max_downloads value")
+		}
+		params.maxDownloads = &maxDl
+	}
+
+	// Parse password parameter
+	if password := r.FormValue("password"); password != "" {
+		hash, err := utils.HashPassword(password)
+		if err != nil {
+			slog.Error("failed to hash password", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return nil, err
+		}
+		params.passwordHash = hash
+	}
+
+	return params, nil
+}
+
+// generateUniqueClaimCode creates a unique claim code with retry logic
+func generateUniqueClaimCode(w http.ResponseWriter, db *sql.DB) (string, error) {
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		claimCode, err := utils.GenerateClaimCode()
+		if err != nil {
+			slog.Error("failed to generate claim code", "error", err)
+			sendError(w, "Failed to generate claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return "", err
+		}
+
+		// Check if code already exists
+		existing, err := database.GetFileByClaimCode(db, claimCode)
+		if err != nil {
+			slog.Error("failed to check claim code", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return "", err
+		}
+
+		if existing == nil {
+			return claimCode, nil
+		}
+
+		if i == maxRetries-1 {
+			sendError(w, "Failed to generate unique claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return "", fmt.Errorf("failed to generate unique claim code")
+		}
+	}
+	return "", fmt.Errorf("unreachable")
+}
+
+// processAndStoreFile handles MIME detection, streaming, hashing, and storage
+func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *multipart.FileHeader, cfg *config.Config) (*fileProcessingResult, error) {
+	// Generate unique filename for storage
+	storedFilename := uuid.New().String() + filepath.Ext(header.Filename)
+
+	// Create upload directory if it doesn't exist
+	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
+		slog.Error("failed to create upload directory", "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return nil, err
+	}
+
+	// Detect MIME type from file content
+	detectedMimeType, fullReader, err := detectMimeTypeAndCreateReader(w, file, header)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stream file to disk with hashing and optional encryption
+	filePath := filepath.Join(cfg.UploadDir, storedFilename)
+	written, sha256Hash, err := streamFileToStorage(w, fullReader, header, filePath, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &fileProcessingResult{
+		storedFilename:   storedFilename,
+		filePath:         filePath,
+		written:          written,
+		sha256Hash:       sha256Hash,
+		detectedMimeType: detectedMimeType,
+	}, nil
+}
+
+// detectMimeTypeAndCreateReader detects MIME type and creates a reader for the full file
+func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, header *multipart.FileHeader) (string, io.Reader, error) {
+	// Read first 512 bytes for MIME detection
+	mimeBuffer := make([]byte, 512)
+	n, err := io.ReadFull(file, mimeBuffer)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		slog.Error("failed to read file for MIME detection", "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return "", nil, err
+	}
+	mimeBuffer = mimeBuffer[:n]
+
+	// Detect MIME type from file content
+	mtype := mimetype.Detect(mimeBuffer)
+	detectedMimeType := mtype.String()
+	slog.Debug("MIME type detected",
+		"filename", header.Filename,
+		"detected", detectedMimeType,
+		"user_provided", header.Header.Get("Content-Type"),
+		"bytes_analyzed", n,
+	)
+
+	// Reconstruct full file stream
+	fullReader := io.MultiReader(bytes.NewReader(mimeBuffer), file)
+	return detectedMimeType, fullReader, nil
+}
+
+// streamFileToStorage streams file to disk with hashing and optional encryption
+func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, error) {
+	// Setup SHA256 hashing during streaming
+	hasher := sha256.New()
+	hashedReader := io.TeeReader(reader, hasher)
+
+	// Atomic write pattern: temp file then rename
+	tempPath := filePath + ".tmp"
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		slog.Error("failed to create temp file", "path", tempPath, "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", err
+	}
+
+	// Track success for cleanup
+	var succeeded bool
+	defer func() {
+		tempFile.Close()
+		if !succeeded {
+			os.Remove(tempPath)
+		}
+	}()
+
+	// Stream file with optional encryption
+	var written int64
+	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+		err = utils.EncryptFileStreamingFromReader(tempFile, hashedReader, cfg.EncryptionKey)
+		if err != nil {
+			slog.Error("failed to encrypt file stream", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", err
+		}
+		written = header.Size
+		slog.Debug("file encrypted with streaming encryption",
+			"original_size", header.Size,
+			"filename", header.Filename,
+		)
+	} else {
+		written, err = io.Copy(tempFile, hashedReader)
+		if err != nil {
+			slog.Error("failed to write file stream", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", err
+		}
+		slog.Debug("file written without encryption", "size", written)
+	}
+
+	// Finalize hash
+	sha256Hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Close and atomically rename
+	if err := tempFile.Close(); err != nil {
+		slog.Error("failed to close temp file", "path", tempPath, "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", err
+	}
+
+	if err := os.Rename(tempPath, filePath); err != nil {
+		slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", err
+	}
+
+	succeeded = true
+	return written, sha256Hash, nil
+}
+
+// createRecordAndRespond creates database record and sends response
+func createRecordAndRespond(w http.ResponseWriter, r *http.Request, db *sql.DB, cfg *config.Config, header *multipart.FileHeader, params *uploadParams, claimCode string, result *fileProcessingResult, quotaConfigured bool) {
+	clientIP := getClientIP(r)
+
+	// Get user ID if authenticated
+	var userID *int64
+	if user := middleware.GetUserFromContext(r); user != nil {
+		userID = &user.ID
+	}
+
+	// Build file record
+	sanitizedFilename := utils.SanitizeFilename(header.Filename)
+	var expiresAt time.Time
+	if params.neverExpire {
+		expiresAt = time.Now().Add(time.Duration(100*365*24) * time.Hour)
+	} else {
+		expiresAt = time.Now().Add(time.Duration(params.expiresInMinutes) * time.Minute)
+	}
+
+	fileRecord := &models.File{
+		ClaimCode:        claimCode,
+		OriginalFilename: sanitizedFilename,
+		StoredFilename:   result.storedFilename,
+		FileSize:         result.written,
+		MimeType:         result.detectedMimeType,
+		ExpiresAt:        expiresAt,
+		MaxDownloads:     params.maxDownloads,
+		UploaderIP:       clientIP,
+		PasswordHash:     params.passwordHash,
+		UserID:           userID,
+		SHA256Hash:       result.sha256Hash,
+	}
+
+	// Create database record with quota check if needed
+	if err := createFileRecord(w, db, cfg, fileRecord, result.filePath, quotaConfigured, clientIP); err != nil {
+		return
+	}
+
+	// Send success response and record metrics
+	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP)
+}
+
+// createFileRecord creates the database record with optional quota check
+func createFileRecord(w http.ResponseWriter, db *sql.DB, cfg *config.Config, fileRecord *models.File, filePath string, quotaConfigured bool, clientIP string) error {
+	if quotaConfigured {
+		quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+		if err := database.CreateFileWithQuotaCheck(db, fileRecord, quotaBytes); err != nil {
+			os.Remove(filePath)
+			if strings.Contains(err.Error(), "quota exceeded") {
+				slog.Warn("quota exceeded (transactional check)",
+					"file_size", fileRecord.FileSize,
+					"quota_limit_gb", cfg.GetQuotaLimitGB(),
+					"client_ip", clientIP,
+				)
+				sendError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+				return err
+			}
+			slog.Error("failed to create file record", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return err
+		}
+	} else {
+		if err := database.CreateFile(db, fileRecord); err != nil {
+			os.Remove(filePath)
+			slog.Error("failed to create file record", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return err
+		}
+	}
+	return nil
+}
+
+// sendSuccessResponse sends the upload success response and records metrics
+func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
+	downloadURL := buildDownloadURL(r, cfg, claimCode)
+
+	response := models.UploadResponse{
+		ClaimCode:          claimCode,
+		ExpiresAt:          fileRecord.ExpiresAt,
+		DownloadURL:        downloadURL,
+		MaxDownloads:       fileRecord.MaxDownloads,
+		CompletedDownloads: 0,
+		FileSize:           result.written,
+		OriginalFilename:   sanitizedFilename,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+
+	// Record metrics
+	metrics.UploadsTotal.WithLabelValues("success").Inc()
+	metrics.UploadSizeBytes.Observe(float64(result.written))
+
+	// Emit webhook event
+	EmitWebhookEvent(&webhooks.Event{
+		Type:      webhooks.EventFileUploaded,
+		Timestamp: time.Now(),
+		File: webhooks.FileData{
+			ID:        fileRecord.ID,
+			ClaimCode: claimCode,
+			Filename:  sanitizedFilename,
+			Size:      result.written,
+			MimeType:  result.detectedMimeType,
+			ExpiresAt: fileRecord.ExpiresAt,
+		},
+	})
+
+	slog.Info("file uploaded",
+		"claim_code", redactClaimCode(claimCode),
+		"filename", header.Filename,
+		"file_extension", utils.GetFileExtension(header.Filename),
+		"size", result.written,
+		"expires_at", fileRecord.ExpiresAt,
+		"max_downloads", fileRecord.MaxDownloads,
+		"password_protected", passwordHash != "",
+		"client_ip", clientIP,
+		"user_agent", getUserAgent(r),
+	)
 }
 
 // getClientIP extracts the client IP address from the request

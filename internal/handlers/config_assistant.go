@@ -153,279 +153,301 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 		ChunkedUploadEnabled: true,
 	}
 
-	// Convert Mbps to MBps (megabytes per second)
+	// Convert Mbps to MBps (megabytes per second) for calculations
 	uploadSpeedMBps := req.UploadSpeed / 8.0
 	downloadSpeedMBps := req.DownloadSpeed / 8.0
 
-	// 1. Determine Max File Size based on typical file size and storage
+	// Calculate each configuration category using helper functions
+	rec.MaxFileSize = calculateMaxFileSize(req)
+	rec.QuotaLimitGB = calculateStorageQuota(req)
+	rec.DefaultExpirationHours, rec.MaxExpirationHours = calculateExpirationTimes(req)
+	rec.RateLimitUpload, rec.RateLimitDownload = calculateRateLimits(req, uploadSpeedMBps, downloadSpeedMBps)
+	rec.ChunkSize = calculateChunkSize(req, uploadSpeedMBps)
+
+	// Apply CDN constraints to chunk size if needed (must be done before timeout calculation)
+	rec.ChunkSize = applyCDNConstraints(req, uploadSpeedMBps, rec.ChunkSize)
+
+	rec.ReadTimeout, rec.WriteTimeout = calculateTimeouts(req, uploadSpeedMBps, rec.ChunkSize)
+	rec.ChunkedUploadThreshold, rec.PartialUploadExpiryHours = calculateChunkedUploadSettings(req, uploadSpeedMBps)
+	rec.SessionExpiryHours, rec.CleanupIntervalMinutes = calculateOperationalSettings(req)
+	rec.RequireAuthForUpload, rec.HTTPSEnabled, rec.PublicURL = calculateSecuritySettings(req)
+
+	return rec
+}
+
+// calculateMaxFileSize determines the maximum file size based on typical usage patterns
+func calculateMaxFileSize(req ConfigAssistantRequest) int64 {
 	switch req.TypicalFileSize {
 	case "small":
-		rec.MaxFileSize = 100 * 1024 * 1024 // 100MB
+		return 100 * 1024 * 1024 // 100MB
 	case "medium":
-		rec.MaxFileSize = 1 * 1024 * 1024 * 1024 // 1GB
+		return 1 * 1024 * 1024 * 1024 // 1GB
 	case "large":
-		rec.MaxFileSize = 5 * 1024 * 1024 * 1024 // 5GB
+		return 5 * 1024 * 1024 * 1024 // 5GB
 	case "huge":
-		rec.MaxFileSize = 10 * 1024 * 1024 * 1024 // 10GB
+		return 10 * 1024 * 1024 * 1024 // 10GB
 	default:
-		rec.MaxFileSize = 100 * 1024 * 1024 // default 100MB
+		return 100 * 1024 * 1024 // default 100MB
+	}
+}
+
+// calculateStorageQuota determines the storage quota based on available capacity
+func calculateStorageQuota(req ConfigAssistantRequest) int64 {
+	if req.StorageCapacity <= 0 {
+		return 0 // unlimited
 	}
 
-	// 2. Set Storage Quota based on available capacity
-	if req.StorageCapacity > 0 {
-		// Use 80% of available capacity as quota to leave headroom
-		rec.QuotaLimitGB = int64(float64(req.StorageCapacity) * 0.8)
-		if rec.QuotaLimitGB < 10 {
-			rec.QuotaLimitGB = req.StorageCapacity // use full capacity if < 10GB
-		}
-	} else {
-		rec.QuotaLimitGB = 0 // unlimited
+	// Use 80% of available capacity as quota to leave headroom
+	quota := int64(float64(req.StorageCapacity) * 0.8)
+	if quota < 10 {
+		return req.StorageCapacity // use full capacity if < 10GB
 	}
+	return quota
+}
 
-	// 3. Set Expiration times based on deployment type
+// calculateExpirationTimes determines default and maximum expiration hours based on deployment type
+func calculateExpirationTimes(req ConfigAssistantRequest) (defaultHours int, maxHours int) {
 	switch req.DeploymentType {
 	case "LAN":
 		// LAN deployments typically have shorter retention needs
-		rec.DefaultExpirationHours = 24 // 1 day
-		rec.MaxExpirationHours = 168    // 7 days
+		return 24, 168 // 1 day, 7 days
 	case "WAN":
 		// WAN deployments need moderate retention
-		rec.DefaultExpirationHours = 72 // 3 days
-		rec.MaxExpirationHours = 336    // 14 days
+		return 72, 336 // 3 days, 14 days
 	case "Internet":
 		// Internet deployments benefit from longer retention
-		rec.DefaultExpirationHours = 168 // 7 days
-		rec.MaxExpirationHours = 720     // 30 days
+		return 168, 720 // 7 days, 30 days
 	default:
-		rec.DefaultExpirationHours = 24
-		rec.MaxExpirationHours = 168
+		return 24, 168
 	}
+}
 
-	// 4. Calculate Rate Limits based on user load and network capacity
+// calculateRateLimits determines upload and download rate limits based on load and bandwidth
+func calculateRateLimits(req ConfigAssistantRequest, uploadSpeedMBps, downloadSpeedMBps float64) (uploadLimit int, downloadLimit int) {
+	// Base limits on user load
 	switch req.UserLoad {
 	case "light":
-		// 1-10 users: generous limits
-		rec.RateLimitUpload = 20
-		rec.RateLimitDownload = 200
+		uploadLimit, downloadLimit = 20, 200 // 1-10 users: generous limits
 	case "moderate":
-		// 10-50 users: balanced limits
-		rec.RateLimitUpload = 15
-		rec.RateLimitDownload = 150
+		uploadLimit, downloadLimit = 15, 150 // 10-50 users: balanced limits
 	case "heavy":
-		// 50-200 users: conservative limits to prevent abuse
-		rec.RateLimitUpload = 10
-		rec.RateLimitDownload = 100
+		uploadLimit, downloadLimit = 10, 100 // 50-200 users: conservative limits
 	case "very_heavy":
-		// > 200 users: strict limits
-		rec.RateLimitUpload = 5
-		rec.RateLimitDownload = 50
+		uploadLimit, downloadLimit = 5, 50 // > 200 users: strict limits
 	default:
-		rec.RateLimitUpload = 10
-		rec.RateLimitDownload = 100
+		uploadLimit, downloadLimit = 10, 100
 	}
 
-	// Adjust rate limits based on bandwidth
+	// Adjust upload limits based on bandwidth
 	if uploadSpeedMBps < 5 {
 		// Low bandwidth: reduce limits further
-		rec.RateLimitUpload = rec.RateLimitUpload / 2
-		if rec.RateLimitUpload < 3 {
-			rec.RateLimitUpload = 3 // minimum
+		uploadLimit = uploadLimit / 2
+		if uploadLimit < 3 {
+			uploadLimit = 3 // minimum
 		}
 	} else if uploadSpeedMBps > 50 {
 		// High bandwidth: can afford higher limits for light/moderate loads
 		if req.UserLoad == "light" || req.UserLoad == "moderate" {
-			rec.RateLimitUpload = int(float64(rec.RateLimitUpload) * 1.5)
+			uploadLimit = int(float64(uploadLimit) * 1.5)
 		}
 	}
 
-	// Adjust download limits similarly
+	// Adjust download limits based on bandwidth
 	if downloadSpeedMBps < 10 {
-		rec.RateLimitDownload = rec.RateLimitDownload / 2
-		if rec.RateLimitDownload < 20 {
-			rec.RateLimitDownload = 20 // minimum
+		downloadLimit = downloadLimit / 2
+		if downloadLimit < 20 {
+			downloadLimit = 20 // minimum
 		}
 	} else if downloadSpeedMBps > 100 {
 		if req.UserLoad == "light" || req.UserLoad == "moderate" {
-			rec.RateLimitDownload = int(float64(rec.RateLimitDownload) * 1.5)
+			downloadLimit = int(float64(downloadLimit) * 1.5)
 		}
 	}
 
-	// 5. Calculate CHUNK_SIZE based on bandwidth and latency
-	// Formula: Optimize for reliability and progress tracking
-	// Smaller chunks (5-10MB) for slow/unreliable connections provide better resume capability
-	// Larger chunks (20-30MB) for fast connections reduce overhead
-	// Range: 5MB - 30MB (always within documented 1-50MB limit)
+	return uploadLimit, downloadLimit
+}
 
+// calculateChunkSize determines optimal chunk size based on bandwidth and latency
+// Range: 5MB - 30MB (within documented 1-50MB limit)
+func calculateChunkSize(req ConfigAssistantRequest, uploadSpeedMBps float64) int64 {
+	var chunkSize int64
+
+	// Smaller chunks for slow/unreliable connections provide better resume capability
+	// Larger chunks for fast connections reduce overhead
 	if req.NetworkLatency == "high" || uploadSpeedMBps < 2 {
-		// High latency or slow connection: smaller chunks for reliability
-		rec.ChunkSize = 5 * 1024 * 1024 // 5MB
+		chunkSize = 5 * 1024 * 1024 // 5MB - high latency or slow connection
 	} else if uploadSpeedMBps < 5 {
-		// Medium-slow connection
-		rec.ChunkSize = 8 * 1024 * 1024 // 8MB
+		chunkSize = 8 * 1024 * 1024 // 8MB - medium-slow connection
 	} else if uploadSpeedMBps < 15 {
-		// Medium connection
-		rec.ChunkSize = 10 * 1024 * 1024 // 10MB (default)
+		chunkSize = 10 * 1024 * 1024 // 10MB - medium connection (default)
 	} else if uploadSpeedMBps < 30 {
-		// Fast connection
-		rec.ChunkSize = 20 * 1024 * 1024 // 20MB
+		chunkSize = 20 * 1024 * 1024 // 20MB - fast connection
 	} else {
-		// Very fast connection
-		rec.ChunkSize = 30 * 1024 * 1024 // 30MB
+		chunkSize = 30 * 1024 * 1024 // 30MB - very fast connection
 	}
 
-	// Adjust for large files - may want smaller chunks for better progress reporting
-	if req.TypicalFileSize == "huge" {
-		if rec.ChunkSize > 10*1024*1024 {
-			rec.ChunkSize = 10 * 1024 * 1024 // cap at 10MB for huge files
-		}
+	// Adjust for large files - smaller chunks for better progress reporting
+	if req.TypicalFileSize == "huge" && chunkSize > 10*1024*1024 {
+		chunkSize = 10 * 1024 * 1024 // cap at 10MB for huge files
 	}
 
-	// 6. Calculate READ_TIMEOUT and WRITE_TIMEOUT
+	return chunkSize
+}
+
+// applyCDNConstraints adjusts chunk size to fit within CDN timeout limits
+func applyCDNConstraints(req ConfigAssistantRequest, uploadSpeedMBps float64, chunkSize int64) int64 {
+	if !req.UsingCDN || req.CDNTimeout <= 0 {
+		return chunkSize // no CDN or no timeout constraint
+	}
+
+	// Formula: ChunkSize <= (UploadSpeed * CDNTimeout * 0.6) to ensure completion
+	maxSafeChunkSize := int64(uploadSpeedMBps * float64(req.CDNTimeout) * 0.6 * 1024 * 1024)
+	if maxSafeChunkSize < 5*1024*1024 {
+		maxSafeChunkSize = 5 * 1024 * 1024 // minimum 5MB
+	}
+
+	if chunkSize > maxSafeChunkSize {
+		return maxSafeChunkSize
+	}
+	return chunkSize
+}
+
+// calculateTimeouts determines read and write timeouts with CDN and encryption considerations
+func calculateTimeouts(req ConfigAssistantRequest, uploadSpeedMBps float64, chunkSize int64) (readTimeout int, writeTimeout int) {
 	// Formula: (ChunkSize in MB / UploadSpeed in MBps) × SafetyFactor
-	chunkSizeMB := float64(rec.ChunkSize) / (1024 * 1024)
+	chunkSizeMB := float64(chunkSize) / (1024 * 1024)
 	baseTimeout := int((chunkSizeMB / uploadSpeedMBps) * 3.0) // 3x safety factor
 
-	// Minimum timeout
+	// Ensure minimum timeout
 	if baseTimeout < 60 {
 		baseTimeout = 60
 	}
 
 	// Add extra time for high latency or slow connections
-	if req.NetworkLatency == "high" {
-		rec.ReadTimeout = baseTimeout * 2
-		rec.WriteTimeout = baseTimeout * 2
-	} else if req.NetworkLatency == "medium" {
-		rec.ReadTimeout = int(float64(baseTimeout) * 1.5)
-		rec.WriteTimeout = int(float64(baseTimeout) * 1.5)
-	} else {
-		rec.ReadTimeout = baseTimeout
-		rec.WriteTimeout = baseTimeout
+	switch req.NetworkLatency {
+	case "high":
+		readTimeout = baseTimeout * 2
+		writeTimeout = baseTimeout * 2
+	case "medium":
+		readTimeout = int(float64(baseTimeout) * 1.5)
+		writeTimeout = int(float64(baseTimeout) * 1.5)
+	default:
+		readTimeout = baseTimeout
+		writeTimeout = baseTimeout
 	}
 
-	// Cap timeouts at reasonable maximums
-	if rec.ReadTimeout > 600 {
-		rec.ReadTimeout = 600 // 10 minutes max
-	}
-	if rec.WriteTimeout > 600 {
-		rec.WriteTimeout = 600
-	}
-
-	// Ensure minimums
-	if rec.ReadTimeout < 60 {
-		rec.ReadTimeout = 60
-	}
-	if rec.WriteTimeout < 60 {
-		rec.WriteTimeout = 60
-	}
+	// Apply timeout caps and minimums
+	readTimeout = applyTimeoutBounds(readTimeout, 60, 600)
+	writeTimeout = applyTimeoutBounds(writeTimeout, 60, 600)
 
 	// Apply CDN timeout constraints if behind a CDN
 	if req.UsingCDN && req.CDNTimeout > 0 {
-		// Timeouts must be less than CDN timeout (use 80% for safety margin)
-		maxAllowedTimeout := int(float64(req.CDNTimeout) * 0.8)
-		if rec.ReadTimeout > maxAllowedTimeout {
-			rec.ReadTimeout = maxAllowedTimeout
-		}
-		if rec.WriteTimeout > maxAllowedTimeout {
-			rec.WriteTimeout = maxAllowedTimeout
-		}
-
-		// Adjust chunk size to fit within CDN timeout
-		// Formula: ChunkSize <= (UploadSpeed * CDNTimeout * 0.6) to ensure completion
-		maxSafeChunkSize := int64(uploadSpeedMBps * float64(req.CDNTimeout) * 0.6 * 1024 * 1024)
-		if maxSafeChunkSize < 5*1024*1024 {
-			maxSafeChunkSize = 5 * 1024 * 1024 // minimum 5MB
-		}
-		if rec.ChunkSize > maxSafeChunkSize {
-			rec.ChunkSize = maxSafeChunkSize
-		}
+		maxAllowedTimeout := int(float64(req.CDNTimeout) * 0.8) // 80% for safety margin
+		readTimeout = min(readTimeout, maxAllowedTimeout)
+		writeTimeout = min(writeTimeout, maxAllowedTimeout)
 	}
 
 	// Apply encryption overhead if encryption is enabled
 	if req.EncryptionEnabled {
 		// Add 20% overhead for encryption/decryption processing
-		rec.ReadTimeout = int(float64(rec.ReadTimeout) * 1.2)
-		rec.WriteTimeout = int(float64(rec.WriteTimeout) * 1.2)
-
-		// Re-apply maximum cap after encryption adjustment
-		if rec.ReadTimeout > 600 {
-			rec.ReadTimeout = 600
-		}
-		if rec.WriteTimeout > 600 {
-			rec.WriteTimeout = 600
-		}
+		readTimeout = applyTimeoutBounds(int(float64(readTimeout)*1.2), 60, 600)
+		writeTimeout = applyTimeoutBounds(int(float64(writeTimeout)*1.2), 60, 600)
 	}
 
-	// 7. Set CHUNKED_UPLOAD_THRESHOLD
-	// Start chunking earlier for large files or slow connections
-	// Lower threshold = more files use chunked upload = better reliability and progress tracking
-	// Higher threshold = fewer files use chunking = less overhead for small/medium files
+	return readTimeout, writeTimeout
+}
+
+// applyTimeoutBounds ensures timeout is within specified min/max range
+func applyTimeoutBounds(timeout, minTimeout, maxTimeout int) int {
+	if timeout < minTimeout {
+		return minTimeout
+	}
+	if timeout > maxTimeout {
+		return maxTimeout
+	}
+	return timeout
+}
+
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// calculateChunkedUploadSettings determines chunked upload threshold and partial expiry hours
+func calculateChunkedUploadSettings(req ConfigAssistantRequest, uploadSpeedMBps float64) (threshold int64, expiryHours int) {
+	// Lower threshold = more files use chunked upload = better reliability
+	// Higher threshold = fewer files use chunking = less overhead
 	if req.TypicalFileSize == "huge" || uploadSpeedMBps < 5 {
-		rec.ChunkedUploadThreshold = 50 * 1024 * 1024 // 50MB - start chunking early for reliability
+		threshold = 50 * 1024 * 1024 // 50MB - start chunking early for reliability
 	} else if req.TypicalFileSize == "large" {
-		rec.ChunkedUploadThreshold = 75 * 1024 * 1024 // 75MB - balanced threshold
+		threshold = 75 * 1024 * 1024 // 75MB - balanced threshold
 	} else {
-		rec.ChunkedUploadThreshold = 100 * 1024 * 1024 // 100MB - default, minimal overhead
+		threshold = 100 * 1024 * 1024 // 100MB - default, minimal overhead
 	}
 
-	// 8. Set PARTIAL_UPLOAD_EXPIRY_HOURS
 	// Give more time for slow connections with large files
 	if (req.TypicalFileSize == "large" || req.TypicalFileSize == "huge") && uploadSpeedMBps < 2 {
-		rec.PartialUploadExpiryHours = 72 // 3 days for very slow large uploads
+		expiryHours = 72 // 3 days for very slow large uploads
 	} else if uploadSpeedMBps < 5 {
-		rec.PartialUploadExpiryHours = 48 // 2 days for slow connections
+		expiryHours = 48 // 2 days for slow connections
 	} else {
-		rec.PartialUploadExpiryHours = 24 // 1 day (default)
+		expiryHours = 24 // 1 day (default)
 	}
 
-	// 9. Set SESSION_EXPIRY_HOURS based on deployment type
+	return threshold, expiryHours
+}
+
+// calculateOperationalSettings determines session expiry and cleanup interval
+func calculateOperationalSettings(req ConfigAssistantRequest) (sessionExpiryHours int, cleanupIntervalMinutes int) {
+	// Session expiry based on deployment type
 	switch req.DeploymentType {
 	case "LAN":
-		rec.SessionExpiryHours = 12 // shorter for internal networks
+		sessionExpiryHours = 12 // shorter for internal networks
 	case "WAN":
-		rec.SessionExpiryHours = 24 // standard
+		sessionExpiryHours = 24 // standard
 	case "Internet":
-		rec.SessionExpiryHours = 48 // longer for external users
+		sessionExpiryHours = 48 // longer for external users
 	default:
-		rec.SessionExpiryHours = 24
+		sessionExpiryHours = 24
 	}
 
-	// 10. Set CLEANUP_INTERVAL_MINUTES based on user load and storage
+	// Cleanup interval based on storage and load
 	if req.StorageCapacity > 0 && req.StorageCapacity < 50 {
-		// Limited storage: cleanup more frequently
-		rec.CleanupIntervalMinutes = 30
+		cleanupIntervalMinutes = 30 // limited storage: cleanup more frequently
 	} else if req.UserLoad == "heavy" || req.UserLoad == "very_heavy" {
-		// High traffic: cleanup more frequently
-		rec.CleanupIntervalMinutes = 45
+		cleanupIntervalMinutes = 45 // high traffic: cleanup more frequently
 	} else {
-		rec.CleanupIntervalMinutes = 60 // default
+		cleanupIntervalMinutes = 60 // default
 	}
 
-	// 11. Set REQUIRE_AUTH_FOR_UPLOAD based on deployment and user load
+	return sessionExpiryHours, cleanupIntervalMinutes
+}
+
+// calculateSecuritySettings determines authentication, HTTPS, and public URL requirements
+func calculateSecuritySettings(req ConfigAssistantRequest) (requireAuth bool, httpsEnabled bool, publicURL string) {
+	// Require authentication for public internet deployments with significant load
 	if req.DeploymentType == "Internet" && (req.UserLoad == "heavy" || req.UserLoad == "very_heavy") {
-		rec.RequireAuthForUpload = true // prevent abuse on public internet
+		requireAuth = true // prevent abuse on public internet
 	} else if req.DeploymentType == "Internet" && req.UserLoad == "moderate" {
-		rec.RequireAuthForUpload = true // recommended for public internet
+		requireAuth = true // recommended for public internet
 	} else {
-		rec.RequireAuthForUpload = false // allow anonymous for internal/light use
+		requireAuth = false // allow anonymous for internal/light use
 	}
 
-	// 12. Set HTTPS_ENABLED recommendation
-	if req.DeploymentType == "Internet" {
-		rec.HTTPSEnabled = true // always for public internet
-	} else if req.DeploymentType == "WAN" {
-		rec.HTTPSEnabled = true // recommended for WAN
-	} else {
-		rec.HTTPSEnabled = false // optional for LAN
-	}
-
-	// 13. Set PUBLIC_URL recommendation (empty means detect from request)
+	// HTTPS recommendation based on deployment type
 	if req.DeploymentType == "Internet" || req.DeploymentType == "WAN" {
-		rec.PublicURL = "" // Should be set manually by admin
+		httpsEnabled = true // always for public internet, recommended for WAN
 	} else {
-		rec.PublicURL = "" // Auto-detect is fine for LAN
+		httpsEnabled = false // optional for LAN
 	}
 
-	return rec
+	// Public URL should be set manually by admin for Internet/WAN
+	publicURL = "" // Empty means auto-detect from request
+
+	return requireAuth, httpsEnabled, publicURL
 }
 
 // generateAnalysis creates human-readable analysis and recommendations
@@ -436,6 +458,23 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 	}
 
 	// Generate summary
+	analysis.Summary = generateAnalysisSummary(req)
+
+	// Generate impact descriptions for configuration changes
+	generateImpactDescriptions(req, current, recommended, &analysis)
+
+	// Generate additional recommendations based on environment
+	generateNetworkRecommendations(req, recommended, &analysis)
+	generateFileRecommendations(req, recommended, &analysis)
+	generateDeploymentRecommendations(req, recommended, &analysis)
+	generateCDNRecommendations(req, recommended, &analysis)
+	generateResourceRecommendations(req, &analysis)
+
+	return analysis
+}
+
+// generateAnalysisSummary creates a summary description of the optimization
+func generateAnalysisSummary(req ConfigAssistantRequest) string {
 	latencyDesc := map[string]string{
 		"local":  "local network",
 		"low":    "low-latency",
@@ -443,15 +482,18 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		"high":   "high-latency",
 	}[req.NetworkLatency]
 
-	analysis.Summary = fmt.Sprintf(
+	return fmt.Sprintf(
 		"Optimized for %s deployment with %s connectivity, %s file sizes, and %s user load.",
 		req.DeploymentType,
 		latencyDesc,
 		req.TypicalFileSize,
 		req.UserLoad,
 	)
+}
 
-	// Explain impacts of each setting
+// generateImpactDescriptions explains the impacts of each configuration change
+func generateImpactDescriptions(req ConfigAssistantRequest, current, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
+	// File size and storage impacts
 	if current.MaxFileSize != recommended.MaxFileSize {
 		if recommended.MaxFileSize > current.MaxFileSize {
 			analysis.Impacts["max_file_size"] = "Increased to accommodate your typical file sizes"
@@ -468,6 +510,7 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		}
 	}
 
+	// Expiration impacts
 	if current.DefaultExpirationHours != recommended.DefaultExpirationHours {
 		analysis.Impacts["default_expiration_hours"] = fmt.Sprintf("Adjusted for %s deployment pattern", req.DeploymentType)
 	}
@@ -476,6 +519,7 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		analysis.Impacts["max_expiration_hours"] = fmt.Sprintf("Extended for %s use case", req.DeploymentType)
 	}
 
+	// Rate limit impacts
 	if current.RateLimitUpload != recommended.RateLimitUpload {
 		analysis.Impacts["rate_limit_upload"] = fmt.Sprintf("Balanced for %s user load and %.1f Mbps upload speed", req.UserLoad, req.UploadSpeed)
 	}
@@ -485,6 +529,14 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 	}
 
 	// Performance settings impacts
+	generatePerformanceImpacts(req, current, recommended, analysis)
+
+	// Operational settings impacts
+	generateOperationalImpacts(req, current, recommended, analysis)
+}
+
+// generatePerformanceImpacts explains changes to performance-related settings
+func generatePerformanceImpacts(req ConfigAssistantRequest, current, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if current.ChunkSize != recommended.ChunkSize {
 		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
 		analysis.Impacts["chunk_size"] = fmt.Sprintf("Optimized to %.0fMB for %.1f Mbps upload speed and %s latency", chunkSizeMB, req.UploadSpeed, req.NetworkLatency)
@@ -506,8 +558,10 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 	if current.PartialUploadExpiryHours != recommended.PartialUploadExpiryHours {
 		analysis.Impacts["partial_upload_expiry_hours"] = fmt.Sprintf("Extended to %d hours for slower connections to complete large uploads", recommended.PartialUploadExpiryHours)
 	}
+}
 
-	// Operational settings impacts
+// generateOperationalImpacts explains changes to operational settings
+func generateOperationalImpacts(req ConfigAssistantRequest, current, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if current.SessionExpiryHours != recommended.SessionExpiryHours {
 		analysis.Impacts["session_expiry_hours"] = fmt.Sprintf("Adjusted to %d hours for %s deployment pattern", recommended.SessionExpiryHours, req.DeploymentType)
 	}
@@ -531,21 +585,36 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 			analysis.Impacts["https_enabled"] = "Optional for local network deployments"
 		}
 	}
+}
 
-	// Add additional recommendations based on environment
+// generateNetworkRecommendations adds recommendations based on network conditions
+func generateNetworkRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if req.NetworkLatency == "high" || req.NetworkLatency == "medium" {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			"Consider enabling TCP tuning for high-latency connections. See docs/TCP_TUNING.md for system-level optimizations.",
 		)
 	}
 
+	uploadSpeedMBps := req.UploadSpeed / 8
+	if uploadSpeedMBps < 5 {
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+			fmt.Sprintf("Low upload bandwidth detected (%.1f MB/s). Consider CHUNK_SIZE=5MB for better reliability on slow connections.", uploadSpeedMBps),
+		)
+	}
+}
+
+// generateFileRecommendations adds recommendations for file size handling
+func generateFileRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if req.TypicalFileSize == "large" || req.TypicalFileSize == "huge" {
 		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			fmt.Sprintf("For large files: CHUNK_SIZE=%.0fMB, READ_TIMEOUT=%ds, WRITE_TIMEOUT=%ds are calculated for your connection speed.", chunkSizeMB, recommended.ReadTimeout, recommended.WriteTimeout),
 		)
 	}
+}
 
+// generateDeploymentRecommendations adds recommendations based on deployment type
+func generateDeploymentRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if req.DeploymentType == "Internet" {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			fmt.Sprintf("For public internet: Configure reverse proxy timeouts to at least %d seconds to match READ_TIMEOUT.", recommended.ReadTimeout),
@@ -556,36 +625,37 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 			)
 		}
 	}
+}
 
-	// CDN-specific recommendations
-	if req.UsingCDN {
-		if req.CDNTimeout > 0 {
-			chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
-			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-				fmt.Sprintf("CDN detected (%ds timeout): Chunk size optimized to %.0fMB to ensure uploads complete within timeout limits.", req.CDNTimeout, chunkSizeMB),
-			)
-		}
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			"CDN detected: Set DOWNLOAD_URL to a DNS-only subdomain (bypassing CDN) for large file downloads. Example: downloads.yourdomain.com",
-		)
-		if req.CDNTimeout < 60 {
-			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-				fmt.Sprintf("⚠️ CDN timeout is only %ds. Consider upgrading CDN tier or bypassing CDN for upload endpoints to support larger files.", req.CDNTimeout),
-			)
-		}
+// generateCDNRecommendations adds CDN-specific recommendations
+func generateCDNRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
+	if !req.UsingCDN {
+		return
 	}
 
-	// Encryption-specific recommendations
+	if req.CDNTimeout > 0 {
+		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+			fmt.Sprintf("CDN detected (%ds timeout): Chunk size optimized to %.0fMB to ensure uploads complete within timeout limits.", req.CDNTimeout, chunkSizeMB),
+		)
+	}
+
+	analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+		"CDN detected: Set DOWNLOAD_URL to a DNS-only subdomain (bypassing CDN) for large file downloads. Example: downloads.yourdomain.com",
+	)
+
+	if req.CDNTimeout < 60 {
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+			fmt.Sprintf("⚠️ CDN timeout is only %ds. Consider upgrading CDN tier or bypassing CDN for upload endpoints to support larger files.", req.CDNTimeout),
+		)
+	}
+}
+
+// generateResourceRecommendations adds recommendations for storage, load, and encryption
+func generateResourceRecommendations(req ConfigAssistantRequest, analysis *ConfigAnalysis) {
 	if req.EncryptionEnabled {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			"Encryption enabled: Timeouts increased by 20%% to account for AES-256-GCM encryption/decryption overhead.",
-		)
-	}
-
-	uploadSpeedMBps := req.UploadSpeed / 8
-	if uploadSpeedMBps < 5 {
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("Low upload bandwidth detected (%.1f MB/s). Consider CHUNK_SIZE=5MB for better reliability on slow connections.", uploadSpeedMBps),
 		)
 	}
 
@@ -595,12 +665,9 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		)
 	}
 
-	// If storage is limited, warn about it
 	if req.StorageCapacity > 0 && req.StorageCapacity < 50 {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			fmt.Sprintf("Limited storage capacity (%d GB). Consider implementing aggressive file expiration policies or increasing storage.", req.StorageCapacity),
 		)
 	}
-
-	return analysis
 }
