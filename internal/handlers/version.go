@@ -3,4 +3,4 @@ package handlers
 // Version is the current release version of SafeShare
 // This is included in the /api/config endpoint for display in the frontend
 // Update this with each release
-const Version = "1.3.1"
+const Version = "1.4.0"
