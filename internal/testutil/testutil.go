@@ -81,7 +81,7 @@ func SetupTestConfig(t *testing.T) *config.Config {
 	cfg.CleanupIntervalMinutes = 60
 	cfg.ChunkedUploadEnabled = true
 	cfg.ChunkedUploadThreshold = 100 * 1024 * 1024 // 100MB
-	cfg.ChunkSize = 10 * 1024 * 1024                // 10MB
+	cfg.ChunkSize = 10 * 1024 * 1024               // 10MB
 	cfg.PartialUploadExpiryHours = 24
 	cfg.ReadTimeoutSeconds = 120
 	cfg.WriteTimeoutSeconds = 120

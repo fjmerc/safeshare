@@ -21,7 +21,7 @@ type APIToken struct {
 // APITokenListItem represents a token in list responses (no hash exposed)
 type APITokenListItem struct {
 	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id,omitempty"` // Only included in admin responses
+	UserID      int64      `json:"user_id,omitempty"`  // Only included in admin responses
 	Username    string     `json:"username,omitempty"` // Only included in admin responses
 	Name        string     `json:"name"`
 	TokenPrefix string     `json:"token_prefix"` // e.g., "safeshare_a1b2"
@@ -34,16 +34,16 @@ type APITokenListItem struct {
 
 // CreateAPITokenRequest is the request body for creating a new token
 type CreateAPITokenRequest struct {
-	Name         string   `json:"name"`                       // User-friendly name (required)
-	Scopes       []string `json:"scopes"`                     // Requested scopes (required)
-	ExpiresInDays *int    `json:"expires_in_days,omitempty"` // Days until expiration (null = never)
+	Name          string   `json:"name"`                      // User-friendly name (required)
+	Scopes        []string `json:"scopes"`                    // Requested scopes (required)
+	ExpiresInDays *int     `json:"expires_in_days,omitempty"` // Days until expiration (null = never)
 }
 
 // CreateAPITokenResponse is the response after creating a token
 type CreateAPITokenResponse struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
-	Token       string     `json:"token"`        // ONLY returned once at creation!
+	Token       string     `json:"token"` // ONLY returned once at creation!
 	TokenPrefix string     `json:"token_prefix"`
 	Scopes      []string   `json:"scopes"`
 	ExpiresAt   *time.Time `json:"expires_at"`

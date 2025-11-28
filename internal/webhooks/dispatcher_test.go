@@ -60,12 +60,12 @@ func (m *MockDatabaseOperations) GetPendingRetries() ([]*Delivery, error) {
 
 // MockMetricsRecorder implements MetricsRecorder for testing
 type MockMetricsRecorder struct {
-	events          int
-	deliveries      int
-	retries         int
-	droppedEvents   int
-	queueSize       int
-	mu              sync.Mutex
+	events        int
+	deliveries    int
+	retries       int
+	droppedEvents int
+	queueSize     int
+	mu            sync.Mutex
 }
 
 func (m *MockMetricsRecorder) RecordEvent(eventType string) {

@@ -287,8 +287,8 @@ func TestAdminListUsersHandler_Pagination(t *testing.T) {
 		expectedLimit int
 		expectedCount int
 	}{
-		{"default", "", "", 50, 25},       // All users fit in default limit
-		{"limit 10", "10", "0", 10, 10},   // First page of 10
+		{"default", "", "", 50, 25},                // All users fit in default limit
+		{"limit 10", "10", "0", 10, 10},            // First page of 10
 		{"limit 10 offset 10", "10", "10", 10, 10}, // Second page of 10
 		{"limit 10 offset 20", "10", "20", 10, 5},  // Third page (only 5 left)
 		{"invalid limit", "invalid", "0", 50, 25},  // Falls back to default
@@ -584,7 +584,6 @@ func TestAdminToggleUserActiveHandler_MethodNotAllowed(t *testing.T) {
 		})
 	}
 }
-
 
 // TestAdminResetUserPasswordHandler_Success tests password reset
 func TestAdminResetUserPasswordHandler_Success(t *testing.T) {

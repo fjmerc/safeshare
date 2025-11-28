@@ -230,15 +230,15 @@ func TestCleanupCompletedUploads(t *testing.T) {
 	oldUploadID := "old-completed-12345"
 	claimCode := "claim123456"
 	oldUpload := &models.PartialUpload{
-		UploadID:    oldUploadID,
-		Filename:    "completed.bin",
-		TotalSize:   1024,
-		ChunkSize:   1024,
-		TotalChunks: 1,
-		Completed:   true,
-		Status:      "completed",
-		ClaimCode:   &claimCode,
-		CreatedAt:   time.Now().Add(-3 * time.Hour),
+		UploadID:     oldUploadID,
+		Filename:     "completed.bin",
+		TotalSize:    1024,
+		ChunkSize:    1024,
+		TotalChunks:  1,
+		Completed:    true,
+		Status:       "completed",
+		ClaimCode:    &claimCode,
+		CreatedAt:    time.Now().Add(-3 * time.Hour),
 		LastActivity: time.Now().Add(-3 * time.Hour),
 	}
 	database.CreatePartialUpload(db, oldUpload)
@@ -247,15 +247,15 @@ func TestCleanupCompletedUploads(t *testing.T) {
 	recentUploadID := "recent-completed-67890"
 	recentClaimCode := "claim789012"
 	recentUpload := &models.PartialUpload{
-		UploadID:    recentUploadID,
-		Filename:    "recent.bin",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		Completed:   true,
-		Status:      "completed",
-		ClaimCode:   &recentClaimCode,
-		CreatedAt:   time.Now().Add(-30 * time.Minute),
+		UploadID:     recentUploadID,
+		Filename:     "recent.bin",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		Completed:    true,
+		Status:       "completed",
+		ClaimCode:    &recentClaimCode,
+		CreatedAt:    time.Now().Add(-30 * time.Minute),
 		LastActivity: time.Now().Add(-30 * time.Minute),
 	}
 	database.CreatePartialUpload(db, recentUpload)

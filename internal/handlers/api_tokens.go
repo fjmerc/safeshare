@@ -138,10 +138,10 @@ func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":     "Maximum number of tokens reached",
-				"code":      "TOO_MANY_TOKENS",
-				"limit":     maxTokensPerUser,
-				"current":   tokenCount,
+				"error":   "Maximum number of tokens reached",
+				"code":    "TOO_MANY_TOKENS",
+				"limit":   maxTokensPerUser,
+				"current": tokenCount,
 			})
 			return
 		}
@@ -153,8 +153,8 @@ func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": "Token expiration exceeds maximum allowed",
-					"code":  "EXPIRATION_TOO_LONG",
+					"error":    "Token expiration exceeds maximum allowed",
+					"code":     "EXPIRATION_TOO_LONG",
 					"max_days": maxTokenExpirationDays,
 				})
 				return
@@ -414,7 +414,13 @@ func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 
 		slog.Info("API token revoked by admin",
 			"token_id", tokenID,
-			"token_owner_id", func() int64 { if token != nil { return token.UserID } else { return 0 } }(),
+			"token_owner_id", func() int64 {
+				if token != nil {
+					return token.UserID
+				} else {
+					return 0
+				}
+			}(),
 			"ip", getClientIP(r),
 		)
 

@@ -77,7 +77,7 @@ func TestEncryptionWithMultiReader(t *testing.T) {
 
 	// Simulate the MIME detection buffer scenario from upload.go line 234
 	mimeBuffer := bytes.Repeat([]byte("M"), 1536) // 1536 bytes (matches MIME buffer size)
-	remainingData := []byte("ABC")                 // 3 bytes after MIME buffer
+	remainingData := []byte("ABC")                // 3 bytes after MIME buffer
 
 	// Total: 1539 bytes (matching production file size)
 	fullReader := io.MultiReader(bytes.NewReader(mimeBuffer), bytes.NewReader(remainingData))

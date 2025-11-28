@@ -61,36 +61,36 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Build response with download URLs
 		type FileResponse struct {
-			ID               int64     `json:"id"`
-			ClaimCode        string    `json:"claim_code"`
-			OriginalFilename string    `json:"original_filename"`
-			FileSize         int64     `json:"file_size"`
-			MimeType         string    `json:"mime_type"`
-			CreatedAt        time.Time `json:"created_at"`
-			ExpiresAt        time.Time `json:"expires_at"`
-			MaxDownloads     *int      `json:"max_downloads"`
-			DownloadCount    int       `json:"download_count"`
-		CompletedDownloads  int       `json:"completed_downloads"`
-			DownloadURL      string    `json:"download_url"`
-			IsExpired        bool      `json:"is_expired"`
-			IsPasswordProtected bool   `json:"is_password_protected"`
+			ID                  int64     `json:"id"`
+			ClaimCode           string    `json:"claim_code"`
+			OriginalFilename    string    `json:"original_filename"`
+			FileSize            int64     `json:"file_size"`
+			MimeType            string    `json:"mime_type"`
+			CreatedAt           time.Time `json:"created_at"`
+			ExpiresAt           time.Time `json:"expires_at"`
+			MaxDownloads        *int      `json:"max_downloads"`
+			DownloadCount       int       `json:"download_count"`
+			CompletedDownloads  int       `json:"completed_downloads"`
+			DownloadURL         string    `json:"download_url"`
+			IsExpired           bool      `json:"is_expired"`
+			IsPasswordProtected bool      `json:"is_password_protected"`
 		}
 
 		fileResponses := make([]FileResponse, 0, len(files))
 		for _, file := range files {
 			fileResponses = append(fileResponses, FileResponse{
-				ID:               file.ID,
-				ClaimCode:        file.ClaimCode,
-				OriginalFilename: file.OriginalFilename,
-				FileSize:         file.FileSize,
-				MimeType:         file.MimeType,
-				CreatedAt:        file.CreatedAt,
-				ExpiresAt:        file.ExpiresAt,
-				MaxDownloads:     file.MaxDownloads,
-				DownloadCount:    file.DownloadCount,
+				ID:                  file.ID,
+				ClaimCode:           file.ClaimCode,
+				OriginalFilename:    file.OriginalFilename,
+				FileSize:            file.FileSize,
+				MimeType:            file.MimeType,
+				CreatedAt:           file.CreatedAt,
+				ExpiresAt:           file.ExpiresAt,
+				MaxDownloads:        file.MaxDownloads,
+				DownloadCount:       file.DownloadCount,
 				CompletedDownloads:  file.CompletedDownloads,
-				DownloadURL:      buildDownloadURL(r, cfg, file.ClaimCode),
-				IsExpired:        time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
+				DownloadURL:         buildDownloadURL(r, cfg, file.ClaimCode),
+				IsExpired:           time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",
 			})
 		}
@@ -323,8 +323,8 @@ func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 		// Parse request
 		var req struct {
-			FileID         int64  `json:"file_id"`
-			NewExpiration  string `json:"new_expiration"`
+			FileID        int64  `json:"file_id"`
+			NewExpiration string `json:"new_expiration"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.Header().Set("Content-Type", "application/json")

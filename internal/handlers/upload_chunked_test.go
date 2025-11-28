@@ -29,11 +29,11 @@ func TestUploadInitHandler_ValidRequest(t *testing.T) {
 
 	// Create init request
 	initReq := models.UploadInitRequest{
-		Filename:        "testfile.txt",
-		TotalSize:       1024 * 1024, // 1 MB
-		ExpiresInHours:  24,
-		MaxDownloads:    5,
-		Password:        "",
+		Filename:       "testfile.txt",
+		TotalSize:      1024 * 1024, // 1 MB
+		ExpiresInHours: 24,
+		MaxDownloads:   5,
+		Password:       "",
 	}
 	body, _ := json.Marshal(initReq)
 
@@ -254,12 +254,12 @@ func TestUploadChunkHandler_ValidChunk(t *testing.T) {
 	// Initialize upload first (use valid UUID)
 	uploadID := "550e8400-e29b-41d4-a716-446655440001"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "test.txt",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "test.txt",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -348,12 +348,12 @@ func TestUploadChunkHandler_ChunkNumberOutOfRange(t *testing.T) {
 
 	// Initialize upload with 2 chunks
 	partialUpload := &models.PartialUpload{
-		UploadID:    "550e8400-e29b-41d4-a716-446655440002",
-		Filename:    "test.txt",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		CreatedAt:   time.Now(),
+		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
+		Filename:     "test.txt",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -387,12 +387,12 @@ func TestUploadChunkHandler_ChunkSizeMismatch(t *testing.T) {
 
 	// Initialize upload with 1024 byte chunks
 	partialUpload := &models.PartialUpload{
-		UploadID:    "550e8400-e29b-41d4-a716-446655440002",
-		Filename:    "test.txt",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		CreatedAt:   time.Now(),
+		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
+		Filename:     "test.txt",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -426,12 +426,12 @@ func TestUploadChunkHandler_Idempotency(t *testing.T) {
 
 	// Initialize upload
 	partialUpload := &models.PartialUpload{
-		UploadID:    "550e8400-e29b-41d4-a716-446655440002",
-		Filename:    "test.txt",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		CreatedAt:   time.Now(),
+		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
+		Filename:     "test.txt",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -536,12 +536,12 @@ func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440004"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "incomplete.txt",
-		TotalSize:   3072,
-		ChunkSize:   1024,
-		TotalChunks: 3,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "incomplete.txt",
+		TotalSize:    3072,
+		ChunkSize:    1024,
+		TotalChunks:  3,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -625,13 +625,13 @@ func TestUploadStatusHandler_InProgress(t *testing.T) {
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440005"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "inprogress.txt",
-		TotalSize:   3072,
-		ChunkSize:   1024,
-		TotalChunks: 3,
-		Completed:   false,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "inprogress.txt",
+		TotalSize:    3072,
+		ChunkSize:    1024,
+		TotalChunks:  3,
+		Completed:    false,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -682,15 +682,15 @@ func TestUploadStatusHandler_Completed(t *testing.T) {
 	uploadID := "550e8400-e29b-41d4-a716-446655440006"
 	claimCode := "testclaimcode123"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "completed.txt",
-		TotalSize:   2048,
-		ChunkSize:   1024,
-		TotalChunks: 2,
-		Completed:   true,
-		Status:      "completed",
-		ClaimCode:   &claimCode,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "completed.txt",
+		TotalSize:    2048,
+		ChunkSize:    1024,
+		TotalChunks:  2,
+		Completed:    true,
+		Status:       "completed",
+		ClaimCode:    &claimCode,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -771,14 +771,14 @@ func TestUploadChunkHandler_AlreadyCompleted(t *testing.T) {
 	// Create completed upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440007"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "done.txt",
-		TotalSize:   1024,
-		ChunkSize:   1024,
-		TotalChunks: 1,
-		Completed:   true,
-		Status:      "completed",
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "done.txt",
+		TotalSize:    1024,
+		ChunkSize:    1024,
+		TotalChunks:  1,
+		Completed:    true,
+		Status:       "completed",
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -919,12 +919,12 @@ func TestUploadChunkHandler_LastChunkValidation(t *testing.T) {
 	// Initialize upload: 2500 bytes total, 1024 byte chunks = 3 chunks (1024, 1024, 452)
 	uploadID := "550e8400-e29b-41d4-a716-446655440008"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "test.txt",
-		TotalSize:   2500,
-		ChunkSize:   1024,
-		TotalChunks: 3,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "test.txt",
+		TotalSize:    2500,
+		ChunkSize:    1024,
+		TotalChunks:  3,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)
@@ -1366,12 +1366,12 @@ func TestUploadChunkHandler_MissingChunkFile(t *testing.T) {
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440013"
 	partialUpload := &models.PartialUpload{
-		UploadID:    uploadID,
-		Filename:    "test.txt",
-		TotalSize:   1024,
-		ChunkSize:   1024,
-		TotalChunks: 1,
-		CreatedAt:   time.Now(),
+		UploadID:     uploadID,
+		Filename:     "test.txt",
+		TotalSize:    1024,
+		ChunkSize:    1024,
+		TotalChunks:  1,
+		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
 	database.CreatePartialUpload(db, partialUpload)

@@ -30,8 +30,8 @@ var (
 	// WebhookDeliveryDuration tracks webhook delivery latency by event type
 	WebhookDeliveryDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "safeshare_webhook_delivery_duration_seconds",
-			Help: "Webhook delivery latency in seconds",
+			Name:    "safeshare_webhook_delivery_duration_seconds",
+			Help:    "Webhook delivery latency in seconds",
 			Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		},
 		[]string{"event_type"},

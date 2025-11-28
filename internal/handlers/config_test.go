@@ -81,7 +81,7 @@ func TestPublicConfigHandler_AllFields(t *testing.T) {
 	cfg.SetMaxFileSize(100 * 1024 * 1024) // 100MB
 	cfg.ChunkedUploadEnabled = true
 	cfg.ChunkedUploadThreshold = 50 * 1024 * 1024 // 50MB
-	cfg.ChunkSize = 10 * 1024 * 1024               // 10MB
+	cfg.ChunkSize = 10 * 1024 * 1024              // 10MB
 
 	handler := PublicConfigHandler(cfg)
 

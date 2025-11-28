@@ -83,10 +83,10 @@ func TestChunkedUploadMetrics(t *testing.T) {
 	initialChunks := testutil.ToFloat64(ChunkedUploadChunksTotal)
 
 	// Simulate chunked upload flow
-	ChunkedUploadsTotal.Inc() // Initialize upload
-	ChunkedUploadChunksTotal.Inc() // Upload chunk 1
-	ChunkedUploadChunksTotal.Inc() // Upload chunk 2
-	ChunkedUploadChunksTotal.Inc() // Upload chunk 3
+	ChunkedUploadsTotal.Inc()          // Initialize upload
+	ChunkedUploadChunksTotal.Inc()     // Upload chunk 1
+	ChunkedUploadChunksTotal.Inc()     // Upload chunk 2
+	ChunkedUploadChunksTotal.Inc()     // Upload chunk 3
 	ChunkedUploadsCompletedTotal.Inc() // Complete upload
 
 	// Verify counts increased
@@ -109,17 +109,17 @@ func TestChunkedUploadMetrics(t *testing.T) {
 func TestUploadSizeBytes(t *testing.T) {
 	// Test that histogram accepts observations without panicking
 	// Note: We can't easily verify histogram counts with testutil.ToFloat64 (it only works for counters/gauges)
-	UploadSizeBytes.Observe(1024)       // 1 KB
-	UploadSizeBytes.Observe(10240)      // 10 KB
-	UploadSizeBytes.Observe(1048576)    // 1 MB
-	UploadSizeBytes.Observe(104857600)  // 100 MB
+	UploadSizeBytes.Observe(1024)      // 1 KB
+	UploadSizeBytes.Observe(10240)     // 10 KB
+	UploadSizeBytes.Observe(1048576)   // 1 MB
+	UploadSizeBytes.Observe(104857600) // 100 MB
 	// If we got here without panic, test passes
 }
 
 func TestDownloadSizeBytes(t *testing.T) {
 	// Test that histogram accepts observations without panicking
-	DownloadSizeBytes.Observe(1024)      // 1 KB
-	DownloadSizeBytes.Observe(10485760)  // 10 MB
+	DownloadSizeBytes.Observe(1024)     // 1 KB
+	DownloadSizeBytes.Observe(10485760) // 10 MB
 	// If we got here without panic, test passes
 }
 
@@ -216,8 +216,8 @@ func TestHealthCheckMetrics(t *testing.T) {
 
 func TestHealthCheckDuration(t *testing.T) {
 	// Test that histogram accepts observations without panicking
-	HealthCheckDuration.WithLabelValues("/health").Observe(0.001) // 1ms
-	HealthCheckDuration.WithLabelValues("/health").Observe(0.005) // 5ms
+	HealthCheckDuration.WithLabelValues("/health").Observe(0.001)    // 1ms
+	HealthCheckDuration.WithLabelValues("/health").Observe(0.005)    // 5ms
 	HealthCheckDuration.WithLabelValues("/readiness").Observe(0.010) // 10ms
 	// If we got here without panic, test passes
 }

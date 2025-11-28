@@ -49,35 +49,35 @@ func (rl *RateLimiter) cleanupOldEntries() {
 	for range rl.cleanup.C {
 		now := time.Now()
 		rl.records.Range(func(key, value interface{}) bool {
-		record := value.(*requestRecord)
-		record.mu.Lock()
+			record := value.(*requestRecord)
+			record.mu.Lock()
 
-				// Remove timestamps older than 1 hour (optimized to reuse backing array)
-		cutoff := now.Add(-1 * time.Hour)
-		oldCount := len(record.timestamps)
-		newTimestamps := record.timestamps[:0] // Reuse backing array
-		for _, ts := range record.timestamps {
-		 if ts.After(cutoff) {
-		 newTimestamps = append(newTimestamps, ts)
-		}
-		}
+			// Remove timestamps older than 1 hour (optimized to reuse backing array)
+			cutoff := now.Add(-1 * time.Hour)
+			oldCount := len(record.timestamps)
+			newTimestamps := record.timestamps[:0] // Reuse backing array
+			for _, ts := range record.timestamps {
+				if ts.After(cutoff) {
+					newTimestamps = append(newTimestamps, ts)
+				}
+			}
 
-				// Only allocate new slice if we removed many items (>50%) and can reclaim significant memory (>100 items)
-		if len(newTimestamps) < oldCount/2 && oldCount > 100 {
-		 record.timestamps = append([]time.Time(nil), newTimestamps...)
-		} else {
-		 record.timestamps = newTimestamps
-		}
+			// Only allocate new slice if we removed many items (>50%) and can reclaim significant memory (>100 items)
+			if len(newTimestamps) < oldCount/2 && oldCount > 100 {
+				record.timestamps = append([]time.Time(nil), newTimestamps...)
+			} else {
+				record.timestamps = newTimestamps
+			}
 
-				// Remove empty records
-		if len(record.timestamps) == 0 {
-		 rl.records.Delete(key)
-		}
+			// Remove empty records
+			if len(record.timestamps) == 0 {
+				rl.records.Delete(key)
+			}
 
-				// Explicitly unlock before returning (fixes memory leak from defer in loop)
-		record.mu.Unlock()
-		 return true
-			})
+			// Explicitly unlock before returning (fixes memory leak from defer in loop)
+			record.mu.Unlock()
+			return true
+		})
 	}
 }
 
