@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## Version Reset Notice (November 2025)
+
+> **SafeShare version was reset from v2.8.3 to v1.0.0**
+
+### Why?
+
+Go's module system requires that any module at v2.0.0 or higher must have `/v2` appended to its module path (e.g., `github.com/example/project/v2`). Our module path was `github.com/fjmerc/safeshare` without the `/v2` suffix, which caused:
+
+- Go Report Card showing outdated/cached versions
+- Go module proxy indexing issues
+- LICENSE file appearing missing in Go tooling
+
+### What Changed?
+
+- **Version reset**: v2.8.3 → v1.0.0
+- **All features preserved**: v1.0.0 contains all functionality from v2.8.3
+- **Historical entries below**: Previous v2.x and v1.x entries are preserved for reference
+
+### Why This Doesn't Affect You
+
+SafeShare is an **application**, not a library. You interact with it via Docker images, binaries, or SDKs (which have independent versioning). The Go module version is an internal detail.
+
+See `docs/VERSION_STRATEGY.md` for full explanation.
+
+---
+
 ## [Unreleased]
 
 ### Added
@@ -1082,22 +1110,7 @@ Initial production release.
 - Disk space monitoring and validation
 - Maximum file expiration enforcement
 
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v2.8.1...HEAD
-[2.8.1]: https://github.com/fjmerc/safeshare/compare/v2.8.0...v2.8.1
-[2.8.0]: https://github.com/fjmerc/safeshare/compare/v2.7.0...v2.8.0
-[2.7.0]: https://github.com/fjmerc/safeshare/compare/v2.6.0...v2.7.0
-[2.6.0]: https://github.com/fjmerc/safeshare/compare/v2.5.1...v2.6.0
-[2.5.1]: https://github.com/fjmerc/safeshare/compare/v2.5.0...v2.5.1
-[2.5.0]: https://github.com/fjmerc/safeshare/compare/v2.4.0...v2.5.0
-[2.4.0]: https://github.com/fjmerc/safeshare/compare/v2.3.2...v2.4.0
-[2.3.2]: https://github.com/fjmerc/safeshare/compare/v2.3.1...v2.3.2
-[2.3.1]: https://github.com/fjmerc/safeshare/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/fjmerc/safeshare/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/fjmerc/safeshare/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/fjmerc/safeshare/compare/v2.0.7...v2.1.0
-[2.0.7]: https://github.com/fjmerc/safeshare/compare/v2.0.6...v2.0.7
-[2.0.6]: https://github.com/fjmerc/safeshare/compare/v2.0.5...v2.0.6
-[2.0.0]: https://github.com/fjmerc/safeshare/compare/v1.2.0...v2.0.0
-[1.2.0]: https://github.com/fjmerc/safeshare/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/fjmerc/safeshare/compare/v1.0.0...v1.1.0
+<!-- Note: Historical version links below reference old v2.x tags that have been deleted.
+     They are preserved for documentation purposes. The current release is v1.0.0. -->
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.0.0
