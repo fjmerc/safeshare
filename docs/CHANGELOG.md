@@ -35,6 +35,16 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.3.1] - 2025-11-28
+
+### Changed
+- **Code Quality**: Applied `gofmt -s` simplifications across 57 Go files
+  - Improves Go Report Card gofmt score from 58% to 100%
+  - Purely syntactic changes (composite literal simplifications)
+  - No behavioral changes, all tests pass with 62.5% coverage
+
+## [1.3.0] - 2025-11-27
+
 ### Added
 - **Token Management UI**: User dashboard now includes a dedicated API Tokens section for managing programmatic access
   - Create new tokens with custom names, scopes (upload, download, manage, admin), and expiration dates
@@ -1112,5 +1122,6 @@ Initial production release.
 
 <!-- Note: Historical version links below reference old v2.x tags that have been deleted.
      They are preserved for documentation purposes. The current release is v1.0.0. -->
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.1
 [1.3.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.0
