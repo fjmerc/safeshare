@@ -262,6 +262,35 @@ func (c *Config) SetAdminPassword(password string) error {
 
 // validate ensures configuration values are sensible
 func (c *Config) validate() error {
+	if err := c.validatePaths(); err != nil {
+		return err
+	}
+
+	if err := c.validateStorageSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateAuthSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateEncryptionKey(); err != nil {
+		return err
+	}
+
+	if err := c.validateChunkedUploadSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateProxySettings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validatePaths validates required path and port configuration fields
+func (c *Config) validatePaths() error {
 	if c.Port == "" {
 		return fmt.Errorf("PORT cannot be empty")
 	}
@@ -274,6 +303,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("UPLOAD_DIR cannot be empty")
 	}
 
+	return nil
+}
+
+// validateStorageSettings validates file size, expiration, rate limits, and quota settings
+func (c *Config) validateStorageSettings() error {
 	if c.maxFileSize <= 0 {
 		return fmt.Errorf("MAX_FILE_SIZE must be positive, got %d", c.maxFileSize)
 	}
@@ -306,6 +340,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("QUOTA_LIMIT_GB must be 0 (unlimited) or positive, got %d", c.quotaLimitGB)
 	}
 
+	return nil
+}
+
+// validateAuthSettings validates session expiry and admin credential configuration
+func (c *Config) validateAuthSettings() error {
 	if c.SessionExpiryHours <= 0 {
 		return fmt.Errorf("SESSION_EXPIRY_HOURS must be positive, got %d", c.SessionExpiryHours)
 	}
@@ -323,6 +362,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("ADMIN_PASSWORD must be at least 8 characters")
 	}
 
+	return nil
+}
+
+// validateEncryptionKey validates the encryption key format if provided
+func (c *Config) validateEncryptionKey() error {
 	// Validate encryption key if provided (must be 64 hex characters = 32 bytes for AES-256)
 	if c.EncryptionKey != "" {
 		if len(c.EncryptionKey) != 64 {
@@ -336,7 +380,11 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// Validate chunked upload settings
+	return nil
+}
+
+// validateChunkedUploadSettings validates chunked upload configuration parameters
+func (c *Config) validateChunkedUploadSettings() error {
 	if c.ChunkSize < 1048576 || c.ChunkSize > 52428800 {
 		return fmt.Errorf("CHUNK_SIZE must be between 1MB (1048576) and 50MB (52428800), got %d", c.ChunkSize)
 	}
@@ -349,7 +397,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("PARTIAL_UPLOAD_EXPIRY_HOURS must be positive, got %d", c.PartialUploadExpiryHours)
 	}
 
-	// Validate TRUST_PROXY_HEADERS
+	return nil
+}
+
+// validateProxySettings validates reverse proxy header trust configuration
+func (c *Config) validateProxySettings() error {
 	validProxySettings := map[string]bool{"auto": true, "true": true, "false": true}
 	if !validProxySettings[c.TrustProxyHeaders] {
 		return fmt.Errorf("TRUST_PROXY_HEADERS must be 'auto', 'true', or 'false', got '%s'", c.TrustProxyHeaders)
