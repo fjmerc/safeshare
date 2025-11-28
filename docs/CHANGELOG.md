@@ -35,6 +35,18 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.4.0] - 2025-11-28
+
+### Changed
+- **Code Quality**: Reduced cyclomatic complexity in high-impact functions
+  - Refactored `calculateRecommendations()` from complexity 70 → ~5 using Extract Method pattern
+  - Refactored `generateAnalysis()` from complexity 35 → ~7 with helper functions
+  - Refactored `UploadHandler()` from complexity 42 → ~7 with structured parameter handling
+  - Refactored `(*Config).validate()` from complexity 35 → ~7 using validator functions
+  - Refactored `normalizePath()` from complexity 31 → ~3 using table-driven design
+  - Improves Go Report Card gocyclo score by reducing functions exceeding threshold (44 → 31)
+  - All tests pass with 62.5% coverage
+
 ## [1.3.1] - 2025-11-28
 
 ### Changed
