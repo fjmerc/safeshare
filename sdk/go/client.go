@@ -260,3 +260,16 @@ func parseTimeRequired(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
 }
+
+// parseTimeNonPointer parses a non-pointer string and returns a pointer to time.
+// Used when the API returns a non-optional time string but we want a pointer.
+func parseTimeNonPointer(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
