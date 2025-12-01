@@ -4,7 +4,10 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /build
 
 # Copy dependency files
+# Note: sdk/go is a local replace directive, so we must copy its go.mod/go.sum
+# before running go mod download to satisfy the dependency resolution
 COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 RUN go mod download
 
 # Copy source code
