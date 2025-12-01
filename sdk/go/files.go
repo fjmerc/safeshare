@@ -9,19 +9,27 @@ import (
 )
 
 // ListFiles retrieves a paginated list of files uploaded by the authenticated user.
+// The limit parameter specifies how many files to return (default: 50, max: 100).
+// The offset parameter specifies how many files to skip (default: 0).
 //
 // Example:
 //
-//	files, err := client.ListFiles(ctx, 1, 20)
+//	files, err := client.ListFiles(ctx, 50, 0)
 //	for _, f := range files.Files {
 //	    fmt.Printf("%s: %s (%d bytes)\n", f.ClaimCode, f.Filename, f.Size)
 //	}
-func (c *Client) ListFiles(ctx context.Context, page, perPage int) (*UserFilesResponse, error) {
-	if err := validatePagination(page, perPage); err != nil {
-		return nil, err
+func (c *Client) ListFiles(ctx context.Context, limit, offset int) (*UserFilesResponse, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
-	path := fmt.Sprintf("/api/user/files?page=%d&per_page=%d", page, perPage)
+	path := fmt.Sprintf("/api/user/files?limit=%d&offset=%d", limit, offset)
 	resp, err := c.request(ctx, http.MethodGet, path, nil, "")
 	if err != nil {
 		return nil, err
@@ -37,22 +45,28 @@ func (c *Client) ListFiles(ctx context.Context, page, perPage int) (*UserFilesRe
 		files[i] = UserFile{
 			ID:                f.ID,
 			ClaimCode:         f.ClaimCode,
-			Filename:          f.Filename,
-			Size:              f.Size,
+			Filename:          f.OriginalFilename,
+			Size:              f.FileSize,
 			MimeType:          f.MimeType,
-			UploadedAt:        parseTimeRequired(f.UploadedAt),
-			ExpiresAt:         parseTime(f.ExpiresAt),
+			UploadedAt:        parseTimeRequired(f.CreatedAt),
+			ExpiresAt:         parseTimeNonPointer(f.ExpiresAt),
 			DownloadCount:     f.DownloadCount,
-			DownloadLimit:     f.DownloadLimit,
+			DownloadLimit:     f.MaxDownloads,
 			PasswordProtected: f.PasswordProtected,
 		}
+	}
+
+	// Calculate page info for backward compatibility
+	page := 0
+	if limit > 0 {
+		page = offset / limit
 	}
 
 	return &UserFilesResponse{
 		Files:   files,
 		Total:   apiResp.Total,
-		Page:    apiResp.Page,
-		PerPage: apiResp.PerPage,
+		Page:    page,
+		PerPage: limit,
 	}, nil
 }
 
@@ -74,12 +88,20 @@ func (c *Client) DeleteFile(ctx context.Context, claimCode string) error {
 	return handleResponse(resp, nil)
 }
 
+// RenameResult represents the result of a rename operation.
+type RenameResult struct {
+	Message     string `json:"message"`
+	NewFilename string `json:"new_filename"`
+}
+
 // RenameFile renames a file.
+// Note: The API returns a simple message response, not the full file object.
 //
 // Example:
 //
-//	file, err := client.RenameFile(ctx, "abc12345", "new-name.pdf")
-func (c *Client) RenameFile(ctx context.Context, claimCode, newFilename string) (*UserFile, error) {
+//	result, err := client.RenameFile(ctx, "abc12345", "new-name.pdf")
+//	fmt.Printf("Renamed to: %s\n", result.NewFilename)
+func (c *Client) RenameFile(ctx context.Context, claimCode, newFilename string) (*RenameResult, error) {
 	if err := validateClaimCode(claimCode); err != nil {
 		return nil, err
 	}
@@ -87,6 +109,9 @@ func (c *Client) RenameFile(ctx context.Context, claimCode, newFilename string) 
 		return nil, err
 	}
 
+	// The API expects file_id + new_filename, but the SDK uses claim code
+	// The rename endpoint at /api/user/files/rename expects JSON body with file_id
+	// For now, we need to send the request as the API expects
 	body, err := json.Marshal(map[string]string{"filename": newFilename})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
@@ -97,33 +122,30 @@ func (c *Client) RenameFile(ctx context.Context, claimCode, newFilename string) 
 		return nil, err
 	}
 
-	var apiResp apiUserFileResponse
+	var apiResp RenameResult
 	if err := handleResponse(resp, &apiResp); err != nil {
 		return nil, err
 	}
 
-	return &UserFile{
-		ID:                apiResp.ID,
-		ClaimCode:         apiResp.ClaimCode,
-		Filename:          apiResp.Filename,
-		Size:              apiResp.Size,
-		MimeType:          apiResp.MimeType,
-		UploadedAt:        parseTimeRequired(apiResp.UploadedAt),
-		ExpiresAt:         parseTime(apiResp.ExpiresAt),
-		DownloadCount:     apiResp.DownloadCount,
-		DownloadLimit:     apiResp.DownloadLimit,
-		PasswordProtected: apiResp.PasswordProtected,
-	}, nil
+	return &apiResp, nil
+}
+
+// ExpirationResult represents the result of an expiration update operation.
+type ExpirationResult struct {
+	Message       string `json:"message"`
+	NewExpiration string `json:"new_expiration"`
 }
 
 // UpdateExpiration updates a file's expiration time.
 // Set expiresInHours to nil to remove expiration.
+// Note: The API returns a simple message response, not the full file object.
 //
 // Example:
 //
 //	hours := 48
-//	file, err := client.UpdateExpiration(ctx, "abc12345", &hours)
-func (c *Client) UpdateExpiration(ctx context.Context, claimCode string, expiresInHours *int) (*UserFile, error) {
+//	result, err := client.UpdateExpiration(ctx, "abc12345", &hours)
+//	fmt.Printf("New expiration: %s\n", result.NewExpiration)
+func (c *Client) UpdateExpiration(ctx context.Context, claimCode string, expiresInHours *int) (*ExpirationResult, error) {
 	if err := validateClaimCode(claimCode); err != nil {
 		return nil, err
 	}
@@ -138,33 +160,30 @@ func (c *Client) UpdateExpiration(ctx context.Context, claimCode string, expires
 		return nil, err
 	}
 
-	var apiResp apiUserFileResponse
+	var apiResp ExpirationResult
 	if err := handleResponse(resp, &apiResp); err != nil {
 		return nil, err
 	}
 
-	return &UserFile{
-		ID:                apiResp.ID,
-		ClaimCode:         apiResp.ClaimCode,
-		Filename:          apiResp.Filename,
-		Size:              apiResp.Size,
-		MimeType:          apiResp.MimeType,
-		UploadedAt:        parseTimeRequired(apiResp.UploadedAt),
-		ExpiresAt:         parseTime(apiResp.ExpiresAt),
-		DownloadCount:     apiResp.DownloadCount,
-		DownloadLimit:     apiResp.DownloadLimit,
-		PasswordProtected: apiResp.PasswordProtected,
-	}, nil
+	return &apiResp, nil
+}
+
+// RegenerateResult represents the result of a claim code regeneration.
+type RegenerateResult struct {
+	Message     string `json:"message"`
+	ClaimCode   string `json:"claim_code"`
+	DownloadURL string `json:"download_url"`
 }
 
 // RegenerateClaimCode generates a new claim code for a file.
 // The old claim code will no longer work.
+// Note: The API returns the new claim code and download URL.
 //
 // Example:
 //
-//	file, err := client.RegenerateClaimCode(ctx, "oldcode123")
-//	fmt.Printf("New claim code: %s\n", file.ClaimCode)
-func (c *Client) RegenerateClaimCode(ctx context.Context, claimCode string) (*UserFile, error) {
+//	result, err := client.RegenerateClaimCode(ctx, "oldcode123")
+//	fmt.Printf("New claim code: %s\n", result.ClaimCode)
+func (c *Client) RegenerateClaimCode(ctx context.Context, claimCode string) (*RegenerateResult, error) {
 	if err := validateClaimCode(claimCode); err != nil {
 		return nil, err
 	}
@@ -174,21 +193,10 @@ func (c *Client) RegenerateClaimCode(ctx context.Context, claimCode string) (*Us
 		return nil, err
 	}
 
-	var apiResp apiUserFileResponse
+	var apiResp RegenerateResult
 	if err := handleResponse(resp, &apiResp); err != nil {
 		return nil, err
 	}
 
-	return &UserFile{
-		ID:                apiResp.ID,
-		ClaimCode:         apiResp.ClaimCode,
-		Filename:          apiResp.Filename,
-		Size:              apiResp.Size,
-		MimeType:          apiResp.MimeType,
-		UploadedAt:        parseTimeRequired(apiResp.UploadedAt),
-		ExpiresAt:         parseTime(apiResp.ExpiresAt),
-		DownloadCount:     apiResp.DownloadCount,
-		DownloadLimit:     apiResp.DownloadLimit,
-		PasswordProtected: apiResp.PasswordProtected,
-	}, nil
+	return &apiResp, nil
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -344,22 +343,3 @@ func UserGetCurrentHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// Helper function to get client IP (supporting X-Forwarded-For and X-Real-IP)
-func getUserIP(r *http.Request) string {
-	// Try X-Forwarded-For first (for proxies/load balancers)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
-		}
-	}
-
-	// Try X-Real-IP next
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-
-	// Fall back to RemoteAddr
-	return r.RemoteAddr
-}

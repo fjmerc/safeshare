@@ -256,24 +256,27 @@ type apiFileInfoResponse struct {
 
 // apiUserFileResponse is the raw API response for user files.
 type apiUserFileResponse struct {
-	ID                int     `json:"id"`
-	ClaimCode         string  `json:"claim_code"`
-	Filename          string  `json:"filename"`
-	Size              int64   `json:"size"`
-	MimeType          string  `json:"mime_type"`
-	UploadedAt        string  `json:"uploaded_at"`
-	ExpiresAt         *string `json:"expires_at"`
-	DownloadCount     int     `json:"download_count"`
-	DownloadLimit     *int    `json:"download_limit"`
-	PasswordProtected bool    `json:"password_protected"`
+	ID                 int     `json:"id"`
+	ClaimCode          string  `json:"claim_code"`
+	OriginalFilename   string  `json:"original_filename"`
+	FileSize           int64   `json:"file_size"`
+	MimeType           string  `json:"mime_type"`
+	CreatedAt          string  `json:"created_at"`
+	ExpiresAt          string  `json:"expires_at"`
+	DownloadCount      int     `json:"download_count"`
+	CompletedDownloads int     `json:"completed_downloads"`
+	MaxDownloads       *int    `json:"max_downloads"`
+	PasswordProtected  bool    `json:"is_password_protected"`
+	DownloadURL        string  `json:"download_url"`
+	IsExpired          bool    `json:"is_expired"`
 }
 
 // apiUserFilesResponse is the raw API response for listing user files.
 type apiUserFilesResponse struct {
-	Files   []apiUserFileResponse `json:"files"`
-	Total   int                   `json:"total"`
-	Page    int                   `json:"page"`
-	PerPage int                   `json:"per_page"`
+	Files  []apiUserFileResponse `json:"files"`
+	Total  int                   `json:"total"`
+	Limit  int                   `json:"limit"`
+	Offset int                   `json:"offset"`
 }
 
 // apiConfigResponse is the raw API response for server config.

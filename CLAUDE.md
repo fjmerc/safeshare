@@ -421,9 +421,12 @@ See **docs/ARCHITECTURE.md** for database schema details.
 **Important**: Frontend is embedded at compile time.
 
 1. Edit files in `internal/static/web/`
-2. Rebuild Go binary or Docker image
-3. Restart application
-4. **Remember to purge Cloudflare CDN cache** (see above)
+2. **Bump `CACHE_VERSION`** in `internal/static/web/service-worker.js` (e.g., `v3` → `v4`)
+   - Required for ANY HTML/JS/CSS changes to ensure users receive fresh content
+   - Without this, the service worker's cache-first strategy will serve stale files
+3. Rebuild Go binary or Docker image
+4. Restart application
+5. **Remember to purge Cloudflare CDN cache** (see above)
 
 ### Security Considerations
 

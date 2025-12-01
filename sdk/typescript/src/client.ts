@@ -23,6 +23,9 @@ import type {
   DownloadOptions,
   DownloadProgress,
   UpdateExpirationOptions,
+  RenameResult,
+  ExpirationResult,
+  RegenerateResult,
   PublicConfig,
   CreateTokenRequest,
   TokenCreatedResponse,
@@ -655,47 +658,56 @@ export class SafeShareClient {
   /**
    * List files uploaded by the authenticated user
    *
-   * @param page - Page number (default: 1, minimum: 1)
-   * @param perPage - Files per page (default: 20, range: 1-100)
+   * @param limit - Number of files to return (default: 50, max: 100)
+   * @param offset - Number of files to skip (default: 0)
    * @returns Paginated list of user's files
    */
-  async listFiles(page = 1, perPage = 20): Promise<UserFilesResponse> {
-    this.validatePagination(page, perPage);
+  async listFiles(limit = 50, offset = 0): Promise<UserFilesResponse> {
+    // Validate and clamp values
+    if (limit <= 0) limit = 50;
+    if (limit > 100) limit = 100;
+    if (offset < 0) offset = 0;
 
     const response = await this.request<{
       files: Array<{
         id: number;
         claim_code: string;
-        filename: string;
-        size: number;
+        original_filename: string;
+        file_size: number;
         mime_type: string;
-        uploaded_at: string;
-        expires_at: string | null;
+        created_at: string;
+        expires_at: string;
         download_count: number;
-        download_limit: number | null;
-        password_protected: boolean;
+        completed_downloads: number;
+        max_downloads: number | null;
+        is_password_protected: boolean;
+        download_url: string;
+        is_expired: boolean;
       }>;
       total: number;
-      page: number;
-      per_page: number;
-    }>("GET", `/api/user/files?page=${page}&per_page=${perPage}`);
+      limit: number;
+      offset: number;
+    }>("GET", `/api/user/files?limit=${limit}&offset=${offset}`);
+
+    // Calculate page info for backward compatibility
+    const page = limit > 0 ? Math.floor(offset / limit) : 0;
 
     return {
       files: response.files.map((f) => ({
         id: f.id,
         claimCode: f.claim_code,
-        filename: f.filename,
-        size: f.size,
+        filename: f.original_filename,
+        size: f.file_size,
         mimeType: f.mime_type,
-        uploadedAt: f.uploaded_at,
-        expiresAt: f.expires_at,
+        uploadedAt: f.created_at,
+        expiresAt: f.expires_at || null,
         downloadCount: f.download_count,
-        downloadLimit: f.download_limit,
-        passwordProtected: f.password_protected,
+        downloadLimit: f.max_downloads,
+        passwordProtected: f.is_password_protected,
       })),
       total: response.total,
-      page: response.page,
-      perPage: response.per_page,
+      page: page,
+      perPage: limit,
     };
   }
 
@@ -711,121 +723,78 @@ export class SafeShareClient {
 
   /**
    * Rename a file
+   * Note: The API returns a simple message response, not the full file object.
    *
    * @param claimCode - File claim code
    * @param newFilename - New filename
-   * @returns Updated file information
+   * @returns Rename result with new filename
    */
-  async renameFile(claimCode: string, newFilename: string): Promise<UserFile> {
+  async renameFile(claimCode: string, newFilename: string): Promise<RenameResult> {
     this.validateClaimCode(claimCode);
     this.validateFilename(newFilename);
 
     const response = await this.request<{
-      id: number;
-      claim_code: string;
-      filename: string;
-      size: number;
-      mime_type: string;
-      uploaded_at: string;
-      expires_at: string | null;
-      download_count: number;
-      download_limit: number | null;
-      password_protected: boolean;
+      message: string;
+      new_filename: string;
     }>("PUT", `/api/user/files/${claimCode}/rename`, {
       body: JSON.stringify({ filename: newFilename }),
       headers: { "Content-Type": "application/json" },
     });
 
     return {
-      id: response.id,
-      claimCode: response.claim_code,
-      filename: response.filename,
-      size: response.size,
-      mimeType: response.mime_type,
-      uploadedAt: response.uploaded_at,
-      expiresAt: response.expires_at,
-      downloadCount: response.download_count,
-      downloadLimit: response.download_limit,
-      passwordProtected: response.password_protected,
+      message: response.message,
+      newFilename: response.new_filename,
     };
   }
 
   /**
    * Update file expiration
+   * Note: The API returns a simple message response, not the full file object.
    *
    * @param claimCode - File claim code
    * @param options - Expiration options
-   * @returns Updated file information
+   * @returns Expiration update result
    */
   async updateExpiration(
     claimCode: string,
     options: UpdateExpirationOptions
-  ): Promise<UserFile> {
+  ): Promise<ExpirationResult> {
     this.validateClaimCode(claimCode);
 
     const response = await this.request<{
-      id: number;
-      claim_code: string;
-      filename: string;
-      size: number;
-      mime_type: string;
-      uploaded_at: string;
-      expires_at: string | null;
-      download_count: number;
-      download_limit: number | null;
-      password_protected: boolean;
+      message: string;
+      new_expiration: string;
     }>("PUT", `/api/user/files/${claimCode}/expiration`, {
       body: JSON.stringify({ expires_in_hours: options.expiresInHours }),
       headers: { "Content-Type": "application/json" },
     });
 
     return {
-      id: response.id,
-      claimCode: response.claim_code,
-      filename: response.filename,
-      size: response.size,
-      mimeType: response.mime_type,
-      uploadedAt: response.uploaded_at,
-      expiresAt: response.expires_at,
-      downloadCount: response.download_count,
-      downloadLimit: response.download_limit,
-      passwordProtected: response.password_protected,
+      message: response.message,
+      newExpiration: response.new_expiration,
     };
   }
 
   /**
    * Regenerate claim code for a file
+   * Note: The API returns the new claim code and download URL.
    *
    * @param claimCode - Current claim code
-   * @returns Updated file information with new claim code
+   * @returns Regeneration result with new claim code
    */
-  async regenerateClaimCode(claimCode: string): Promise<UserFile> {
+  async regenerateClaimCode(claimCode: string): Promise<RegenerateResult> {
     this.validateClaimCode(claimCode);
 
     const response = await this.request<{
-      id: number;
+      message: string;
       claim_code: string;
-      filename: string;
-      size: number;
-      mime_type: string;
-      uploaded_at: string;
-      expires_at: string | null;
-      download_count: number;
-      download_limit: number | null;
-      password_protected: boolean;
+      download_url: string;
     }>("POST", `/api/user/files/${claimCode}/regenerate`);
 
     return {
-      id: response.id,
+      message: response.message,
       claimCode: response.claim_code,
-      filename: response.filename,
-      size: response.size,
-      mimeType: response.mime_type,
-      uploadedAt: response.uploaded_at,
-      expiresAt: response.expires_at,
-      downloadCount: response.download_count,
-      downloadLimit: response.download_limit,
-      passwordProtected: response.password_protected,
+      downloadUrl: response.download_url,
     };
   }
 

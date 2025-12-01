@@ -11,8 +11,8 @@ import (
 
 func listCmd() *cobra.Command {
 	var (
-		page    int
-		perPage int
+		limit  int
+		offset int
 	)
 
 	cmd := &cobra.Command{
@@ -22,7 +22,7 @@ func listCmd() *cobra.Command {
 
 Examples:
   safeshare-cli list
-  safeshare-cli list --page 2 --per-page 50`,
+  safeshare-cli list --limit 50 --offset 0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkAuth(); err != nil {
 				return err
@@ -38,7 +38,7 @@ Examples:
 			}
 
 			ctx := context.Background()
-			files, err := client.ListFiles(ctx, page, perPage)
+			files, err := client.ListFiles(ctx, limit, offset)
 			if err != nil {
 				return err
 			}
@@ -48,7 +48,7 @@ Examples:
 				return nil
 			}
 
-			fmt.Printf("Files (page %d, showing %d of %d):\n", files.Page, len(files.Files), files.Total)
+			fmt.Printf("Files (offset %d, showing %d of %d):\n", offset, len(files.Files), files.Total)
 			fmt.Println(strings.Repeat("═", 80))
 
 			for _, f := range files.Files {
@@ -76,8 +76,8 @@ Examples:
 		},
 	}
 
-	cmd.Flags().IntVarP(&page, "page", "", 1, "Page number")
-	cmd.Flags().IntVarP(&perPage, "per-page", "n", 20, "Files per page")
+	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Number of files to show (max 100)")
+	cmd.Flags().IntVarP(&offset, "offset", "o", 0, "Number of files to skip")
 
 	return cmd
 }
@@ -171,12 +171,12 @@ Example:
 			}
 
 			ctx := context.Background()
-			file, err := client.RenameFile(ctx, claimCode, newFilename)
+			result, err := client.RenameFile(ctx, claimCode, newFilename)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("File renamed to: %s\n", file.Filename)
+			fmt.Printf("File renamed to: %s\n", result.NewFilename)
 			return nil
 		},
 	}

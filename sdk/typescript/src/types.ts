@@ -214,6 +214,38 @@ export interface UpdateExpirationOptions {
   expiresInHours: number | null;
 }
 
+/**
+ * Result of a file rename operation
+ */
+export interface RenameResult {
+  /** Success message */
+  message: string;
+  /** New filename after rename */
+  newFilename: string;
+}
+
+/**
+ * Result of an expiration update operation
+ */
+export interface ExpirationResult {
+  /** Success message */
+  message: string;
+  /** New expiration timestamp (ISO 8601) */
+  newExpiration: string;
+}
+
+/**
+ * Result of a claim code regeneration
+ */
+export interface RegenerateResult {
+  /** Success message */
+  message: string;
+  /** New claim code */
+  claimCode: string;
+  /** New download URL */
+  downloadUrl: string;
+}
+
 // ============================================================================
 // Configuration Types
 // ============================================================================

@@ -501,5 +501,3 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"user_agent", getUserAgent(r),
 	)
 }
-
-// getClientIP extracts the client IP address from the request

@@ -1605,6 +1605,36 @@
 
         /* ===== API TOKEN MANAGEMENT STYLES ===== */
 
+        /* Compact Empty State for Tokens */
+        .empty-state-compact {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 20px 16px;
+            color: #64748b;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px dashed #e2e8f0;
+        }
+
+        .empty-state-compact svg {
+            width: 24px;
+            height: 24px;
+            opacity: 0.5;
+            flex-shrink: 0;
+        }
+
+        .empty-state-compact span {
+            font-size: 14px;
+        }
+
+        [data-theme="dark"] .empty-state-compact {
+            background: #1e293b;
+            border-color: #374151;
+            color: #9ca3af;
+        }
+
         /* Scope Badge Styles */
         .scope-badge {
             display: inline-block;
@@ -1662,6 +1692,18 @@
             vertical-align: middle;
         }
 
+        /* Center Scopes, Created, Expires, Last Used columns */
+        .tokens-table th:nth-child(2),
+        .tokens-table th:nth-child(3),
+        .tokens-table th:nth-child(4),
+        .tokens-table th:nth-child(5),
+        .tokens-table td:nth-child(2),
+        .tokens-table td:nth-child(3),
+        .tokens-table td:nth-child(4),
+        .tokens-table td:nth-child(5) {
+            text-align: center;
+        }
+
         .tokens-table tbody tr:hover {
             background: #f8fafc;
         }
@@ -1682,8 +1724,9 @@
         }
 
         .scopes-cell {
-            display: flex;
+            display: inline-flex;
             flex-wrap: wrap;
+            justify-content: center;
             gap: 4px;
             max-width: 200px;
         }
@@ -3219,12 +3262,11 @@
 
             if (!tokens || tokens.length === 0) {
                 container.innerHTML = `
-                    <div class="empty-state">
+                    <div class="empty-state-compact">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
-                        <h3>No API Tokens</h3>
-                        <p>Create your first token to enable programmatic access</p>
+                        <span>No API tokens yet. Create one to enable programmatic access.</span>
                     </div>
                 `;
                 return;
