@@ -163,8 +163,20 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	// This ensures all connections (including pooled ones) get proper pragmas
 	registerConnectionHook()
 
+	// Build DSN with _txlock=immediate to ensure all transactions use BEGIN IMMEDIATE.
+	// This is critical because:
+	// 1. modernc.org/sqlite ignores sql.TxOptions.Isolation - it doesn't translate
+	//    sql.LevelSerializable to BEGIN IMMEDIATE as other drivers might
+	// 2. Without IMMEDIATE, transactions use BEGIN DEFERRED which acquires locks lazily
+	// 3. DEFERRED can cause SQLITE_BUSY_SNAPSHOT (517) errors when upgrading from
+	//    SHARED to EXCLUSIVE lock in WAL mode if the database changed between reads
+	// 4. IMMEDIATE acquires a RESERVED lock at BEGIN time, preventing upgrade failures
+	//
+	// Reference: https://pkg.go.dev/modernc.org/sqlite - _txlock parameter
+	dsn := dbPath + "?_txlock=immediate"
+
 	// Open database connection
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -229,15 +241,19 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-// BeginImmediateTx starts a transaction with IMMEDIATE locking to prevent SQLITE_BUSY errors.
-// Unlike db.Begin() which uses DEFERRED transactions (acquiring locks lazily),
-// IMMEDIATE transactions acquire a RESERVED lock immediately, preventing lock upgrade failures.
+// BeginImmediateTx starts a transaction with retry logic for robustness.
+// The IMMEDIATE locking is ensured by _txlock=immediate in the DSN (set in Initialize()).
+//
+// Note: The sql.LevelSerializable isolation level is kept for documentation purposes,
+// but modernc.org/sqlite ignores it. The actual BEGIN IMMEDIATE behavior comes from
+// the _txlock=immediate DSN parameter.
 //
 // Use this for transactions that will perform writes, especially:
 // - Quota check + insert operations
 // - Read-modify-write patterns
 //
-// The function includes retry logic with exponential backoff for robustness.
+// The function includes retry logic with exponential backoff for handling
+// SQLITE_BUSY errors that may still occur during high contention.
 func BeginImmediateTx(db *sql.DB) (*sql.Tx, error) {
 	return BeginImmediateTxContext(context.Background(), db)
 }
@@ -249,10 +265,9 @@ func BeginImmediateTxContext(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Use BeginTx with Serializable isolation level.
-		// For SQLite, this translates to BEGIN IMMEDIATE (or EXCLUSIVE depending on driver).
-		// This acquires a RESERVED lock immediately, preventing the SHARED->EXCLUSIVE upgrade
-		// race condition that causes SQLITE_BUSY errors.
+		// Note: sql.LevelSerializable is specified for documentation, but modernc.org/sqlite
+		// ignores this setting. The actual BEGIN IMMEDIATE behavior is controlled by
+		// _txlock=immediate in the DSN (set in Initialize()).
 		tx, err := db.BeginTx(ctx, &sql.TxOptions{
 			Isolation: sql.LevelSerializable,
 		})
