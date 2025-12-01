@@ -36,7 +36,8 @@ import {
 } from "./errors.js";
 
 // Validation patterns
-const CLAIM_CODE_PATTERN = /^[a-zA-Z0-9]{8,32}$/;
+// Server uses base64 URL-safe encoding which includes - and _ characters
+const CLAIM_CODE_PATTERN = /^[a-zA-Z0-9_-]{8,32}$/;
 // Standard UUID v4 pattern (8-4-4-4-12 format)
 const UPLOAD_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const FILENAME_MAX_LENGTH = 255;
@@ -117,7 +118,7 @@ export class SafeShareClient {
   private validateClaimCode(claimCode: string): void {
     if (!claimCode || !CLAIM_CODE_PATTERN.test(claimCode)) {
       throw new ValidationError(
-        "Invalid claim code format. Must be 8-32 alphanumeric characters."
+        "Invalid claim code format. Must be 8-32 alphanumeric characters (including - and _)."
       );
     }
   }
