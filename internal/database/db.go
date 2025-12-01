@@ -282,6 +282,11 @@ func BeginImmediateTxContext(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 }
 
 // isSQLiteBusyError checks if an error is an SQLITE_BUSY or SQLITE_LOCKED error.
+// SQLite extended error codes:
+//   - 5 = SQLITE_BUSY (database is locked)
+//   - 6 = SQLITE_LOCKED (table is locked)
+//   - 517 = SQLITE_BUSY_SNAPSHOT (WAL mode snapshot conflict)
+//   - 262 = SQLITE_BUSY_RECOVERY (WAL recovery in progress)
 func isSQLiteBusyError(err error) bool {
 	if err == nil {
 		return false
@@ -290,6 +295,8 @@ func isSQLiteBusyError(err error) bool {
 	return strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "sqlite_busy") ||
 		strings.Contains(errStr, "sqlite_locked") ||
-		strings.Contains(errStr, "(5)") || // SQLITE_BUSY error code
-		strings.Contains(errStr, "(6)") // SQLITE_LOCKED error code
+		strings.Contains(errStr, "(5)") ||   // SQLITE_BUSY
+		strings.Contains(errStr, "(6)") ||   // SQLITE_LOCKED
+		strings.Contains(errStr, "(517)") || // SQLITE_BUSY_SNAPSHOT (WAL mode)
+		strings.Contains(errStr, "(262)")    // SQLITE_BUSY_RECOVERY
 }
