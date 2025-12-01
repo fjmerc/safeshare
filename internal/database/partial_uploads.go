@@ -47,8 +47,10 @@ func CreatePartialUpload(db *sql.DB, upload *models.PartialUpload) error {
 // This prevents race conditions where multiple uploads could exceed quota limits.
 // Returns error if quota would be exceeded.
 func CreatePartialUploadWithQuotaCheck(db *sql.DB, upload *models.PartialUpload, quotaLimitBytes int64) error {
-	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
-	tx, err := db.Begin()
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races.
+	// Using BeginImmediateTx instead of db.Begin() to acquire a RESERVED lock immediately,
+	// which prevents SQLITE_BUSY errors from lock upgrade failures (SHARED -> EXCLUSIVE).
+	tx, err := BeginImmediateTx(db)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

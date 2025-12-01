@@ -468,8 +468,10 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 		// Get client IP for audit logging
 		clientIP := getClientIP(r)
 
-		// Begin transaction to prevent race conditions
-		tx, err := db.Begin()
+		// Begin transaction with IMMEDIATE lock to prevent race conditions.
+		// Using BeginImmediateTx to acquire a RESERVED lock immediately,
+		// which prevents SQLITE_BUSY errors from lock upgrade failures.
+		tx, err := database.BeginImmediateTx(db)
 		if err != nil {
 			slog.Error("failed to begin transaction", "error", err)
 			w.Header().Set("Content-Type", "application/json")
