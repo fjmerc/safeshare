@@ -87,9 +87,10 @@ func CreateFile(db *sql.DB, file *models.File) error {
 // This prevents race conditions where multiple uploads could exceed quota limits.
 // Returns error if quota would be exceeded.
 func CreateFileWithQuotaCheck(db *sql.DB, file *models.File, quotaLimitBytes int64) error {
-	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
-	// IMMEDIATE acquires RESERVED lock, blocking other writers but allowing readers
-	tx, err := db.Begin()
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races.
+	// Using BeginImmediateTx instead of db.Begin() to acquire a RESERVED lock immediately,
+	// which prevents SQLITE_BUSY errors from lock upgrade failures (SHARED -> EXCLUSIVE).
+	tx, err := BeginImmediateTx(db)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -521,8 +522,9 @@ func batchDeleteFiles(db *sql.DB, fileIDs []int64) int {
 	const batchSize = 500
 	deletedCount := 0
 
-	// Begin transaction for atomic batch delete
-	tx, err := db.Begin()
+	// Begin transaction with IMMEDIATE lock for atomic batch delete.
+	// Using BeginImmediateTx to prevent SQLITE_BUSY errors during concurrent operations.
+	tx, err := BeginImmediateTx(db)
 	if err != nil {
 		slog.Error("failed to begin transaction for batch delete", "error", err)
 		return 0

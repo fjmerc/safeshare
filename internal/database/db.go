@@ -1,11 +1,14 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 const schema = `
@@ -126,8 +129,40 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `
 
+// connectionHookOnce ensures we only register the connection hook once
+var connectionHookOnce sync.Once
+
+// registerConnectionHook sets up a hook that applies SQLite pragmas to ALL new connections.
+// This is critical because database/sql connection pooling can create new connections
+// that don't inherit pragmas set on the initial connection.
+func registerConnectionHook() {
+	connectionHookOnce.Do(func() {
+		sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+			// Apply critical pragmas to each new connection
+			// These MUST be applied per-connection as they are connection-level settings
+			pragmas := []string{
+				"PRAGMA foreign_keys = ON",
+				"PRAGMA busy_timeout = 5000", // 5 second busy timeout - CRITICAL for preventing SQLITE_BUSY
+				"PRAGMA synchronous = NORMAL",
+				"PRAGMA cache_size = -64000",
+				"PRAGMA temp_store = MEMORY",
+			}
+			for _, pragma := range pragmas {
+				if _, err := conn.ExecContext(context.Background(), pragma, nil); err != nil {
+					return fmt.Errorf("failed to set pragma %q: %w", pragma, err)
+				}
+			}
+			return nil
+		})
+	})
+}
+
 // Initialize opens the SQLite database and creates the schema
 func Initialize(dbPath string) (*sql.DB, error) {
+	// Register connection hook BEFORE opening database
+	// This ensures all connections (including pooled ones) get proper pragmas
+	registerConnectionHook()
+
 	// Open database connection
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -146,14 +181,10 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	db.SetMaxIdleConns(5)                  // Keep 5 idle connections for reuse
 	db.SetConnMaxLifetime(5 * time.Minute) // Recycle connections every 5 minutes
 
-	// Enable foreign keys and WAL mode for better concurrency
+	// These pragmas are database-level (persist across connections) and only need
+	// to be set once. Connection-level pragmas are set via RegisterConnectionHook above.
 	pragmas := []string{
-		"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
-		"PRAGMA journal_mode = WAL",        // Write-Ahead Logging for concurrency
-		"PRAGMA synchronous = NORMAL",      // Balance durability/performance
-		"PRAGMA cache_size = -64000",       // 64MB page cache
-		"PRAGMA busy_timeout = 5000",       // 5 second busy timeout
-		"PRAGMA temp_store = MEMORY",       // Store temp tables in RAM (faster JOINs)
+		"PRAGMA journal_mode = WAL",        // Write-Ahead Logging for concurrency (persists)
 		"PRAGMA wal_autocheckpoint = 4000", // Checkpoint every 16MB (less frequent)
 	}
 
@@ -196,4 +227,69 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// BeginImmediateTx starts a transaction with IMMEDIATE locking to prevent SQLITE_BUSY errors.
+// Unlike db.Begin() which uses DEFERRED transactions (acquiring locks lazily),
+// IMMEDIATE transactions acquire a RESERVED lock immediately, preventing lock upgrade failures.
+//
+// Use this for transactions that will perform writes, especially:
+// - Quota check + insert operations
+// - Read-modify-write patterns
+//
+// The function includes retry logic with exponential backoff for robustness.
+func BeginImmediateTx(db *sql.DB) (*sql.Tx, error) {
+	return BeginImmediateTxContext(context.Background(), db)
+}
+
+// BeginImmediateTxContext is like BeginImmediateTx but accepts a context.
+func BeginImmediateTxContext(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	const maxRetries = 5
+	baseDelay := 50 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Use BeginTx with Serializable isolation level.
+		// For SQLite, this translates to BEGIN IMMEDIATE (or EXCLUSIVE depending on driver).
+		// This acquires a RESERVED lock immediately, preventing the SHARED->EXCLUSIVE upgrade
+		// race condition that causes SQLITE_BUSY errors.
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{
+			Isolation: sql.LevelSerializable,
+		})
+		if err == nil {
+			return tx, nil
+		}
+
+		lastErr = err
+
+		// Check if this is a busy/locked error that's worth retrying
+		if !isSQLiteBusyError(err) {
+			return nil, err // Non-retryable error
+		}
+
+		// Wait with exponential backoff before retrying
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt)) // 50ms, 100ms, 200ms, 400ms, 800ms
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to begin transaction after %d attempts: %w", maxRetries, lastErr)
+}
+
+// isSQLiteBusyError checks if an error is an SQLITE_BUSY or SQLITE_LOCKED error.
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "database is locked") ||
+		strings.Contains(errStr, "sqlite_busy") ||
+		strings.Contains(errStr, "sqlite_locked") ||
+		strings.Contains(errStr, "(5)") || // SQLITE_BUSY error code
+		strings.Contains(errStr, "(6)") // SQLITE_LOCKED error code
 }
