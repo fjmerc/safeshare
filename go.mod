@@ -2,6 +2,9 @@ module github.com/fjmerc/safeshare
 
 go 1.24.0
 
+// Local SDK for contract testing - validates SDK can parse real server responses
+replace github.com/fjmerc/safeshare/sdk/go => ./sdk/go
+
 toolchain go1.24.7
 
 require (
@@ -17,6 +20,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
