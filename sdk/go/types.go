@@ -91,6 +91,14 @@ type UploadStatus struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	// Complete indicates if the upload is complete.
 	Complete bool `json:"complete"`
+	// Status is the current status: uploading, processing, completed, failed.
+	Status string `json:"status"`
+	// ClaimCode is the claim code (only set when completed).
+	ClaimCode *string `json:"claim_code,omitempty"`
+	// ErrorMessage is the error message (only set when failed).
+	ErrorMessage *string `json:"error_message,omitempty"`
+	// MaxDownloads is the maximum download limit (nil if unlimited).
+	MaxDownloads *int `json:"max_downloads,omitempty"`
 }
 
 // FileInfo represents public file information.
@@ -171,7 +179,7 @@ type PublicConfig struct {
 	// MaxFileSize is the maximum upload size in bytes.
 	MaxFileSize int64 `json:"max_file_size"`
 	// ChunkUploadThreshold is when to use chunked upload.
-	ChunkUploadThreshold int64 `json:"chunk_upload_threshold"`
+	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
 	// ChunkSize is the size of each chunk.
 	ChunkSize int64 `json:"chunk_size"`
 	// MaxExpirationHours is the maximum expiration time.
@@ -282,7 +290,7 @@ type apiUserFilesResponse struct {
 // apiConfigResponse is the raw API response for server config.
 type apiConfigResponse struct {
 	MaxFileSize          int64 `json:"max_file_size"`
-	ChunkUploadThreshold int64 `json:"chunk_upload_threshold"`
+	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
 	ChunkSize            int64 `json:"chunk_size"`
 	MaxExpirationHours   int   `json:"max_expiration_hours"`
 	RegistrationEnabled  bool  `json:"registration_enabled"`
