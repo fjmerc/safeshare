@@ -783,22 +783,37 @@ export class SafeShareClient {
   async getFileInfo(claimCode: string): Promise<FileInfo> {
     this.validateClaimCode(claimCode);
 
+    // Server returns fields from internal/handlers/claim.go:ClaimInfoHandler
     const response = await this.request<{
-      filename: string;
-      size: number;
+      claim_code: string;
+      original_filename: string;
+      file_size: number;
       mime_type: string;
+      created_at: string;
       expires_at: string | null;
-      password_protected: boolean;
-      downloads_remaining: number | null;
+      max_downloads: number | null;
+      download_count: number;
+      completed_downloads: number;
+      download_limit_reached: boolean;
+      password_required: boolean;
+      download_url: string;
+      sha256_hash: string;
     }>("GET", `/api/claim/${claimCode}/info`);
 
+    // Calculate downloads remaining from max_downloads and download_count
+    let downloadsRemaining: number | null = null;
+    if (response.max_downloads !== null) {
+      const remaining = response.max_downloads - response.download_count;
+      downloadsRemaining = remaining < 0 ? 0 : remaining;
+    }
+
     return {
-      filename: response.filename,
-      size: response.size,
+      filename: response.original_filename,
+      size: response.file_size,
       mimeType: response.mime_type,
       expiresAt: response.expires_at,
-      passwordProtected: response.password_protected,
-      downloadsRemaining: response.downloads_remaining,
+      passwordProtected: response.password_required,
+      downloadsRemaining: downloadsRemaining,
     };
   }
 

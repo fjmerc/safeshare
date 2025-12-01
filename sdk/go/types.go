@@ -253,13 +253,21 @@ type apiUploadResponse struct {
 }
 
 // apiFileInfoResponse is the raw API response for file info.
+// Server returns fields from internal/handlers/claim.go:ClaimInfoHandler
 type apiFileInfoResponse struct {
-	Filename           string  `json:"filename"`
-	Size               int64   `json:"size"`
-	MimeType           string  `json:"mime_type"`
-	ExpiresAt          *string `json:"expires_at"`
-	PasswordProtected  bool    `json:"password_protected"`
-	DownloadsRemaining *int    `json:"downloads_remaining"`
+	ClaimCode            string  `json:"claim_code"`
+	Filename             string  `json:"original_filename"`
+	Size                 int64   `json:"file_size"`
+	MimeType             string  `json:"mime_type"`
+	CreatedAt            string  `json:"created_at"`
+	ExpiresAt            *string `json:"expires_at"`
+	MaxDownloads         *int    `json:"max_downloads"`
+	DownloadCount        int     `json:"download_count"`
+	CompletedDownloads   int     `json:"completed_downloads"`
+	DownloadLimitReached bool    `json:"download_limit_reached"`
+	PasswordProtected    bool    `json:"password_required"`
+	DownloadURL          string  `json:"download_url"`
+	SHA256Hash           string  `json:"sha256_hash"`
 }
 
 // apiUserFileResponse is the raw API response for user files.
