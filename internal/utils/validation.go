@@ -3,8 +3,26 @@ package utils
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// claimCodePattern matches valid claim codes: 8-32 alphanumeric characters
+var claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9]{8,32}$`)
+
+// ValidateClaimCode validates that a claim code has a valid format.
+// Claim codes must be 8-32 alphanumeric characters (a-z, A-Z, 0-9).
+// This validation provides defense-in-depth to prevent log injection,
+// DoS via extremely long inputs, and ensures consistent behavior across clients.
+func ValidateClaimCode(claimCode string) error {
+	if claimCode == "" {
+		return fmt.Errorf("claim code cannot be empty")
+	}
+	if !claimCodePattern.MatchString(claimCode) {
+		return fmt.Errorf("claim code must be 8-32 alphanumeric characters")
+	}
+	return nil
+}
 
 // IsFileAllowed checks if a file is allowed based on its extension
 // Returns: (allowed bool, matched extension, error)

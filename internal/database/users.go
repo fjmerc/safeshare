@@ -670,3 +670,139 @@ func UpdateFileExpirationByIDAndUserID(db *sql.DB, fileID, userID int64, newExpi
 
 	return nil
 }
+
+// GetFileByClaimCodeAndUserID retrieves a file by claim code if it belongs to the specified user
+func GetFileByClaimCodeAndUserID(db *sql.DB, claimCode string, userID int64) (*models.File, error) {
+	query := `
+		SELECT
+			id, claim_code, original_filename, stored_filename, file_size,
+			mime_type, created_at, expires_at, max_downloads, download_count,
+			completed_downloads, uploader_ip, password_hash, user_id
+		FROM files
+		WHERE claim_code = ? AND user_id = ?
+	`
+
+	file := &models.File{}
+	var createdAt, expiresAt string
+	var passwordHash sql.NullString
+	var maxDownloads sql.NullInt64
+	var userIDVal sql.NullInt64
+
+	err := db.QueryRow(query, claimCode, userID).Scan(
+		&file.ID,
+		&file.ClaimCode,
+		&file.OriginalFilename,
+		&file.StoredFilename,
+		&file.FileSize,
+		&file.MimeType,
+		&createdAt,
+		&expiresAt,
+		&maxDownloads,
+		&file.DownloadCount,
+		&file.CompletedDownloads,
+		&file.UploaderIP,
+		&passwordHash,
+		&userIDVal,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query file: %w", err)
+	}
+
+	// Parse timestamps
+	file.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse created_at: %w", err)
+	}
+
+	file.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse expires_at: %w", err)
+	}
+
+	// Handle nullable fields
+	if maxDownloads.Valid {
+		val := int(maxDownloads.Int64)
+		file.MaxDownloads = &val
+	}
+	if passwordHash.Valid {
+		file.PasswordHash = passwordHash.String
+	}
+	if userIDVal.Valid {
+		file.UserID = &userIDVal.Int64
+	}
+
+	return file, nil
+}
+
+// DeleteFileByClaimCodeAndUserID deletes a file by claim code if it belongs to the specified user
+// Returns the file record for cleanup or error if not found
+func DeleteFileByClaimCodeAndUserID(db *sql.DB, claimCode string, userID int64) (*models.File, error) {
+	// First get the file to ensure it exists and belongs to the user
+	file, err := GetFileByClaimCodeAndUserID(db, claimCode, userID)
+	if err != nil {
+		return nil, err
+	}
+	if file == nil {
+		return nil, fmt.Errorf("file not found or does not belong to user")
+	}
+
+	// Delete from database
+	deleteQuery := `DELETE FROM files WHERE claim_code = ? AND user_id = ?`
+	_, err = db.Exec(deleteQuery, claimCode, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete file from database: %w", err)
+	}
+
+	return file, nil
+}
+
+// UpdateFileNameByClaimCodeAndUserID updates the original filename for a file identified by claim code
+// Returns error if file not found or doesn't belong to the user
+func UpdateFileNameByClaimCodeAndUserID(db *sql.DB, claimCode string, userID int64, newFilename string) error {
+	query := `UPDATE files SET original_filename = ? WHERE claim_code = ? AND user_id = ?`
+
+	result, err := db.Exec(query, newFilename, claimCode, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update filename: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("file not found or does not belong to user")
+	}
+
+	return nil
+}
+
+// UpdateFileExpirationByClaimCodeAndUserID updates the expiration date for a file identified by claim code
+// Returns error if file not found or doesn't belong to the user
+func UpdateFileExpirationByClaimCodeAndUserID(db *sql.DB, claimCode string, userID int64, newExpiration time.Time) error {
+	query := `UPDATE files SET expires_at = ? WHERE claim_code = ? AND user_id = ?`
+
+	// Format as RFC3339 for consistent SQLite datetime() parsing
+	expiresAtRFC3339 := newExpiration.Format(time.RFC3339)
+
+	result, err := db.Exec(query, expiresAtRFC3339, claimCode, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update expiration: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("file not found or does not belong to user")
+	}
+
+	return nil
+}
