@@ -154,7 +154,7 @@ const response = await client.listFiles(1, 20); // page, perPage
 
 for (const file of response.files) {
   console.log(`${file.filename} (${file.claimCode})`);
-  console.log(`  Downloads: ${file.downloadCount}/${file.downloadLimit || "∞"}`);
+  console.log(`  Downloads: ${file.completedDownloads}/${file.downloadLimit || "∞"}`);
 }
 
 console.log(`Total: ${response.total}`);

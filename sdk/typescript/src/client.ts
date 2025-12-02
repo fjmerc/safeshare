@@ -868,6 +868,7 @@ export class SafeShareClient {
         mimeType: f.mime_type,
         uploadedAt: f.created_at,
         expiresAt: f.expires_at || null,
+        completedDownloads: f.completed_downloads,
         downloadCount: f.download_count,
         downloadLimit: f.max_downloads,
         passwordProtected: f.is_password_protected,

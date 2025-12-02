@@ -51,7 +51,7 @@ async function main() {
       console.log(`MIME Type: ${file.mimeType}`);
       console.log(`Uploaded: ${file.uploadedAt}`);
       console.log(`Expires: ${file.expiresAt || "Never"}`);
-      console.log(`Downloads: ${file.downloadCount}/${file.downloadLimit || "∞"}`);
+      console.log(`Downloads: ${file.completedDownloads}/${file.downloadLimit || "∞"}`);
       console.log(`Password: ${file.passwordProtected ? "Yes" : "No"}`);
     }
     console.log("─".repeat(40));

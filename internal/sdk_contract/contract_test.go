@@ -23,6 +23,7 @@ package sdk_contract
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -33,8 +34,12 @@ import (
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
 
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/testutil"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // setupTestServer creates an httptest.Server with real SafeShare handlers.
@@ -414,4 +419,256 @@ func TestGetFileInfoAfterDownloadContract(t *testing.T) {
 	if info.DownloadsRemaining == nil || *info.DownloadsRemaining != 2 {
 		t.Errorf("After 1 download, DownloadsRemaining = %v, want 2", info.DownloadsRemaining)
 	}
+}
+
+// ============================================================================
+// Authenticated endpoint tests (ListFiles)
+// ============================================================================
+
+// authTestServer holds references needed for authenticated tests
+type authTestServer struct {
+	server   *httptest.Server
+	db       *sql.DB
+	cfg      *config.Config
+	apiToken string // The raw token for SDK authentication
+	userID   int64
+}
+
+// setupAuthenticatedTestServer creates a test server with authenticated endpoints.
+// Returns the server, API token, and cleanup function.
+func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
+	t.Helper()
+
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Create a test user (users are approved by default in the schema)
+	user, err := database.CreateUser(db, "testuser", "test@example.com", "hashedpassword", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
+	// Create an API token for the user
+	rawToken, prefix, err := utils.GenerateAPIToken()
+	if err != nil {
+		t.Fatalf("failed to generate API token: %v", err)
+	}
+	tokenHash := utils.HashAPIToken(rawToken)
+	_, err = database.CreateAPIToken(db, user.ID, "test-token", tokenHash, prefix, "upload,download,manage", "127.0.0.1", nil)
+	if err != nil {
+		t.Fatalf("failed to create API token: %v", err)
+	}
+
+	mux := http.NewServeMux()
+
+	// Upload endpoint (with optional auth to associate files with user)
+	mux.Handle("/api/upload", middleware.OptionalUserAuth(db)(handlers.UploadHandler(db, cfg)))
+
+	// Claim info endpoint
+	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, "/info") && r.Method == http.MethodGet {
+			handlers.ClaimInfoHandler(db, cfg).ServeHTTP(w, r)
+		} else if r.Method == http.MethodGet {
+			handlers.ClaimHandler(db, cfg).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// User files endpoint (requires auth)
+	mux.Handle("/api/user/files", middleware.UserAuth(db)(handlers.UserDashboardDataHandler(db, cfg)))
+
+	server := httptest.NewServer(mux)
+
+	cleanup := func() {
+		server.Close()
+	}
+
+	return &authTestServer{
+		server:   server,
+		db:       db,
+		cfg:      cfg,
+		apiToken: rawToken,
+		userID:   user.ID,
+	}, cleanup
+}
+
+// createAuthenticatedSDKClient creates an SDK client with API token authentication.
+func createAuthenticatedSDKClient(t *testing.T, serverURL, apiToken string) *safeshare.Client {
+	t.Helper()
+
+	client, err := safeshare.NewClient(safeshare.ClientConfig{
+		BaseURL:  serverURL,
+		APIToken: apiToken,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create authenticated SDK client: %v", err)
+	}
+	return client
+}
+
+// uploadTestFileWithAuth uploads a file with authentication to associate it with a user.
+func uploadTestFileWithAuth(t *testing.T, serverURL, apiToken, filename string, content []byte, options map[string]string) string {
+	t.Helper()
+
+	// Create multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Add file
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("failed to write file content: %v", err)
+	}
+
+	// Add options
+	for key, value := range options {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatalf("failed to write field %s: %v", key, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close multipart writer: %v", err)
+	}
+
+	// Create request with auth header
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/upload", &buf)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+
+	// Make request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upload request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload failed: status=%d, body=%s", resp.StatusCode, body)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode upload response: %v", err)
+	}
+
+	claimCode, ok := result["claim_code"].(string)
+	if !ok || claimCode == "" {
+		t.Fatalf("upload response missing claim_code: %v", result)
+	}
+
+	return claimCode
+}
+
+// TestListFilesContract validates that the SDK's ListFiles method
+// correctly parses the server's UserDashboardDataHandler response.
+//
+// This test catches the bug where:
+//   - Server returns both "download_count" and "completed_downloads"
+//   - SDK must use "completed_downloads" for accurate download counts
+//   - "download_count" includes HTTP requests (retries, range requests)
+//   - "completed_downloads" counts only fully completed downloads
+func TestListFilesContract(t *testing.T) {
+	authServer, cleanup := setupAuthenticatedTestServer(t)
+	defer cleanup()
+
+	// Upload a test file with authentication (associates with user)
+	testContent := []byte("ListFiles contract test content")
+	claimCode := uploadTestFileWithAuth(t, authServer.server.URL, authServer.apiToken,
+		"listfiles_test.txt", testContent, map[string]string{
+			"expires_in_hours": "24",
+			"max_downloads":    "10",
+		})
+
+	// Create authenticated SDK client
+	client := createAuthenticatedSDKClient(t, authServer.server.URL, authServer.apiToken)
+	ctx := context.Background()
+
+	// List files before any downloads
+	files, err := client.ListFiles(ctx, 50, 0)
+	if err != nil {
+		t.Fatalf("SDK ListFiles failed: %v", err)
+	}
+
+	if len(files.Files) == 0 {
+		t.Fatal("Expected at least one file in list")
+	}
+
+	// Find our uploaded file
+	var foundFile *safeshare.UserFile
+	for i := range files.Files {
+		if files.Files[i].ClaimCode == claimCode {
+			foundFile = &files.Files[i]
+			break
+		}
+	}
+
+	if foundFile == nil {
+		t.Fatalf("Uploaded file with claim code %s not found in list", claimCode)
+	}
+
+	// Validate fields are correctly parsed
+	t.Run("Filename", func(t *testing.T) {
+		if foundFile.Filename != "listfiles_test.txt" {
+			t.Errorf("Filename = %q, want %q", foundFile.Filename, "listfiles_test.txt")
+		}
+	})
+
+	t.Run("Size", func(t *testing.T) {
+		expectedSize := int64(len(testContent))
+		if foundFile.Size != expectedSize {
+			t.Errorf("Size = %d, want %d", foundFile.Size, expectedSize)
+		}
+	})
+
+	t.Run("InitialCompletedDownloads", func(t *testing.T) {
+		if foundFile.CompletedDownloads != 0 {
+			t.Errorf("Initial CompletedDownloads = %d, want 0", foundFile.CompletedDownloads)
+		}
+	})
+
+	t.Run("DownloadLimit", func(t *testing.T) {
+		if foundFile.DownloadLimit == nil || *foundFile.DownloadLimit != 10 {
+			t.Errorf("DownloadLimit = %v, want 10", foundFile.DownloadLimit)
+		}
+	})
+
+	// Now download the file to increment completed_downloads
+	var buf bytes.Buffer
+	if err := client.DownloadToWriter(ctx, claimCode, &buf, nil); err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+
+	// List files again and verify completed_downloads incremented
+	files, err = client.ListFiles(ctx, 50, 0)
+	if err != nil {
+		t.Fatalf("SDK ListFiles after download failed: %v", err)
+	}
+
+	// Find our file again
+	foundFile = nil
+	for i := range files.Files {
+		if files.Files[i].ClaimCode == claimCode {
+			foundFile = &files.Files[i]
+			break
+		}
+	}
+
+	if foundFile == nil {
+		t.Fatalf("File not found in list after download")
+	}
+
+	t.Run("CompletedDownloadsAfterDownload", func(t *testing.T) {
+		if foundFile.CompletedDownloads != 1 {
+			t.Errorf("CompletedDownloads after 1 download = %d, want 1", foundFile.CompletedDownloads)
+		}
+	})
 }

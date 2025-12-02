@@ -133,7 +133,10 @@ type UserFile struct {
 	UploadedAt time.Time `json:"uploaded_at"`
 	// ExpiresAt is the expiration time (nil if no expiration).
 	ExpiresAt *time.Time `json:"expires_at"`
-	// DownloadCount is how many times the file has been downloaded.
+	// CompletedDownloads is how many times the file has been fully downloaded.
+	CompletedDownloads int `json:"completed_downloads"`
+	// DownloadCount is the raw HTTP request count (includes partial/retried downloads).
+	// Deprecated: Use CompletedDownloads instead for accurate download counts.
 	DownloadCount int `json:"download_count"`
 	// DownloadLimit is the max downloads (nil if unlimited).
 	DownloadLimit *int `json:"download_limit"`
