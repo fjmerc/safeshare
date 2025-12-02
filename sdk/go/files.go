@@ -43,16 +43,17 @@ func (c *Client) ListFiles(ctx context.Context, limit, offset int) (*UserFilesRe
 	files := make([]UserFile, len(apiResp.Files))
 	for i, f := range apiResp.Files {
 		files[i] = UserFile{
-			ID:                f.ID,
-			ClaimCode:         f.ClaimCode,
-			Filename:          f.OriginalFilename,
-			Size:              f.FileSize,
-			MimeType:          f.MimeType,
-			UploadedAt:        parseTimeRequired(f.CreatedAt),
-			ExpiresAt:         parseTimeNonPointer(f.ExpiresAt),
-			DownloadCount:     f.DownloadCount,
-			DownloadLimit:     f.MaxDownloads,
-			PasswordProtected: f.PasswordProtected,
+			ID:                 f.ID,
+			ClaimCode:          f.ClaimCode,
+			Filename:           f.OriginalFilename,
+			Size:               f.FileSize,
+			MimeType:           f.MimeType,
+			UploadedAt:         parseTimeRequired(f.CreatedAt),
+			ExpiresAt:          parseTimeNonPointer(f.ExpiresAt),
+			CompletedDownloads: f.CompletedDownloads,
+			DownloadCount:      f.DownloadCount,
+			DownloadLimit:      f.MaxDownloads,
+			PasswordProtected:  f.PasswordProtected,
 		}
 	}
 

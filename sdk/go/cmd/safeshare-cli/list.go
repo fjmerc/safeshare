@@ -61,7 +61,7 @@ Examples:
 				} else {
 					fmt.Printf("%-12s Never\n", "Expires:")
 				}
-				downloadStr := fmt.Sprintf("%d", f.DownloadCount)
+				downloadStr := fmt.Sprintf("%d", f.CompletedDownloads)
 				if f.DownloadLimit != nil {
 					downloadStr += fmt.Sprintf("/%d", *f.DownloadLimit)
 				} else {
