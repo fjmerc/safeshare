@@ -1,11 +1,14 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 const schema = `
@@ -126,10 +129,54 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `
 
+// connectionHookOnce ensures we only register the connection hook once
+var connectionHookOnce sync.Once
+
+// registerConnectionHook sets up a hook that applies SQLite pragmas to ALL new connections.
+// This is critical because database/sql connection pooling can create new connections
+// that don't inherit pragmas set on the initial connection.
+func registerConnectionHook() {
+	connectionHookOnce.Do(func() {
+		sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+			// Apply critical pragmas to each new connection
+			// These MUST be applied per-connection as they are connection-level settings
+			pragmas := []string{
+				"PRAGMA foreign_keys = ON",
+				"PRAGMA busy_timeout = 5000", // 5 second busy timeout - CRITICAL for preventing SQLITE_BUSY
+				"PRAGMA synchronous = NORMAL",
+				"PRAGMA cache_size = -64000",
+				"PRAGMA temp_store = MEMORY",
+			}
+			for _, pragma := range pragmas {
+				if _, err := conn.ExecContext(context.Background(), pragma, nil); err != nil {
+					return fmt.Errorf("failed to set pragma %q: %w", pragma, err)
+				}
+			}
+			return nil
+		})
+	})
+}
+
 // Initialize opens the SQLite database and creates the schema
 func Initialize(dbPath string) (*sql.DB, error) {
+	// Register connection hook BEFORE opening database
+	// This ensures all connections (including pooled ones) get proper pragmas
+	registerConnectionHook()
+
+	// Build DSN with _txlock=immediate to ensure all transactions use BEGIN IMMEDIATE.
+	// This is critical because:
+	// 1. modernc.org/sqlite ignores sql.TxOptions.Isolation - it doesn't translate
+	//    sql.LevelSerializable to BEGIN IMMEDIATE as other drivers might
+	// 2. Without IMMEDIATE, transactions use BEGIN DEFERRED which acquires locks lazily
+	// 3. DEFERRED can cause SQLITE_BUSY_SNAPSHOT (517) errors when upgrading from
+	//    SHARED to EXCLUSIVE lock in WAL mode if the database changed between reads
+	// 4. IMMEDIATE acquires a RESERVED lock at BEGIN time, preventing upgrade failures
+	//
+	// Reference: https://pkg.go.dev/modernc.org/sqlite - _txlock parameter
+	dsn := dbPath + "?_txlock=immediate"
+
 	// Open database connection
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -146,14 +193,10 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	db.SetMaxIdleConns(5)                  // Keep 5 idle connections for reuse
 	db.SetConnMaxLifetime(5 * time.Minute) // Recycle connections every 5 minutes
 
-	// Enable foreign keys and WAL mode for better concurrency
+	// These pragmas are database-level (persist across connections) and only need
+	// to be set once. Connection-level pragmas are set via RegisterConnectionHook above.
 	pragmas := []string{
-		"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
-		"PRAGMA journal_mode = WAL",        // Write-Ahead Logging for concurrency
-		"PRAGMA synchronous = NORMAL",      // Balance durability/performance
-		"PRAGMA cache_size = -64000",       // 64MB page cache
-		"PRAGMA busy_timeout = 5000",       // 5 second busy timeout
-		"PRAGMA temp_store = MEMORY",       // Store temp tables in RAM (faster JOINs)
+		"PRAGMA journal_mode = WAL",        // Write-Ahead Logging for concurrency (persists)
 		"PRAGMA wal_autocheckpoint = 4000", // Checkpoint every 16MB (less frequent)
 	}
 
@@ -196,4 +239,79 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// BeginImmediateTx starts a transaction with retry logic for robustness.
+// The IMMEDIATE locking is ensured by _txlock=immediate in the DSN (set in Initialize()).
+//
+// Note: The sql.LevelSerializable isolation level is kept for documentation purposes,
+// but modernc.org/sqlite ignores it. The actual BEGIN IMMEDIATE behavior comes from
+// the _txlock=immediate DSN parameter.
+//
+// Use this for transactions that will perform writes, especially:
+// - Quota check + insert operations
+// - Read-modify-write patterns
+//
+// The function includes retry logic with exponential backoff for handling
+// SQLITE_BUSY errors that may still occur during high contention.
+func BeginImmediateTx(db *sql.DB) (*sql.Tx, error) {
+	return BeginImmediateTxContext(context.Background(), db)
+}
+
+// BeginImmediateTxContext is like BeginImmediateTx but accepts a context.
+func BeginImmediateTxContext(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	const maxRetries = 5
+	baseDelay := 50 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Note: sql.LevelSerializable is specified for documentation, but modernc.org/sqlite
+		// ignores this setting. The actual BEGIN IMMEDIATE behavior is controlled by
+		// _txlock=immediate in the DSN (set in Initialize()).
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{
+			Isolation: sql.LevelSerializable,
+		})
+		if err == nil {
+			return tx, nil
+		}
+
+		lastErr = err
+
+		// Check if this is a busy/locked error that's worth retrying
+		if !isSQLiteBusyError(err) {
+			return nil, err // Non-retryable error
+		}
+
+		// Wait with exponential backoff before retrying
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt)) // 50ms, 100ms, 200ms, 400ms, 800ms
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to begin transaction after %d attempts: %w", maxRetries, lastErr)
+}
+
+// isSQLiteBusyError checks if an error is an SQLITE_BUSY or SQLITE_LOCKED error.
+// SQLite extended error codes:
+//   - 5 = SQLITE_BUSY (database is locked)
+//   - 6 = SQLITE_LOCKED (table is locked)
+//   - 517 = SQLITE_BUSY_SNAPSHOT (WAL mode snapshot conflict)
+//   - 262 = SQLITE_BUSY_RECOVERY (WAL recovery in progress)
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "database is locked") ||
+		strings.Contains(errStr, "sqlite_busy") ||
+		strings.Contains(errStr, "sqlite_locked") ||
+		strings.Contains(errStr, "(5)") ||   // SQLITE_BUSY
+		strings.Contains(errStr, "(6)") ||   // SQLITE_LOCKED
+		strings.Contains(errStr, "(517)") || // SQLITE_BUSY_SNAPSHOT (WAL mode)
+		strings.Contains(errStr, "(262)")    // SQLITE_BUSY_RECOVERY
 }

@@ -187,13 +187,23 @@ func (c *Client) GetFileInfo(ctx context.Context, claimCode string) (*FileInfo, 
 		return nil, err
 	}
 
+	// Calculate downloads remaining from max_downloads and download_count
+	var downloadsRemaining *int
+	if apiResp.MaxDownloads != nil {
+		remaining := *apiResp.MaxDownloads - apiResp.DownloadCount
+		if remaining < 0 {
+			remaining = 0
+		}
+		downloadsRemaining = &remaining
+	}
+
 	return &FileInfo{
 		Filename:           apiResp.Filename,
 		Size:               apiResp.Size,
 		MimeType:           apiResp.MimeType,
 		ExpiresAt:          parseTime(apiResp.ExpiresAt),
 		PasswordProtected:  apiResp.PasswordProtected,
-		DownloadsRemaining: apiResp.DownloadsRemaining,
+		DownloadsRemaining: downloadsRemaining,
 	}, nil
 }
 

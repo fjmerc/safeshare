@@ -5,6 +5,149 @@ import (
 	"testing"
 )
 
+// TestValidateClaimCode tests claim code validation
+func TestValidateClaimCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		claimCode   string
+		expectError bool
+		errorMsg    string
+	}{
+		// Valid claim codes
+		{
+			name:        "valid 8 char alphanumeric",
+			claimCode:   "abc12345",
+			expectError: false,
+		},
+		{
+			name:        "valid 16 char alphanumeric",
+			claimCode:   "abcdef1234567890",
+			expectError: false,
+		},
+		{
+			name:        "valid 32 char alphanumeric",
+			claimCode:   "abcdefghijklmnopqrstuvwxyz123456",
+			expectError: false,
+		},
+		{
+			name:        "valid uppercase",
+			claimCode:   "ABCD1234",
+			expectError: false,
+		},
+		{
+			name:        "valid mixed case",
+			claimCode:   "AbCd1234",
+			expectError: false,
+		},
+		{
+			name:        "valid all numbers",
+			claimCode:   "12345678",
+			expectError: false,
+		},
+		{
+			name:        "valid all letters",
+			claimCode:   "abcdefgh",
+			expectError: false,
+		},
+
+		// Invalid: empty
+		{
+			name:        "empty string",
+			claimCode:   "",
+			expectError: true,
+			errorMsg:    "cannot be empty",
+		},
+
+		// Invalid: too short
+		{
+			name:        "too short - 7 chars",
+			claimCode:   "abc1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "too short - 1 char",
+			claimCode:   "a",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+
+		// Invalid: too long
+		{
+			name:        "too long - 33 chars",
+			claimCode:   "abcdefghijklmnopqrstuvwxyz1234567",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+
+		// Invalid: special characters
+		{
+			name:        "contains hyphen",
+			claimCode:   "abc-1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "contains underscore",
+			claimCode:   "abc_1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "contains space",
+			claimCode:   "abc 1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "contains dot",
+			claimCode:   "abc.1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "contains slash",
+			claimCode:   "abc/1234",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+
+		// Security: path traversal attempts
+		{
+			name:        "path traversal attempt",
+			claimCode:   "../etc/passwd",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+		{
+			name:        "SQL injection attempt",
+			claimCode:   "'; DROP TABLE--",
+			expectError: true,
+			errorMsg:    "8-32 alphanumeric",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateClaimCode(tt.claimCode)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error containing %q, got nil", tt.errorMsg)
+					return
+				}
+				if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // TestIsFileAllowed_EdgeCases tests edge cases for file validation
 func TestIsFileAllowed_EdgeCases(t *testing.T) {
 	blockedExts := []string{".exe", ".bat", ".sh", ".ps1"}

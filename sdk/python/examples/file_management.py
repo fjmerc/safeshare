@@ -42,9 +42,9 @@ def list_files(client: SafeShareClient):
 
         # Format downloads
         if f.max_downloads:
-            downloads = f"{f.download_count}/{f.max_downloads}"
+            downloads = f"{f.completed_downloads}/{f.max_downloads}"
         else:
-            downloads = str(f.download_count)
+            downloads = str(f.completed_downloads)
 
         print(f"ID: {f.id}")
         print(f"  Filename: {f.original_filename}")

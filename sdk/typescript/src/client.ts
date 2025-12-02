@@ -7,21 +7,16 @@
 import { createReadStream, statSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve, basename } from "node:path";
-import { Readable } from "node:stream";
 
 import type {
   ClientOptions,
   UploadResult,
   UploadOptions,
-  UploadProgress,
-  ChunkedUploadSession,
   ChunkUploadResult,
   UploadStatus,
   FileInfo,
-  UserFile,
   UserFilesResponse,
   DownloadOptions,
-  DownloadProgress,
   UpdateExpirationOptions,
   RenameResult,
   ExpirationResult,
@@ -35,14 +30,14 @@ import type {
 import {
   SafeShareError,
   ValidationError,
-  UploadError,
   DownloadError,
   ChunkedUploadError,
   handleErrorResponse,
 } from "./errors.js";
 
 // Validation patterns
-const CLAIM_CODE_PATTERN = /^[a-zA-Z0-9]{8,32}$/;
+// Server uses base64 URL-safe encoding which includes - and _ characters
+const CLAIM_CODE_PATTERN = /^[a-zA-Z0-9_-]{8,32}$/;
 // Standard UUID v4 pattern (8-4-4-4-12 format)
 const UPLOAD_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const FILENAME_MAX_LENGTH = 255;
@@ -123,7 +118,7 @@ export class SafeShareClient {
   private validateClaimCode(claimCode: string): void {
     if (!claimCode || !CLAIM_CODE_PATTERN.test(claimCode)) {
       throw new ValidationError(
-        "Invalid claim code format. Must be 8-32 alphanumeric characters."
+        "Invalid claim code format. Must be 8-32 alphanumeric characters (including - and _)."
       );
     }
   }
@@ -136,6 +131,7 @@ export class SafeShareClient {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private validatePagination(page: number, perPage: number): void {
     if (!Number.isInteger(page) || page < MIN_PAGE) {
       throw new ValidationError("page must be a positive integer");
@@ -233,7 +229,7 @@ export class SafeShareClient {
 
     const response = await this.request<{
       max_file_size: number;
-      chunk_upload_threshold: number;
+      chunked_upload_threshold: number;
       chunk_size: number;
       max_expiration_hours: number;
       registration_enabled: boolean;
@@ -241,7 +237,7 @@ export class SafeShareClient {
 
     this.configCache = {
       maxFileSize: response.max_file_size,
-      chunkUploadThreshold: response.chunk_upload_threshold,
+      chunkUploadThreshold: response.chunked_upload_threshold,
       chunkSize: response.chunk_size,
       maxExpirationHours: response.max_expiration_hours,
       registrationEnabled: response.registration_enabled,
@@ -359,7 +355,6 @@ export class SafeShareClient {
     const resolvedPath = resolve(filePath);
     const stats = statSync(resolvedPath);
     const filename = basename(resolvedPath);
-    const config = await this.getConfig();
 
     // Initialize chunked upload
     const initBody: Record<string, unknown> = {
@@ -421,28 +416,10 @@ export class SafeShareClient {
         }
       }
 
-      // Complete the upload
-      const result = await this.request<{
-        claim_code: string;
-        filename: string;
-        size: number;
-        mime_type: string;
-        expires_at: string | null;
-        download_limit: number | null;
-        password_protected: boolean;
-        user_id?: number;
-      }>("POST", `/api/upload/complete/${uploadId}`);
+      // Complete the upload - may return 200 (sync) or 202 (async assembly)
+      const completeResult = await this.completeChunkedUpload(uploadId, filename, stats.size);
 
-      return {
-        claimCode: result.claim_code,
-        filename: result.filename,
-        size: result.size,
-        mimeType: result.mime_type,
-        expiresAt: result.expires_at,
-        downloadLimit: result.download_limit,
-        passwordProtected: result.password_protected,
-        userId: result.user_id,
-      };
+      return completeResult;
     } catch (error) {
       // Try to cancel the upload on error
       try {
@@ -459,6 +436,181 @@ export class SafeShareClient {
         uploadId
       );
     }
+  }
+
+  /**
+   * Complete a chunked upload, handling both sync and async assembly
+   */
+  private async completeChunkedUpload(
+    uploadId: string,
+    filename: string,
+    fileSize: number
+  ): Promise<UploadResult> {
+    const url = `${this.baseUrl}/api/upload/complete/${uploadId}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: this.getHeaders(),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        await handleErrorResponse(response);
+      }
+
+      // Check if async assembly (202 Accepted)
+      if (response.status === 202) {
+        return this.pollForCompletion(uploadId, filename, fileSize);
+      }
+
+      // Sync completion (200 OK)
+      const result = await response.json() as {
+        claim_code: string;
+        filename: string;
+        size: number;
+        mime_type: string;
+        expires_at: string | null;
+        download_limit: number | null;
+        password_protected: boolean;
+        user_id?: number;
+      };
+
+      return {
+        claimCode: result.claim_code,
+        filename: result.filename,
+        size: result.size,
+        mimeType: result.mime_type,
+        expiresAt: result.expires_at,
+        downloadLimit: result.download_limit,
+        passwordProtected: result.password_protected,
+        userId: result.user_id,
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Poll for async assembly completion
+   */
+  private async pollForCompletion(
+    uploadId: string,
+    filename: string,
+    fileSize: number
+  ): Promise<UploadResult> {
+    const INITIAL_DELAY = 500;
+    const MAX_DELAY = 5000;
+    const MAX_DURATION = 10 * 60 * 1000; // 10 minutes
+    const MAX_ITERATIONS = 200;
+
+    const deadline = Date.now() + MAX_DURATION;
+    let delay = INITIAL_DELAY;
+
+    for (let iteration = 0; iteration < MAX_ITERATIONS && Date.now() < deadline; iteration++) {
+      // Get status
+      const status = await this.getUploadStatusInternal(uploadId);
+
+      switch (status.status) {
+        case "completed":
+          if (!status.claimCode) {
+            throw new ChunkedUploadError(
+              "Upload completed but no claim code returned",
+              uploadId
+            );
+          }
+          return {
+            claimCode: status.claimCode,
+            filename: filename,
+            size: fileSize,
+            mimeType: "", // Not available in status response
+            expiresAt: status.expiresAt,
+            downloadLimit: status.maxDownloads ?? null,
+            passwordProtected: false, // Not available in status response
+          };
+
+        case "failed":
+          throw new ChunkedUploadError(
+            status.errorMessage ? `Assembly failed: "${status.errorMessage}"` : "Assembly failed",
+            uploadId
+          );
+
+        case "processing":
+        case "uploading":
+          // Wait before retrying
+          await this.sleep(delay);
+          delay = Math.min(delay * 2, MAX_DELAY);
+          break;
+
+        default:
+          throw new ChunkedUploadError(`Unexpected status: ${status.status}`, uploadId);
+      }
+    }
+
+    throw new ChunkedUploadError(
+      `Timeout waiting for assembly to complete (max ${MAX_DURATION / 1000 / 60} minutes)`,
+      uploadId
+    );
+  }
+
+  /**
+   * Helper to sleep with a promise
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Internal method to get upload status with extended fields
+   */
+  private async getUploadStatusInternal(uploadId: string): Promise<{
+    uploadId: string;
+    filename: string;
+    totalSize: number;
+    uploadedSize: number;
+    uploadedChunks: number[];
+    totalChunks: number;
+    chunkSize: number;
+    expiresAt: string;
+    complete: boolean;
+    status: string;
+    claimCode?: string;
+    errorMessage?: string;
+    maxDownloads?: number;
+  }> {
+    const response = await this.request<{
+      upload_id: string;
+      filename: string;
+      total_size: number;
+      uploaded_size: number;
+      uploaded_chunks: number[];
+      total_chunks: number;
+      chunk_size: number;
+      expires_at: string;
+      complete: boolean;
+      status?: string;
+      claim_code?: string;
+      error_message?: string;
+      max_downloads?: number;
+    }>("GET", `/api/upload/status/${uploadId}`);
+
+    return {
+      uploadId: response.upload_id,
+      filename: response.filename,
+      totalSize: response.total_size,
+      uploadedSize: response.uploaded_size,
+      uploadedChunks: response.uploaded_chunks,
+      totalChunks: response.total_chunks,
+      chunkSize: response.chunk_size,
+      expiresAt: response.expires_at,
+      complete: response.complete,
+      status: response.status ?? (response.complete ? "completed" : "uploading"),
+      claimCode: response.claim_code,
+      errorMessage: response.error_message,
+      maxDownloads: response.max_downloads,
+    };
   }
 
   /**
@@ -632,22 +784,37 @@ export class SafeShareClient {
   async getFileInfo(claimCode: string): Promise<FileInfo> {
     this.validateClaimCode(claimCode);
 
+    // Server returns fields from internal/handlers/claim.go:ClaimInfoHandler
     const response = await this.request<{
-      filename: string;
-      size: number;
+      claim_code: string;
+      original_filename: string;
+      file_size: number;
       mime_type: string;
+      created_at: string;
       expires_at: string | null;
-      password_protected: boolean;
-      downloads_remaining: number | null;
+      max_downloads: number | null;
+      download_count: number;
+      completed_downloads: number;
+      download_limit_reached: boolean;
+      password_required: boolean;
+      download_url: string;
+      sha256_hash: string;
     }>("GET", `/api/claim/${claimCode}/info`);
 
+    // Calculate downloads remaining from max_downloads and download_count
+    let downloadsRemaining: number | null = null;
+    if (response.max_downloads !== null) {
+      const remaining = response.max_downloads - response.download_count;
+      downloadsRemaining = remaining < 0 ? 0 : remaining;
+    }
+
     return {
-      filename: response.filename,
-      size: response.size,
+      filename: response.original_filename,
+      size: response.file_size,
       mimeType: response.mime_type,
       expiresAt: response.expires_at,
-      passwordProtected: response.password_protected,
-      downloadsRemaining: response.downloads_remaining,
+      passwordProtected: response.password_required,
+      downloadsRemaining: downloadsRemaining,
     };
   }
 
@@ -701,6 +868,7 @@ export class SafeShareClient {
         mimeType: f.mime_type,
         uploadedAt: f.created_at,
         expiresAt: f.expires_at || null,
+        completedDownloads: f.completed_downloads,
         downloadCount: f.download_count,
         downloadLimit: f.max_downloads,
         passwordProtected: f.is_password_protected,

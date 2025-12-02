@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 // Upload uploads a file to SafeShare.
@@ -284,6 +285,13 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 		}
 	}
 
+	// Check if server returned 202 Accepted (async assembly in progress)
+	if completeResp.StatusCode == http.StatusAccepted {
+		completeResp.Body.Close()
+		// Poll for completion
+		return c.pollForCompletion(ctx, uploadID, filename, fileSize, opts)
+	}
+
 	var apiResp apiUploadResponse
 	if err := handleResponse(completeResp, &apiResp); err != nil {
 		c.cancelUpload(ctx, uploadID)
@@ -314,27 +322,125 @@ func (c *Client) cancelUpload(ctx context.Context, uploadID string) {
 	}
 }
 
+// pollForCompletion polls the upload status endpoint until assembly is complete.
+// This is used when the server returns 202 Accepted for async assembly.
+func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename string, fileSize int64, opts *UploadOptions) (*UploadResult, error) {
+	// Poll with exponential backoff: start at 500ms, max 5s, timeout after 10 minutes
+	const (
+		initialDelay  = 500 * time.Millisecond
+		maxDelay      = 5 * time.Second
+		maxDuration   = 10 * time.Minute
+		maxIterations = 200 // Safety limit to prevent runaway polling
+	)
+
+	deadline := time.Now().Add(maxDuration)
+	delay := initialDelay
+
+	for iteration := 0; iteration < maxIterations && time.Now().Before(deadline); iteration++ {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			c.cancelUpload(context.Background(), uploadID)
+			return nil, ctx.Err()
+		default:
+		}
+
+		// Get status
+		status, err := c.getUploadStatusInternal(ctx, uploadID)
+		if err != nil {
+			return nil, &ChunkedUploadError{
+				UploadID: uploadID,
+				Err:      fmt.Errorf("polling status: %w", err),
+			}
+		}
+
+		switch status.Status {
+		case "completed":
+			// Assembly complete - return result
+			if status.ClaimCode == nil || *status.ClaimCode == "" {
+				return nil, &ChunkedUploadError{
+					UploadID: uploadID,
+					Err:      fmt.Errorf("upload completed but no claim code returned"),
+				}
+			}
+			return &UploadResult{
+				ClaimCode:         *status.ClaimCode,
+				Filename:          filename,
+				Size:              fileSize,
+				MimeType:          "", // Not available in status response
+				ExpiresAt:         &status.ExpiresAt,
+				DownloadLimit:     status.MaxDownloads,
+				PasswordProtected: false, // Not available in status response
+			}, nil
+
+		case "failed":
+			errMsg := "assembly failed"
+			if status.ErrorMessage != nil {
+				errMsg = fmt.Sprintf("assembly failed: %q", *status.ErrorMessage)
+			}
+			return nil, &ChunkedUploadError{
+				UploadID: uploadID,
+				Err:      fmt.Errorf("%s", errMsg),
+			}
+
+		case "processing", "uploading":
+			// Wait with cancellation support before retrying
+			select {
+			case <-ctx.Done():
+				c.cancelUpload(context.Background(), uploadID)
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			// Exponential backoff
+			delay = delay * 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+
+		default:
+			return nil, &ChunkedUploadError{
+				UploadID: uploadID,
+				Err:      fmt.Errorf("unexpected status: %s", status.Status),
+			}
+		}
+	}
+
+	return nil, &ChunkedUploadError{
+		UploadID: uploadID,
+		Err:      fmt.Errorf("timeout waiting for assembly to complete (max %v)", maxDuration),
+	}
+}
+
 // GetUploadStatus retrieves the status of a chunked upload session.
 func (c *Client) GetUploadStatus(ctx context.Context, uploadID string) (*UploadStatus, error) {
 	if err := validateUploadID(uploadID); err != nil {
 		return nil, err
 	}
+	return c.getUploadStatusInternal(ctx, uploadID)
+}
 
+// getUploadStatusInternal is the internal implementation of GetUploadStatus.
+// It's separated to allow calling without re-validating the uploadID during polling.
+func (c *Client) getUploadStatusInternal(ctx context.Context, uploadID string) (*UploadStatus, error) {
 	resp, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/api/upload/status/%s", uploadID), nil, "")
 	if err != nil {
 		return nil, err
 	}
 
 	var apiResp struct {
-		UploadID       string `json:"upload_id"`
-		Filename       string `json:"filename"`
-		TotalSize      int64  `json:"total_size"`
-		UploadedSize   int64  `json:"uploaded_size"`
-		UploadedChunks []int  `json:"uploaded_chunks"`
-		TotalChunks    int    `json:"total_chunks"`
-		ChunkSize      int64  `json:"chunk_size"`
-		ExpiresAt      string `json:"expires_at"`
-		Complete       bool   `json:"complete"`
+		UploadID       string  `json:"upload_id"`
+		Filename       string  `json:"filename"`
+		TotalSize      int64   `json:"total_size"`
+		UploadedSize   int64   `json:"uploaded_size"`
+		UploadedChunks []int   `json:"uploaded_chunks"`
+		TotalChunks    int     `json:"total_chunks"`
+		ChunkSize      int64   `json:"chunk_size"`
+		ExpiresAt      string  `json:"expires_at"`
+		Complete       bool    `json:"complete"`
+		Status         string  `json:"status"`
+		ClaimCode      *string `json:"claim_code,omitempty"`
+		ErrorMessage   *string `json:"error_message,omitempty"`
+		MaxDownloads   *int    `json:"max_downloads,omitempty"`
 	}
 
 	if err := handleResponse(resp, &apiResp); err != nil {
@@ -351,6 +457,10 @@ func (c *Client) GetUploadStatus(ctx context.Context, uploadID string) (*UploadS
 		ChunkSize:      apiResp.ChunkSize,
 		ExpiresAt:      parseTimeRequired(apiResp.ExpiresAt),
 		Complete:       apiResp.Complete,
+		Status:         apiResp.Status,
+		ClaimCode:      apiResp.ClaimCode,
+		ErrorMessage:   apiResp.ErrorMessage,
+		MaxDownloads:   apiResp.MaxDownloads,
 	}, nil
 }
 

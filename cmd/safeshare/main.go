@@ -235,6 +235,30 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
 	})
 
+	// SDK-compatible user file management routes (claim code in URL path)
+	// These routes support: DELETE /api/user/files/{claimCode}
+	//                       PUT /api/user/files/{claimCode}/rename
+	//                       PUT /api/user/files/{claimCode}/expiration
+	//                       POST /api/user/files/{claimCode}/regenerate
+	mux.HandleFunc("/api/user/files/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Route based on path suffix and method
+		switch {
+		case strings.HasSuffix(path, "/rename") && r.Method == http.MethodPut:
+			userAuth(http.HandlerFunc(handlers.UserRenameFileByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/expiration") && r.Method == http.MethodPut:
+			userAuth(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/regenerate") && r.Method == http.MethodPost:
+			userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+		case r.Method == http.MethodDelete:
+			// DELETE /api/user/files/{claimCode}
+			userAuth(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API Token management routes
 	// Note: Token creation requires session auth (cannot create tokens using tokens)
 	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {

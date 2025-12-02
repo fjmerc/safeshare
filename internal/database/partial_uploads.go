@@ -46,9 +46,44 @@ func CreatePartialUpload(db *sql.DB, upload *models.PartialUpload) error {
 // CreatePartialUploadWithQuotaCheck atomically checks quota and inserts partial upload record in a transaction.
 // This prevents race conditions where multiple uploads could exceed quota limits.
 // Returns error if quota would be exceeded.
+//
+// The function includes retry logic with exponential backoff to handle SQLITE_BUSY errors
+// that may occur during the transaction (not just at BEGIN time). While _txlock=immediate
+// in the DSN prevents most lock upgrade failures, retries provide defense in depth.
 func CreatePartialUploadWithQuotaCheck(db *sql.DB, upload *models.PartialUpload, quotaLimitBytes int64) error {
-	// Begin transaction with IMMEDIATE lock to prevent quota bypass races
-	tx, err := db.Begin()
+	const maxRetries = 5
+	baseDelay := 50 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := createPartialUploadWithQuotaCheckOnce(db, upload, quotaLimitBytes)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Only retry on SQLITE_BUSY errors, not on quota exceeded or other errors
+		if !isSQLiteBusyError(err) {
+			return err
+		}
+
+		// Wait with exponential backoff before retrying
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(attempt)) // 50ms, 100ms, 200ms, 400ms, 800ms
+			time.Sleep(delay)
+		}
+	}
+
+	return fmt.Errorf("failed to create partial upload after %d attempts: %w", maxRetries, lastErr)
+}
+
+// createPartialUploadWithQuotaCheckOnce performs a single attempt at the quota check and insert.
+// This is called by CreatePartialUploadWithQuotaCheck with retry logic.
+func createPartialUploadWithQuotaCheckOnce(db *sql.DB, upload *models.PartialUpload, quotaLimitBytes int64) error {
+	// Begin transaction with IMMEDIATE lock to prevent quota bypass races.
+	// Note: _txlock=immediate in DSN ensures BEGIN IMMEDIATE is used.
+	// BeginImmediateTx provides additional retry logic for the BEGIN itself.
+	tx, err := BeginImmediateTx(db)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

@@ -35,6 +35,23 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.4.1] - 2025-12-02
+
+### Fixed
+- **SDK API Alignment**: Multiple fixes to align SDK field names with API responses
+  - `completed_downloads` field now correctly used for accurate download counts
+  - User file management APIs aligned with SDK expectations
+  - Chunked upload threshold field corrected with async polling support
+  - Go and TypeScript SDK field names aligned with API response
+- **SQLite Stability**: Fixed database connection issues under concurrent load
+  - Added `_txlock=immediate` DSN for actual BEGIN IMMEDIATE transactions
+  - Added SQLITE_BUSY_SNAPSHOT (517) to error detection
+  - Fixed connection pool pragma handling to prevent SQLITE_BUSY errors
+- **Dashboard UI**: Fixed stale dashboard issue by bumping service worker cache version
+
+### Changed
+- **UI**: Compact API tokens section with centered table columns
+
 ## [1.4.0] - 2025-11-28
 
 ### Changed
@@ -1134,6 +1151,8 @@ Initial production release.
 
 <!-- Note: Historical version links below reference old v2.x tags that have been deleted.
      They are preserved for documentation purposes. The current release is v1.0.0. -->
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.1
+[1.4.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.0
 [1.3.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.1
 [1.3.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.0

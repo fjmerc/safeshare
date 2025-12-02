@@ -154,7 +154,12 @@ export interface UserFile {
   uploadedAt: string;
   /** ISO 8601 expiration timestamp (null if no expiration) */
   expiresAt: string | null;
-  /** Number of times file has been downloaded */
+  /** Number of times file has been fully downloaded */
+  completedDownloads: number;
+  /**
+   * Raw HTTP request count (includes partial/retried downloads)
+   * @deprecated Use completedDownloads instead for accurate download counts
+   */
   downloadCount: number;
   /** Maximum downloads allowed (null if unlimited) */
   downloadLimit: number | null;

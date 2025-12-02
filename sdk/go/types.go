@@ -91,6 +91,14 @@ type UploadStatus struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	// Complete indicates if the upload is complete.
 	Complete bool `json:"complete"`
+	// Status is the current status: uploading, processing, completed, failed.
+	Status string `json:"status"`
+	// ClaimCode is the claim code (only set when completed).
+	ClaimCode *string `json:"claim_code,omitempty"`
+	// ErrorMessage is the error message (only set when failed).
+	ErrorMessage *string `json:"error_message,omitempty"`
+	// MaxDownloads is the maximum download limit (nil if unlimited).
+	MaxDownloads *int `json:"max_downloads,omitempty"`
 }
 
 // FileInfo represents public file information.
@@ -125,7 +133,10 @@ type UserFile struct {
 	UploadedAt time.Time `json:"uploaded_at"`
 	// ExpiresAt is the expiration time (nil if no expiration).
 	ExpiresAt *time.Time `json:"expires_at"`
-	// DownloadCount is how many times the file has been downloaded.
+	// CompletedDownloads is how many times the file has been fully downloaded.
+	CompletedDownloads int `json:"completed_downloads"`
+	// DownloadCount is the raw HTTP request count (includes partial/retried downloads).
+	// Deprecated: Use CompletedDownloads instead for accurate download counts.
 	DownloadCount int `json:"download_count"`
 	// DownloadLimit is the max downloads (nil if unlimited).
 	DownloadLimit *int `json:"download_limit"`
@@ -171,7 +182,7 @@ type PublicConfig struct {
 	// MaxFileSize is the maximum upload size in bytes.
 	MaxFileSize int64 `json:"max_file_size"`
 	// ChunkUploadThreshold is when to use chunked upload.
-	ChunkUploadThreshold int64 `json:"chunk_upload_threshold"`
+	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
 	// ChunkSize is the size of each chunk.
 	ChunkSize int64 `json:"chunk_size"`
 	// MaxExpirationHours is the maximum expiration time.
@@ -245,13 +256,21 @@ type apiUploadResponse struct {
 }
 
 // apiFileInfoResponse is the raw API response for file info.
+// Server returns fields from internal/handlers/claim.go:ClaimInfoHandler
 type apiFileInfoResponse struct {
-	Filename           string  `json:"filename"`
-	Size               int64   `json:"size"`
-	MimeType           string  `json:"mime_type"`
-	ExpiresAt          *string `json:"expires_at"`
-	PasswordProtected  bool    `json:"password_protected"`
-	DownloadsRemaining *int    `json:"downloads_remaining"`
+	ClaimCode            string  `json:"claim_code"`
+	Filename             string  `json:"original_filename"`
+	Size                 int64   `json:"file_size"`
+	MimeType             string  `json:"mime_type"`
+	CreatedAt            string  `json:"created_at"`
+	ExpiresAt            *string `json:"expires_at"`
+	MaxDownloads         *int    `json:"max_downloads"`
+	DownloadCount        int     `json:"download_count"`
+	CompletedDownloads   int     `json:"completed_downloads"`
+	DownloadLimitReached bool    `json:"download_limit_reached"`
+	PasswordProtected    bool    `json:"password_required"`
+	DownloadURL          string  `json:"download_url"`
+	SHA256Hash           string  `json:"sha256_hash"`
 }
 
 // apiUserFileResponse is the raw API response for user files.
@@ -282,7 +301,7 @@ type apiUserFilesResponse struct {
 // apiConfigResponse is the raw API response for server config.
 type apiConfigResponse struct {
 	MaxFileSize          int64 `json:"max_file_size"`
-	ChunkUploadThreshold int64 `json:"chunk_upload_threshold"`
+	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
 	ChunkSize            int64 `json:"chunk_size"`
 	MaxExpirationHours   int   `json:"max_expiration_hours"`
 	RegistrationEnabled  bool  `json:"registration_enabled"`

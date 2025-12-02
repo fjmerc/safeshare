@@ -16,7 +16,8 @@ import (
 
 // Validation patterns
 var (
-	claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9]{8,32}$`)
+	// Server uses base64 URL-safe encoding which includes - and _ characters
+	claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,32}$`)
 	uploadIDPattern  = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 )
 
@@ -113,7 +114,7 @@ func validateClaimCode(code string) error {
 	if code == "" || !claimCodePattern.MatchString(code) {
 		return &ValidationError{
 			Field:   "claimCode",
-			Message: "must be 8-32 alphanumeric characters",
+			Message: "must be 8-32 alphanumeric characters (including - and _)",
 		}
 	}
 	return nil

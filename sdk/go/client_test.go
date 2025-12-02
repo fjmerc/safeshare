@@ -302,12 +302,16 @@ func TestGetFileInfo(t *testing.T) {
 			return
 		}
 
+		// Mock server response matching actual server field names
 		resp := apiFileInfoResponse{
-			Filename:           "test.txt",
-			Size:               1024,
-			MimeType:           "text/plain",
-			PasswordProtected:  false,
-			DownloadsRemaining: intPtr(5),
+			ClaimCode:         "abc12345",
+			Filename:          "test.txt",
+			Size:              1024,
+			MimeType:          "text/plain",
+			PasswordProtected: false,
+			MaxDownloads:      intPtr(10),  // max_downloads from server
+			DownloadCount:     5,           // download_count from server
+			// SDK calculates DownloadsRemaining = MaxDownloads - DownloadCount = 5
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -327,8 +331,9 @@ func TestGetFileInfo(t *testing.T) {
 	if info.Size != 1024 {
 		t.Errorf("Size = %d, want 1024", info.Size)
 	}
+	// DownloadsRemaining should be MaxDownloads - DownloadCount = 10 - 5 = 5
 	if info.DownloadsRemaining == nil || *info.DownloadsRemaining != 5 {
-		t.Errorf("DownloadsRemaining unexpected")
+		t.Errorf("DownloadsRemaining = %v, want 5", info.DownloadsRemaining)
 	}
 }
 
