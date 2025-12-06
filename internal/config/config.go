@@ -16,6 +16,9 @@ type Config struct {
 	Port                     string
 	DBPath                   string
 	UploadDir                string
+	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
+	DataDir                  string // Data directory for database and backups
+	Version                  string // Application version
 	CleanupIntervalMinutes   int
 	PublicURL                string
 	DownloadURL              string // Optional: Separate URL for downloads (bypasses CDN timeouts)
@@ -54,6 +57,9 @@ func Load() (*Config, error) {
 		Port:                     getEnv("PORT", "8080"),
 		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
 		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
+		BackupDir:                getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
+		DataDir:                  getEnv("DATA_DIR", "./data"),
+		Version:                  getEnv("APP_VERSION", "1.4.1"),
 		CleanupIntervalMinutes:   getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
 		PublicURL:                getEnv("PUBLIC_URL", ""),
 		DownloadURL:              getEnv("DOWNLOAD_URL", ""), // Optional: bypasses CDN for large downloads

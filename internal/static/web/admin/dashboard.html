@@ -112,6 +112,7 @@
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
             <button class="tab-btn" data-tab="webhooks">Webhooks</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="backups">Backups</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
 
@@ -554,6 +555,65 @@
                     </button>
                 </div>
             </div>
+            </div>
+        </div>
+
+        <!-- Backups Tab -->
+        <div id="backupsTab" class="tab-content">
+            <div class="table-controls">
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <select id="backupMode" class="webhook-filter">
+                        <option value="config">Config Only</option>
+                        <option value="database">Database</option>
+                        <option value="full">Full (DB + Files)</option>
+                    </select>
+                    <button id="createBackupBtn" class="btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Create Backup
+                    </button>
+                </div>
+                <button id="refreshBackupsBtn" class="btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div class="alert-info" style="margin-bottom: 16px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <span><strong>Backup Modes:</strong> Config = settings only | Database = settings + DB | Full = settings + DB + uploaded files</span>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Mode</th>
+                            <th>Size</th>
+                            <th>Created</th>
+                            <th>Version</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backupsTableBody">
+                        <tr>
+                            <td colspan="7" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -1039,6 +1099,69 @@
             </div>
             <div class="modal-actions">
                 <button class="btn-primary" onclick="hideDeliveryDetailModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Restore Backup Modal -->
+    <div id="restoreBackupModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Restore Backup</h3>
+            <div style="margin: 20px 0;">
+                <p id="restoreBackupInfo" style="margin-bottom: 16px;"></p>
+                
+                <div class="alert-warning" style="margin-bottom: 16px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <span><strong>Warning:</strong> Restoring will overwrite current data. This action cannot be undone!</span>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="restoreDryRun" checked style="width: auto; margin-right: 8px;">
+                        Dry Run (preview changes without applying)
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label for="restoreOrphanHandling">Orphan File Handling</label>
+                    <select id="restoreOrphanHandling">
+                        <option value="keep">Keep orphan files</option>
+                        <option value="remove">Remove orphan files</option>
+                    </select>
+                    <small>Files in uploads directory not in the backup</small>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="confirmRestoreBtn" class="btn-danger">Restore Backup</button>
+                <button class="btn-secondary" onclick="hideRestoreBackupModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Progress Modal -->
+    <div id="backupProgressModal" class="modal" style="display: none;">
+        <div class="modal-content" style="text-align: center;">
+            <h3 id="backupProgressTitle">Creating Backup...</h3>
+            <div style="margin: 30px 0;">
+                <div class="spinner" style="margin: 0 auto 20px;"></div>
+                <p id="backupProgressMessage">Please wait while the backup is being created.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Result Modal -->
+    <div id="backupResultModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="backupResultTitle">Backup Complete</h3>
+            <div id="backupResultContent" style="margin: 20px 0;">
+                <!-- Populated by JavaScript -->
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="hideBackupResultModal()">Close</button>
             </div>
         </div>
     </div>
