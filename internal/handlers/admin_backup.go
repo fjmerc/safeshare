@@ -633,7 +633,6 @@ func AdminDownloadBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc
 
 		// Create streaming zip writer
 		zipWriter := zip.NewWriter(w)
-		defer zipWriter.Close()
 
 		slog.Info("starting backup download",
 			"backup", filename,
@@ -707,6 +706,13 @@ func AdminDownloadBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc
 			_, err = io.Copy(writer, file)
 			return err
 		})
+
+		// Close the zip writer and check for errors
+		// Must close before logging completion to finalize the zip file
+		if closeErr := zipWriter.Close(); closeErr != nil {
+			slog.Error("failed to close zip writer", "error", closeErr)
+			// Can't change headers after we've started writing, so just log the error
+		}
 
 		if err != nil {
 			slog.Error("failed to create backup zip", "error", err)
