@@ -488,6 +488,10 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRestoreBackupHandler(db, cfg)))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/backups/download", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDownloadBackupHandler(db, cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin static assets
 		mux.Handle("/admin/assets/", http.StripPrefix("/", static.Handler()))
 	} else {

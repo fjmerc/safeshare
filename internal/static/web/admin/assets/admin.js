@@ -1239,10 +1239,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Backup table event delegation (for action buttons)
     document.getElementById('backupsTableBody')?.addEventListener('click', (e) => {
         const verifyBtn = e.target.closest('.backup-verify-btn');
+        const downloadBtn = e.target.closest('.backup-download-btn');
         const restoreBtn = e.target.closest('.backup-restore-btn');
         const deleteBtn = e.target.closest('.backup-delete-btn');
 
         if (verifyBtn) verifyBackup(verifyBtn.dataset.filename);
+        if (downloadBtn) downloadBackup(downloadBtn.dataset.filename);
         if (restoreBtn) showRestoreBackupModal(restoreBtn.dataset.filename);
         if (deleteBtn) deleteBackup(deleteBtn.dataset.filename);
     });
@@ -2635,6 +2637,13 @@ function updateBackupsTable(backups) {
                             <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                     </button>
+                    <button class="btn-icon btn-success backup-download-btn" data-filename="${escapeHtml(backup.filename)}" title="Download backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
                     <button class="btn-icon btn-warning backup-restore-btn" data-filename="${escapeHtml(backup.filename)}" title="Restore backup">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="1 4 1 10 7 10"></polyline>
@@ -2701,6 +2710,44 @@ async function createBackup() {
         document.getElementById('backupProgressModal').style.display = 'none';
         console.error('Error creating backup:', error);
         showError('Failed to create backup');
+    }
+}
+
+// Download backup as zip file
+async function downloadBackup(filename) {
+    try {
+        showSuccess('Preparing download...');
+
+        const response = await fetch('/admin/api/backups/download', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ filename })
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            showError(data.error || 'Failed to download backup');
+            return;
+        }
+
+        // Get the blob and trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showSuccess('Download started!');
+    } catch (error) {
+        console.error('Error downloading backup:', error);
+        showError('Failed to download backup');
     }
 }
 
