@@ -332,6 +332,26 @@ curl -O http://localhost:8080/api/claim/<CLAIM_CODE>
 curl http://localhost:8080/health
 ```
 
+### Backup Management
+
+SafeShare provides backup management through both CLI tools and the Admin Dashboard web interface.
+
+**Admin Dashboard** (Web UI):
+- Navigate to Admin Dashboard → Backups tab
+- View existing backups in the backup directory
+- Download backups as zip files with one click (green download icon)
+- Requires admin authentication and CSRF token (automatic in web UI)
+- See `docs/BACKUP_RESTORE.md` for full documentation
+
+**CLI Tool** (`cmd/safeshare-backup`):
+- Create backups (config, database, or full mode)
+- Restore backups with orphan handling
+- Verify backup integrity
+- List backups in directory
+- See `docs/BACKUP_RESTORE.md` for CLI usage examples
+
+---
+
 ### Import Tool (CLI Admin Utility)
 
 SafeShare includes a command-line import tool for bulk file imports without network upload.
