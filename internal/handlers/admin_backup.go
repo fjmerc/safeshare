@@ -7,47 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
 )
-
-// BackupJobManager manages async backup/restore jobs
-type BackupJobManager struct {
-	mu   sync.RWMutex
-	jobs map[string]*backup.BackupJob
-}
-
-var jobManager = &BackupJobManager{
-	jobs: make(map[string]*backup.BackupJob),
-}
-
-// GetJob returns a job by ID
-func (m *BackupJobManager) GetJob(id string) (*backup.BackupJob, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	job, ok := m.jobs[id]
-	return job, ok
-}
-
-// SetJob stores a job
-func (m *BackupJobManager) SetJob(job *backup.BackupJob) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.jobs[job.ID] = job
-}
-
-// ListJobs returns all jobs
-func (m *BackupJobManager) ListJobs() []*backup.BackupJob {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	jobs := make([]*backup.BackupJob, 0, len(m.jobs))
-	for _, job := range m.jobs {
-		jobs = append(jobs, job)
-	}
-	return jobs
-}
 
 // AdminListBackupsHandler lists available backups
 func AdminListBackupsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
