@@ -695,3 +695,32 @@ func GetAllFiles(db *sql.DB) ([]*models.File, error) {
 
 	return files, nil
 }
+
+// GetAllStoredFilenames returns all stored filenames from the database as a set.
+// This is optimized for orphan detection to avoid N+1 queries.
+// Includes both active and expired files since we don't want to delete
+// files that have expired but haven't been cleaned up yet.
+func GetAllStoredFilenames(db *sql.DB) (map[string]bool, error) {
+	query := `SELECT stored_filename FROM files`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stored filenames: %w", err)
+	}
+	defer rows.Close()
+
+	filenames := make(map[string]bool)
+	for rows.Next() {
+		var filename string
+		if err := rows.Scan(&filename); err != nil {
+			return nil, fmt.Errorf("failed to scan stored filename: %w", err)
+		}
+		filenames[filename] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating stored filenames: %w", err)
+	}
+
+	return filenames, nil
+}

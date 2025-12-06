@@ -505,6 +505,10 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 - `AdminUpdateQuotaHandler`: Dynamically updates storage quota without restart (requires CSRF)
 - `AdminChangePasswordHandler`: Changes admin password without restart (requires CSRF)
 
+*Admin Backup Management:*
+- `AdminListBackupsHandler`: Lists all backups in the backup directory
+- `AdminDownloadBackupHandler`: Downloads backup as zip file (requires CSRF)
+
 *Admin User Management:*
 - `AdminCreateUserHandler`: Creates new user with optional or auto-generated temporary password
 - `AdminListUsersHandler`: Returns paginated list of all users with file counts
@@ -515,7 +519,7 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 
 **Frontend** (`internal/static/web/admin/`):
 - `login.html`: Login page with username/password form
-- `dashboard.html`: Four-tab interface (Files, Users, Blocked IPs, Settings)
+- `dashboard.html`: Five-tab interface (Files, Users, Blocked IPs, Backups, Settings)
 - `admin.css`: Responsive design with light theme
 - `admin.js`: Handles API calls, pagination, search, confirmations
 
@@ -533,6 +537,7 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 **Protected routes with CSRF** (require session + CSRF token):
 - File management: `POST /admin/api/files/delete`
 - IP management: `POST /admin/api/ip/block`, `POST /admin/api/ip/unblock`
+- Backup management: `POST /admin/api/backups/download`
 - Settings: `POST /admin/api/quota/update`, `POST /admin/api/settings/password`
 - User management: `POST /admin/api/users/create`, `PUT /admin/api/users/:id`, `DELETE /admin/api/users/:id`, etc.
 
@@ -548,6 +553,7 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 **Files Tab**: Table view with search, pagination, delete functionality
 **Users Tab**: User management with create, edit, enable/disable, reset password, delete
 **Blocked IPs Tab**: IP blocklist with add/unblock functionality
+**Backups Tab**: Backup management with list view and download functionality
 **Settings Tab**: Dynamic settings updates (storage, security, password, system info)
 **Real-time Stats**: Total files, storage used, quota usage, blocked IPs, total users
 

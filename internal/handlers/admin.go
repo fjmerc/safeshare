@@ -1189,19 +1189,22 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 		slog.Info("admin completed partial uploads cleanup",
 			"deleted_count", result.DeletedCount,
 			"abandoned_count", result.AbandonedCount,
-			"orphaned_count", result.OrphanedCount,
+			"orphaned_chunks_count", result.OrphanedCount,
+			"orphaned_files_count", result.OrphanedFilesCount,
 			"bytes_reclaimed", result.BytesReclaimed,
-			"orphaned_bytes", result.OrphanedBytes,
+			"orphaned_chunk_bytes", result.OrphanedBytes,
+			"orphaned_file_bytes", result.OrphanedFilesBytes,
 			"admin_ip", clientIP,
 		)
 
 		// Format the success message with breakdown
 		var message string
-		if result.OrphanedCount > 0 {
-			message = fmt.Sprintf("Cleaned up %d upload(s) (%d abandoned, %d orphaned), reclaimed %s",
-				result.DeletedCount,
+		if result.OrphanedCount > 0 || result.OrphanedFilesCount > 0 {
+			message = fmt.Sprintf("Cleaned up %d upload(s) (%d abandoned, %d orphaned chunks, %d orphaned files), reclaimed %s",
+				result.DeletedCount+result.OrphanedFilesCount,
 				result.AbandonedCount,
 				result.OrphanedCount,
+				result.OrphanedFilesCount,
 				utils.FormatBytes(uint64(result.BytesReclaimed)),
 			)
 		} else {
@@ -1213,13 +1216,15 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":         true,
-			"deleted_count":   result.DeletedCount,
-			"abandoned_count": result.AbandonedCount,
-			"orphaned_count":  result.OrphanedCount,
-			"bytes_reclaimed": result.BytesReclaimed,
-			"orphaned_bytes":  result.OrphanedBytes,
-			"message":         message,
+			"success":              true,
+			"deleted_count":        result.DeletedCount,
+			"abandoned_count":      result.AbandonedCount,
+			"orphaned_chunks_count": result.OrphanedCount,
+			"orphaned_files_count":  result.OrphanedFilesCount,
+			"bytes_reclaimed":      result.BytesReclaimed,
+			"orphaned_chunk_bytes": result.OrphanedBytes,
+			"orphaned_file_bytes":  result.OrphanedFilesBytes,
+			"message":              message,
 		})
 	}
 }

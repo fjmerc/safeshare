@@ -48,6 +48,38 @@ Backs up everything:
 
 **Use case**: Complete system backup for disaster recovery.
 
+## Admin Dashboard Management
+
+Starting with SafeShare v1.4.1, backups can be managed through the Admin Dashboard web interface in addition to the CLI tool.
+
+### Accessing the Backups Tab
+
+1. Log into the Admin Dashboard at `/admin/dashboard`
+2. Navigate to the **Backups** tab
+3. View existing backups in the backup directory
+4. Download backups as zip files with one click
+
+### Downloading Backups
+
+The Admin Dashboard provides a convenient way to download backups without SSH/terminal access:
+
+1. In the Backups tab, locate the backup you want to download
+2. Click the green download icon next to the backup
+3. The backup will be packaged as a zip file and downloaded to your browser
+
+**Supported backup types**: Config, Database, and Full backups can all be downloaded via the web interface.
+
+**Requirements**:
+- Admin authentication (admin session or user account with admin role)
+- CSRF token (automatically handled by the web interface)
+
+**Technical details**:
+- Endpoint: `POST /admin/api/backups/download`
+- Request body: `{"filename": "safeshare-backup-YYYYMMDD-HHMMSS"}`
+- Response: Streaming zip file with `Content-Type: application/zip`
+
+---
+
 ## CLI Tool Usage
 
 ### Building the CLI Tool
@@ -312,7 +344,9 @@ For very large uploads directories:
 
 ## API Reference
 
-The backup functionality is also available programmatically:
+The backup functionality is available both programmatically and via HTTP API.
+
+### Go Package API
 
 ```go
 import "github.com/fjmerc/safeshare/internal/backup"
@@ -340,6 +374,44 @@ result := backup.Verify("/backups/safeshare-backup-20240101-120000")
 // List backups
 backups, err := backup.ListBackups("/backups")
 ```
+
+### HTTP API Endpoints
+
+#### Download Backup
+
+**Endpoint**: `POST /admin/api/backups/download`
+
+**Authentication**: Requires admin session cookie and CSRF token
+
+**Request Body** (JSON):
+```json
+{
+  "filename": "safeshare-backup-20240101-120000"
+}
+```
+
+**Response**:
+- **Content-Type**: `application/zip`
+- **Content-Disposition**: `attachment; filename="safeshare-backup-20240101-120000.zip"`
+- **Body**: Streaming zip file containing backup directory
+
+**Example** (using curl with admin session):
+```bash
+curl -X POST https://share.example.com/admin/api/backups/download \
+  -H "Content-Type: application/json" \
+  -H "Cookie: admin_session=<session_token>" \
+  -H "X-CSRF-Token: <csrf_token>" \
+  -d '{"filename": "safeshare-backup-20240101-120000"}' \
+  -o backup.zip
+```
+
+**Response Codes**:
+- `200 OK` - Backup downloaded successfully
+- `400 Bad Request` - Invalid filename or missing parameter
+- `401 Unauthorized` - Not authenticated as admin
+- `403 Forbidden` - Invalid CSRF token
+- `404 Not Found` - Backup not found
+- `500 Internal Server Error` - Failed to create zip or read backup files
 
 ## Security Considerations
 
