@@ -2290,6 +2290,21 @@ code {
 
 
 
+/* ===== BACKUPS TABLE STYLING ===== */
+
+/* Center all columns in Backups table */
+#backupsTab .data-table th,
+#backupsTab .data-table td {
+    text-align: center !important;
+    vertical-align: middle;
+}
+
+/* Filename column - left align for readability */
+#backupsTab .data-table th:nth-child(1),
+#backupsTab .data-table td:nth-child(1) {
+    text-align: left !important;
+}
+
 /* Better pre formatting in modals */
 pre {
     white-space: pre-wrap;

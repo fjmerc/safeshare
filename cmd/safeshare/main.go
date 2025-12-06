@@ -467,6 +467,27 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(db)))).ServeHTTP(w, r)
 		})
 
+		// Backup management routes
+		mux.HandleFunc("/admin/api/backups", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminListBackupsHandler(db, cfg))).ServeHTTP(w, r)
+			} else if r.Method == http.MethodPost {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateBackupHandler(db, cfg)))).ServeHTTP(w, r)
+			} else if r.Method == http.MethodDelete {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteBackupHandler(db, cfg)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/backups/verify", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminVerifyBackupHandler(db, cfg)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backups/restore", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRestoreBackupHandler(db, cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin static assets
 		mux.Handle("/admin/assets/", http.StripPrefix("/", static.Handler()))
 	} else {

@@ -1181,6 +1181,8 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (btn.dataset.tab === 'webhooks') {
                 loadWebhooks();
                 loadDeliveries();
+            } else if (btn.dataset.tab === 'backups') {
+                loadBackups();
             }
         });
     });
@@ -1223,6 +1225,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Clear delivery history button
     document.getElementById('clearDeliveryHistoryBtn')?.addEventListener('click', clearDeliveryHistory);
+
+    // Backup event listeners
+    document.getElementById('createBackupBtn')?.addEventListener('click', createBackup);
+    document.getElementById('refreshBackupsBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadBackups();
+    });
+    document.getElementById('confirmRestoreBtn')?.addEventListener('click', restoreBackup);
+
+    // Backup table event delegation (for action buttons)
+    document.getElementById('backupsTableBody')?.addEventListener('click', (e) => {
+        const verifyBtn = e.target.closest('.backup-verify-btn');
+        const restoreBtn = e.target.closest('.backup-restore-btn');
+        const deleteBtn = e.target.closest('.backup-delete-btn');
+
+        if (verifyBtn) verifyBackup(verifyBtn.dataset.filename);
+        if (restoreBtn) showRestoreBackupModal(restoreBtn.dataset.filename);
+        if (deleteBtn) deleteBackup(deleteBtn.dataset.filename);
+    });
 
     // Add input event listeners for Settings tab fields to detect changes
     const settingsFields = [
@@ -2559,5 +2582,322 @@ async function clearDeliveryHistory() {
     } catch (error) {
         console.error('Error clearing delivery history:', error);
         showError('Failed to clear delivery history');
+    }
+}
+
+// ============ BACKUP MANAGEMENT FUNCTIONS ============
+
+let currentRestoreBackup = null;
+
+// Load backup list
+async function loadBackups() {
+    try {
+        const response = await fetch('/admin/api/backups');
+
+        if (!response.ok) {
+            throw new Error('Failed to load backups');
+        }
+
+        const data = await response.json();
+        updateBackupsTable(data.backups || []);
+    } catch (error) {
+        console.error('Error loading backups:', error);
+        showError('Failed to load backups');
+    }
+}
+
+// Update backups table
+function updateBackupsTable(backups) {
+    const tbody = document.getElementById('backupsTableBody');
+
+    if (backups.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No backups found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = backups.map(backup => {
+        const modeBadge = getModeBadge(backup.mode);
+        const statusBadge = backup.verified 
+            ? '<span class="badge badge-yes">Verified</span>' 
+            : '<span class="badge badge-secondary">Unverified</span>';
+
+        return `
+            <tr>
+                <td><code style="font-size: 12px;">${escapeHtml(backup.filename)}</code></td>
+                <td>${modeBadge}</td>
+                <td>${formatBytes(backup.size)}</td>
+                <td>${formatDate(backup.created_at)}</td>
+                <td>${escapeHtml(backup.version || 'Unknown')}</td>
+                <td>${statusBadge}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-info backup-verify-btn" data-filename="${escapeHtml(backup.filename)}" title="Verify backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-warning backup-restore-btn" data-filename="${escapeHtml(backup.filename)}" title="Restore backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"></polyline>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger backup-delete-btn" data-filename="${escapeHtml(backup.filename)}" title="Delete backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Get mode badge HTML
+function getModeBadge(mode) {
+    switch (mode) {
+        case 'config':
+            return '<span class="badge badge-secondary">Config</span>';
+        case 'database':
+            return '<span class="badge badge-info">Database</span>';
+        case 'full':
+            return '<span class="badge badge-primary">Full</span>';
+        default:
+            return '<span class="badge badge-secondary">Unknown</span>';
+    }
+}
+
+// Create backup
+async function createBackup() {
+    const mode = document.getElementById('backupMode').value;
+
+    // Show progress modal
+    document.getElementById('backupProgressTitle').textContent = 'Creating Backup...';
+    document.getElementById('backupProgressMessage').textContent = `Creating ${mode} backup. Please wait...`;
+    document.getElementById('backupProgressModal').style.display = 'flex';
+
+    try {
+        const response = await fetch('/admin/api/backups', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ mode })
+        });
+
+        const data = await response.json();
+
+        // Hide progress modal
+        document.getElementById('backupProgressModal').style.display = 'none';
+
+        if (response.ok && data.success) {
+            showBackupResult('Backup Created Successfully', data);
+            loadBackups();
+        } else {
+            showError(data.error || 'Failed to create backup');
+        }
+    } catch (error) {
+        document.getElementById('backupProgressModal').style.display = 'none';
+        console.error('Error creating backup:', error);
+        showError('Failed to create backup');
+    }
+}
+
+// Verify backup
+async function verifyBackup(filename) {
+    try {
+        const response = await fetch('/admin/api/backups/verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ filename })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.valid) {
+            showSuccess(`Backup verified successfully! Mode: ${data.mode}, Version: ${data.version}`);
+            loadBackups();
+        } else {
+            const errors = data.errors ? data.errors.join(', ') : 'Unknown verification error';
+            showError(`Backup verification failed: ${errors}`);
+        }
+    } catch (error) {
+        console.error('Error verifying backup:', error);
+        showError('Failed to verify backup');
+    }
+}
+
+// Show restore backup modal
+function showRestoreBackupModal(filename) {
+    currentRestoreBackup = filename;
+    document.getElementById('restoreBackupInfo').innerHTML = `
+        <strong>Backup:</strong> <code>${escapeHtml(filename)}</code>
+    `;
+    document.getElementById('restoreDryRun').checked = true;
+    document.getElementById('restoreOrphanHandling').value = 'keep';
+    document.getElementById('restoreBackupModal').style.display = 'flex';
+}
+
+// Hide restore backup modal
+function hideRestoreBackupModal() {
+    document.getElementById('restoreBackupModal').style.display = 'none';
+    currentRestoreBackup = null;
+}
+
+// Restore backup
+async function restoreBackup() {
+    if (!currentRestoreBackup) {
+        showError('No backup selected');
+        return;
+    }
+
+    const dryRun = document.getElementById('restoreDryRun').checked;
+    const orphanHandling = document.getElementById('restoreOrphanHandling').value;
+
+    // Hide restore modal
+    hideRestoreBackupModal();
+
+    // Show progress modal
+    const actionText = dryRun ? 'Simulating restore' : 'Restoring';
+    document.getElementById('backupProgressTitle').textContent = dryRun ? 'Dry Run...' : 'Restoring Backup...';
+    document.getElementById('backupProgressMessage').textContent = `${actionText} from backup. Please wait...`;
+    document.getElementById('backupProgressModal').style.display = 'flex';
+
+    try {
+        const response = await fetch('/admin/api/backups/restore', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({
+                filename: currentRestoreBackup,
+                dry_run: dryRun,
+                orphan_handling: orphanHandling
+            })
+        });
+
+        const data = await response.json();
+
+        // Hide progress modal
+        document.getElementById('backupProgressModal').style.display = 'none';
+
+        if (response.ok && data.success) {
+            showRestoreResult(dryRun, data);
+        } else {
+            showError(data.error || 'Failed to restore backup');
+        }
+    } catch (error) {
+        document.getElementById('backupProgressModal').style.display = 'none';
+        console.error('Error restoring backup:', error);
+        showError('Failed to restore backup');
+    }
+}
+
+// Show backup result
+function showBackupResult(title, data) {
+    document.getElementById('backupResultTitle').textContent = title;
+    
+    let content = `
+        <div style="display: grid; gap: 12px;">
+            <div><strong>Backup File:</strong> <code>${escapeHtml(data.filename || 'N/A')}</code></div>
+            <div><strong>Mode:</strong> ${getModeBadge(data.mode)}</div>
+            <div><strong>Size:</strong> ${formatBytes(data.size || 0)}</div>
+    `;
+
+    if (data.files_count !== undefined) {
+        content += `<div><strong>Files Backed Up:</strong> ${data.files_count}</div>`;
+    }
+
+    content += `</div>`;
+
+    document.getElementById('backupResultContent').innerHTML = content;
+    document.getElementById('backupResultModal').style.display = 'flex';
+}
+
+// Show restore result
+function showRestoreResult(dryRun, data) {
+    const title = dryRun ? 'Dry Run Complete' : 'Restore Complete';
+    document.getElementById('backupResultTitle').textContent = title;
+
+    let content = `
+        <div style="display: grid; gap: 12px;">
+            <div class="alert-${dryRun ? 'info' : 'success'}" style="margin-bottom: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${dryRun 
+                        ? '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>'
+                        : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'
+                    }
+                </svg>
+                <span>${dryRun ? 'This was a dry run - no changes were made.' : 'Backup restored successfully!'}</span>
+            </div>
+    `;
+
+    if (data.settings_restored !== undefined) {
+        content += `<div><strong>Settings Restored:</strong> ${data.settings_restored}</div>`;
+    }
+    if (data.files_restored !== undefined) {
+        content += `<div><strong>Files Restored:</strong> ${data.files_restored}</div>`;
+    }
+    if (data.orphans_found !== undefined && data.orphans_found > 0) {
+        content += `<div><strong>Orphan Files Found:</strong> ${data.orphans_found}</div>`;
+    }
+    if (data.orphans_removed !== undefined && data.orphans_removed > 0) {
+        content += `<div><strong>Orphan Files Removed:</strong> ${data.orphans_removed}</div>`;
+    }
+
+    if (!dryRun) {
+        content += `
+            <div class="alert-warning" style="margin-top: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>You may need to restart SafeShare for all changes to take effect.</span>
+            </div>
+        `;
+    }
+
+    content += `</div>`;
+
+    document.getElementById('backupResultContent').innerHTML = content;
+    document.getElementById('backupResultModal').style.display = 'flex';
+}
+
+// Hide backup result modal
+function hideBackupResultModal() {
+    document.getElementById('backupResultModal').style.display = 'none';
+}
+
+// Delete backup
+async function deleteBackup(filename) {
+    if (!await confirm(`Delete backup "${filename}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/backups?filename=' + encodeURIComponent(filename), {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showSuccess('Backup deleted successfully');
+            loadBackups();
+        } else {
+            showError(data.error || 'Failed to delete backup');
+        }
+    } catch (error) {
+        console.error('Error deleting backup:', error);
+        showError('Failed to delete backup');
     }
 }
