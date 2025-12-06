@@ -436,3 +436,136 @@ func TestPartialUploadSizeCalculation(t *testing.T) {
 
 	t.Log("Partial upload size calculation test completed successfully")
 }
+
+// TestCleanupOrphanedFiles tests cleanup of files without database records
+func TestCleanupOrphanedFiles(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Create a file WITH database record
+	trackedCode, _ := utils.GenerateClaimCode()
+	trackedFilename := "tracked-" + trackedCode + ".bin"
+	database.CreateFile(db, &models.File{
+		ClaimCode:        trackedCode,
+		StoredFilename:   trackedFilename,
+		OriginalFilename: "tracked.txt",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	})
+	trackedPath := filepath.Join(cfg.UploadDir, trackedFilename)
+	os.WriteFile(trackedPath, []byte("tracked file"), 0644)
+
+	// Create orphaned files (no database record, older than grace period)
+	orphanedFilenames := []string{"orphan-1.bin", "orphan-2.bin"}
+	for _, filename := range orphanedFilenames {
+		orphanPath := filepath.Join(cfg.UploadDir, filename)
+		os.WriteFile(orphanPath, []byte("orphaned file"), 0644)
+		// Set modification time to 2 hours ago (beyond 1-hour grace period)
+		oldTime := time.Now().Add(-2 * time.Hour)
+		os.Chtimes(orphanPath, oldTime, oldTime)
+	}
+
+	// Create an orphaned file within grace period (should NOT be deleted)
+	recentOrphanPath := filepath.Join(cfg.UploadDir, "recent-orphan.bin")
+	os.WriteFile(recentOrphanPath, []byte("recent orphan"), 0644)
+	// Don't modify time - it's recent
+
+	// Run cleanup with 1-hour grace period
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	if err != nil {
+		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
+	}
+
+	// Should delete 2 orphaned files (not the recent one)
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+
+	if bytesReclaimed != int64(len("orphaned file")*2) {
+		t.Errorf("bytesReclaimed = %d, want %d", bytesReclaimed, len("orphaned file")*2)
+	}
+
+	// Verify tracked file still exists
+	if _, err := os.Stat(trackedPath); os.IsNotExist(err) {
+		t.Error("Tracked file should NOT be deleted")
+	}
+
+	// Verify old orphaned files are deleted
+	for _, filename := range orphanedFilenames {
+		orphanPath := filepath.Join(cfg.UploadDir, filename)
+		if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+			t.Errorf("Orphaned file should be deleted: %s", filename)
+		}
+	}
+
+	// Verify recent orphan still exists (within grace period)
+	if _, err := os.Stat(recentOrphanPath); os.IsNotExist(err) {
+		t.Error("Recent orphan should NOT be deleted (within grace period)")
+	}
+
+	t.Log("Cleanup orphaned files test completed successfully")
+}
+
+// TestCleanupOrphanedFiles_NoOrphans tests when there are no orphaned files
+func TestCleanupOrphanedFiles_NoOrphans(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Create only files WITH database records
+	for i := 0; i < 3; i++ {
+		code, _ := utils.GenerateClaimCode()
+		filename := "tracked-" + code + ".bin"
+		database.CreateFile(db, &models.File{
+			ClaimCode:        code,
+			StoredFilename:   filename,
+			OriginalFilename: "test.txt",
+			FileSize:         1024,
+			MimeType:         "text/plain",
+			ExpiresAt:        time.Now().Add(24 * time.Hour),
+			UploaderIP:       "127.0.0.1",
+		})
+		filePath := filepath.Join(cfg.UploadDir, filename)
+		os.WriteFile(filePath, []byte("tracked"), 0644)
+	}
+
+	// Run cleanup
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	if err != nil {
+		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
+	}
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0", deleted)
+	}
+
+	if bytesReclaimed != 0 {
+		t.Errorf("bytesReclaimed = %d, want 0", bytesReclaimed)
+	}
+
+	t.Log("Cleanup no orphans test completed successfully")
+}
+
+// TestCleanupOrphanedFiles_EmptyDirectory tests with empty uploads directory
+func TestCleanupOrphanedFiles_EmptyDirectory(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	// Ensure directory is empty (just .partial)
+	// Run cleanup
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	if err != nil {
+		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
+	}
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0", deleted)
+	}
+
+	if bytesReclaimed != 0 {
+		t.Errorf("bytesReclaimed = %d, want 0", bytesReclaimed)
+	}
+
+	t.Log("Cleanup empty directory test completed successfully")
+}

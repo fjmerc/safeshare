@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"archive/zip"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminListBackupsHandler lists available backups
@@ -532,6 +536,191 @@ func AdminDeleteBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"success": true,
 			"message": "Backup deleted successfully",
 		})
+	}
+}
+
+// AdminDownloadBackupHandler downloads a backup as a zip file
+func AdminDownloadBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get backup directory from config
+		backupDir := cfg.BackupDir
+		if backupDir == "" {
+			backupDir = filepath.Join(cfg.DataDir, "backups")
+		}
+
+		// Parse request body for filename
+		var req struct {
+			Filename string `json:"filename"`
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 4096) // 4KB limit
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+			})
+			return
+		}
+
+		filename := req.Filename
+		if filename == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "filename is required",
+			})
+			return
+		}
+
+		backupPath := filepath.Join(backupDir, filename)
+
+		// Security: Ensure backup path is within allowed directory
+		absBackupPath, err := filepath.Abs(backupPath)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid backup path",
+			})
+			return
+		}
+
+		absBackupDir, _ := filepath.Abs(backupDir)
+		if !isSubPath(absBackupDir, absBackupPath) {
+			slog.Warn("attempted path traversal in backup download",
+				"requested", backupPath,
+				"allowed", backupDir,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Access denied",
+			})
+			return
+		}
+
+		// Check if path exists and is a directory
+		info, err := os.Stat(absBackupPath)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Backup not found",
+			})
+			return
+		}
+
+		if !info.IsDir() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Path is not a backup directory",
+			})
+			return
+		}
+
+		// Set headers for zip download
+		// Sanitize filename for Content-Disposition header to prevent header injection
+		safeFilename := utils.SanitizeForContentDisposition(filename) + ".zip"
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeFilename))
+
+		// Create streaming zip writer
+		zipWriter := zip.NewWriter(w)
+
+		slog.Info("starting backup download",
+			"backup", filename,
+			"path", absBackupPath,
+		)
+
+		// Walk the backup directory and add files to zip
+		err = filepath.Walk(absBackupPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip the root directory itself
+			if path == absBackupPath {
+				return nil
+			}
+
+			// Security: Skip symlinks to prevent path traversal attacks
+			if info.Mode()&os.ModeSymlink != 0 {
+				slog.Warn("skipping symlink in backup download", "path", path)
+				return nil
+			}
+
+			// Security: Verify file is actually within backup directory
+			// This protects against symlinks that might have been followed
+			realPath, evalErr := filepath.EvalSymlinks(path)
+			if evalErr != nil {
+				slog.Warn("cannot resolve path in backup download", "path", path, "error", evalErr)
+				return nil
+			}
+			if !isSubPath(absBackupPath, realPath) && realPath != absBackupPath {
+				slog.Warn("path escapes backup directory", "path", path, "realPath", realPath)
+				return nil
+			}
+
+			// Get relative path for zip entry
+			relPath, err := filepath.Rel(absBackupPath, path)
+			if err != nil {
+				return err
+			}
+
+			// Create zip header
+			header, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return err
+			}
+			header.Name = relPath
+
+			if info.IsDir() {
+				header.Name += "/"
+				_, err = zipWriter.CreateHeader(header)
+				return err
+			}
+
+			// Use deflate compression for files
+			header.Method = zip.Deflate
+
+			// Create file entry in zip
+			writer, err := zipWriter.CreateHeader(header)
+			if err != nil {
+				return err
+			}
+
+			// Open and copy file content
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			_, err = io.Copy(writer, file)
+			return err
+		})
+
+		// Close the zip writer and check for errors
+		// Must close before logging completion to finalize the zip file
+		if closeErr := zipWriter.Close(); closeErr != nil {
+			slog.Error("failed to close zip writer", "error", closeErr)
+			// Can't change headers after we've started writing, so just log the error
+		}
+
+		if err != nil {
+			slog.Error("failed to create backup zip", "error", err)
+			// Can't change headers after we've started writing, so just log the error
+			return
+		}
+
+		slog.Info("backup download completed", "backup", filename)
 	}
 }
 
