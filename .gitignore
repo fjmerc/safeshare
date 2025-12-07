@@ -15,5 +15,9 @@ CLAUDE.md
 scripts/purge-cloudflare-cache.sh
 scripts/*.local.sh
 
+# Planning Docs
+SafeShare-Planning
+
+# Coverage test files
 *.out
 *.test
