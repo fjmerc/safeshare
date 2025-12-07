@@ -34,6 +34,9 @@ var (
 
 	// ErrInvalidInput is returned when input validation fails.
 	ErrInvalidInput = errors.New("invalid input")
+
+	// ErrNilDatabase is returned when a nil database connection is provided.
+	ErrNilDatabase = errors.New("nil database connection")
 )
 
 // FileStats contains statistics about file storage.
