@@ -37,6 +37,9 @@ var (
 
 	// ErrNilDatabase is returned when a nil database connection is provided.
 	ErrNilDatabase = errors.New("nil database connection")
+
+	// ErrServiceUnavailable is returned when a service is temporarily unavailable.
+	ErrServiceUnavailable = errors.New("service temporarily unavailable")
 )
 
 // FileStats contains statistics about file storage.

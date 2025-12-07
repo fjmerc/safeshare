@@ -49,6 +49,27 @@ func TestValidateClaimCode(t *testing.T) {
 			claimCode:   "abcdefgh",
 			expectError: false,
 		},
+		// Valid: URL-safe base64 characters (hyphen and underscore)
+		{
+			name:        "valid with hyphen (base64url)",
+			claimCode:   "abc-1234",
+			expectError: false,
+		},
+		{
+			name:        "valid with underscore (base64url)",
+			claimCode:   "abc_1234",
+			expectError: false,
+		},
+		{
+			name:        "valid with hyphen and underscore (base64url)",
+			claimCode:   "ab_c-123",
+			expectError: false,
+		},
+		{
+			name:        "valid base64url encoded (8 char)",
+			claimCode:   "Aa_-Bb12",
+			expectError: false,
+		},
 
 		// Invalid: empty
 		{
@@ -63,13 +84,13 @@ func TestValidateClaimCode(t *testing.T) {
 			name:        "too short - 7 chars",
 			claimCode:   "abc1234",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 		{
 			name:        "too short - 1 char",
 			claimCode:   "a",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 
 		// Invalid: too long
@@ -77,39 +98,39 @@ func TestValidateClaimCode(t *testing.T) {
 			name:        "too long - 33 chars",
 			claimCode:   "abcdefghijklmnopqrstuvwxyz1234567",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 
-		// Invalid: special characters
-		{
-			name:        "contains hyphen",
-			claimCode:   "abc-1234",
-			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
-		},
-		{
-			name:        "contains underscore",
-			claimCode:   "abc_1234",
-			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
-		},
+		// Invalid: special characters (not in base64url)
 		{
 			name:        "contains space",
 			claimCode:   "abc 1234",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 		{
 			name:        "contains dot",
 			claimCode:   "abc.1234",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 		{
 			name:        "contains slash",
 			claimCode:   "abc/1234",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
+		},
+		{
+			name:        "contains plus sign",
+			claimCode:   "abc+1234",
+			expectError: true,
+			errorMsg:    "8-32 characters",
+		},
+		{
+			name:        "contains equals sign",
+			claimCode:   "abc=1234",
+			expectError: true,
+			errorMsg:    "8-32 characters",
 		},
 
 		// Security: path traversal attempts
@@ -117,13 +138,13 @@ func TestValidateClaimCode(t *testing.T) {
 			name:        "path traversal attempt",
 			claimCode:   "../etc/passwd",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 		{
 			name:        "SQL injection attempt",
 			claimCode:   "'; DROP TABLE--",
 			expectError: true,
-			errorMsg:    "8-32 alphanumeric",
+			errorMsg:    "8-32 characters",
 		},
 	}
 

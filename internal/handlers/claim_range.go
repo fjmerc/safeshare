@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,9 +9,9 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
@@ -25,7 +24,7 @@ func serveFileWithRangeSupport(
 	file *models.File,
 	filePath string,
 	cfg *config.Config,
-	db *sql.DB,
+	repos *repository.Repositories,
 ) {
 	// Check if file is stream-encrypted (SFSE1 format)
 	isStreamEnc, err := utils.IsStreamEncrypted(filePath)
@@ -56,7 +55,7 @@ func serveFileWithRangeSupport(
 
 	// If no Range header, serve the entire file
 	if rangeHeader == "" {
-		serveEntireFile(w, r, file, filePath, cfg, isStreamEnc, fileSize, db)
+		serveEntireFile(w, r, file, filePath, cfg, isStreamEnc, fileSize, repos)
 		return
 	}
 
@@ -89,8 +88,9 @@ func serveEntireFile(
 	cfg *config.Config,
 	isStreamEnc bool,
 	fileSize int64,
-	db *sql.DB,
+	repos *repository.Repositories,
 ) {
+	ctx := r.Context()
 	var written int64
 
 	// Handle streaming encrypted files
@@ -194,7 +194,7 @@ func serveEntireFile(
 	metrics.DownloadSizeBytes.Observe(float64(written))
 
 	// Increment completed downloads counter (only for full file downloads, not ranges)
-	if err := database.IncrementCompletedDownloads(db, file.ID); err != nil {
+	if err := repos.Files.IncrementCompletedDownloads(ctx, file.ID); err != nil {
 		slog.Error("failed to increment completed downloads", "file_id", file.ID, "error", err)
 		// Don't fail the response - file was already successfully sent
 	}

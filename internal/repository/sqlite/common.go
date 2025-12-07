@@ -3,7 +3,9 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -99,4 +101,14 @@ func isSQLiteBusyError(err error) bool {
 		strings.Contains(errStr, "(6)") ||   // SQLITE_LOCKED
 		strings.Contains(errStr, "(517)") || // SQLITE_BUSY_SNAPSHOT
 		strings.Contains(errStr, "(262)")    // SQLITE_BUSY_RECOVERY
+}
+
+// generateClaimCode generates a cryptographically secure claim code.
+// The code is 8 characters using URL-safe base64 alphabet (6 random bytes = ~36 bits of entropy).
+func generateClaimCode() (string, error) {
+	bytes := make([]byte, 6)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }

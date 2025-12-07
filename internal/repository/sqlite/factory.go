@@ -26,5 +26,6 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		PartialUploads: NewPartialUploadRepository(db),
 		Webhooks:       NewWebhookRepository(db),
 		APITokens:      NewAPITokenRepository(db),
+		DB:             db, // DEPRECATED: for backward compatibility during migration
 	}, nil
 }

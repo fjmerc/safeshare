@@ -8,8 +8,10 @@ replace github.com/fjmerc/safeshare/sdk/go => ./sdk/go
 toolchain go1.24.7
 
 require (
+	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0
 	github.com/gabriel-vasile/mimetype v1.4.3
 	github.com/google/uuid v1.5.0
+	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.44.0
 	golang.org/x/net v0.47.0
@@ -20,7 +22,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect

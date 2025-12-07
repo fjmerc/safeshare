@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/google/uuid"
@@ -19,11 +19,12 @@ import (
 
 // AssembleUploadAsync performs the file assembly in a background goroutine
 // This function is called after all chunks have been uploaded and validated
-func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.PartialUpload, clientIP string) {
+func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, partialUpload *models.PartialUpload, clientIP string) {
 	// This function runs in a goroutine, so we must handle all errors internally
 	// and update the database status accordingly
 
 	uploadID := partialUpload.UploadID
+	ctx := context.Background() // Background context for async worker
 
 	// Add panic recovery to prevent goroutine death and orphaned files
 	defer func() {
@@ -32,7 +33,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 				"upload_id", uploadID,
 				"panic", r,
 			)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Assembly panicked: %v", r))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembly panicked: %v", r))
 		}
 	}()
 
@@ -51,15 +52,15 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		claimCode, err = utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err, "upload_id", uploadID)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to generate claim code: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate claim code: %v", err))
 			return
 		}
 
 		// Check if code already exists
-		existing, err := database.GetFileByClaimCode(db, claimCode)
+		existing, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to check claim code", "error", err, "upload_id", uploadID)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to check claim code: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to check claim code: %v", err))
 			return
 		}
 
@@ -69,7 +70,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 
 		if i == maxRetries-1 {
 			slog.Error("failed to generate unique claim code after retries", "upload_id", uploadID)
-			database.SetAssemblyFailed(db, uploadID, "Failed to generate unique claim code")
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Failed to generate unique claim code")
 			return
 		}
 	}
@@ -89,7 +90,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 	if err != nil {
 		slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
 		os.Remove(finalPath) // Clean up partial final file if it exists
-		database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to assemble file: %v", err))
+		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err))
 		return
 	}
 
@@ -101,7 +102,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 			"actual", totalBytesWritten,
 		)
 		os.Remove(finalPath)
-		database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten))
+		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten))
 		return
 	}
 
@@ -122,7 +123,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 			slog.Error("failed to encrypt file", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
 			os.Remove(tempEncryptedPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err))
 			return
 		}
 
@@ -134,13 +135,13 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		if err := os.Remove(finalPath); err != nil {
 			slog.Error("failed to remove original file", "error", err, "upload_id", uploadID)
 			os.Remove(tempEncryptedPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to remove original file: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err))
 			return
 		}
 		if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
 			slog.Error("failed to rename encrypted file", "error", err, "upload_id", uploadID)
 			os.Remove(tempEncryptedPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err))
 			return
 		}
 
@@ -157,7 +158,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		if err != nil {
 			slog.Error("failed to open file for MIME detection", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err))
 			return
 		}
 
@@ -169,7 +170,7 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		if err != nil && err != io.EOF {
 			slog.Error("failed to read file for MIME detection", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
-			database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err))
+			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err))
 			return
 		}
 
@@ -206,15 +207,15 @@ func AssembleUploadAsync(db *sql.DB, cfg *config.Config, partialUpload *models.P
 		SHA256Hash:       sha256Hash,
 	}
 
-	if err := database.CreateFile(db, fileRecord); err != nil {
+	if err := repos.Files.Create(ctx, fileRecord); err != nil {
 		os.Remove(finalPath) // Clean up on error
 		slog.Error("failed to create file record", "error", err, "upload_id", uploadID)
-		database.SetAssemblyFailed(db, uploadID, fmt.Sprintf("Failed to create file record: %v", err))
+		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to create file record: %v", err))
 		return
 	}
 
 	// Mark partial upload as completed
-	if err := database.SetAssemblyCompleted(db, uploadID, claimCode); err != nil {
+	if err := repos.PartialUploads.SetAssemblyCompleted(ctx, uploadID, claimCode); err != nil {
 		slog.Error("failed to mark partial upload as completed", "error", err, "upload_id", uploadID)
 		// Don't fail the request - file is already created
 	}

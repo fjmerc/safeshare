@@ -1,26 +1,27 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UserLoginHandler handles user login
-func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Parse JSON request
 		var req models.UserLoginRequest
@@ -55,8 +56,8 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Get user from database
-		user, err := database.GetUserByUsername(db, req.Username)
+		// Get user from repository
+		user, err := repos.Users.GetByUsername(ctx, req.Username)
 		if err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -104,8 +105,8 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Calculate expiry time (use same as admin session)
 		expiresAt := time.Now().Add(time.Duration(cfg.SessionExpiryHours) * time.Hour)
 
-		// Store session in database
-		err = database.CreateUserSession(db, user.ID, sessionToken, expiresAt, clientIP, userAgent)
+		// Store session in repository
+		err = repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, clientIP, userAgent)
 		if err != nil {
 			slog.Error("failed to create user session", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -113,7 +114,7 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Update last login timestamp
-		if err := database.UpdateUserLastLogin(db, user.ID); err != nil {
+		if err := repos.Users.UpdateLastLogin(ctx, user.ID); err != nil {
 			slog.Error("failed to update last login", "error", err)
 			// Don't fail the request, just log
 		}
@@ -150,12 +151,14 @@ func UserLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserLogoutHandler handles user logout
-func UserLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get session token from cookie
 		cookie, err := r.Cookie("user_session")
@@ -168,8 +171,8 @@ func UserLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Delete session from database
-		if err := database.DeleteUserSession(db, cookie.Value); err != nil {
+		// Delete session from repository
+		if err := repos.Users.DeleteSession(ctx, cookie.Value); err != nil {
 			slog.Error("failed to delete user session", "error", err)
 			// Continue anyway to clear the cookie
 		}
@@ -197,12 +200,14 @@ func UserLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserChangePasswordHandler handles user password changes
-func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
+func UserChangePasswordHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context (set by middleware)
 		user := middleware.GetUserFromContext(r)
@@ -279,20 +284,11 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Update password in database
-		if err := database.UpdateUserPassword(db, user.ID, hashedPassword, true); err != nil {
+		// Update password and invalidate all sessions atomically
+		if err := repos.Users.UpdatePasswordWithSessionInvalidation(ctx, user.ID, hashedPassword, true); err != nil {
 			slog.Error("failed to update password", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
-		}
-
-		// Invalidate all existing sessions for this user (security best practice)
-		if err := database.DeleteUserSessionsByUserID(db, user.ID); err != nil {
-			slog.Error("failed to delete user sessions after password change",
-				"error", err,
-				"user_id", user.ID,
-			)
-			// Don't fail the request - password was updated, just log the error
 		}
 
 		slog.Info("password changed successfully",
@@ -308,12 +304,14 @@ func UserChangePasswordHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // UserGetCurrentHandler returns the current logged-in user info
-func UserGetCurrentHandler(db *sql.DB) http.HandlerFunc {
+func UserGetCurrentHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context (set by middleware)
 		contextUser := middleware.GetUserFromContext(r)
@@ -322,8 +320,8 @@ func UserGetCurrentHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Reload user from database to get fresh data (e.g., after password change)
-		user, err := database.GetUserByID(db, contextUser.ID)
+		// Reload user from repository to get fresh data (e.g., after password change)
+		user, err := repos.Users.GetByID(ctx, contextUser.ID)
 		if err != nil || user == nil {
 			slog.Error("failed to get user", "error", err, "user_id", contextUser.ID)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)

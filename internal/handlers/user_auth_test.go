@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -19,11 +19,16 @@ import (
 func TestUserLoginHandler_ValidLogin(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserLoginHandler(repos, cfg)
 
 	// Create test user
 	passwordHash, _ := utils.HashPassword("password123")
-	_, err := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	_, err = repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -74,19 +79,19 @@ func TestUserLoginHandler_ValidLogin(t *testing.T) {
 func TestUserLoginHandler_InvalidCredentials(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserLoginHandler(repos, cfg)
 
 	// Create test user
 	passwordHash, _ := utils.HashPassword("password123")
-	user := &models.User{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     true,
+	_, err = repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
 	}
-
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
 
 	tests := []struct {
 		name       string
@@ -142,14 +147,24 @@ func TestUserLoginHandler_InvalidCredentials(t *testing.T) {
 func TestUserLoginHandler_DisabledAccount(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserLoginHandler(repos, cfg)
 
-	// Create user then disable them (CreateUser always creates active users)
+	// Create user then disable them (Create always creates active users)
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "disabled", "disabled@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "disabled", "disabled@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Disable the user
-	database.SetUserActive(db, user.ID, false)
+	if err := repos.Users.SetActive(ctx, user.ID, false); err != nil {
+		t.Fatalf("failed to disable user: %v", err)
+	}
 
 	loginReq := models.UserLoginRequest{
 		Username: "disabled",
@@ -176,7 +191,11 @@ func TestUserLoginHandler_DisabledAccount(t *testing.T) {
 func TestUserLoginHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserLoginHandler(repos, cfg)
 
 	methods := []string{
 		http.MethodGet,
@@ -199,7 +218,11 @@ func TestUserLoginHandler_MethodNotAllowed(t *testing.T) {
 func TestUserLogoutHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLogoutHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserLogoutHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	// Add session cookie
@@ -226,13 +249,21 @@ func TestUserLogoutHandler(t *testing.T) {
 
 func TestChangePasswordHandler_Valid(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create test user in database
 	oldPasswordHash, _ := utils.HashPassword("oldpassword123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", oldPasswordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", oldPasswordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
-	handler := UserChangePasswordHandler(db)
+	handler := UserChangePasswordHandler(repos)
 
 	// Create request
 	changeReq := models.ChangePasswordRequest{
@@ -246,9 +277,9 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user to context (simulating authentication middleware)
-	ctx := req.Context()
-	ctx = context.WithValue(ctx, middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := req.Context()
+	reqCtx = context.WithValue(reqCtx, middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -256,7 +287,10 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Verify password was changed
-	updatedUser, _ := database.GetUserByUsername(db, "testuser")
+	updatedUser, err := repos.Users.GetByUsername(ctx, "testuser")
+	if err != nil {
+		t.Fatalf("failed to get updated user: %v", err)
+	}
 	if !utils.VerifyPassword(updatedUser.PasswordHash, "newpassword456") {
 		t.Error("password was not updated")
 	}
@@ -269,20 +303,20 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 
 func TestChangePasswordHandler_InvalidCurrentPassword(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	passwordHash, _ := utils.HashPassword("correctpassword")
-	user := &models.User{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     true,
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
 	}
 
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
-
-	handler := UserChangePasswordHandler(db)
+	handler := UserChangePasswordHandler(repos)
 
 	changeReq := models.ChangePasswordRequest{
 		CurrentPassword: "wrongpassword",
@@ -294,8 +328,8 @@ func TestChangePasswordHandler_InvalidCurrentPassword(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -305,20 +339,20 @@ func TestChangePasswordHandler_InvalidCurrentPassword(t *testing.T) {
 
 func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	passwordHash, _ := utils.HashPassword("currentpassword")
-	user := &models.User{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     true,
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
 	}
 
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
-
-	handler := UserChangePasswordHandler(db)
+	handler := UserChangePasswordHandler(repos)
 
 	changeReq := models.ChangePasswordRequest{
 		CurrentPassword: "currentpassword",
@@ -330,8 +364,8 @@ func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -341,18 +375,26 @@ func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
 
 func TestGetCurrentUserHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t)
-	handler := UserGetCurrentHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserGetCurrentHandler(repos)
 
 	// Create user in database (handler reloads from DB)
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/user", nil)
 
 	// Add user to context
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -375,24 +417,34 @@ func TestGetCurrentUserHandler(t *testing.T) {
 func TestUserDashboardHandler_ListFiles(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDashboardDataHandler(repos, cfg)
 
 	// Create test user in database (use returned user with correct ID)
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create some files for the user (each needs unique claim code)
 	for i := 0; i < 3; i++ {
 		file := testutil.SampleFile()
 		file.UserID = &user.ID
 		file.ClaimCode = fmt.Sprintf("test-claim-code-%d", i) // Unique claim codes
-		database.CreateFile(db, file)
+		if err := repos.Files.Create(ctx, file); err != nil {
+			t.Fatalf("failed to create file %d: %v", i, err)
+		}
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -415,7 +467,11 @@ func TestUserDashboardHandler_ListFiles(t *testing.T) {
 func TestUserLoginHandler_InvalidJSON(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserLoginHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -429,19 +485,19 @@ func TestUserLoginHandler_InvalidJSON(t *testing.T) {
 func TestUserLoginHandler_CaseInsensitive(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserLoginHandler(repos, cfg)
 
 	// Create user with lowercase username
 	passwordHash, _ := utils.HashPassword("password123")
-	user := &models.User{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     true,
+	_, err = repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
 	}
-
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
 
 	// Try login with different case
 	variants := []string{
@@ -479,18 +535,18 @@ func TestUserLoginHandler_CaseInsensitive(t *testing.T) {
 func BenchmarkUserLoginHandler(b *testing.B) {
 	db := testutil.SetupTestDB(&testing.T{})
 	cfg := testutil.SetupTestConfig(&testing.T{})
-	handler := UserLoginHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		b.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserLoginHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user := &models.User{
-		Username:     "benchuser",
-		Email:        "bench@example.com",
-		PasswordHash: passwordHash,
-		Role:         "user",
-		IsActive:     true,
+	_, err = repos.Users.Create(ctx, "benchuser", "bench@example.com", passwordHash, "user", false)
+	if err != nil {
+		b.Fatalf("failed to create user: %v", err)
 	}
-
-	_, _ = database.CreateUser(db, user.Username, user.Email, user.PasswordHash, user.Role, false)
 
 	loginReq := models.UserLoginRequest{
 		Username: "benchuser",
@@ -513,7 +569,11 @@ func BenchmarkUserLoginHandler(b *testing.B) {
 func TestUserLogoutHandler_NoCookie(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLogoutHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserLogoutHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
 	// No cookie added
@@ -535,7 +595,11 @@ func TestUserLogoutHandler_NoCookie(t *testing.T) {
 func TestUserLogoutHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserLogoutHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserLogoutHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -554,7 +618,12 @@ func TestUserLogoutHandler_MethodNotAllowed(t *testing.T) {
 // TestUserGetCurrentHandler_MethodNotAllowed tests HTTP method validation
 func TestUserGetCurrentHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := UserGetCurrentHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserGetCurrentHandler(repos)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 
@@ -573,7 +642,12 @@ func TestUserGetCurrentHandler_MethodNotAllowed(t *testing.T) {
 // TestUserChangePasswordHandler_MethodNotAllowed tests HTTP method validation
 func TestUserChangePasswordHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := UserChangePasswordHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserChangePasswordHandler(repos)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -592,11 +666,20 @@ func TestUserChangePasswordHandler_MethodNotAllowed(t *testing.T) {
 // TestUserChangePasswordHandler_WeakPassword tests password strength validation
 func TestUserChangePasswordHandler_WeakPassword(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	passwordHash, _ := utils.HashPassword("currentpassword")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
-	handler := UserChangePasswordHandler(db)
+	handler := UserChangePasswordHandler(repos)
 
 	tests := []struct {
 		name        string
@@ -619,8 +702,8 @@ func TestUserChangePasswordHandler_WeakPassword(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-			req = req.WithContext(ctx)
+			reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+			req = req.WithContext(reqCtx)
 
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)

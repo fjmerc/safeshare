@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/gabriel-vasile/mimetype"
@@ -46,8 +46,9 @@ type fileProcessingResult struct {
 }
 
 // UploadHandler handles file upload requests
-func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept POST requests
 		if r.Method != http.MethodPost {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -74,7 +75,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Generate unique claim code
-		claimCode, err := generateUniqueClaimCode(w, db)
+		claimCode, err := generateUniqueClaimCode(ctx, w, repos)
 		if err != nil {
 			return // Error already sent to client
 		}
@@ -86,7 +87,7 @@ func UploadHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Create database record and handle response
-		createRecordAndRespond(w, r, db, cfg, header, params, claimCode, result, quotaConfigured)
+		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured)
 	}
 }
 
@@ -222,7 +223,7 @@ func parseUploadParameters(w http.ResponseWriter, r *http.Request, cfg *config.C
 }
 
 // generateUniqueClaimCode creates a unique claim code with retry logic
-func generateUniqueClaimCode(w http.ResponseWriter, db *sql.DB) (string, error) {
+func generateUniqueClaimCode(ctx context.Context, w http.ResponseWriter, repos *repository.Repositories) (string, error) {
 	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
 		claimCode, err := utils.GenerateClaimCode()
@@ -233,7 +234,7 @@ func generateUniqueClaimCode(w http.ResponseWriter, db *sql.DB) (string, error) 
 		}
 
 		// Check if code already exists
-		existing, err := database.GetFileByClaimCode(db, claimCode)
+		existing, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to check claim code", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -382,7 +383,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 }
 
 // createRecordAndRespond creates database record and sends response
-func createRecordAndRespond(w http.ResponseWriter, r *http.Request, db *sql.DB, cfg *config.Config, header *multipart.FileHeader, params *uploadParams, claimCode string, result *fileProcessingResult, quotaConfigured bool) {
+func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, header *multipart.FileHeader, params *uploadParams, claimCode string, result *fileProcessingResult, quotaConfigured bool) {
 	clientIP := getClientIP(r)
 
 	// Get user ID if authenticated
@@ -415,7 +416,7 @@ func createRecordAndRespond(w http.ResponseWriter, r *http.Request, db *sql.DB, 
 	}
 
 	// Create database record with quota check if needed
-	if err := createFileRecord(w, db, cfg, fileRecord, result.filePath, quotaConfigured, clientIP); err != nil {
+	if err := createFileRecord(ctx, w, repos, cfg, fileRecord, result.filePath, quotaConfigured, clientIP); err != nil {
 		return
 	}
 
@@ -424,12 +425,12 @@ func createRecordAndRespond(w http.ResponseWriter, r *http.Request, db *sql.DB, 
 }
 
 // createFileRecord creates the database record with optional quota check
-func createFileRecord(w http.ResponseWriter, db *sql.DB, cfg *config.Config, fileRecord *models.File, filePath string, quotaConfigured bool, clientIP string) error {
+func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *repository.Repositories, cfg *config.Config, fileRecord *models.File, filePath string, quotaConfigured bool, clientIP string) error {
 	if quotaConfigured {
 		quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-		if err := database.CreateFileWithQuotaCheck(db, fileRecord, quotaBytes); err != nil {
+		if err := repos.Files.CreateWithQuotaCheck(ctx, fileRecord, quotaBytes); err != nil {
 			os.Remove(filePath)
-			if strings.Contains(err.Error(), "quota exceeded") {
+			if err == repository.ErrQuotaExceeded || strings.Contains(err.Error(), "quota exceeded") {
 				slog.Warn("quota exceeded (transactional check)",
 					"file_size", fileRecord.FileSize,
 					"quota_limit_gb", cfg.GetQuotaLimitGB(),
@@ -443,7 +444,7 @@ func createFileRecord(w http.ResponseWriter, db *sql.DB, cfg *config.Config, fil
 			return err
 		}
 	} else {
-		if err := database.CreateFile(db, fileRecord); err != nil {
+		if err := repos.Files.Create(ctx, fileRecord); err != nil {
 			os.Remove(filePath)
 			slog.Error("failed to create file record", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)

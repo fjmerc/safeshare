@@ -100,4 +100,22 @@ type UserRepository interface {
 	// GetFileByClaimCode retrieves a file by claim code if it belongs to the specified user.
 	// Returns nil, nil if not found.
 	GetFileByClaimCode(ctx context.Context, claimCode string, userID int64) (*models.File, error)
+
+	// RegenerateClaimCode generates a new unique claim code for a file owned by the specified user.
+	// Returns the result containing the new claim code, file ID, and original filename.
+	// Uses a transaction with exponential backoff for claim code uniqueness.
+	RegenerateClaimCode(ctx context.Context, fileID, userID int64) (*ClaimCodeRegenerationResult, error)
+
+	// RegenerateClaimCodeByClaimCode generates a new unique claim code for a file identified by claim code.
+	// Returns the result containing the new claim code, file ID, and original filename.
+	// Uses a transaction with exponential backoff for claim code uniqueness.
+	RegenerateClaimCodeByClaimCode(ctx context.Context, oldClaimCode string, userID int64) (*ClaimCodeRegenerationResult, error)
+}
+
+// ClaimCodeRegenerationResult contains the result of a claim code regeneration operation.
+type ClaimCodeRegenerationResult struct {
+	NewClaimCode     string
+	OldClaimCode     string
+	FileID           int64
+	OriginalFilename string
 }
