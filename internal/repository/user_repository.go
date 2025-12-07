@@ -27,7 +27,13 @@ type UserRepository interface {
 
 	// UpdatePassword updates a user's password hash.
 	// If clearPasswordChangeFlag is true, the require_password_change flag is cleared.
+	// NOTE: This method does NOT invalidate sessions. Use UpdatePasswordWithSessionInvalidation
+	// for security-critical password changes.
 	UpdatePassword(ctx context.Context, userID int64, passwordHash string, clearPasswordChangeFlag bool) error
+
+	// UpdatePasswordWithSessionInvalidation atomically updates password and invalidates all sessions.
+	// This prevents session fixation attacks by ensuring old sessions cannot be used after password change.
+	UpdatePasswordWithSessionInvalidation(ctx context.Context, userID int64, passwordHash string, clearPasswordChangeFlag bool) error
 
 	// Update updates user details (username, email, role).
 	Update(ctx context.Context, userID int64, username, email, role string) error
