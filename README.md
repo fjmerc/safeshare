@@ -5,7 +5,7 @@
 
 A self-hosted secure file sharing service for temporary transfers with automatic expiration, cryptographically secure claim codes, and enterprise-grade security features.
 
-**Version**: 1.4.0
+**Version**: 1.4.1
 
 ## Screenshots
 
