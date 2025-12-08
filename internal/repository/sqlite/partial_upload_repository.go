@@ -411,10 +411,10 @@ func (r *PartialUploadRepository) GetAbandoned(ctx context.Context, expiryHours 
 		WHERE completed = 0
 		AND (
 			-- Stuck processing uploads (assembly timeout: 6 hours)
-			(status = 'processing' AND assembly_started_at IS NOT NULL AND assembly_started_at < datetime('now', '-6 hours'))
+			(status = 'processing' AND assembly_started_at IS NOT NULL AND datetime(assembly_started_at) < datetime('now', '-6 hours'))
 			OR
 			-- Regular abandoned uploads (not processing)
-			((status IS NULL OR status != 'processing') AND last_activity %s datetime('now', '-' || ? || ' hours'))
+			((status IS NULL OR status != 'processing') AND datetime(last_activity) %s datetime('now', '-' || ? || ' hours'))
 		)
 		ORDER BY last_activity ASC
 	`, operator)

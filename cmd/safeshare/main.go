@@ -18,6 +18,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
@@ -62,9 +63,17 @@ func run() error {
 
 	slog.Info("database initialized", "path", cfg.DBPath)
 
+	// Initialize repositories
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		return fmt.Errorf("failed to create repositories: %w", err)
+	}
+
+	slog.Info("repositories initialized")
+
 	// Initialize admin credentials if admin is enabled
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
-		err = database.InitializeAdminCredentials(db, cfg.AdminUsername, cfg.GetAdminPassword())
+		err = repos.Admin.InitializeCredentials(context.Background(), cfg.AdminUsername, cfg.GetAdminPassword())
 		if err != nil {
 			return fmt.Errorf("failed to initialize admin credentials: %w", err)
 		}
@@ -72,7 +81,7 @@ func run() error {
 	}
 
 	// Load all settings from database (overrides environment variables if set)
-	if dbSettings, err := database.GetSettings(db); err != nil {
+	if dbSettings, err := repos.Settings.Get(context.Background()); err != nil {
 		slog.Error("failed to load settings from database", "error", err)
 	} else if dbSettings != nil {
 		// Database has settings - use them instead of env vars
@@ -119,9 +128,9 @@ func run() error {
 	mux := http.NewServeMux()
 
 	// Register public API routes (with IP blocking middleware and conditional user auth)
-	ipBlockMw := middleware.IPBlockCheck(db, cfg)
-	optionalUserAuth := middleware.OptionalUserAuth(db)
-	userAuth := middleware.UserAuth(db)
+	ipBlockMw := middleware.IPBlockCheck(repos, cfg)
+	optionalUserAuth := middleware.OptionalUserAuth(repos)
+	userAuth := middleware.UserAuth(repos)
 
 	// Select authentication middleware for uploads based on configuration
 	var uploadAuthMw func(http.Handler) http.Handler
@@ -135,44 +144,46 @@ func run() error {
 
 	// Upload endpoint with conditional authentication
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	// Chunked upload endpoints with conditional authentication
 	mux.HandleFunc("/api/upload/init", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadInitHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadInitHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/chunk/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadChunkHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadChunkHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/complete/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadCompleteHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadCompleteHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/status/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadStatusHandler(db, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	// Note: Order matters - info endpoint must be registered before catch-all claim handler
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
 		handler := func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, "/info") {
-				handlers.ClaimInfoHandler(db, cfg)(w, r)
+				handlers.ClaimInfoHandler(repos, cfg)(w, r)
 			} else {
-				handlers.ClaimHandler(db, cfg)(w, r)
+				handlers.ClaimHandler(repos, cfg)(w, r)
 			}
 		}
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
 	// Health check endpoints (no auth required for monitoring)
-	mux.HandleFunc("/health", handlers.HealthHandler(db, cfg, startTime))
-	mux.HandleFunc("/health/live", handlers.HealthLivenessHandler(db))
-	mux.HandleFunc("/health/ready", handlers.HealthReadinessHandler(db, cfg, startTime))
+	// Note: Health handlers still use *sql.DB - use repos.DB for backward compatibility
+	mux.HandleFunc("/health", handlers.HealthHandler(repos.DB, cfg, startTime))
+	mux.HandleFunc("/health/live", handlers.HealthLivenessHandler(repos.DB))
+	mux.HandleFunc("/health/ready", handlers.HealthReadinessHandler(repos.DB, cfg, startTime))
 
 	// Prometheus metrics endpoint (no auth required for Prometheus scraper)
-	mux.Handle("/metrics", handlers.MetricsHandler(db, cfg))
+	// Note: Metrics handler still uses *sql.DB - use repos.DB for backward compatibility
+	mux.Handle("/metrics", handlers.MetricsHandler(repos.DB, cfg))
 
 	// Public configuration endpoint (no auth required)
 	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
@@ -183,7 +194,7 @@ func run() error {
 		cookie, err := r.Cookie("user_session")
 		if err == nil {
 			// Has cookie, verify it's valid
-			session, _ := database.GetUserSession(db, cookie.Value)
+			session, _ := repos.Users.GetSession(r.Context(), cookie.Value)
 			if session != nil {
 				// Valid session, redirect to dashboard
 				http.Redirect(w, r, "/dashboard", http.StatusFound)
@@ -194,7 +205,7 @@ func run() error {
 		serveUserPage("login.html")(w, r)
 	})
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(db, cfg))).ServeHTTP(w, r)
+		middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	// User dashboard routes (auth required)
@@ -205,34 +216,34 @@ func run() error {
 	})
 
 	mux.HandleFunc("/api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserLogoutHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserLogoutHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/auth/user", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserGetCurrentHandler(db))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserGetCurrentHandler(repos))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/auth/change-password", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserChangePasswordHandler(db))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserChangePasswordHandler(repos))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserDashboardDataHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserDashboardDataHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/delete", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserDeleteFileHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserDeleteFileHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/rename", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserRenameFileHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserRenameFileHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/update-expiration", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserEditExpirationHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserEditExpirationHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/api/user/files/regenerate-claim-code", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	// SDK-compatible user file management routes (claim code in URL path)
@@ -246,14 +257,14 @@ func run() error {
 		// Route based on path suffix and method
 		switch {
 		case strings.HasSuffix(path, "/rename") && r.Method == http.MethodPut:
-			userAuth(http.HandlerFunc(handlers.UserRenameFileByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.UserRenameFileByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/expiration") && r.Method == http.MethodPut:
-			userAuth(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/regenerate") && r.Method == http.MethodPost:
-			userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
 		case r.Method == http.MethodDelete:
 			// DELETE /api/user/files/{claimCode}
-			userAuth(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(db, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -261,13 +272,14 @@ func run() error {
 
 	// API Token management routes
 	// Note: Token creation requires session auth (cannot create tokens using tokens)
+	// Note: API Token handlers still use *sql.DB - use repos.DB for backward compatibility
 	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			// Create token - requires session auth only
-			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(db, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(repos.DB, cfg))).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
 			// List tokens - allows both session and token auth
-			userAuth(http.HandlerFunc(handlers.ListAPITokensHandler(db))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.ListAPITokensHandler(repos.DB))).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -276,7 +288,7 @@ func run() error {
 	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			// Revoke token - allows both session and token auth
-			userAuth(http.HandlerFunc(handlers.RevokeAPITokenHandler(db))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB))).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -292,7 +304,7 @@ func run() error {
 			adminCookie, adminErr := r.Cookie("admin_session")
 			if adminErr == nil {
 				// Has admin cookie, verify it's valid
-				session, _ := database.GetSession(db, adminCookie.Value)
+				session, _ := repos.Admin.GetSession(r.Context(), adminCookie.Value)
 				if session != nil {
 					// Valid admin session, redirect to admin dashboard
 					http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
@@ -303,9 +315,9 @@ func run() error {
 			// Check for user_session with admin role
 			userCookie, userErr := r.Cookie("user_session")
 			if userErr == nil {
-				session, _ := database.GetUserSession(db, userCookie.Value)
+				session, _ := repos.Users.GetSession(r.Context(), userCookie.Value)
 				if session != nil {
-					user, _ := database.GetUserByID(db, session.UserID)
+					user, _ := repos.Users.GetByID(r.Context(), session.UserID)
 					if user != nil && user.Role == "admin" {
 						// User has admin role, redirect to admin dashboard
 						http.Redirect(w, r, "/admin/dashboard", http.StatusFound)
@@ -318,12 +330,12 @@ func run() error {
 			serveAdminPage("admin/login.html")(w, r)
 		})
 		mux.HandleFunc("/admin/api/login", func(w http.ResponseWriter, r *http.Request) {
-			middleware.RateLimitAdminLogin()(http.HandlerFunc(handlers.AdminLoginHandler(db, cfg))).ServeHTTP(w, r)
+			middleware.RateLimitAdminLogin()(http.HandlerFunc(handlers.AdminLoginHandler(repos, cfg))).ServeHTTP(w, r)
 		})
 
 		// Admin dashboard routes (auth required)
-		adminAuth := middleware.AdminAuth(db)
-		csrfProtection := middleware.CSRFProtection(db)
+		adminAuth := middleware.AdminAuth(repos)
+		csrfProtection := middleware.CSRFProtection(repos)
 
 		mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 			// Redirect to dashboard
@@ -336,39 +348,39 @@ func run() error {
 
 		// Admin API routes (auth + CSRF protection required)
 		mux.HandleFunc("/admin/api/logout", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(http.HandlerFunc(handlers.AdminLogoutHandler(db, cfg))).ServeHTTP(w, r)
+			adminAuth(http.HandlerFunc(handlers.AdminLogoutHandler(repos, cfg))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/dashboard", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(http.HandlerFunc(handlers.AdminDashboardDataHandler(db, cfg))).ServeHTTP(w, r)
+			adminAuth(http.HandlerFunc(handlers.AdminDashboardDataHandler(repos, cfg))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/files/delete", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteFileHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteFileHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/files/delete/bulk", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBulkDeleteFilesHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBulkDeleteFilesHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/ip/block", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBlockIPHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBlockIPHandler(repos)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/ip/unblock", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUnblockIPHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUnblockIPHandler(repos)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/quota/update", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateQuotaHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateQuotaHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/storage", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateStorageSettingsHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateStorageSettingsHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/security", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSecuritySettingsHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSecuritySettingsHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/settings/password", func(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +388,7 @@ func run() error {
 		})
 
 		mux.HandleFunc("/admin/api/partial-uploads/cleanup", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCleanupPartialUploadsHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCleanupPartialUploadsHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/config", func(w http.ResponseWriter, r *http.Request) {
@@ -389,11 +401,11 @@ func run() error {
 
 		// Admin user management routes
 		mux.HandleFunc("/admin/api/users/create", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(repos)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/users", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(http.HandlerFunc(handlers.AdminListUsersHandler(db))).ServeHTTP(w, r)
+			adminAuth(http.HandlerFunc(handlers.AdminListUsersHandler(repos))).ServeHTTP(w, r)
 		})
 
 		// Match patterns for user-specific operations
@@ -402,15 +414,15 @@ func run() error {
 			path := r.URL.Path
 
 			if r.Method == "PUT" || r.Method == "PATCH" {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(db)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(repos)))).ServeHTTP(w, r)
 			} else if r.Method == "DELETE" {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteUserHandler(db, cfg)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteUserHandler(repos, cfg)))).ServeHTTP(w, r)
 			} else if r.Method == "POST" {
 				// Check which action: enable, disable, or reset-password
 				if strings.Contains(path, "/enable") || strings.Contains(path, "/disable") {
-					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminToggleUserActiveHandler(db)))).ServeHTTP(w, r)
+					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminToggleUserActiveHandler(repos)))).ServeHTTP(w, r)
 				} else if strings.Contains(path, "/reset-password") {
-					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserPasswordHandler(db)))).ServeHTTP(w, r)
+					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserPasswordHandler(repos)))).ServeHTTP(w, r)
 				} else {
 					http.Error(w, "Not found", http.StatusNotFound)
 				}
@@ -420,76 +432,79 @@ func run() error {
 		})
 
 		// Webhook management routes
+		// Note: Webhook handlers still use *sql.DB - use repos.DB for backward compatibility
 		mux.HandleFunc("/admin/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "GET" {
-				adminAuth(http.HandlerFunc(handlers.ListWebhookConfigsHandler(db))).ServeHTTP(w, r)
+				adminAuth(http.HandlerFunc(handlers.ListWebhookConfigsHandler(repos.DB))).ServeHTTP(w, r)
 			} else if r.Method == "POST" {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.CreateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.CreateWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
 		})
 
 		mux.HandleFunc("/admin/api/webhooks/update", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.UpdateWebhookConfigHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.UpdateWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/webhooks/delete", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookConfigHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.TestWebhookConfigHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.TestWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/webhook-deliveries", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(http.HandlerFunc(handlers.ListWebhookDeliveriesHandler(db))).ServeHTTP(w, r)
+			adminAuth(http.HandlerFunc(handlers.ListWebhookDeliveriesHandler(repos.DB))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/webhook-deliveries/detail", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(db))).ServeHTTP(w, r)
+			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(repos.DB))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/webhook-deliveries/clear", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
 		// Admin API Token management routes
+		// Note: Admin token handlers still use *sql.DB - use repos.DB for backward compatibility
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
-				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensHandler(db))).ServeHTTP(w, r)
+				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensHandler(repos.DB))).ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
 		})
 
 		mux.HandleFunc("/admin/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(db)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
 		// Backup management routes
+		// Note: Backup handlers still use *sql.DB - use repos.DB for backward compatibility
 		mux.HandleFunc("/admin/api/backups", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
-				adminAuth(http.HandlerFunc(handlers.AdminListBackupsHandler(db, cfg))).ServeHTTP(w, r)
+				adminAuth(http.HandlerFunc(handlers.AdminListBackupsHandler(repos.DB, cfg))).ServeHTTP(w, r)
 			} else if r.Method == http.MethodPost {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateBackupHandler(db, cfg)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 			} else if r.Method == http.MethodDelete {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteBackupHandler(db, cfg)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
 		})
 
 		mux.HandleFunc("/admin/api/backups/verify", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminVerifyBackupHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminVerifyBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/backups/restore", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRestoreBackupHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRestoreBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/backups/download", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDownloadBackupHandler(db, cfg)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDownloadBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		})
 
 		// Admin static assets
@@ -573,21 +588,21 @@ func run() error {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartCleanupWorker(ctx, db, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent)
+		utils.StartCleanupWorker(ctx, repos, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent)
 	}()
 
 	// Start partial upload cleanup worker (runs every 6 hours)
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartPartialUploadCleanupWorker(ctx, db, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+		utils.StartPartialUploadCleanupWorker(ctx, repos, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
 	}()
 
 	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartAssemblyRecoveryWorker(ctx, db, cfg, handlers.AssembleUploadAsync)
+		utils.StartAssemblyRecoveryWorker(ctx, repos, cfg, handlers.AssembleUploadAsync)
 	}()
 
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
@@ -610,20 +625,22 @@ func run() error {
 						}
 					}()
 
-					if err := database.CleanupExpiredSessions(db); err != nil {
+					cleanupCtx := context.Background()
+
+					if err := repos.Admin.CleanupExpiredSessions(cleanupCtx); err != nil {
 						slog.Error("failed to cleanup expired admin sessions", "error", err)
 					} else {
 						slog.Debug("cleaned up expired admin sessions")
 					}
 
-					if err := database.CleanupExpiredUserSessions(db); err != nil {
+					if err := repos.Users.CleanupExpiredSessions(cleanupCtx); err != nil {
 						slog.Error("failed to cleanup expired user sessions", "error", err)
 					} else {
 						slog.Debug("cleaned up expired user sessions")
 					}
 
 					// Cleanup expired API tokens
-					if count, err := database.CleanupExpiredAPITokens(db); err != nil {
+					if count, err := repos.APITokens.CleanupExpired(cleanupCtx); err != nil {
 						slog.Error("failed to cleanup expired API tokens", "error", err)
 					} else if count > 0 {
 						slog.Info("cleaned up expired API tokens", "count", count)

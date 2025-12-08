@@ -12,6 +12,8 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 )
 
 // Time constants for testing
@@ -236,4 +238,21 @@ func AssertNotContains(t *testing.T, haystack, needle string) {
 	if bytes.Contains([]byte(haystack), []byte(needle)) {
 		t.Errorf("expected %q to not contain %q", haystack, needle)
 	}
+}
+
+// SetupTestRepos creates repositories from a test database and config.
+// This is the recommended way to set up test infrastructure that uses the repository pattern.
+// The returned repositories are backed by an in-memory SQLite database.
+func SetupTestRepos(t *testing.T) (*repository.Repositories, *config.Config) {
+	t.Helper()
+
+	db := SetupTestDB(t)
+	cfg := SetupTestConfig(t)
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	return repos, cfg
 }

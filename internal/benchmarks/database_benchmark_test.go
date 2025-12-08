@@ -1,10 +1,10 @@
 package benchmarks
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -12,9 +12,10 @@ import (
 
 // BenchmarkFileCreation benchmarks creating files in database
 func BenchmarkFileCreation(b *testing.B) {
-	// Create a minimal testing.T implementation for SetupTestDB
+	// Create a minimal testing.T implementation for SetupTestRepos
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -31,14 +32,15 @@ func BenchmarkFileCreation(b *testing.B) {
 			UploaderIP:       "127.0.0.1",
 		}
 
-		database.CreateFile(db, file)
+		repos.Files.Create(ctx, file)
 	}
 }
 
 // BenchmarkFileRetrieval benchmarks retrieving files by claim code
 func BenchmarkFileRetrieval(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a file
 	claimCode, _ := utils.GenerateClaimCode()
@@ -51,20 +53,21 @@ func BenchmarkFileRetrieval(b *testing.B) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		database.GetFileByClaimCode(db, claimCode)
+		repos.Files.GetByClaimCode(ctx, claimCode)
 	}
 }
 
 // BenchmarkDownloadCountIncrement benchmarks incrementing download count
 func BenchmarkDownloadCountIncrement(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a file
 	claimCode, _ := utils.GenerateClaimCode()
@@ -77,20 +80,21 @@ func BenchmarkDownloadCountIncrement(b *testing.B) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		database.IncrementDownloadCount(db, file.ID)
+		repos.Files.IncrementDownloadCount(ctx, file.ID)
 	}
 }
 
 // BenchmarkSessionCreation benchmarks creating sessions
 func BenchmarkSessionCreation(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -98,32 +102,34 @@ func BenchmarkSessionCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sessionToken, _ := utils.GenerateSessionToken()
 		expiresAt := time.Now().Add(24 * time.Hour)
-		database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+		repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 	}
 }
 
 // BenchmarkSessionValidation benchmarks validating sessions
 func BenchmarkSessionValidation(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a session
 	sessionToken, _ := utils.GenerateSessionToken()
 	expiresAt := time.Now().Add(24 * time.Hour)
-	database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		database.GetSession(db, sessionToken)
+		repos.Admin.GetSession(ctx, sessionToken)
 	}
 }
 
 // BenchmarkPartialUploadCreation benchmarks creating partial uploads
 func BenchmarkPartialUploadCreation(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -140,14 +146,15 @@ func BenchmarkPartialUploadCreation(b *testing.B) {
 			LastActivity: time.Now(),
 		}
 
-		database.CreatePartialUpload(db, partialUpload)
+		repos.PartialUploads.Create(ctx, partialUpload)
 	}
 }
 
 // BenchmarkGetStats benchmarks getting storage statistics
 func BenchmarkGetStats(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create some files
 	for i := 0; i < 100; i++ {
@@ -161,21 +168,22 @@ func BenchmarkGetStats(b *testing.B) {
 			ExpiresAt:        time.Now().Add(24 * time.Hour),
 			UploaderIP:       "127.0.0.1",
 		}
-		database.CreateFile(db, file)
+		repos.Files.Create(ctx, file)
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		database.GetStats(db, ".")
+		repos.Files.GetStats(ctx, ".")
 	}
 }
 
 // BenchmarkConcurrentDatabaseOperations benchmarks concurrent database access
 func BenchmarkConcurrentDatabaseOperations(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create some initial data
 	claimCode, _ := utils.GenerateClaimCode()
@@ -188,7 +196,7 @@ func BenchmarkConcurrentDatabaseOperations(b *testing.B) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -196,9 +204,9 @@ func BenchmarkConcurrentDatabaseOperations(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			// Mix of read and write operations
-			database.GetFileByClaimCode(db, claimCode)
-			database.IncrementDownloadCount(db, file.ID)
-			database.GetStats(db, ".")
+			repos.Files.GetByClaimCode(ctx, claimCode)
+			repos.Files.IncrementDownloadCount(ctx, file.ID)
+			repos.Files.GetStats(ctx, ".")
 		}
 	})
 }

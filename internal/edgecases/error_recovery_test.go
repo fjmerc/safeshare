@@ -2,6 +2,7 @@ package edgecases
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"mime/multipart"
 	"net/http/httptest"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
@@ -19,13 +19,12 @@ import (
 
 // TestRecoveryFromDatabaseError tests graceful handling of database errors
 func TestRecoveryFromDatabaseError(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Close database to simulate error
-	db.Close()
+	repos.DB.Close()
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	fileContent := []byte("test")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "test.txt", nil)
@@ -44,13 +43,12 @@ func TestRecoveryFromDatabaseError(t *testing.T) {
 
 // TestRecoveryFromFilesystemError tests handling of filesystem errors
 func TestRecoveryFromFilesystemError(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Set upload dir to invalid/inaccessible path
 	cfg.UploadDir = "/nonexistent/path/uploads"
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	fileContent := []byte("test")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "test.txt", nil)
@@ -69,14 +67,14 @@ func TestRecoveryFromFilesystemError(t *testing.T) {
 
 // TestRecoveryFromMissingFile tests downloading when physical file is missing
 func TestRecoveryFromMissingFile(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create database record without physical file
 	claimCode, _ := utils.GenerateClaimCode()
 	storedFilename := "missing_file.dat"
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode,
 		StoredFilename:   storedFilename,
 		OriginalFilename: "missing.txt",
@@ -88,7 +86,7 @@ func TestRecoveryFromMissingFile(t *testing.T) {
 
 	// Don't create physical file
 
-	handler := handlers.ClaimHandler(db, cfg)
+	handler := handlers.ClaimHandler(repos, cfg)
 
 	req := httptest.NewRequest("GET", "/api/claim/"+claimCode, nil)
 	rr := httptest.NewRecorder()
@@ -103,8 +101,8 @@ func TestRecoveryFromMissingFile(t *testing.T) {
 
 // TestRecoveryFromCorruptedChunks tests handling of corrupted chunk files
 func TestRecoveryFromCorruptedChunks(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 	cfg.ChunkedUploadEnabled = true
 
 	// Create partial upload
@@ -118,7 +116,7 @@ func TestRecoveryFromCorruptedChunks(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create chunks with wrong sizes (corrupted)
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -133,7 +131,7 @@ func TestRecoveryFromCorruptedChunks(t *testing.T) {
 	os.WriteFile(chunk1Path, bytes.Repeat([]byte("B"), 512), 0644) // Only 512 bytes instead of 1024
 
 	// Try to complete upload
-	completeHandler := handlers.UploadCompleteHandler(db, cfg)
+	completeHandler := handlers.UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest("POST", "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -148,7 +146,8 @@ func TestRecoveryFromCorruptedChunks(t *testing.T) {
 
 // TestRecoveryFromDuplicateFile tests handling duplicate file creation
 func TestRecoveryFromDuplicateFile(t *testing.T) {
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a file with specific claim code
 	claimCode := "duplicate-test-code"
@@ -162,7 +161,7 @@ func TestRecoveryFromDuplicateFile(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file1)
+	repos.Files.Create(ctx, file1)
 
 	// Try to create another file with same claim code
 	file2 := &models.File{
@@ -174,7 +173,7 @@ func TestRecoveryFromDuplicateFile(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	err := database.CreateFile(db, file2)
+	err := repos.Files.Create(ctx, file2)
 
 	// Should fail with unique constraint error
 	if err == nil {
@@ -184,14 +183,14 @@ func TestRecoveryFromDuplicateFile(t *testing.T) {
 
 // TestRecoveryFromConcurrentFileDelete tests concurrent deletion
 func TestRecoveryFromConcurrentFileDelete(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create and upload a file
 	claimCode, _ := utils.GenerateClaimCode()
 	storedFilename := "concurrent_delete.dat"
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode,
 		StoredFilename:   storedFilename,
 		OriginalFilename: "test.txt",
@@ -206,10 +205,10 @@ func TestRecoveryFromConcurrentFileDelete(t *testing.T) {
 	os.WriteFile(filePath, []byte("test"), 0644)
 
 	// Delete the file from database
-	database.DeleteFileByClaimCode(db, claimCode)
+	repos.Files.DeleteByClaimCode(ctx, claimCode)
 
 	// Try to download (file was deleted)
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	req := httptest.NewRequest("GET", "/api/claim/"+claimCode, nil)
 	rr := httptest.NewRecorder()
@@ -224,16 +223,16 @@ func TestRecoveryFromConcurrentFileDelete(t *testing.T) {
 
 // TestRecoveryFromSessionExpiry tests handling of expired sessions gracefully
 func TestRecoveryFromSessionExpiry(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t) // Needed for test setup
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create expired session
 	sessionToken, _ := utils.GenerateSessionToken()
 	expiresAt := time.Now().Add(-1 * time.Hour) // Expired
-	database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 
 	// Try to use expired session
-	session, _ := database.GetSession(db, sessionToken)
+	session, _ := repos.Admin.GetSession(ctx, sessionToken)
 
 	// Should return false for expired session
 	if session != nil {
@@ -243,12 +242,13 @@ func TestRecoveryFromSessionExpiry(t *testing.T) {
 
 // TestRecoveryFromInvalidSessionToken tests handling of invalid session tokens
 func TestRecoveryFromInvalidSessionToken(t *testing.T) {
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Use non-existent session token
 	fakeToken := "nonexistent-session-token"
 
-	session, err := database.GetSession(db, fakeToken)
+	session, err := repos.Admin.GetSession(ctx, fakeToken)
 
 	// Should return false, not error
 	if session != nil {
@@ -262,11 +262,10 @@ func TestRecoveryFromInvalidSessionToken(t *testing.T) {
 
 // TestRecoveryFromPartialUploadNotFound tests handling missing partial upload
 func TestRecoveryFromPartialUploadNotFound(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 	cfg.ChunkedUploadEnabled = true
 
-	chunkHandler := handlers.UploadChunkHandler(db, cfg)
+	chunkHandler := handlers.UploadChunkHandler(repos, cfg)
 
 	// Try to upload chunk to non-existent upload (using valid UUID format)
 	fakeUploadID := "00000000-0000-0000-0000-000000000000" // Valid UUID but doesn't exist
@@ -295,13 +294,12 @@ func TestRecoveryFromDiskFull(t *testing.T) {
 	// This test would require actually filling disk or mocking disk space check
 	// Simplified version: test the disk space check function
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Simulate very large file that would exceed available space
 	// In real scenario, you'd need to mock filesystem calls
 
-	_ = handlers.UploadHandler(db, cfg) // Initialize handler for test setup
+	_ = handlers.UploadHandler(repos, cfg) // Initialize handler for test setup
 
 	// Try to upload very large file
 	// Note: This won't actually fill disk in test, but tests the code path
@@ -313,10 +311,9 @@ func TestRecoveryFromDiskFull(t *testing.T) {
 
 // TestRecoveryFromMultipleFailures tests handling multiple concurrent failures
 func TestRecoveryFromMultipleFailures(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.ClaimHandler(db, cfg)
+	handler := handlers.ClaimHandler(repos, cfg)
 
 	// Make multiple requests for non-existent files concurrently
 	numRequests := 10
@@ -360,10 +357,9 @@ func TestRecoveryFromNetworkTimeout(t *testing.T) {
 	// Network timeouts are typically handled by the HTTP server
 	// This tests that our handlers don't block indefinitely
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Create request with context timeout
 	// Note: httptest doesn't fully simulate network timeouts

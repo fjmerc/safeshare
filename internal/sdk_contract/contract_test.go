@@ -23,7 +23,6 @@ package sdk_contract
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -35,9 +34,9 @@ import (
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -47,8 +46,7 @@ import (
 func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	t.Helper()
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	mux := http.NewServeMux()
 
@@ -58,16 +56,16 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		handlers.UploadHandler(db, cfg).ServeHTTP(w, r)
+		handlers.UploadHandler(repos, cfg).ServeHTTP(w, r)
 	})
 
 	// Claim info endpoint (GET /api/claim/{code}/info)
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if strings.HasSuffix(path, "/info") && r.Method == http.MethodGet {
-			handlers.ClaimInfoHandler(db, cfg).ServeHTTP(w, r)
+			handlers.ClaimInfoHandler(repos, cfg).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
-			handlers.ClaimHandler(db, cfg).ServeHTTP(w, r)
+			handlers.ClaimHandler(repos, cfg).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -428,7 +426,7 @@ func TestGetFileInfoAfterDownloadContract(t *testing.T) {
 // authTestServer holds references needed for authenticated tests
 type authTestServer struct {
 	server   *httptest.Server
-	db       *sql.DB
+	repos    *repository.Repositories
 	cfg      *config.Config
 	apiToken string // The raw token for SDK authentication
 	userID   int64
@@ -439,11 +437,11 @@ type authTestServer struct {
 func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 	t.Helper()
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a test user (users are approved by default in the schema)
-	user, err := database.CreateUser(db, "testuser", "test@example.com", "hashedpassword", "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
@@ -454,7 +452,7 @@ func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 		t.Fatalf("failed to generate API token: %v", err)
 	}
 	tokenHash := utils.HashAPIToken(rawToken)
-	_, err = database.CreateAPIToken(db, user.ID, "test-token", tokenHash, prefix, "upload,download,manage", "127.0.0.1", nil)
+	_, err = repos.APITokens.Create(ctx, user.ID, "test-token", tokenHash, prefix, "upload,download,manage", "127.0.0.1", nil)
 	if err != nil {
 		t.Fatalf("failed to create API token: %v", err)
 	}
@@ -462,22 +460,22 @@ func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 	mux := http.NewServeMux()
 
 	// Upload endpoint (with optional auth to associate files with user)
-	mux.Handle("/api/upload", middleware.OptionalUserAuth(db)(handlers.UploadHandler(db, cfg)))
+	mux.Handle("/api/upload", middleware.OptionalUserAuth(repos)(handlers.UploadHandler(repos, cfg)))
 
 	// Claim info endpoint
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if strings.HasSuffix(path, "/info") && r.Method == http.MethodGet {
-			handlers.ClaimInfoHandler(db, cfg).ServeHTTP(w, r)
+			handlers.ClaimInfoHandler(repos, cfg).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
-			handlers.ClaimHandler(db, cfg).ServeHTTP(w, r)
+			handlers.ClaimHandler(repos, cfg).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
 	// User files endpoint (requires auth)
-	mux.Handle("/api/user/files", middleware.UserAuth(db)(handlers.UserDashboardDataHandler(db, cfg)))
+	mux.Handle("/api/user/files", middleware.UserAuth(repos)(handlers.UserDashboardDataHandler(repos, cfg)))
 
 	server := httptest.NewServer(mux)
 
@@ -487,7 +485,7 @@ func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 
 	return &authTestServer{
 		server:   server,
-		db:       db,
+		repos:    repos,
 		cfg:      cfg,
 		apiToken: rawToken,
 		userID:   user.ID,

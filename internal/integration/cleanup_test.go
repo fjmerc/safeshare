@@ -1,12 +1,14 @@
 package integration
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/google/uuid"
+
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -14,8 +16,8 @@ import (
 
 // TestCleanupExpiredFiles tests the cleanup worker for expired files
 func TestCleanupExpiredFiles(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create 3 expired files and 2 active files
 	expiredFiles := []string{}
@@ -26,7 +28,7 @@ func TestCleanupExpiredFiles(t *testing.T) {
 		storedFilename := "expired_" + claimCode + ".dat"
 
 		// Create database record (expired 2 hours ago to account for 1-hour grace period)
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   storedFilename,
 			OriginalFilename: "file.txt",
@@ -48,7 +50,7 @@ func TestCleanupExpiredFiles(t *testing.T) {
 		storedFilename := "active_" + claimCode + ".dat"
 
 		// Create database record (not expired)
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   storedFilename,
 			OriginalFilename: "file.txt",
@@ -66,7 +68,7 @@ func TestCleanupExpiredFiles(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
+	deleted, err := repos.Files.DeleteExpired(ctx, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -96,11 +98,11 @@ func TestCleanupExpiredFiles(t *testing.T) {
 
 // TestCleanupAbandonedPartialUploads tests cleanup of abandoned chunked uploads
 func TestCleanupAbandonedPartialUploads(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create abandoned partial upload (old and incomplete)
-	abandonedUploadID := "abandoned-upload-12345"
+	abandonedUploadID := uuid.New().String()
 	partialUpload := &models.PartialUpload{
 		UploadID:     abandonedUploadID,
 		Filename:     "abandoned.bin",
@@ -112,7 +114,7 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 		CreatedAt:    time.Now().Add(-48 * time.Hour),
 		LastActivity: time.Now().Add(-48 * time.Hour),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create chunks on disk
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", abandonedUploadID)
@@ -124,7 +126,7 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 	}
 
 	// Create active partial upload (recent)
-	activeUploadID := "active-upload-67890"
+	activeUploadID := uuid.New().String()
 	activeUpload := &models.PartialUpload{
 		UploadID:     activeUploadID,
 		Filename:     "active.bin",
@@ -136,7 +138,7 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 		CreatedAt:    time.Now().Add(-1 * time.Hour),
 		LastActivity: time.Now().Add(-30 * time.Minute),
 	}
-	database.CreatePartialUpload(db, activeUpload)
+	repos.PartialUploads.Create(ctx, activeUpload)
 
 	// Create chunks for active upload
 	activeDir := filepath.Join(cfg.UploadDir, ".partial", activeUploadID)
@@ -145,7 +147,7 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 	os.WriteFile(chunkPath, make([]byte, 1024), 0644)
 
 	// Run cleanup (expiry: 24 hours)
-	result, err := utils.CleanupAbandonedUploads(db, cfg.UploadDir, 24)
+	result, err := utils.CleanupAbandonedUploads(repos, cfg.UploadDir, 24)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -165,13 +167,13 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 	}
 
 	// Verify abandoned partial upload is deleted from database
-	upload, _ := database.GetPartialUpload(db, abandonedUploadID)
+	upload, _ := repos.PartialUploads.GetByUploadID(ctx, abandonedUploadID)
 	if upload != nil {
 		t.Error("abandoned partial upload should be deleted from database")
 	}
 
 	// Verify active upload still exists
-	activeUploadCheck, _ := database.GetPartialUpload(db, activeUploadID)
+	activeUploadCheck, _ := repos.PartialUploads.GetByUploadID(ctx, activeUploadID)
 	if activeUploadCheck == nil {
 		t.Error("active partial upload should still exist")
 	}
@@ -185,11 +187,10 @@ func TestCleanupAbandonedPartialUploads(t *testing.T) {
 
 // TestCleanupOrphanedChunks tests cleanup of orphaned chunk directories
 func TestCleanupOrphanedChunks(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Create orphaned chunks (no database record)
-	orphanedUploadID := "orphaned-chunks-12345"
+	orphanedUploadID := uuid.New().String()
 	orphanedDir := filepath.Join(cfg.UploadDir, ".partial", orphanedUploadID)
 	os.MkdirAll(orphanedDir, 0755)
 
@@ -200,7 +201,7 @@ func TestCleanupOrphanedChunks(t *testing.T) {
 	}
 
 	// Run cleanup (should detect and remove orphaned chunks)
-	result, err := utils.CleanupAbandonedUploads(db, cfg.UploadDir, 0)
+	result, err := utils.CleanupAbandonedUploads(repos, cfg.UploadDir, 0)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -223,11 +224,11 @@ func TestCleanupOrphanedChunks(t *testing.T) {
 
 // TestCleanupCompletedUploads tests cleanup of old completed uploads
 func TestCleanupCompletedUploads(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	_ = testutil.SetupTestConfig(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create old completed upload (for idempotency cleanup)
-	oldUploadID := "old-completed-12345"
+	oldUploadID := uuid.New().String()
 	claimCode := "claim123456"
 	oldUpload := &models.PartialUpload{
 		UploadID:     oldUploadID,
@@ -241,10 +242,10 @@ func TestCleanupCompletedUploads(t *testing.T) {
 		CreatedAt:    time.Now().Add(-3 * time.Hour),
 		LastActivity: time.Now().Add(-3 * time.Hour),
 	}
-	database.CreatePartialUpload(db, oldUpload)
+	repos.PartialUploads.Create(ctx, oldUpload)
 
 	// Create recent completed upload
-	recentUploadID := "recent-completed-67890"
+	recentUploadID := uuid.New().String()
 	recentClaimCode := "claim789012"
 	recentUpload := &models.PartialUpload{
 		UploadID:     recentUploadID,
@@ -258,19 +259,18 @@ func TestCleanupCompletedUploads(t *testing.T) {
 		CreatedAt:    time.Now().Add(-30 * time.Minute),
 		LastActivity: time.Now().Add(-30 * time.Minute),
 	}
-	database.CreatePartialUpload(db, recentUpload)
+	repos.PartialUploads.Create(ctx, recentUpload)
 
 	// Get old completed uploads (older than 1 hour)
-	completed, err := database.GetOldCompletedUploads(db, 1)
+	completed, err := repos.PartialUploads.GetOldCompleted(ctx, 1)
 	if err != nil {
 		t.Fatalf("failed to get old completed uploads: %v", err)
 	}
 
-	// NOTE: GetOldCompletedUploads currently returns 0 due to datetime() parsing issue with RFC3339 timestamps
-	// The query uses datetime(last_activity) which cannot parse RFC3339 format with nanoseconds
-	// This is a known limitation documented in GetAbandonedPartialUploads
-	if len(completed) != 0 {
-		t.Errorf("old completed uploads = %d, want 0", len(completed))
+	// GetOldCompleted should find uploads older than the specified retention period
+	// The query uses datetime(last_activity) to properly compare RFC3339 timestamps
+	if len(completed) != 1 {
+		t.Errorf("old completed uploads = %d, want 1", len(completed))
 	}
 
 	if len(completed) > 0 && completed[0].UploadID != oldUploadID {
@@ -278,16 +278,16 @@ func TestCleanupCompletedUploads(t *testing.T) {
 	}
 
 	// Delete old completed upload
-	database.DeletePartialUpload(db, oldUploadID)
+	repos.PartialUploads.Delete(ctx, oldUploadID)
 
 	// Verify old upload is deleted
-	upload, _ := database.GetPartialUpload(db, oldUploadID)
+	upload, _ := repos.PartialUploads.GetByUploadID(ctx, oldUploadID)
 	if upload != nil {
 		t.Error("old completed upload should be deleted")
 	}
 
 	// Verify recent upload still exists
-	recentCheck, _ := database.GetPartialUpload(db, recentUploadID)
+	recentCheck, _ := repos.PartialUploads.GetByUploadID(ctx, recentUploadID)
 	if recentCheck == nil {
 		t.Error("recent completed upload should still exist")
 	}
@@ -297,14 +297,14 @@ func TestCleanupCompletedUploads(t *testing.T) {
 
 // TestCleanupMissingPhysicalFiles tests cleanup when database records exist but files are missing
 func TestCleanupMissingPhysicalFiles(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create database record without physical file
 	claimCode, _ := utils.GenerateClaimCode()
 	storedFilename := "missing_" + claimCode + ".dat"
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode,
 		StoredFilename:   storedFilename,
 		OriginalFilename: "missing.txt",
@@ -317,7 +317,7 @@ func TestCleanupMissingPhysicalFiles(t *testing.T) {
 	// Don't create physical file (simulating missing file)
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
+	deleted, err := repos.Files.DeleteExpired(ctx, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestCleanupMissingPhysicalFiles(t *testing.T) {
 	}
 
 	// Verify database record is deleted
-	file, _ := database.GetFileByClaimCode(db, claimCode)
+	file, _ := repos.Files.GetByClaimCode(ctx, claimCode)
 	if file != nil {
 		t.Error("database record should be deleted even if physical file is missing")
 	}
@@ -338,11 +338,10 @@ func TestCleanupMissingPhysicalFiles(t *testing.T) {
 
 // TestCleanupEmptyPartialDirectory tests cleanup of empty partial upload directory
 func TestCleanupEmptyPartialDirectory(t *testing.T) {
-	_ = testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	_, cfg := testutil.SetupTestRepos(t)
 
 	// Create empty partial upload directory
-	emptyUploadID := "empty-dir-12345"
+	emptyUploadID := uuid.New().String()
 	emptyDir := filepath.Join(cfg.UploadDir, ".partial", emptyUploadID)
 	os.MkdirAll(emptyDir, 0755)
 
@@ -367,15 +366,15 @@ func TestCleanupEmptyPartialDirectory(t *testing.T) {
 
 // TestCleanupNoExpiredFiles tests cleanup when there are no expired files
 func TestCleanupNoExpiredFiles(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create only active files
 	for i := 0; i < 3; i++ {
 		claimCode, _ := utils.GenerateClaimCode()
 		storedFilename := "active_" + claimCode + ".dat"
 
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   storedFilename,
 			OriginalFilename: "file.txt",
@@ -390,7 +389,7 @@ func TestCleanupNoExpiredFiles(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
+	deleted, err := repos.Files.DeleteExpired(ctx, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("cleanup failed: %v", err)
 	}
@@ -405,9 +404,9 @@ func TestCleanupNoExpiredFiles(t *testing.T) {
 
 // TestPartialUploadSizeCalculation tests calculating size of partial upload chunks
 func TestPartialUploadSizeCalculation(t *testing.T) {
-	cfg := testutil.SetupTestConfig(t)
+	_, cfg := testutil.SetupTestRepos(t)
 
-	uploadID := "size-test-12345"
+	uploadID := uuid.New().String()
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
 	os.MkdirAll(partialDir, 0755)
 
@@ -439,13 +438,13 @@ func TestPartialUploadSizeCalculation(t *testing.T) {
 
 // TestCleanupOrphanedFiles tests cleanup of files without database records
 func TestCleanupOrphanedFiles(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create a file WITH database record
 	trackedCode, _ := utils.GenerateClaimCode()
 	trackedFilename := "tracked-" + trackedCode + ".bin"
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        trackedCode,
 		StoredFilename:   trackedFilename,
 		OriginalFilename: "tracked.txt",
@@ -473,7 +472,7 @@ func TestCleanupOrphanedFiles(t *testing.T) {
 	// Don't modify time - it's recent
 
 	// Run cleanup with 1-hour grace period
-	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(repos, cfg.UploadDir, 1)
 	if err != nil {
 		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
 	}
@@ -510,14 +509,14 @@ func TestCleanupOrphanedFiles(t *testing.T) {
 
 // TestCleanupOrphanedFiles_NoOrphans tests when there are no orphaned files
 func TestCleanupOrphanedFiles_NoOrphans(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create only files WITH database records
 	for i := 0; i < 3; i++ {
 		code, _ := utils.GenerateClaimCode()
 		filename := "tracked-" + code + ".bin"
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        code,
 			StoredFilename:   filename,
 			OriginalFilename: "test.txt",
@@ -531,7 +530,7 @@ func TestCleanupOrphanedFiles_NoOrphans(t *testing.T) {
 	}
 
 	// Run cleanup
-	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(repos, cfg.UploadDir, 1)
 	if err != nil {
 		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
 	}
@@ -549,12 +548,11 @@ func TestCleanupOrphanedFiles_NoOrphans(t *testing.T) {
 
 // TestCleanupOrphanedFiles_EmptyDirectory tests with empty uploads directory
 func TestCleanupOrphanedFiles_EmptyDirectory(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Ensure directory is empty (just .partial)
 	// Run cleanup
-	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(db, cfg.UploadDir, 1)
+	deleted, bytesReclaimed, err := utils.CleanupOrphanedFiles(repos, cfg.UploadDir, 1)
 	if err != nil {
 		t.Fatalf("CleanupOrphanedFiles() error: %v", err)
 	}
