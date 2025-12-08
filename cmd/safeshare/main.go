@@ -20,6 +20,8 @@ import (
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/static"
+	"github.com/fjmerc/safeshare/internal/storage"
+	"github.com/fjmerc/safeshare/internal/storage/filesystem"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"golang.org/x/net/http2"
@@ -109,6 +111,29 @@ func run() error {
 	}
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
+
+	// Initialize storage backend
+	fsStorage, err := filesystem.NewFilesystemStorage(cfg.UploadDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize filesystem storage: %w", err)
+	}
+
+	// Wrap with encryption if encryption is enabled
+	var storageBackend storage.StorageBackend
+	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+		encStorage, err := storage.NewEncryptedStorage(fsStorage, cfg.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("failed to initialize encrypted storage: %w", err)
+		}
+		storageBackend = encStorage
+		slog.Info("storage initialized with encryption")
+	} else {
+		storageBackend = fsStorage
+		slog.Info("storage initialized without encryption")
+	}
+
+	// Make storage backend available to handlers
+	handlers.SetStorageBackend(storageBackend)
 
 	// Initialize webhook dispatcher
 	webhookMetrics := webhooks.NewPrometheusMetrics()
