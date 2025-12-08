@@ -329,6 +329,11 @@ func (es *EncryptedStorage) GetUsedSpace(ctx context.Context) (int64, error) {
 	return es.backend.GetUsedSpace(ctx)
 }
 
+// HealthCheck passes through to the underlying backend.
+func (es *EncryptedStorage) HealthCheck(ctx context.Context) error {
+	return es.backend.HealthCheck(ctx)
+}
+
 // IsStreamEncrypted checks if a file is encrypted with SFSE1 format.
 func (es *EncryptedStorage) IsStreamEncrypted(filePath string) (bool, error) {
 	file, err := os.Open(filePath)

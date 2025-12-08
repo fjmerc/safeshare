@@ -29,21 +29,22 @@ type StorageBackend struct {
 	usedSpace      int64
 
 	// Error injection for testing
-	StoreError           error
-	RetrieveError        error
-	DeleteError          error
-	ExistsError          error
-	GetSizeError         error
-	StreamRangeError     error
-	SaveChunkError       error
-	GetChunkError        error
-	DeleteChunksError    error
-	ChunkExistsError     error
-	AssembleChunksError  error
-	GetMissingChunksError error
-	GetChunkCountError    error
+	StoreError             error
+	RetrieveError          error
+	DeleteError            error
+	ExistsError            error
+	GetSizeError           error
+	StreamRangeError       error
+	SaveChunkError         error
+	GetChunkError          error
+	DeleteChunksError      error
+	ChunkExistsError       error
+	AssembleChunksError    error
+	GetMissingChunksError  error
+	GetChunkCountError     error
 	GetAvailableSpaceError error
-	GetUsedSpaceError     error
+	GetUsedSpaceError      error
+	HealthCheckError       error
 
 	// Custom behavior hooks
 	OnStore          func(ctx context.Context, filename string, reader io.Reader, size int64) (string, string, error)
@@ -91,6 +92,7 @@ func (s *StorageBackend) Reset() {
 	s.GetChunkCountError = nil
 	s.GetAvailableSpaceError = nil
 	s.GetUsedSpaceError = nil
+	s.HealthCheckError = nil
 
 	// Clear hooks
 	s.OnStore = nil
@@ -639,4 +641,20 @@ func (s *StorageBackend) GetChunkContent(uploadID string, chunkNum int) ([]byte,
 	contentCopy := make([]byte, len(content))
 	copy(contentCopy, content)
 	return contentCopy, true
+}
+
+// HealthCheck implements storage.StorageBackend.HealthCheck.
+// For the mock, this always succeeds unless HealthCheckError is set.
+func (s *StorageBackend) HealthCheck(ctx context.Context) error {
+	if s.HealthCheckError != nil {
+		return s.HealthCheckError
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	return nil
 }

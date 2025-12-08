@@ -718,10 +718,31 @@ func run() error {
 	case sig := <-shutdown:
 		slog.Info("shutdown signal received", "signal", sig)
 
+		// Get upload tracker to manage in-progress uploads
+		uploadTracker := utils.GetUploadTracker()
+
+		// Phase 1: Stop accepting new uploads (but allow existing ones to finish)
+		slog.Info("phase 1: stopping new uploads",
+			"active_uploads", uploadTracker.GetActiveCount(),
+		)
+		uploadTracker.BeginShutdown()
+
 		// Cancel context to signal workers to stop
 		cancel()
 
-		// Give outstanding requests 10 seconds to complete
+		// Phase 2: Wait for in-progress uploads to complete (up to 30 seconds)
+		// This is separate from HTTP server shutdown to give uploads more time
+		uploadTimeout := 30 * time.Second
+		if uploadTracker.GetActiveCount() > 0 {
+			slog.Info("phase 2: waiting for in-progress uploads to complete",
+				"timeout_seconds", uploadTimeout.Seconds(),
+				"active_uploads", uploadTracker.GetActiveCount(),
+			)
+			uploadTracker.WaitForUploads(uploadTimeout)
+		}
+
+		// Phase 3: Gracefully shutdown HTTP server (give remaining requests 10 seconds)
+		slog.Info("phase 3: shutting down HTTP server")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 
@@ -733,10 +754,10 @@ func run() error {
 			return fmt.Errorf("graceful shutdown failed: %w", err)
 		}
 
-		slog.Info("server shutdown complete")
+		slog.Info("HTTP server shutdown complete")
 
-		// Wait for all background workers to finish (with 5 second timeout)
-		slog.Info("waiting for background workers to finish")
+		// Phase 4: Wait for all background workers to finish (with 5 second timeout)
+		slog.Info("phase 4: waiting for background workers to finish")
 		workerDone := make(chan struct{})
 		go func() {
 			workerWg.Wait()
@@ -750,6 +771,7 @@ func run() error {
 			slog.Warn("background workers did not finish within timeout, forcing exit")
 		}
 
+		slog.Info("graceful shutdown complete")
 		return nil
 	}
 }

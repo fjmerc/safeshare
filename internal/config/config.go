@@ -21,6 +21,17 @@ type PostgreSQLConfig struct {
 	Options        string // Additional connection options (e.g., "application_name=safeshare")
 }
 
+// S3Config holds S3-specific configuration options.
+type S3Config struct {
+	Bucket          string // S3 bucket name (required if STORAGE_TYPE=s3)
+	Region          string // AWS region (default: us-east-1)
+	Endpoint        string // Custom S3 endpoint for MinIO or other S3-compatible services
+	AccessKeyID     string // AWS access key ID (or use IAM roles)
+	SecretAccessKey string // AWS secret access key (or use IAM roles)
+	PathStyle       bool   // Use path-style addressing (required for MinIO, default: false)
+	StorageQuota    int64  // Optional storage quota in bytes (0 = unlimited)
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -28,8 +39,10 @@ type Config struct {
 	// Immutable fields (set at startup only)
 	Port                     string
 	DBPath                   string
-	DatabaseType             string           // "sqlite" or "postgresql" (default: sqlite)
+	DatabaseType             string            // "sqlite" or "postgresql" (default: sqlite)
 	PostgreSQL               *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
+	StorageType              string            // "filesystem" or "s3" (default: filesystem)
+	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -75,6 +88,7 @@ func Load() (*Config, error) {
 		Port:                     getEnv("PORT", "8080"),
 		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
 		DatabaseType:             getEnv("DATABASE_TYPE", "sqlite"),
+		StorageType:              getEnv("STORAGE_TYPE", "filesystem"),
 		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
 		BackupDir:                getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
 		DataDir:                  getEnv("DATA_DIR", "./data"),
@@ -102,6 +116,9 @@ func Load() (*Config, error) {
 		// PostgreSQL configuration (loaded if DATABASE_TYPE=postgresql)
 		PostgreSQL: nil, // Will be populated below if needed
 
+		// S3 configuration (loaded if STORAGE_TYPE=s3)
+		S3: nil, // Will be populated below if needed
+
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
 		defaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
@@ -116,6 +133,11 @@ func Load() (*Config, error) {
 	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
 	if cfg.DatabaseType == "postgresql" {
 		cfg.PostgreSQL = loadPostgreSQLConfig()
+	}
+
+	// Load S3 configuration if STORAGE_TYPE=s3
+	if cfg.StorageType == "s3" {
+		cfg.S3 = loadS3Config()
 	}
 
 	// Validate configuration
@@ -303,6 +325,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.validateDatabaseSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateStorageTypeSettings(); err != nil {
 		return err
 	}
 
@@ -496,6 +522,57 @@ func (c *Config) validateDatabaseSettings() error {
 	}
 
 	return nil
+}
+
+// validateStorageTypeSettings validates storage type and S3 configuration
+func (c *Config) validateStorageTypeSettings() error {
+	// Validate storage type
+	validStorageTypes := map[string]bool{"filesystem": true, "s3": true}
+	if !validStorageTypes[c.StorageType] {
+		return fmt.Errorf("STORAGE_TYPE must be 'filesystem' or 's3', got '%s'", c.StorageType)
+	}
+
+	// If S3 is selected, validate its configuration
+	if c.StorageType == "s3" {
+		if c.S3 == nil {
+			return fmt.Errorf("S3 configuration is required when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.Bucket == "" {
+			return fmt.Errorf("S3_BUCKET cannot be empty when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.Region == "" {
+			return fmt.Errorf("S3_REGION cannot be empty when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.StorageQuota < 0 {
+			return fmt.Errorf("S3_STORAGE_QUOTA must be 0 (unlimited) or positive, got %d", c.S3.StorageQuota)
+		}
+	}
+
+	return nil
+}
+
+// loadS3Config loads S3 configuration from environment variables.
+// Environment variables:
+//   - S3_BUCKET: S3 bucket name (required)
+//   - S3_REGION: AWS region (default: us-east-1)
+//   - S3_ENDPOINT: Custom S3 endpoint for MinIO (optional)
+//   - S3_ACCESS_KEY_ID: AWS access key ID (optional, use IAM roles if not set)
+//   - S3_SECRET_ACCESS_KEY: AWS secret access key (optional)
+//   - S3_PATH_STYLE: Use path-style addressing (default: false, set true for MinIO)
+//   - S3_STORAGE_QUOTA: Storage quota in bytes (default: 0 = unlimited)
+func loadS3Config() *S3Config {
+	return &S3Config{
+		Bucket:          getEnv("S3_BUCKET", ""),
+		Region:          getEnv("S3_REGION", "us-east-1"),
+		Endpoint:        getEnv("S3_ENDPOINT", ""),
+		AccessKeyID:     getEnv("S3_ACCESS_KEY_ID", ""),
+		SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
+		PathStyle:       getEnvBool("S3_PATH_STYLE", false),
+		StorageQuota:    getEnvInt64("S3_STORAGE_QUOTA", 0),
+	}
 }
 
 // loadPostgreSQLConfig loads PostgreSQL configuration from environment variables.

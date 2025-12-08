@@ -26,6 +26,9 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		PartialUploads: NewPartialUploadRepository(db),
 		Webhooks:       NewWebhookRepository(db),
 		APITokens:      NewAPITokenRepository(db),
+		RateLimits:     NewRateLimitRepository(db),
+		Locks:          NewLockRepository(db),
+		Health:         NewHealthRepository(db, cfg.DBPath),
 		DB:             db, // DEPRECATED: for backward compatibility during migration
 		DatabaseType:   repository.DatabaseTypeSQLite,
 		Cleanup: func() {

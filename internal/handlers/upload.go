@@ -55,12 +55,27 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			return
 		}
 
+		// Check if server is shutting down
+		uploadTracker := utils.GetUploadTracker()
+		if uploadTracker.IsShuttingDown() {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Validate and retrieve uploaded file
 		file, header, err := validateAndGetUploadedFile(w, r, cfg)
 		if err != nil {
 			return // Error already sent to client
 		}
 		defer file.Close()
+
+		// Track this upload for graceful shutdown
+		uploadID := uuid.New().String()
+		if !uploadTracker.StartUpload(uploadID, header.Filename, header.Size) {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+		defer uploadTracker.FinishUpload(uploadID)
 
 		// Check storage availability
 		quotaConfigured := cfg.GetQuotaLimitGB() > 0

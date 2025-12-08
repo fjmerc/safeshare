@@ -73,6 +73,12 @@ type StorageBackend interface {
 
 	// GetUsedSpace returns the storage space currently used in bytes.
 	GetUsedSpace(ctx context.Context) (int64, error)
+
+	// Health check
+
+	// HealthCheck performs a health check on the storage backend.
+	// Returns nil if healthy, or an error describing the issue.
+	HealthCheck(ctx context.Context) error
 }
 
 // StorageError represents errors from storage operations with additional context.

@@ -596,6 +596,35 @@ func (fs *FilesystemStorage) GetBaseDir() string {
 	return fs.baseDir
 }
 
+// HealthCheck performs a health check on the filesystem storage backend.
+// It verifies that the base directory exists and is writable.
+// Uses os.CreateTemp to avoid race conditions when multiple health checks run concurrently.
+func (fs *FilesystemStorage) HealthCheck(ctx context.Context) error {
+	// Check base directory exists and is accessible
+	info, err := os.Stat(fs.baseDir)
+	if err != nil {
+		return storage.NewStorageErrorWithMessage("HealthCheck", fs.baseDir, err, "storage directory not accessible")
+	}
+	if !info.IsDir() {
+		return storage.NewStorageErrorWithMessage("HealthCheck", fs.baseDir, nil, "storage path is not a directory")
+	}
+
+	// Test write capability by creating and removing a temp file
+	// Use os.CreateTemp for unique file names to avoid race conditions
+	file, err := os.CreateTemp(fs.baseDir, ".health_check_*")
+	if err != nil {
+		return storage.NewStorageErrorWithMessage("HealthCheck", fs.baseDir, err, "storage directory not writable")
+	}
+	testFile := file.Name()
+	file.Close()
+	if err := os.Remove(testFile); err != nil {
+		// Log but don't fail - we could still write
+		slog.Warn("failed to remove health check file", "path", testFile, "error", err)
+	}
+
+	return nil
+}
+
 // GetChunkNumbers returns a sorted list of chunk numbers that exist for an upload.
 func (fs *FilesystemStorage) GetChunkNumbers(ctx context.Context, uploadID string) ([]int, error) {
 	// Validate uploadID to prevent path traversal

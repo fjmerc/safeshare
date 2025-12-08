@@ -52,6 +52,9 @@ func NewRepositories(cfg *config.Config) (*repository.Repositories, func(), erro
 		PartialUploads: NewPartialUploadRepository(pool),
 		Webhooks:       NewWebhookRepository(pool),
 		APITokens:      NewAPITokenRepository(pool),
+		RateLimits:     NewRateLimitRepository(pool),
+		Locks:          NewLockRepository(pool),
+		Health:         NewHealthRepository(pool.Pool),
 		DB:             nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:   repository.DatabaseTypePostgreSQL,
 		Cleanup:        cleanup,
@@ -76,6 +79,9 @@ func NewRepositoriesWithPool(pool *Pool) (*repository.Repositories, error) {
 		PartialUploads: NewPartialUploadRepository(pool),
 		Webhooks:       NewWebhookRepository(pool),
 		APITokens:      NewAPITokenRepository(pool),
+		RateLimits:     NewRateLimitRepository(pool),
+		Locks:          NewLockRepository(pool),
+		Health:         NewHealthRepository(pool.Pool),
 		DB:             nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:   repository.DatabaseTypePostgreSQL,
 		Cleanup:        nil, // Caller manages the pool lifecycle

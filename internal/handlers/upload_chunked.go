@@ -42,6 +42,13 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			return
 		}
 
+		// Check if server is shutting down
+		uploadTracker := utils.GetUploadTracker()
+		if uploadTracker.IsShuttingDown() {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Limit JSON request body size to prevent memory exhaustion
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
 
@@ -283,7 +290,7 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		// Extract upload_id and chunk_number from URL path
+		// Extract upload_id and chunk_number from URL path first for tracking
 		// Path format: /api/upload/chunk/{upload_id}/{chunk_number}
 		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/upload/chunk/"), "/")
 		if len(pathParts) != 2 {
@@ -306,6 +313,15 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			sendError(w, "Invalid chunk_number", "INVALID_CHUNK_NUMBER", http.StatusBadRequest)
 			return
 		}
+
+		// Track this chunk upload for graceful shutdown
+		uploadTracker := utils.GetUploadTracker()
+		chunkTrackID := fmt.Sprintf("chunk-%s-%d", uploadID, chunkNumber)
+		if !uploadTracker.StartUpload(chunkTrackID, "", 0) {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+		defer uploadTracker.FinishUpload(chunkTrackID)
 
 		// Get partial upload from database
 		partialUpload, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
@@ -578,6 +594,9 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
+		// Get upload tracker for shutdown checks later
+		uploadTracker := utils.GetUploadTracker()
+
 		// Extract upload_id from URL path
 		uploadID := strings.TrimPrefix(r.URL.Path, "/api/upload/complete/")
 
@@ -733,10 +752,18 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 		// Get client IP for logging
 		clientIP := getClientIP(r)
 
+		// Track assembly for graceful shutdown - re-check shutdown status right before spawning
+		if !uploadTracker.StartAssembly(uploadID) {
+			sendError(w, "Server is shutting down, cannot start file assembly", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Spawn goroutine to assemble file asynchronously with concurrency limit
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
 		go func() {
+			defer uploadTracker.FinishAssembly(uploadID)
+
 			// Acquire semaphore slot (blocks if 10 assemblies already running)
 			assemblySemaphore <- struct{}{}
 			defer func() { <-assemblySemaphore }() // Release slot when done

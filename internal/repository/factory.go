@@ -18,6 +18,9 @@ type Repositories struct {
 	PartialUploads PartialUploadRepository
 	Webhooks       WebhookRepository
 	APITokens      APITokenRepository
+	RateLimits     RateLimitRepository
+	Locks          LockRepository
+	Health         HealthRepository
 
 	// DB provides direct database access for code that hasn't been migrated to use repositories yet.
 	// DEPRECATED: This field will be removed once all database access is migrated to use repositories.

@@ -249,6 +249,69 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_is_active ON api_tokens(is_active);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_expires_at ON api_tokens(expires_at);
 `,
 	},
+	{
+		Version:     2,
+		Name:        "002_rate_limits",
+		Description: "Rate limits table for database-backed rate limiting (HA support)",
+		SQL: `
+-- ============================================================================
+-- RATE LIMITS TABLE (for multi-node rate limiting)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rate_limits (
+    id BIGSERIAL PRIMARY KEY,
+    ip_address TEXT NOT NULL,
+    limit_type TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 1,
+    window_end TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(ip_address, limit_type)
+);
+
+-- Index for efficient lookups by IP and type
+CREATE INDEX IF NOT EXISTS idx_rate_limits_ip_type ON rate_limits(ip_address, limit_type);
+
+-- Index for cleanup worker to find expired entries efficiently
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window_end ON rate_limits(window_end);
+`,
+	},
+	{
+		Version:     3,
+		Name:        "003_distributed_locks",
+		Description: "Distributed locks table for multi-node coordination (HA support)",
+		SQL: `
+-- ============================================================================
+-- DISTRIBUTED LOCKS TABLE (for multi-node locking)
+-- ============================================================================
+-- This table is used alongside PostgreSQL advisory locks for:
+-- 1. Visibility into held locks (debugging/monitoring)
+-- 2. TTL-based expiration (safety net)
+-- 3. Lock metadata storage
+--
+-- The actual locking is done via pg_advisory_lock for performance.
+
+CREATE TABLE IF NOT EXISTS distributed_locks (
+    id BIGSERIAL PRIMARY KEY,
+    lock_type TEXT NOT NULL,           -- Type of lock (chunk_assembly, file_deletion, etc.)
+    lock_key TEXT NOT NULL,            -- Unique key for the locked resource
+    owner_id TEXT NOT NULL,            -- Identifier of the lock holder (hostname:pid)
+    acquired_at TIMESTAMPTZ NOT NULL,  -- When the lock was acquired
+    expires_at TIMESTAMPTZ NOT NULL,   -- When the lock expires (safety timeout)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ,
+    UNIQUE(lock_type, lock_key)        -- Only one lock per type+key
+);
+
+-- Index for efficient expiration cleanup
+CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires_at ON distributed_locks(expires_at);
+
+-- Index for querying locks by type
+CREATE INDEX IF NOT EXISTS idx_distributed_locks_type ON distributed_locks(lock_type);
+
+-- Index for querying locks by owner (useful for debugging)
+CREATE INDEX IF NOT EXISTS idx_distributed_locks_owner ON distributed_locks(owner_id);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.
