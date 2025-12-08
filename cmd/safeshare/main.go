@@ -94,6 +94,19 @@ func run() error {
 		cfg.SetRateLimitUpload(dbSettings.RateLimitUpload)
 		cfg.SetRateLimitDownload(dbSettings.RateLimitDownload)
 		cfg.SetBlockedExtensions(dbSettings.BlockedExtensions)
+
+		// Load feature flags from database
+		cfg.Features.SetAll(config.FeatureFlagsData{
+			EnablePostgreSQL:  dbSettings.FeaturePostgreSQL,
+			EnableS3Storage:   dbSettings.FeatureS3Storage,
+			EnableSSO:         dbSettings.FeatureSSO,
+			EnableMFA:         dbSettings.FeatureMFA,
+			EnableWebhooks:    dbSettings.FeatureWebhooks,
+			EnableAPITokens:   dbSettings.FeatureAPITokens,
+			EnableMalwareScan: dbSettings.FeatureMalwareScan,
+			EnableBackups:     dbSettings.FeatureBackups,
+		})
+
 		slog.Info("loaded settings from database",
 			"quota_limit_gb", dbSettings.QuotaLimitGB,
 			"max_file_size_bytes", dbSettings.MaxFileSizeBytes,
@@ -418,6 +431,17 @@ func run() error {
 
 		mux.HandleFunc("/admin/api/config", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(handlers.AdminGetConfigHandler(cfg))).ServeHTTP(w, r)
+		})
+
+		// Feature flags management
+		mux.HandleFunc("/admin/api/features", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminGetFeatureFlagsHandler(repos, cfg))).ServeHTTP(w, r)
+			} else if r.Method == http.MethodPut {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateFeatureFlagsHandler(repos, cfg)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
 		})
 
 		mux.HandleFunc("/admin/api/config-assistant/analyze", func(w http.ResponseWriter, r *http.Request) {

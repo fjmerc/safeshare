@@ -11,6 +11,16 @@ type Settings struct {
 	RateLimitUpload        int
 	RateLimitDownload      int
 	BlockedExtensions      []string
+
+	// Feature flags
+	FeaturePostgreSQL  bool
+	FeatureS3Storage   bool
+	FeatureSSO         bool
+	FeatureMFA         bool
+	FeatureWebhooks    bool
+	FeatureAPITokens   bool
+	FeatureMalwareScan bool
+	FeatureBackups     bool
 }
 
 // SettingsRepository defines the interface for settings-related database operations.
@@ -40,4 +50,23 @@ type SettingsRepository interface {
 
 	// UpdateBlockedExtensions saves the blocked_extensions setting to the database.
 	UpdateBlockedExtensions(ctx context.Context, extensions []string) error
+
+	// GetFeatureFlags retrieves all feature flags from the database.
+	// Returns a FeatureFlags struct. If no settings exist, all flags are false.
+	GetFeatureFlags(ctx context.Context) (*FeatureFlags, error)
+
+	// UpdateFeatureFlags saves all feature flags to the database.
+	UpdateFeatureFlags(ctx context.Context, flags *FeatureFlags) error
+}
+
+// FeatureFlags represents the persisted feature flag settings.
+type FeatureFlags struct {
+	EnablePostgreSQL  bool
+	EnableS3Storage   bool
+	EnableSSO         bool
+	EnableMFA         bool
+	EnableWebhooks    bool
+	EnableAPITokens   bool
+	EnableMalwareScan bool
+	EnableBackups     bool
 }

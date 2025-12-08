@@ -31,12 +31,18 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 	query := `
 		SELECT quota_limit_gb, max_file_size_bytes, default_expiration_hours,
 		       max_expiration_hours, rate_limit_upload, rate_limit_download,
-		       blocked_extensions
+		       blocked_extensions,
+		       COALESCE(feature_postgresql, 0), COALESCE(feature_s3_storage, 0),
+		       COALESCE(feature_sso, 0), COALESCE(feature_mfa, 0),
+		       COALESCE(feature_webhooks, 0), COALESCE(feature_api_tokens, 0),
+		       COALESCE(feature_malware_scan, 0), COALESCE(feature_backups, 0)
 		FROM settings WHERE id = 1
 	`
 
 	var s repository.Settings
 	var blockedExtsStr string
+	var featurePG, featureS3, featureSSO, featureMFA int
+	var featureWebhooks, featureAPITokens, featureMalware, featureBackups int
 
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&s.QuotaLimitGB,
@@ -46,6 +52,8 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 		&s.RateLimitUpload,
 		&s.RateLimitDownload,
 		&blockedExtsStr,
+		&featurePG, &featureS3, &featureSSO, &featureMFA,
+		&featureWebhooks, &featureAPITokens, &featureMalware, &featureBackups,
 	)
 
 	if err == sql.ErrNoRows {
@@ -58,6 +66,16 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 
 	// Parse comma-separated blocked extensions
 	s.BlockedExtensions = parseBlockedExtensions(blockedExtsStr)
+
+	// Convert int to bool for feature flags
+	s.FeaturePostgreSQL = featurePG != 0
+	s.FeatureS3Storage = featureS3 != 0
+	s.FeatureSSO = featureSSO != 0
+	s.FeatureMFA = featureMFA != 0
+	s.FeatureWebhooks = featureWebhooks != 0
+	s.FeatureAPITokens = featureAPITokens != 0
+	s.FeatureMalwareScan = featureMalware != 0
+	s.FeatureBackups = featureBackups != 0
 
 	return &s, nil
 }
@@ -233,6 +251,95 @@ func (r *SettingsRepository) UpdateBlockedExtensions(ctx context.Context, extens
 		return fmt.Errorf("failed to update blocked extensions setting: %w", err)
 	}
 	return nil
+}
+
+// GetFeatureFlags retrieves all feature flags from the database.
+// Returns a FeatureFlags struct with all flags set to false if no settings exist.
+func (r *SettingsRepository) GetFeatureFlags(ctx context.Context) (*repository.FeatureFlags, error) {
+	query := `
+		SELECT COALESCE(feature_postgresql, 0), COALESCE(feature_s3_storage, 0),
+		       COALESCE(feature_sso, 0), COALESCE(feature_mfa, 0),
+		       COALESCE(feature_webhooks, 0), COALESCE(feature_api_tokens, 0),
+		       COALESCE(feature_malware_scan, 0), COALESCE(feature_backups, 0)
+		FROM settings WHERE id = 1
+	`
+
+	var featurePG, featureS3, featureSSO, featureMFA int
+	var featureWebhooks, featureAPITokens, featureMalware, featureBackups int
+
+	err := r.db.QueryRowContext(ctx, query).Scan(
+		&featurePG, &featureS3, &featureSSO, &featureMFA,
+		&featureWebhooks, &featureAPITokens, &featureMalware, &featureBackups,
+	)
+
+	if err == sql.ErrNoRows {
+		// No settings exist yet - return all flags as false
+		return &repository.FeatureFlags{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature flags: %w", err)
+	}
+
+	return &repository.FeatureFlags{
+		EnablePostgreSQL:  featurePG != 0,
+		EnableS3Storage:   featureS3 != 0,
+		EnableSSO:         featureSSO != 0,
+		EnableMFA:         featureMFA != 0,
+		EnableWebhooks:    featureWebhooks != 0,
+		EnableAPITokens:   featureAPITokens != 0,
+		EnableMalwareScan: featureMalware != 0,
+		EnableBackups:     featureBackups != 0,
+	}, nil
+}
+
+// UpdateFeatureFlags saves all feature flags to the database.
+// Uses atomic UPSERT pattern to prevent race conditions.
+func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repository.FeatureFlags) error {
+	if flags == nil {
+		return fmt.Errorf("feature flags cannot be nil")
+	}
+
+	// Convert bool to int for SQLite storage
+	query := `
+		INSERT INTO settings (
+			id, feature_postgresql, feature_s3_storage, feature_sso, feature_mfa,
+			feature_webhooks, feature_api_tokens, feature_malware_scan, feature_backups,
+			updated_at
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			feature_postgresql = excluded.feature_postgresql,
+			feature_s3_storage = excluded.feature_s3_storage,
+			feature_sso = excluded.feature_sso,
+			feature_mfa = excluded.feature_mfa,
+			feature_webhooks = excluded.feature_webhooks,
+			feature_api_tokens = excluded.feature_api_tokens,
+			feature_malware_scan = excluded.feature_malware_scan,
+			feature_backups = excluded.feature_backups,
+			updated_at = CURRENT_TIMESTAMP
+	`
+
+	_, err := r.db.ExecContext(ctx, query,
+		boolToInt(flags.EnablePostgreSQL),
+		boolToInt(flags.EnableS3Storage),
+		boolToInt(flags.EnableSSO),
+		boolToInt(flags.EnableMFA),
+		boolToInt(flags.EnableWebhooks),
+		boolToInt(flags.EnableAPITokens),
+		boolToInt(flags.EnableMalwareScan),
+		boolToInt(flags.EnableBackups),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update feature flags: %w", err)
+	}
+	return nil
+}
+
+// boolToInt converts a boolean to an integer (0 or 1) for SQLite storage.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // parseBlockedExtensions converts a comma-separated string to a slice of extensions.

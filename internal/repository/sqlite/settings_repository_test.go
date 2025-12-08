@@ -18,6 +18,7 @@ func setupSettingsTestDB(t *testing.T) *sql.DB {
 	}
 
 	// Create settings table (matching the schema from internal/database/db.go)
+	// Including feature flag columns added in migration 011_feature_flags.sql
 	_, err = db.Exec(`
 		CREATE TABLE settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -28,7 +29,15 @@ func setupSettingsTestDB(t *testing.T) *sql.DB {
 			rate_limit_upload INTEGER DEFAULT 10,
 			rate_limit_download INTEGER DEFAULT 50,
 			blocked_extensions TEXT DEFAULT '',
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			feature_postgresql INTEGER NOT NULL DEFAULT 0,
+			feature_s3_storage INTEGER NOT NULL DEFAULT 0,
+			feature_sso INTEGER NOT NULL DEFAULT 0,
+			feature_mfa INTEGER NOT NULL DEFAULT 0,
+			feature_webhooks INTEGER NOT NULL DEFAULT 0,
+			feature_api_tokens INTEGER NOT NULL DEFAULT 0,
+			feature_malware_scan INTEGER NOT NULL DEFAULT 0,
+			feature_backups INTEGER NOT NULL DEFAULT 0
 		)
 	`)
 	if err != nil {

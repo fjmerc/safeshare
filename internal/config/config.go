@@ -36,6 +36,9 @@ type Config struct {
 	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
 
+	// Feature flags (enterprise features - can be updated at runtime)
+	Features *FeatureFlags
+
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
 	defaultExpirationHours int
@@ -76,6 +79,9 @@ func Load() (*Config, error) {
 		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
+
+		// Feature flags (enterprise features - all default to false)
+		Features: loadFeatureFlags(),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
