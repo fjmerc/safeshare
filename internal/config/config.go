@@ -8,6 +8,19 @@ import (
 	"sync"
 )
 
+// PostgreSQLConfig holds PostgreSQL-specific configuration options.
+type PostgreSQLConfig struct {
+	Host           string // PostgreSQL host (default: localhost)
+	Port           int    // PostgreSQL port (default: 5432)
+	User           string // PostgreSQL user
+	Password       string // PostgreSQL password
+	Database       string // PostgreSQL database name
+	SSLMode        string // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
+	MaxConnections int    // Maximum pool connections (default: 25)
+	AutoMigrate    bool   // Automatically run migrations on startup (default: true)
+	Options        string // Additional connection options (e.g., "application_name=safeshare")
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -15,6 +28,8 @@ type Config struct {
 	// Immutable fields (set at startup only)
 	Port                     string
 	DBPath                   string
+	DatabaseType             string           // "sqlite" or "postgresql" (default: sqlite)
+	PostgreSQL               *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -59,6 +74,7 @@ func Load() (*Config, error) {
 		// Immutable fields
 		Port:                     getEnv("PORT", "8080"),
 		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
+		DatabaseType:             getEnv("DATABASE_TYPE", "sqlite"),
 		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
 		BackupDir:                getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
 		DataDir:                  getEnv("DATA_DIR", "./data"),
@@ -83,6 +99,9 @@ func Load() (*Config, error) {
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
 
+		// PostgreSQL configuration (loaded if DATABASE_TYPE=postgresql)
+		PostgreSQL: nil, // Will be populated below if needed
+
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
 		defaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
@@ -92,6 +111,11 @@ func Load() (*Config, error) {
 		rateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 50), // 50 downloads per hour per IP
 		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),     // 0 = unlimited (default)
 		adminPassword:          getEnv("ADMIN_PASSWORD", ""),         // Required for admin access
+	}
+
+	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
+	if cfg.DatabaseType == "postgresql" {
+		cfg.PostgreSQL = loadPostgreSQLConfig()
 	}
 
 	// Validate configuration
@@ -278,6 +302,10 @@ func (c *Config) validate() error {
 		return err
 	}
 
+	if err := c.validateDatabaseSettings(); err != nil {
+		return err
+	}
+
 	if err := c.validateStorageSettings(); err != nil {
 		return err
 	}
@@ -420,6 +448,79 @@ func (c *Config) validateProxySettings() error {
 	}
 
 	return nil
+}
+
+// validateDatabaseSettings validates database type and PostgreSQL configuration
+func (c *Config) validateDatabaseSettings() error {
+	// Validate database type
+	validDBTypes := map[string]bool{"sqlite": true, "postgresql": true}
+	if !validDBTypes[c.DatabaseType] {
+		return fmt.Errorf("DATABASE_TYPE must be 'sqlite' or 'postgresql', got '%s'", c.DatabaseType)
+	}
+
+	// If PostgreSQL is selected, validate its configuration
+	if c.DatabaseType == "postgresql" {
+		if c.PostgreSQL == nil {
+			return fmt.Errorf("PostgreSQL configuration is required when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Host == "" {
+			return fmt.Errorf("PG_HOST cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Port <= 0 || c.PostgreSQL.Port > 65535 {
+			return fmt.Errorf("PG_PORT must be between 1 and 65535, got %d", c.PostgreSQL.Port)
+		}
+
+		if c.PostgreSQL.User == "" {
+			return fmt.Errorf("PG_USER cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Database == "" {
+			return fmt.Errorf("PG_DATABASE cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		// Validate SSL mode
+		validSSLModes := map[string]bool{
+			"disable": true, "allow": true, "prefer": true,
+			"require": true, "verify-ca": true, "verify-full": true,
+		}
+		if c.PostgreSQL.SSLMode != "" && !validSSLModes[c.PostgreSQL.SSLMode] {
+			return fmt.Errorf("PG_SSL_MODE must be one of: disable, allow, prefer, require, verify-ca, verify-full")
+		}
+
+		// Validate max connections
+		if c.PostgreSQL.MaxConnections < 1 || c.PostgreSQL.MaxConnections > 1000 {
+			return fmt.Errorf("PG_MAX_CONNECTIONS must be between 1 and 1000, got %d", c.PostgreSQL.MaxConnections)
+		}
+	}
+
+	return nil
+}
+
+// loadPostgreSQLConfig loads PostgreSQL configuration from environment variables.
+// Environment variables:
+//   - PG_HOST: PostgreSQL host (default: localhost)
+//   - PG_PORT: PostgreSQL port (default: 5432)
+//   - PG_USER: PostgreSQL user (required)
+//   - PG_PASSWORD: PostgreSQL password (default: empty)
+//   - PG_DATABASE: PostgreSQL database name (required)
+//   - PG_SSL_MODE: SSL mode (default: prefer)
+//   - PG_MAX_CONNECTIONS: Maximum pool connections (default: 25)
+//   - PG_AUTO_MIGRATE: Auto-run migrations on startup (default: true)
+//   - PG_OPTIONS: Additional connection options (default: empty)
+func loadPostgreSQLConfig() *PostgreSQLConfig {
+	return &PostgreSQLConfig{
+		Host:           getEnv("PG_HOST", "localhost"),
+		Port:           getEnvInt("PG_PORT", 5432),
+		User:           getEnv("PG_USER", ""),
+		Password:       getEnv("PG_PASSWORD", ""),
+		Database:       getEnv("PG_DATABASE", ""),
+		SSLMode:        getEnv("PG_SSL_MODE", "prefer"),
+		MaxConnections: getEnvInt("PG_MAX_CONNECTIONS", 25),
+		AutoMigrate:    getEnvBool("PG_AUTO_MIGRATE", true),
+		Options:        getEnv("PG_OPTIONS", ""),
+	}
 }
 
 // getEnv retrieves an environment variable or returns a default value
