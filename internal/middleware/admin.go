@@ -2,26 +2,27 @@ package middleware
 
 import (
 	"crypto/subtle"
-	"database/sql"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminAuth middleware checks for valid admin session
-func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
+func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
 			// Try admin_session first
 			adminCookie, adminErr := r.Cookie("admin_session")
 			if adminErr == nil {
 				// Validate admin session
-				session, err := database.GetSession(db, adminCookie.Value)
+				session, err := repos.Admin.GetSession(ctx, adminCookie.Value)
 				if err != nil {
 					slog.Error("failed to validate admin session",
 						"error", err,
@@ -33,7 +34,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 
 				if session != nil {
 					// Update session activity
-					if err := database.UpdateSessionActivity(db, adminCookie.Value); err != nil {
+					if err := repos.Admin.UpdateSessionActivity(ctx, adminCookie.Value); err != nil {
 						slog.Error("failed to update admin session activity", "error", err)
 					}
 					// Session is valid, proceed
@@ -59,7 +60,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Validate user session
-			userSession, err := database.GetUserSession(db, userCookie.Value)
+			userSession, err := repos.Users.GetSession(ctx, userCookie.Value)
 			if err != nil {
 				slog.Error("failed to validate user session",
 					"error", err,
@@ -84,7 +85,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Get user and check role
-			user, err := database.GetUserByID(db, userSession.UserID)
+			user, err := repos.Users.GetByID(ctx, userSession.UserID)
 			if err != nil || user == nil {
 				slog.Error("failed to get user for admin check",
 					"error", err,
@@ -111,7 +112,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Update session activity
-			if err := database.UpdateUserSessionActivity(db, userCookie.Value); err != nil {
+			if err := repos.Users.UpdateSessionActivity(ctx, userCookie.Value); err != nil {
 				slog.Error("failed to update user session activity", "error", err)
 			}
 
@@ -122,11 +123,13 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 // CSRFProtection middleware validates CSRF tokens for state-changing requests
-func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
+func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only check CSRF for state-changing methods
 			if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" || r.Method == "PATCH" {
+				ctx := r.Context()
+
 				// Get CSRF token from header or form
 				csrfToken := r.Header.Get("X-CSRF-Token")
 				if csrfToken == "" {
@@ -139,7 +142,7 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 				// Check admin_session first
 				adminCookie, adminErr := r.Cookie("admin_session")
 				if adminErr == nil {
-					session, err := database.GetSession(db, adminCookie.Value)
+					session, err := repos.Admin.GetSession(ctx, adminCookie.Value)
 					if err == nil && session != nil {
 						hasValidSession = true
 					}
@@ -149,10 +152,10 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 				if !hasValidSession {
 					userCookie, userErr := r.Cookie("user_session")
 					if userErr == nil {
-						userSession, err := database.GetUserSession(db, userCookie.Value)
+						userSession, err := repos.Users.GetSession(ctx, userCookie.Value)
 						if err == nil && userSession != nil {
 							// Verify user has admin role
-							user, err := database.GetUserByID(db, userSession.UserID)
+							user, err := repos.Users.GetByID(ctx, userSession.UserID)
 							if err == nil && user != nil && user.Role == "admin" {
 								hasValidSession = true
 							}

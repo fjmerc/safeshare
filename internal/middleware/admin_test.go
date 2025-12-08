@@ -1,29 +1,36 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // TestAdminAuth_ValidSession tests AdminAuth middleware with valid admin session
 func TestAdminAuth_ValidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create admin session
 	token := "test-admin-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err := database.CreateSession(db, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Admin.CreateSession(ctx, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := AdminAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -45,8 +52,13 @@ func TestAdminAuth_ValidSession(t *testing.T) {
 // TestAdminAuth_NoSession tests AdminAuth middleware with no session cookie
 func TestAdminAuth_NoSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -79,16 +91,22 @@ func TestAdminAuth_NoSession(t *testing.T) {
 // TestAdminAuth_ExpiredSession tests AdminAuth middleware with expired session
 func TestAdminAuth_ExpiredSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create expired session
 	token := "expired-admin-session"
 	expiresAt := time.Now().Add(-1 * time.Hour) // expired
-	err := database.CreateSession(db, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Admin.CreateSession(ctx, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := AdminAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -106,13 +124,19 @@ func TestAdminAuth_ExpiredSession(t *testing.T) {
 // TestAdminAuth_UserSessionWithAdminRole tests AdminAuth fallback to user session with admin role
 func TestAdminAuth_UserSessionWithAdminRole(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create admin user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	adminUser, err := database.CreateUser(db, "admin@test.com", "admin@test.com", string(passwordHash), "admin", false)
+	adminUser, err := repos.Users.Create(ctx, "admin@test.com", "admin@test.com", passwordHash, "admin", false)
 	if err != nil {
 		t.Fatalf("failed to create admin user: %v", err)
 	}
@@ -120,12 +144,12 @@ func TestAdminAuth_UserSessionWithAdminRole(t *testing.T) {
 	// Create user session
 	token := "user-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, adminUser.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, adminUser.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create user session: %v", err)
 	}
 
-	handler := AdminAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -144,13 +168,19 @@ func TestAdminAuth_UserSessionWithAdminRole(t *testing.T) {
 // TestAdminAuth_UserSessionWithoutAdminRole tests AdminAuth with non-admin user
 func TestAdminAuth_UserSessionWithoutAdminRole(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create regular user (not admin)
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "user@test.com", "user@test.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "user@test.com", "user@test.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -158,12 +188,12 @@ func TestAdminAuth_UserSessionWithoutAdminRole(t *testing.T) {
 	// Create user session
 	token := "user-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create user session: %v", err)
 	}
 
-	handler := AdminAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -194,18 +224,24 @@ func TestAdminAuth_UserSessionWithoutAdminRole(t *testing.T) {
 // TestCSRFProtection_ValidToken tests CSRF protection with valid token
 func TestCSRFProtection_ValidToken(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create admin session
 	sessionToken := "admin-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err := database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
 	csrfToken := "test-csrf-token"
 
-	handler := CSRFProtection(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -226,16 +262,22 @@ func TestCSRFProtection_ValidToken(t *testing.T) {
 // TestCSRFProtection_MissingToken tests CSRF protection with missing token
 func TestCSRFProtection_MissingToken(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create admin session
 	sessionToken := "admin-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err := database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := CSRFProtection(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -253,16 +295,22 @@ func TestCSRFProtection_MissingToken(t *testing.T) {
 // TestCSRFProtection_TokenMismatch tests CSRF protection with mismatched tokens
 func TestCSRFProtection_TokenMismatch(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create admin session
 	sessionToken := "admin-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err := database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := CSRFProtection(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -282,8 +330,13 @@ func TestCSRFProtection_TokenMismatch(t *testing.T) {
 // TestCSRFProtection_GetRequest tests CSRF protection doesn't block GET requests
 func TestCSRFProtection_GetRequest(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := CSRFProtection(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -301,8 +354,13 @@ func TestCSRFProtection_GetRequest(t *testing.T) {
 // TestCSRFProtection_NoSession tests CSRF protection with no session
 func TestCSRFProtection_NoSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := CSRFProtection(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

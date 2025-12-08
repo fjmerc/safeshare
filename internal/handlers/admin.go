@@ -1209,8 +1209,7 @@ func AdminCleanupPartialUploadsHandler(repos *repository.Repositories, cfg *conf
 		)
 
 		// Clean up abandoned uploads
-		// NOTE: CleanupAbandonedUploads still uses *sql.DB - will be migrated in Task 1.3.7
-		result, err := utils.CleanupAbandonedUploads(repos.DB, cfg.UploadDir, expiryHours)
+		result, err := utils.CleanupAbandonedUploads(repos, cfg.UploadDir, expiryHours)
 		if err != nil {
 			slog.Error("failed to cleanup partial uploads",
 				"error", err,

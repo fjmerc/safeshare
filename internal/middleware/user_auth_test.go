@@ -1,26 +1,33 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // TestUserAuth_ValidSession tests UserAuth middleware with valid session
 func TestUserAuth_ValidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "testuser", "test@example.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -28,12 +35,12 @@ func TestUserAuth_ValidSession(t *testing.T) {
 	// Create session
 	token := "valid-user-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check that user is in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
@@ -57,8 +64,13 @@ func TestUserAuth_ValidSession(t *testing.T) {
 // TestUserAuth_NoSession tests UserAuth middleware with no session cookie
 func TestUserAuth_NoSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -91,8 +103,13 @@ func TestUserAuth_NoSession(t *testing.T) {
 // TestUserAuth_InvalidSession tests UserAuth middleware with invalid session token
 func TestUserAuth_InvalidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -110,13 +127,19 @@ func TestUserAuth_InvalidSession(t *testing.T) {
 // TestUserAuth_ExpiredSession tests UserAuth middleware with expired session
 func TestUserAuth_ExpiredSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "testuser", "test@example.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -124,12 +147,12 @@ func TestUserAuth_ExpiredSession(t *testing.T) {
 	// Create expired session
 	token := "expired-user-session"
 	expiresAt := time.Now().Add(-1 * time.Hour) // expired
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -147,19 +170,25 @@ func TestUserAuth_ExpiredSession(t *testing.T) {
 // TestUserAuth_InactiveUser tests UserAuth middleware with inactive user
 func TestUserAuth_InactiveUser(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create inactive user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "inactiveuser", "inactive@example.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "inactiveuser", "inactive@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
 	// Deactivate the user
-	err = database.SetUserActive(db, user.ID, false)
+	err = repos.Users.SetActive(ctx, user.ID, false)
 	if err != nil {
 		t.Fatalf("failed to deactivate user: %v", err)
 	}
@@ -167,12 +196,12 @@ func TestUserAuth_InactiveUser(t *testing.T) {
 	// Create session
 	token := "inactive-user-session"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -204,13 +233,19 @@ func TestUserAuth_InactiveUser(t *testing.T) {
 // TestOptionalUserAuth_ValidSession tests OptionalUserAuth with valid session
 func TestOptionalUserAuth_ValidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "testuser", "test@example.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -218,12 +253,12 @@ func TestOptionalUserAuth_ValidSession(t *testing.T) {
 	// Create session
 	token := "valid-user-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check that user is in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
@@ -247,8 +282,13 @@ func TestOptionalUserAuth_ValidSession(t *testing.T) {
 // TestOptionalUserAuth_NoSession tests OptionalUserAuth without session (should continue)
 func TestOptionalUserAuth_NoSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
@@ -271,8 +311,13 @@ func TestOptionalUserAuth_NoSession(t *testing.T) {
 // TestOptionalUserAuth_InvalidSession tests OptionalUserAuth with invalid session (should continue)
 func TestOptionalUserAuth_InvalidSession(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
@@ -296,19 +341,25 @@ func TestOptionalUserAuth_InvalidSession(t *testing.T) {
 // TestOptionalUserAuth_InactiveUser tests OptionalUserAuth with inactive user (should continue without user)
 func TestOptionalUserAuth_InactiveUser(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create inactive user
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	passwordHash, err := utils.HashPassword("password123")
 	if err != nil {
 		t.Fatalf("failed to hash password: %v", err)
 	}
-	user, err := database.CreateUser(db, "inactiveuser", "inactive@example.com", string(passwordHash), "user", false)
+	user, err := repos.Users.Create(ctx, "inactiveuser", "inactive@example.com", passwordHash, "user", false)
 	if err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
 	// Deactivate the user
-	err = database.SetUserActive(db, user.ID, false)
+	err = repos.Users.SetActive(ctx, user.ID, false)
 	if err != nil {
 		t.Fatalf("failed to deactivate user: %v", err)
 	}
@@ -316,12 +367,12 @@ func TestOptionalUserAuth_InactiveUser(t *testing.T) {
 	// Create session
 	token := "inactive-user-session"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	err = database.CreateUserSession(db, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
+	err = repos.Users.CreateSession(ctx, user.ID, token, expiresAt, "127.0.0.1", "test-agent")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := OptionalUserAuth(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context (inactive) using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {

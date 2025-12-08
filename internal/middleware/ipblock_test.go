@@ -1,11 +1,12 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 )
 
@@ -22,13 +23,19 @@ func (m *mockProxyConfig) GetTrustedProxyIPs() string {
 
 func TestIPBlockCheck_BlockedIP(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block an IP
-	if err := database.BlockIP(db, "192.168.1.100", "test block", "test"); err != nil {
+	if err := repos.Admin.BlockIP(ctx, "192.168.1.100", "test block", "test"); err != nil {
 		t.Fatalf("failed to block IP: %v", err)
 	}
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -47,8 +54,13 @@ func TestIPBlockCheck_BlockedIP(t *testing.T) {
 
 func TestIPBlockCheck_AllowedIP(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -67,13 +79,19 @@ func TestIPBlockCheck_AllowedIP(t *testing.T) {
 
 func TestIPBlockCheck_XForwardedFor(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block the real client IP (from X-Forwarded-For)
-	if err := database.BlockIP(db, "203.0.113.1", "test block", "test"); err != nil {
+	if err := repos.Admin.BlockIP(ctx, "203.0.113.1", "test block", "test"); err != nil {
 		t.Fatalf("failed to block IP: %v", err)
 	}
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -93,12 +111,18 @@ func TestIPBlockCheck_XForwardedFor(t *testing.T) {
 
 func TestIPBlockCheck_UnblockIP(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block then unblock
-	database.BlockIP(db, "192.168.1.100", "test block", "test")
-	database.UnblockIP(db, "192.168.1.100")
+	repos.Admin.BlockIP(ctx, "192.168.1.100", "test block", "test")
+	repos.Admin.UnblockIP(ctx, "192.168.1.100")
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -117,6 +141,12 @@ func TestIPBlockCheck_UnblockIP(t *testing.T) {
 
 func TestIPBlockCheck_MultipleBlockedIPs(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block multiple IPs
 	blockedIPs := []string{
@@ -126,12 +156,12 @@ func TestIPBlockCheck_MultipleBlockedIPs(t *testing.T) {
 	}
 
 	for _, ip := range blockedIPs {
-		if err := database.BlockIP(db, ip, "test block", "test"); err != nil {
+		if err := repos.Admin.BlockIP(ctx, ip, "test block", "test"); err != nil {
 			t.Fatalf("failed to block IP %s: %v", ip, err)
 		}
 	}
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -163,13 +193,19 @@ func TestIPBlockCheck_MultipleBlockedIPs(t *testing.T) {
 
 func TestIPBlockCheck_IPv6(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block IPv6 address (without brackets - ExtractIP removes them)
-	if err := database.BlockIP(db, "2001:db8::1", "test block", "test"); err != nil {
+	if err := repos.Admin.BlockIP(ctx, "2001:db8::1", "test block", "test"); err != nil {
 		t.Fatalf("failed to block IPv6: %v", err)
 	}
 
-	middleware := IPBlockCheck(db, &mockProxyConfig{})
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
