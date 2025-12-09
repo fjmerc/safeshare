@@ -74,3 +74,9 @@ type RotateAPITokenResponse struct {
 	RotatedAt   time.Time  `json:"rotated_at"` // When rotation occurred
 	Warning     string     `json:"warning"`
 }
+
+// APITokenWithStats represents an API token list item with usage statistics.
+type APITokenWithStats struct {
+	APITokenListItem
+	UsageStats *TokenUsageStats `json:"usage_stats,omitempty"`
+}

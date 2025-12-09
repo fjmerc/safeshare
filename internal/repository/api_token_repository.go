@@ -76,4 +76,14 @@ type APITokenRepository interface {
 	// CleanupOldUsageLogs removes usage logs older than the specified retention period.
 	// Returns the number of logs deleted.
 	CleanupOldUsageLogs(ctx context.Context, olderThan time.Time) (int64, error)
+
+	// GetUsageStats retrieves aggregated usage statistics for a token.
+	// Statistics include total requests, last 24h requests, unique IPs, and top 5 endpoints.
+	// Returns empty stats (not nil) for tokens with no usage data.
+	GetUsageStats(ctx context.Context, tokenID int64) (*models.TokenUsageStats, error)
+
+	// GetUsageStatsBatch retrieves usage statistics for multiple tokens in a single batch.
+	// This is more efficient than calling GetUsageStats for each token individually.
+	// Returns a map of tokenID to TokenUsageStats. Missing tokens get empty stats.
+	GetUsageStatsBatch(ctx context.Context, tokenIDs []int64) (map[int64]*models.TokenUsageStats, error)
 }

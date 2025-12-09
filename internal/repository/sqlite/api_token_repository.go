@@ -770,5 +770,189 @@ func (r *APITokenRepository) CleanupOldUsageLogs(ctx context.Context, olderThan 
 	return rows, nil
 }
 
+// GetUsageStats retrieves aggregated usage statistics for a token.
+// Statistics include total requests, last 24h requests, unique IPs, and top 5 endpoints.
+// Returns empty stats (not nil) for tokens with no usage data.
+func (r *APITokenRepository) GetUsageStats(ctx context.Context, tokenID int64) (*models.TokenUsageStats, error) {
+	if tokenID <= 0 {
+		return nil, fmt.Errorf("token_id must be positive")
+	}
+
+	stats := &models.TokenUsageStats{
+		TopEndpoints: []models.EndpointStat{},
+	}
+
+	// Get total requests (all time)
+	totalQuery := `SELECT COUNT(*) FROM api_token_usage WHERE token_id = ?`
+	err := r.db.QueryRowContext(ctx, totalQuery, tokenID).Scan(&stats.TotalRequests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total requests: %w", err)
+	}
+
+	// Get last 24h requests
+	// Use datetime('now', '-24 hours') for SQLite
+	last24hQuery := `SELECT COUNT(*) FROM api_token_usage 
+		WHERE token_id = ? AND datetime(timestamp) > datetime('now', '-24 hours')`
+	err = r.db.QueryRowContext(ctx, last24hQuery, tokenID).Scan(&stats.Last24hRequests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last 24h requests: %w", err)
+	}
+
+	// Get unique IPs (all time)
+	uniqueIPsQuery := `SELECT COUNT(DISTINCT ip_address) FROM api_token_usage WHERE token_id = ?`
+	err = r.db.QueryRowContext(ctx, uniqueIPsQuery, tokenID).Scan(&stats.UniqueIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unique IPs: %w", err)
+	}
+
+	// Get top 5 endpoints by request count
+	topEndpointsQuery := `SELECT endpoint, COUNT(*) as count 
+		FROM api_token_usage 
+		WHERE token_id = ? 
+		GROUP BY endpoint 
+		ORDER BY count DESC 
+		LIMIT 5`
+	rows, err := r.db.QueryContext(ctx, topEndpointsQuery, tokenID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top endpoints: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ep models.EndpointStat
+		if err := rows.Scan(&ep.Endpoint, &ep.Count); err != nil {
+			return nil, fmt.Errorf("failed to scan endpoint stat: %w", err)
+		}
+		stats.TopEndpoints = append(stats.TopEndpoints, ep)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating endpoint stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// GetUsageStatsBatch retrieves usage statistics for multiple tokens in a single batch.
+// This is more efficient than calling GetUsageStats for each token individually (avoids N+1 queries).
+// Returns a map of tokenID to TokenUsageStats. Missing tokens get empty stats.
+func (r *APITokenRepository) GetUsageStatsBatch(ctx context.Context, tokenIDs []int64) (map[int64]*models.TokenUsageStats, error) {
+	// Initialize result map with empty stats for all requested tokens
+	result := make(map[int64]*models.TokenUsageStats, len(tokenIDs))
+	for _, id := range tokenIDs {
+		result[id] = &models.TokenUsageStats{
+			TopEndpoints: []models.EndpointStat{},
+		}
+	}
+
+	if len(tokenIDs) == 0 {
+		return result, nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(tokenIDs))
+	args := make([]interface{}, len(tokenIDs))
+	for i, id := range tokenIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Query 1: Get total requests per token
+	totalQuery := `SELECT token_id, COUNT(*) as total FROM api_token_usage 
+		WHERE token_id IN (` + inClause + `) GROUP BY token_id`
+	rows, err := r.db.QueryContext(ctx, totalQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total requests batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tokenID, total int64
+		if err := rows.Scan(&tokenID, &total); err != nil {
+			return nil, fmt.Errorf("failed to scan total requests: %w", err)
+		}
+		if stats, ok := result[tokenID]; ok {
+			stats.TotalRequests = total
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating total requests: %w", err)
+	}
+
+	// Query 2: Get last 24h requests per token
+	last24hQuery := `SELECT token_id, COUNT(*) as total FROM api_token_usage 
+		WHERE token_id IN (` + inClause + `) AND datetime(timestamp) > datetime('now', '-24 hours') 
+		GROUP BY token_id`
+	rows, err = r.db.QueryContext(ctx, last24hQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last 24h requests batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tokenID, total int64
+		if err := rows.Scan(&tokenID, &total); err != nil {
+			return nil, fmt.Errorf("failed to scan last 24h requests: %w", err)
+		}
+		if stats, ok := result[tokenID]; ok {
+			stats.Last24hRequests = total
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating last 24h requests: %w", err)
+	}
+
+	// Query 3: Get unique IPs per token
+	uniqueIPsQuery := `SELECT token_id, COUNT(DISTINCT ip_address) as unique_ips FROM api_token_usage 
+		WHERE token_id IN (` + inClause + `) GROUP BY token_id`
+	rows, err = r.db.QueryContext(ctx, uniqueIPsQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unique IPs batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tokenID, uniqueIPs int64
+		if err := rows.Scan(&tokenID, &uniqueIPs); err != nil {
+			return nil, fmt.Errorf("failed to scan unique IPs: %w", err)
+		}
+		if stats, ok := result[tokenID]; ok {
+			stats.UniqueIPs = uniqueIPs
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating unique IPs: %w", err)
+	}
+
+	// Query 4: Get top 5 endpoints per token using window function
+	// SQLite supports ROW_NUMBER() in version 3.25.0+
+	topEndpointsQuery := `WITH ranked AS (
+		SELECT token_id, endpoint, COUNT(*) as count,
+			ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY COUNT(*) DESC) as rn
+		FROM api_token_usage 
+		WHERE token_id IN (` + inClause + `) 
+		GROUP BY token_id, endpoint
+	)
+	SELECT token_id, endpoint, count FROM ranked WHERE rn <= 5`
+	rows, err = r.db.QueryContext(ctx, topEndpointsQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top endpoints batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tokenID int64
+		var ep models.EndpointStat
+		if err := rows.Scan(&tokenID, &ep.Endpoint, &ep.Count); err != nil {
+			return nil, fmt.Errorf("failed to scan endpoint stat: %w", err)
+		}
+		if stats, ok := result[tokenID]; ok {
+			stats.TopEndpoints = append(stats.TopEndpoints, ep)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating endpoint stats: %w", err)
+	}
+
+	return result, nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

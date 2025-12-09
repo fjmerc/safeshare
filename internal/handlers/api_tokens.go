@@ -219,6 +219,7 @@ func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // ListAPITokensHandler lists all tokens for the authenticated user
+// Deprecated: Use ListAPITokensWithStatsHandler for usage statistics support.
 func ListAPITokensHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -248,6 +249,72 @@ func ListAPITokensHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"tokens": tokens,
+		})
+	}
+}
+
+// ListAPITokensWithStatsHandler lists all tokens for the authenticated user with usage statistics.
+// Uses the repository pattern for database access and includes usage stats for each token.
+func ListAPITokensWithStatsHandler(repos *repository.Repositories) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Get user from context
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		tokens, err := repos.APITokens.GetByUserID(ctx, user.ID)
+		if err != nil {
+			slog.Error("failed to list API tokens", "error", err, "user_id", user.ID)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure we return empty array instead of null
+		if tokens == nil {
+			tokens = []models.APITokenListItem{}
+		}
+
+		// Collect token IDs for batch stats query
+		tokenIDs := make([]int64, len(tokens))
+		for i, token := range tokens {
+			tokenIDs[i] = token.ID
+		}
+
+		// Batch fetch usage stats for all tokens (avoids N+1 query problem)
+		statsMap, err := repos.APITokens.GetUsageStatsBatch(ctx, tokenIDs)
+		if err != nil {
+			slog.Warn("failed to get batch usage stats", "error", err, "user_id", user.ID)
+			// Initialize empty map if batch query fails
+			statsMap = make(map[int64]*models.TokenUsageStats)
+		}
+
+		// Build response with usage stats for each token
+		tokensWithStats := make([]models.APITokenWithStats, 0, len(tokens))
+		for _, token := range tokens {
+			tokenWithStats := models.APITokenWithStats{
+				APITokenListItem: token,
+			}
+
+			// Get stats from batch result
+			if stats, ok := statsMap[token.ID]; ok {
+				tokenWithStats.UsageStats = stats
+			}
+
+			tokensWithStats = append(tokensWithStats, tokenWithStats)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tokens": tokensWithStats,
 		})
 	}
 }
@@ -456,6 +523,7 @@ func RotateTokenHandler(repos *repository.Repositories, cfg *config.Config) http
 }
 
 // AdminListAPITokensHandler lists all API tokens (admin only)
+// Deprecated: Use AdminListAPITokensWithStatsHandler for usage statistics support.
 func AdminListAPITokensHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -492,6 +560,82 @@ func AdminListAPITokensHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"tokens": tokens,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
+	}
+}
+
+// AdminListAPITokensWithStatsHandler lists all API tokens with usage statistics (admin only).
+// Uses the repository pattern for database access and includes usage stats for each token.
+func AdminListAPITokensWithStatsHandler(repos *repository.Repositories) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Parse pagination
+		limit := 50
+		offset := 0
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+				limit = parsed
+			}
+		}
+		if o := r.URL.Query().Get("offset"); o != "" {
+			if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+				offset = parsed
+			}
+		}
+
+		tokens, total, err := repos.APITokens.GetAllAdmin(ctx, limit, offset)
+		if err != nil {
+			slog.Error("failed to list API tokens (admin)", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure we return empty array instead of null
+		if tokens == nil {
+			tokens = []models.APITokenListItem{}
+		}
+
+		// Collect token IDs for batch stats query
+		tokenIDs := make([]int64, len(tokens))
+		for i, token := range tokens {
+			tokenIDs[i] = token.ID
+		}
+
+		// Batch fetch usage stats for all tokens (avoids N+1 query problem)
+		statsMap, err := repos.APITokens.GetUsageStatsBatch(ctx, tokenIDs)
+		if err != nil {
+			slog.Warn("failed to get batch usage stats (admin)", "error", err)
+			// Initialize empty map if batch query fails
+			statsMap = make(map[int64]*models.TokenUsageStats)
+		}
+
+		// Build response with usage stats for each token
+		tokensWithStats := make([]models.APITokenWithStats, 0, len(tokens))
+		for _, token := range tokens {
+			tokenWithStats := models.APITokenWithStats{
+				APITokenListItem: token,
+			}
+
+			// Get stats from batch result
+			if stats, ok := statsMap[token.ID]; ok {
+				tokenWithStats.UsageStats = stats
+			}
+
+			tokensWithStats = append(tokensWithStats, tokenWithStats)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tokens": tokensWithStats,
 			"total":  total,
 			"limit":  limit,
 			"offset": offset,

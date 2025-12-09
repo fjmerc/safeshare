@@ -596,3 +596,308 @@ func TestAPITokenRepository_Interface(t *testing.T) {
 	// Verify APITokenRepository implements repository.APITokenRepository
 	var _ repository.APITokenRepository = (*APITokenRepository)(nil)
 }
+
+func TestAPITokenRepository_GetUsageStats(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+
+	// Create a token
+	token, err := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Get stats for token with no usage
+	stats, err := repo.GetUsageStats(ctx, token.ID)
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	if stats.TotalRequests != 0 {
+		t.Errorf("expected TotalRequests 0, got %d", stats.TotalRequests)
+	}
+	if stats.Last24hRequests != 0 {
+		t.Errorf("expected Last24hRequests 0, got %d", stats.Last24hRequests)
+	}
+	if stats.UniqueIPs != 0 {
+		t.Errorf("expected UniqueIPs 0, got %d", stats.UniqueIPs)
+	}
+	if len(stats.TopEndpoints) != 0 {
+		t.Errorf("expected 0 TopEndpoints, got %d", len(stats.TopEndpoints))
+	}
+}
+
+func TestAPITokenRepository_GetUsageStats_WithUsage(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+
+	// Create a token
+	token, err := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Log usage from different IPs and endpoints
+	// Endpoint 1: 5 requests from 2 IPs
+	for i := 0; i < 3; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/upload", "192.168.1.100", "Test-Agent", 200)
+	}
+	for i := 0; i < 2; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/upload", "192.168.1.101", "Test-Agent", 200)
+	}
+
+	// Endpoint 2: 3 requests from 1 IP
+	for i := 0; i < 3; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/download", "192.168.1.100", "Test-Agent", 200)
+	}
+
+	// Endpoint 3: 2 requests
+	for i := 0; i < 2; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/files", "192.168.1.102", "Test-Agent", 200)
+	}
+
+	// Get stats
+	stats, err := repo.GetUsageStats(ctx, token.ID)
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	// Total: 5 + 3 + 2 = 10 requests
+	if stats.TotalRequests != 10 {
+		t.Errorf("expected TotalRequests 10, got %d", stats.TotalRequests)
+	}
+
+	// All should be within last 24h
+	if stats.Last24hRequests != 10 {
+		t.Errorf("expected Last24hRequests 10, got %d", stats.Last24hRequests)
+	}
+
+	// Unique IPs: 192.168.1.100, 192.168.1.101, 192.168.1.102 = 3
+	if stats.UniqueIPs != 3 {
+		t.Errorf("expected UniqueIPs 3, got %d", stats.UniqueIPs)
+	}
+
+	// Top endpoints should be sorted by count
+	if len(stats.TopEndpoints) < 3 {
+		t.Fatalf("expected at least 3 TopEndpoints, got %d", len(stats.TopEndpoints))
+	}
+
+	// First should be /api/upload with 5 requests
+	if stats.TopEndpoints[0].Endpoint != "/api/upload" {
+		t.Errorf("expected first endpoint to be /api/upload, got %s", stats.TopEndpoints[0].Endpoint)
+	}
+	if stats.TopEndpoints[0].Count != 5 {
+		t.Errorf("expected /api/upload count 5, got %d", stats.TopEndpoints[0].Count)
+	}
+
+	// Second should be /api/download with 3 requests
+	if stats.TopEndpoints[1].Endpoint != "/api/download" {
+		t.Errorf("expected second endpoint to be /api/download, got %s", stats.TopEndpoints[1].Endpoint)
+	}
+	if stats.TopEndpoints[1].Count != 3 {
+		t.Errorf("expected /api/download count 3, got %d", stats.TopEndpoints[1].Count)
+	}
+}
+
+func TestAPITokenRepository_GetUsageStats_InvalidTokenID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	// Test with zero token ID
+	_, err := repo.GetUsageStats(ctx, 0)
+	if err == nil {
+		t.Error("expected error for zero token ID")
+	}
+
+	// Test with negative token ID
+	_, err = repo.GetUsageStats(ctx, -1)
+	if err == nil {
+		t.Error("expected error for negative token ID")
+	}
+}
+
+func TestAPITokenRepository_GetUsageStats_NonExistentToken(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	// Get stats for non-existent token (should return empty stats, not error)
+	stats, err := repo.GetUsageStats(ctx, 99999)
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	if stats.TotalRequests != 0 {
+		t.Errorf("expected TotalRequests 0 for non-existent token, got %d", stats.TotalRequests)
+	}
+}
+
+func TestAPITokenRepository_GetUsageStats_TopEndpointsLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+
+	// Create a token
+	token, err := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Log usage to 10 different endpoints
+	for i := 0; i < 10; i++ {
+		endpoint := "/api/endpoint" + string(rune('A'+i))
+		for j := 0; j <= i; j++ { // Each endpoint gets (i+1) requests
+			_ = repo.LogUsage(ctx, token.ID, endpoint, "192.168.1.100", "Test-Agent", 200)
+		}
+	}
+
+	// Get stats
+	stats, err := repo.GetUsageStats(ctx, token.ID)
+	if err != nil {
+		t.Fatalf("GetUsageStats failed: %v", err)
+	}
+
+	// Should only return top 5 endpoints
+	if len(stats.TopEndpoints) != 5 {
+		t.Errorf("expected exactly 5 TopEndpoints, got %d", len(stats.TopEndpoints))
+	}
+
+	// First endpoint should have the most requests (10)
+	if stats.TopEndpoints[0].Count != 10 {
+		t.Errorf("expected first endpoint to have 10 requests, got %d", stats.TopEndpoints[0].Count)
+	}
+}
+
+func TestAPITokenRepository_GetUsageStatsBatch(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create multiple tokens
+	var tokenIDs []int64
+	for i := 0; i < 3; i++ {
+		tokenHash := generateTokenHash(t, "test-token-"+string(rune('a'+i)))
+		token, err := repo.Create(ctx, user.ID, "Token "+string(rune('A'+i)), tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		tokenIDs = append(tokenIDs, token.ID)
+
+		// Add usage for each token (different amounts)
+		for j := 0; j <= i; j++ {
+			_ = repo.LogUsage(ctx, token.ID, "/api/test", "192.168.1.100", "Test-Agent", 200)
+		}
+	}
+
+	// Get batch stats
+	statsMap, err := repo.GetUsageStatsBatch(ctx, tokenIDs)
+	if err != nil {
+		t.Fatalf("GetUsageStatsBatch failed: %v", err)
+	}
+
+	// Verify all tokens have stats
+	if len(statsMap) != 3 {
+		t.Errorf("expected 3 stats entries, got %d", len(statsMap))
+	}
+
+	// Verify counts are correct
+	for i, tokenID := range tokenIDs {
+		stats, ok := statsMap[tokenID]
+		if !ok {
+			t.Errorf("missing stats for token %d", tokenID)
+			continue
+		}
+		expectedCount := int64(i + 1) // Token 0 has 1 req, token 1 has 2 reqs, token 2 has 3 reqs
+		if stats.TotalRequests != expectedCount {
+			t.Errorf("token %d: expected TotalRequests %d, got %d", tokenID, expectedCount, stats.TotalRequests)
+		}
+	}
+}
+
+func TestAPITokenRepository_GetUsageStatsBatch_EmptyList(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	// Get batch stats with empty list
+	statsMap, err := repo.GetUsageStatsBatch(ctx, []int64{})
+	if err != nil {
+		t.Fatalf("GetUsageStatsBatch failed: %v", err)
+	}
+
+	if len(statsMap) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(statsMap))
+	}
+}
+
+func TestAPITokenRepository_GetUsageStatsBatch_NoUsage(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create tokens without any usage
+	var tokenIDs []int64
+	for i := 0; i < 2; i++ {
+		tokenHash := generateTokenHash(t, "test-token-"+string(rune('a'+i)))
+		token, _ := repo.Create(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+		tokenIDs = append(tokenIDs, token.ID)
+	}
+
+	// Get batch stats
+	statsMap, err := repo.GetUsageStatsBatch(ctx, tokenIDs)
+	if err != nil {
+		t.Fatalf("GetUsageStatsBatch failed: %v", err)
+	}
+
+	// Verify all tokens have empty stats
+	for _, tokenID := range tokenIDs {
+		stats, ok := statsMap[tokenID]
+		if !ok {
+			t.Errorf("missing stats entry for token %d", tokenID)
+			continue
+		}
+		if stats.TotalRequests != 0 {
+			t.Errorf("expected TotalRequests 0, got %d", stats.TotalRequests)
+		}
+		if len(stats.TopEndpoints) != 0 {
+			t.Errorf("expected 0 TopEndpoints, got %d", len(stats.TopEndpoints))
+		}
+	}
+}

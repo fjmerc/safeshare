@@ -330,14 +330,13 @@ func run() error {
 
 	// API Token management routes
 	// Note: Token creation requires session auth (cannot create tokens using tokens)
-	// Note: API Token handlers still use *sql.DB - use repos.DB for backward compatibility
 	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			// Create token - requires session auth only (no token audit needed for session-only ops)
 			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(repos.DB, cfg))).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
-			// List tokens - allows both session and token auth (with token audit logging)
-			userAuth(tokenAudit(http.HandlerFunc(handlers.ListAPITokensHandler(repos.DB)))).ServeHTTP(w, r)
+			// List tokens with usage stats - allows both session and token auth (with token audit logging)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.ListAPITokensWithStatsHandler(repos)))).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -547,10 +546,10 @@ func run() error {
 		})
 
 		// Admin API Token management routes
-		// Note: Admin token handlers still use *sql.DB - use repos.DB for backward compatibility
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
-				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensHandler(repos.DB))).ServeHTTP(w, r)
+				// List all tokens with usage stats
+				adminAuth(http.HandlerFunc(handlers.AdminListAPITokensWithStatsHandler(repos))).ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}

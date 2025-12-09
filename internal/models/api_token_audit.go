@@ -32,3 +32,17 @@ type APITokenUsageResponse struct {
 	StartDate  *time.Time         `json:"start_date,omitempty"`
 	EndDate    *time.Time         `json:"end_date,omitempty"`
 }
+
+// EndpointStat represents usage statistics for a single endpoint.
+type EndpointStat struct {
+	Endpoint string `json:"endpoint"`
+	Count    int64  `json:"count"`
+}
+
+// TokenUsageStats provides aggregated usage statistics for an API token.
+type TokenUsageStats struct {
+	TotalRequests   int64          `json:"total_requests"`
+	Last24hRequests int64          `json:"last_24h_requests"`
+	UniqueIPs       int64          `json:"unique_ips"`
+	TopEndpoints    []EndpointStat `json:"top_endpoints"`
+}
