@@ -902,5 +902,55 @@ func (r *APITokenRepository) GetUsageStatsBatch(ctx context.Context, tokenIDs []
 	return result, nil
 }
 
+// RevokeMultiple revokes multiple tokens by their IDs (admin only, no user check).
+// Returns the count of tokens actually revoked.
+func (r *APITokenRepository) RevokeMultiple(ctx context.Context, tokenIDs []int64) (int, error) {
+	if len(tokenIDs) == 0 {
+		return 0, nil
+	}
+
+	// Validate all IDs are positive
+	for _, id := range tokenIDs {
+		if id <= 0 {
+			return 0, fmt.Errorf("token_id must be positive")
+		}
+	}
+
+	// Build parameterized IN clause
+	placeholders := make([]string, len(tokenIDs))
+	args := make([]interface{}, len(tokenIDs))
+	for i, id := range tokenIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	query := `UPDATE api_tokens SET is_active = false WHERE id IN (` + inClause + `) AND is_active = true`
+
+	result, err := r.pool.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to revoke multiple tokens: %w", err)
+	}
+
+	return int(result.RowsAffected()), nil
+}
+
+// RevokeAllByUserID revokes all active tokens for a specific user.
+// Returns the count of tokens revoked.
+func (r *APITokenRepository) RevokeAllByUserID(ctx context.Context, userID int64) (int, error) {
+	if userID <= 0 {
+		return 0, fmt.Errorf("user_id must be positive")
+	}
+
+	query := `UPDATE api_tokens SET is_active = false WHERE user_id = $1 AND is_active = true`
+
+	result, err := r.pool.Pool.Exec(ctx, query, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to revoke all user tokens: %w", err)
+	}
+
+	return int(result.RowsAffected()), nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

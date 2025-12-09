@@ -559,6 +559,16 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		// Bulk token revocation - revoke multiple tokens by IDs
+		mux.HandleFunc("/admin/api/tokens/bulk-revoke", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBulkRevokeTokensHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
+		// Revoke all tokens for a specific user
+		mux.HandleFunc("/admin/api/tokens/revoke-user/", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeUserTokensHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
 		// Token usage audit logs
 		mux.HandleFunc("/admin/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
 			// Only handle /admin/api/tokens/{id}/usage pattern

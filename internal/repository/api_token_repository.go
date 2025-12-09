@@ -95,4 +95,12 @@ type APITokenRepository interface {
 	// This is more efficient than calling GetUsageStats for each token individually.
 	// Returns a map of tokenID to TokenUsageStats. Missing tokens get empty stats.
 	GetUsageStatsBatch(ctx context.Context, tokenIDs []int64) (map[int64]*models.TokenUsageStats, error)
+
+	// RevokeMultiple revokes multiple tokens by their IDs (admin only, no user check).
+	// Returns the count of tokens actually revoked.
+	RevokeMultiple(ctx context.Context, tokenIDs []int64) (int, error)
+
+	// RevokeAllByUserID revokes all active tokens for a specific user.
+	// Returns the count of tokens revoked.
+	RevokeAllByUserID(ctx context.Context, userID int64) (int, error)
 }

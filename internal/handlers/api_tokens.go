@@ -22,6 +22,9 @@ import (
 // tokenRotatePathRegex matches /api/tokens/{id}/rotate where id is numeric
 var tokenRotatePathRegex = regexp.MustCompile(`^/api/tokens/([0-9]+)/rotate/?$`)
 
+// adminRevokeUserTokensPathRegex matches /admin/api/tokens/revoke-user/{userID}
+var adminRevokeUserTokensPathRegex = regexp.MustCompile(`^/admin/api/tokens/revoke-user/([0-9]+)/?$`)
+
 // CreateAPITokenHandler creates a new API token for the authenticated user.
 // Uses the repository pattern for database access and enforces configurable token limits.
 // Tokens can only be created via session auth (not via existing API token).
@@ -692,4 +695,261 @@ func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 			"message": "Token revoked successfully",
 		})
 	}
+}
+
+// BulkRevokeRequest represents the request body for bulk token revocation.
+type BulkRevokeRequest struct {
+	TokenIDs []int64 `json:"token_ids"`
+	Confirm  bool    `json:"confirm"`
+}
+
+// BulkRevokeResponse represents the response for bulk token revocation.
+type BulkRevokeResponse struct {
+	Message      string `json:"message"`
+	RevokedCount int    `json:"revoked_count"`
+}
+
+// AdminBulkRevokeTokensHandler revokes multiple API tokens by IDs (admin only).
+// Requires explicit confirmation in the request body for safety.
+// POST /admin/api/tokens/bulk-revoke
+func AdminBulkRevokeTokensHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Get admin info from context for logging
+		adminUsername := getAdminUsernameFromContext(r)
+		clientIP := getClientIPWithConfig(r, cfg)
+
+		// Parse request body
+		var req BulkRevokeRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Error("failed to parse bulk revoke request", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+				"code":  "INVALID_JSON",
+			})
+			return
+		}
+
+		// Require explicit confirmation for safety
+		if !req.Confirm {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Confirmation required: set 'confirm' to true",
+				"code":  "CONFIRMATION_REQUIRED",
+			})
+			return
+		}
+
+		// Validate token_ids array
+		if len(req.TokenIDs) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "At least one token ID is required",
+				"code":  "MISSING_TOKEN_IDS",
+			})
+			return
+		}
+
+		// Limit batch size for safety (prevent accidental mass revocations)
+		const maxBatchSize = 100
+		if len(req.TokenIDs) > maxBatchSize {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":     "Too many token IDs in single request",
+				"code":      "BATCH_SIZE_EXCEEDED",
+				"max_batch": maxBatchSize,
+			})
+			return
+		}
+
+		// Validate all token IDs are positive
+		for _, id := range req.TokenIDs {
+			if id <= 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid token ID: all IDs must be positive integers",
+					"code":  "INVALID_TOKEN_ID",
+				})
+				return
+			}
+		}
+
+		// Perform bulk revocation
+		revokedCount, err := repos.APITokens.RevokeMultiple(ctx, req.TokenIDs)
+		if err != nil {
+			slog.Error("failed to bulk revoke tokens",
+				"error", err,
+				"requested_count", len(req.TokenIDs),
+				"admin", adminUsername,
+				"ip", clientIP,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("bulk token revocation completed",
+			"requested_count", len(req.TokenIDs),
+			"revoked_count", revokedCount,
+			"token_ids", req.TokenIDs,
+			"admin", adminUsername,
+			"ip", clientIP,
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BulkRevokeResponse{
+			Message:      "Tokens revoked successfully",
+			RevokedCount: revokedCount,
+		})
+	}
+}
+
+// RevokeUserTokensRequest represents the request body for revoking all tokens of a user.
+type RevokeUserTokensRequest struct {
+	Confirm bool `json:"confirm"`
+}
+
+// RevokeUserTokensResponse represents the response for revoking all user tokens.
+type RevokeUserTokensResponse struct {
+	Message      string `json:"message"`
+	UserID       int64  `json:"user_id"`
+	RevokedCount int    `json:"revoked_count"`
+}
+
+// AdminRevokeUserTokensHandler revokes all API tokens for a specific user (admin only).
+// Requires explicit confirmation in the request body for safety.
+// POST /admin/api/tokens/revoke-user/{userID}
+func AdminRevokeUserTokensHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Get admin info from context for logging
+		adminUsername := getAdminUsernameFromContext(r)
+		clientIP := getClientIPWithConfig(r, cfg)
+
+		// Parse user ID from path
+		matches := adminRevokeUserTokensPathRegex.FindStringSubmatch(r.URL.Path)
+		if len(matches) != 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request path",
+				"code":  "INVALID_PATH",
+			})
+			return
+		}
+
+		userID, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil || userID <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid user ID",
+				"code":  "INVALID_USER_ID",
+			})
+			return
+		}
+
+		// Parse request body
+		var req RevokeUserTokensRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Error("failed to parse revoke user tokens request", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+				"code":  "INVALID_JSON",
+			})
+			return
+		}
+
+		// Require explicit confirmation for safety
+		if !req.Confirm {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Confirmation required: set 'confirm' to true",
+				"code":  "CONFIRMATION_REQUIRED",
+			})
+			return
+		}
+
+		// Verify user exists before revoking tokens
+		user, err := repos.Users.GetByID(ctx, userID)
+		if err != nil {
+			slog.Error("failed to get user for token revocation", "error", err, "user_id", userID)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if user == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+
+		// Perform revocation of all user tokens
+		revokedCount, err := repos.APITokens.RevokeAllByUserID(ctx, userID)
+		if err != nil {
+			slog.Error("failed to revoke all user tokens",
+				"error", err,
+				"user_id", userID,
+				"username", user.Username,
+				"admin", adminUsername,
+				"ip", clientIP,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("all user tokens revoked by admin",
+			"user_id", userID,
+			"username", user.Username,
+			"revoked_count", revokedCount,
+			"admin", adminUsername,
+			"ip", clientIP,
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RevokeUserTokensResponse{
+			Message:      "All user tokens revoked successfully",
+			UserID:       userID,
+			RevokedCount: revokedCount,
+		})
+	}
+}
+
+// getAdminUsernameFromContext extracts the admin username from the request context.
+// Returns "unknown" if the admin info is not available.
+// Note: AdminAuth middleware sets user context for users with admin role, but admin_session
+// authentication doesn't set user context. We check both sources.
+func getAdminUsernameFromContext(r *http.Request) string {
+	// Try to get from user context (for users with admin role via user_session)
+	if user := middleware.GetUserFromContext(r); user != nil && user.Role == "admin" {
+		return user.Username
+	}
+	// For admin_session-based authentication, the username is not stored in context
+	// In this case, return "admin" as a generic indicator
+	return "admin"
 }

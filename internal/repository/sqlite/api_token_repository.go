@@ -1045,5 +1045,67 @@ func (r *APITokenRepository) GetUsageStatsBatch(ctx context.Context, tokenIDs []
 	return result, nil
 }
 
+// RevokeMultiple revokes multiple tokens by their IDs (admin only, no user check).
+// Uses a batch UPDATE operation for efficiency.
+// Returns the count of tokens actually revoked (those that were active).
+func (r *APITokenRepository) RevokeMultiple(ctx context.Context, tokenIDs []int64) (int, error) {
+	if len(tokenIDs) == 0 {
+		return 0, nil
+	}
+
+	// Validate all token IDs are positive
+	for _, id := range tokenIDs {
+		if id <= 0 {
+			return 0, fmt.Errorf("token_id must be positive")
+		}
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(tokenIDs))
+	args := make([]interface{}, len(tokenIDs))
+	for i, id := range tokenIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Only revoke active tokens
+	query := `UPDATE api_tokens SET is_active = 0 WHERE id IN (` + inClause + `) AND is_active = 1`
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to revoke tokens: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return int(rows), nil
+}
+
+// RevokeAllByUserID revokes all active tokens for a specific user.
+// Returns the count of tokens revoked.
+func (r *APITokenRepository) RevokeAllByUserID(ctx context.Context, userID int64) (int, error) {
+	if userID <= 0 {
+		return 0, fmt.Errorf("user_id must be positive")
+	}
+
+	query := `UPDATE api_tokens SET is_active = 0 WHERE user_id = ? AND is_active = 1`
+
+	result, err := r.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to revoke user tokens: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return int(rows), nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)
