@@ -28,12 +28,27 @@ const (
 
 	// ContextKeyTokenScopes stores the API token scopes if token auth was used
 	ContextKeyTokenScopes contextKey = "api_token_scopes"
+
+	// ContextKeyTokenExpiresAt stores the API token expiration time if token auth was used
+	ContextKeyTokenExpiresAt contextKey = "api_token_expires_at"
 )
 
 // Authentication type constants
 const (
 	AuthTypeSession  = "session"
 	AuthTypeAPIToken = "api_token"
+)
+
+// Token expiration warning constants
+const (
+	// TokenExpiringSoonThreshold is the duration before expiration to warn clients (7 days)
+	TokenExpiringSoonThreshold = 7 * 24 * time.Hour
+
+	// HeaderTokenExpiresAt is the header name for token expiration timestamp
+	HeaderTokenExpiresAt = "X-Token-Expires-At"
+
+	// HeaderTokenExpiresSoon is the header name indicating token expires soon
+	HeaderTokenExpiresSoon = "X-Token-Expires-Soon"
 )
 
 // extractBearerToken extracts the token from Authorization: Bearer header
@@ -64,6 +79,8 @@ func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 					return
 				}
 				if user != nil {
+					// Add token expiration warning headers before serving
+					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -107,6 +124,8 @@ func OptionalUserAuth(repos *repository.Repositories) func(http.Handler) http.Ha
 			if bearerToken != "" {
 				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken)
 				if err == nil && user != nil {
+					// Add token expiration warning headers before serving
+					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -256,8 +275,29 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 	newCtx = context.WithValue(newCtx, ContextKeyAuthType, AuthTypeAPIToken)
 	newCtx = context.WithValue(newCtx, ContextKeyTokenID, apiToken.ID)
 	newCtx = context.WithValue(newCtx, ContextKeyTokenScopes, apiToken.Scopes)
+	if apiToken.ExpiresAt != nil {
+		newCtx = context.WithValue(newCtx, ContextKeyTokenExpiresAt, apiToken.ExpiresAt)
+	}
 
 	return user, newCtx, nil
+}
+
+// addTokenExpirationHeaders adds X-Token-Expires-At and X-Token-Expires-Soon headers
+// if the request was authenticated via API token with an expiration date.
+// This allows API clients to proactively refresh tokens before they expire.
+func addTokenExpirationHeaders(w http.ResponseWriter, ctx context.Context) {
+	expiresAt, ok := ctx.Value(ContextKeyTokenExpiresAt).(*time.Time)
+	if !ok || expiresAt == nil {
+		return
+	}
+
+	// Always add X-Token-Expires-At header for tokens with expiration
+	w.Header().Set(HeaderTokenExpiresAt, expiresAt.Format(time.RFC3339))
+
+	// Add X-Token-Expires-Soon if within threshold (7 days)
+	if time.Until(*expiresAt) < TokenExpiringSoonThreshold {
+		w.Header().Set(HeaderTokenExpiresSoon, "true")
+	}
 }
 
 // authenticateWithSession validates a session cookie and returns the user
@@ -400,6 +440,16 @@ func GetTokenScopesFromContext(r *http.Request) string {
 		return ""
 	}
 	return scopes
+}
+
+// GetTokenExpiresAtFromContext retrieves the API token expiration time from request context
+// Returns nil if not using token auth or token doesn't expire
+func GetTokenExpiresAtFromContext(r *http.Request) *time.Time {
+	expiresAt, ok := r.Context().Value(ContextKeyTokenExpiresAt).(*time.Time)
+	if !ok {
+		return nil
+	}
+	return expiresAt
 }
 
 // authError represents an authentication error with HTTP status code
