@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
@@ -158,6 +159,23 @@ func run() error {
 
 	// Make webhook dispatcher available to handlers
 	handlers.SetWebhookDispatcher(webhookDispatcher)
+
+	// Initialize backup scheduler
+	backupScheduler := backup.NewScheduler(cfg, repos)
+	if cfg.AutoBackup != nil && cfg.AutoBackup.Enabled {
+		if err := backupScheduler.Start(context.Background()); err != nil {
+			slog.Error("failed to start backup scheduler", "error", err)
+		} else {
+			slog.Info("backup scheduler started",
+				"schedule", cfg.AutoBackup.Schedule,
+				"mode", cfg.AutoBackup.Mode,
+				"retention_days", cfg.AutoBackup.RetentionDays,
+			)
+		}
+	} else {
+		slog.Info("automatic backups disabled (set AUTO_BACKUP_ENABLED=true to enable)")
+	}
+	defer backupScheduler.Stop()
 
 	// Record start time for health checks
 	startTime := time.Now()
@@ -554,6 +572,43 @@ func run() error {
 
 		mux.HandleFunc("/admin/api/backups/download", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDownloadBackupHandler(repos.DB, cfg)))).ServeHTTP(w, r)
+		})
+
+		// Backup scheduler management routes
+		backupSchedulerHandler := handlers.NewBackupSchedulerHandler(repos, cfg, backupScheduler)
+
+		mux.HandleFunc("/admin/api/backup-schedules", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(backupSchedulerHandler.ListSchedules())).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backup-schedules/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(backupSchedulerHandler.GetSchedule())).ServeHTTP(w, r)
+			} else if r.Method == http.MethodPut {
+				adminAuth(csrfProtection(http.HandlerFunc(backupSchedulerHandler.UpdateSchedule()))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/backup-runs", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(backupSchedulerHandler.ListRuns())).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backup-runs/{id}", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(backupSchedulerHandler.GetRun())).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backup-stats", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(backupSchedulerHandler.GetStats())).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backup-trigger", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(backupSchedulerHandler.TriggerBackup()))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/backup-running", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(backupSchedulerHandler.GetRunningBackup())).ServeHTTP(w, r)
 		})
 
 		// Admin static assets

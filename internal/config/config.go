@@ -32,6 +32,14 @@ type S3Config struct {
 	StorageQuota    int64  // Optional storage quota in bytes (0 = unlimited)
 }
 
+// AutoBackupConfig holds automatic backup scheduler configuration.
+type AutoBackupConfig struct {
+	Enabled       bool   // Enable automatic backups (default: false)
+	Schedule      string // Cron expression (default: "0 2 * * *" = 2 AM daily)
+	Mode          string // Backup mode: full, database, config (default: full)
+	RetentionDays int    // Days to keep backups, 0 = unlimited (default: 30)
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -43,6 +51,7 @@ type Config struct {
 	PostgreSQL               *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
 	StorageType              string            // "filesystem" or "s3" (default: filesystem)
 	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
+	AutoBackup               *AutoBackupConfig // Automatic backup configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -118,6 +127,9 @@ func Load() (*Config, error) {
 
 		// S3 configuration (loaded if STORAGE_TYPE=s3)
 		S3: nil, // Will be populated below if needed
+
+		// Automatic backup configuration (loaded if AUTO_BACKUP_ENABLED=true)
+		AutoBackup: loadAutoBackupConfig(),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -352,6 +364,10 @@ func (c *Config) validate() error {
 		return err
 	}
 
+	if err := c.validateAutoBackupSettings(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -476,6 +492,36 @@ func (c *Config) validateProxySettings() error {
 	return nil
 }
 
+// validateAutoBackupSettings validates automatic backup configuration
+func (c *Config) validateAutoBackupSettings() error {
+	if c.AutoBackup == nil {
+		return nil // AutoBackup is optional
+	}
+
+	// If not enabled, skip further validation
+	if !c.AutoBackup.Enabled {
+		return nil
+	}
+
+	// Validate schedule is not empty
+	if c.AutoBackup.Schedule == "" {
+		return fmt.Errorf("AUTO_BACKUP_SCHEDULE cannot be empty when AUTO_BACKUP_ENABLED=true")
+	}
+
+	// Validate backup mode
+	validModes := map[string]bool{"full": true, "database": true, "config": true}
+	if !validModes[c.AutoBackup.Mode] {
+		return fmt.Errorf("AUTO_BACKUP_MODE must be 'full', 'database', or 'config', got '%s'", c.AutoBackup.Mode)
+	}
+
+	// Validate retention days (0 = unlimited, positive = number of days)
+	if c.AutoBackup.RetentionDays < 0 {
+		return fmt.Errorf("AUTO_BACKUP_RETENTION_DAYS must be 0 (unlimited) or positive, got %d", c.AutoBackup.RetentionDays)
+	}
+
+	return nil
+}
+
 // validateDatabaseSettings validates database type and PostgreSQL configuration
 func (c *Config) validateDatabaseSettings() error {
 	// Validate database type
@@ -572,6 +618,21 @@ func loadS3Config() *S3Config {
 		SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
 		PathStyle:       getEnvBool("S3_PATH_STYLE", false),
 		StorageQuota:    getEnvInt64("S3_STORAGE_QUOTA", 0),
+	}
+}
+
+// loadAutoBackupConfig loads automatic backup configuration from environment variables.
+// Environment variables:
+//   - AUTO_BACKUP_ENABLED: Enable automatic backups (default: false)
+//   - AUTO_BACKUP_SCHEDULE: Cron expression (default: "0 2 * * *" = 2 AM daily)
+//   - AUTO_BACKUP_MODE: Backup mode - full, database, config (default: full)
+//   - AUTO_BACKUP_RETENTION_DAYS: Days to keep backups, 0 = unlimited (default: 30)
+func loadAutoBackupConfig() *AutoBackupConfig {
+	return &AutoBackupConfig{
+		Enabled:       getEnvBool("AUTO_BACKUP_ENABLED", false),
+		Schedule:      getEnv("AUTO_BACKUP_SCHEDULE", "0 2 * * *"),
+		Mode:          getEnv("AUTO_BACKUP_MODE", "full"),
+		RetentionDays: getEnvInt("AUTO_BACKUP_RETENTION_DAYS", 30),
 	}
 }
 

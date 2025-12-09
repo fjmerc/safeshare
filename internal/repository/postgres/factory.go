@@ -45,19 +45,20 @@ func NewRepositories(cfg *config.Config) (*repository.Repositories, func(), erro
 
 	// Create all repositories
 	repos := &repository.Repositories{
-		Files:          NewFileRepository(pool),
-		Users:          NewUserRepository(pool),
-		Admin:          NewAdminRepository(pool),
-		Settings:       NewSettingsRepository(pool),
-		PartialUploads: NewPartialUploadRepository(pool),
-		Webhooks:       NewWebhookRepository(pool),
-		APITokens:      NewAPITokenRepository(pool),
-		RateLimits:     NewRateLimitRepository(pool),
-		Locks:          NewLockRepository(pool),
-		Health:         NewHealthRepository(pool.Pool),
-		DB:             nil, // PostgreSQL doesn't use *sql.DB
-		DatabaseType:   repository.DatabaseTypePostgreSQL,
-		Cleanup:        cleanup,
+		Files:           NewFileRepository(pool),
+		Users:           NewUserRepository(pool),
+		Admin:           NewAdminRepository(pool),
+		Settings:        NewSettingsRepository(pool),
+		PartialUploads:  NewPartialUploadRepository(pool),
+		Webhooks:        NewWebhookRepository(pool),
+		APITokens:       NewAPITokenRepository(pool),
+		RateLimits:      NewRateLimitRepository(pool),
+		Locks:           NewLockRepository(pool),
+		Health:          NewHealthRepository(pool.Pool),
+		BackupScheduler: NewBackupSchedulerRepository(pool),
+		DB:              nil, // PostgreSQL doesn't use *sql.DB
+		DatabaseType:    repository.DatabaseTypePostgreSQL,
+		Cleanup:         cleanup,
 	}
 
 	return repos, cleanup, nil
@@ -72,19 +73,20 @@ func NewRepositoriesWithPool(pool *Pool) (*repository.Repositories, error) {
 	}
 
 	return &repository.Repositories{
-		Files:          NewFileRepository(pool),
-		Users:          NewUserRepository(pool),
-		Admin:          NewAdminRepository(pool),
-		Settings:       NewSettingsRepository(pool),
-		PartialUploads: NewPartialUploadRepository(pool),
-		Webhooks:       NewWebhookRepository(pool),
-		APITokens:      NewAPITokenRepository(pool),
-		RateLimits:     NewRateLimitRepository(pool),
-		Locks:          NewLockRepository(pool),
-		Health:         NewHealthRepository(pool.Pool),
-		DB:             nil, // PostgreSQL doesn't use *sql.DB
-		DatabaseType:   repository.DatabaseTypePostgreSQL,
-		Cleanup:        nil, // Caller manages the pool lifecycle
+		Files:           NewFileRepository(pool),
+		Users:           NewUserRepository(pool),
+		Admin:           NewAdminRepository(pool),
+		Settings:        NewSettingsRepository(pool),
+		PartialUploads:  NewPartialUploadRepository(pool),
+		Webhooks:        NewWebhookRepository(pool),
+		APITokens:       NewAPITokenRepository(pool),
+		RateLimits:      NewRateLimitRepository(pool),
+		Locks:           NewLockRepository(pool),
+		Health:          NewHealthRepository(pool.Pool),
+		BackupScheduler: NewBackupSchedulerRepository(pool),
+		DB:              nil, // PostgreSQL doesn't use *sql.DB
+		DatabaseType:    repository.DatabaseTypePostgreSQL,
+		Cleanup:         nil, // Caller manages the pool lifecycle
 	}, nil
 }
 
