@@ -22,20 +22,17 @@ import (
 // tokenRotatePathRegex matches /api/tokens/{id}/rotate where id is numeric
 var tokenRotatePathRegex = regexp.MustCompile(`^/api/tokens/([0-9]+)/rotate/?$`)
 
-// Maximum number of tokens per user to prevent abuse
-const maxTokensPerUser = 50
-
-// Maximum expiration in days for API tokens (1 year)
-const maxTokenExpirationDays = 365
-
-// CreateAPITokenHandler creates a new API token for the authenticated user
-// Tokens can only be created via session auth (not via existing API token)
-func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+// CreateAPITokenHandler creates a new API token for the authenticated user.
+// Uses the repository pattern for database access and enforces configurable token limits.
+// Tokens can only be created via session auth (not via existing API token).
+func CreateAPITokenHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -133,35 +130,20 @@ func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-		// Check if user has too many tokens
-		tokenCount, err := database.CountAPITokensByUserID(db, user.ID)
-		if err != nil {
-			slog.Error("failed to count user tokens", "error", err, "user_id", user.ID)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		if tokenCount >= maxTokensPerUser {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   "Maximum number of tokens reached",
-				"code":    "TOO_MANY_TOKENS",
-				"limit":   maxTokensPerUser,
-				"current": tokenCount,
-			})
-			return
-		}
+		// Get configurable limits from config
+		maxTokensPerUser := cfg.APIToken.MaxTokensPerUser
+		maxExpiryDays := cfg.APIToken.MaxExpiryDays
 
 		// Calculate expiration with validation
 		var expiresAt *time.Time
 		if req.ExpiresInDays != nil && *req.ExpiresInDays > 0 {
-			if *req.ExpiresInDays > maxTokenExpirationDays {
+			if *req.ExpiresInDays > maxExpiryDays {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"error":    "Token expiration exceeds maximum allowed",
 					"code":     "EXPIRATION_TOO_LONG",
-					"max_days": maxTokenExpirationDays,
+					"max_days": maxExpiryDays,
 				})
 				return
 			}
@@ -182,9 +164,20 @@ func CreateAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		scopeStr := utils.ScopesToString(req.Scopes)
 		clientIP := getClientIPWithConfig(r, cfg)
 
-		// Store in database
-		apiToken, err := database.CreateAPIToken(db, user.ID, req.Name, tokenHash, prefix, scopeStr, clientIP, expiresAt)
+		// Store in database using atomic CreateWithLimit to prevent race conditions
+		// This uses a transaction to ensure count check and insert are atomic
+		apiToken, err := repos.APITokens.CreateWithLimit(ctx, user.ID, req.Name, tokenHash, prefix, scopeStr, clientIP, expiresAt, maxTokensPerUser)
 		if err != nil {
+			if errors.Is(err, repository.ErrTooManyTokens) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": "Maximum number of tokens reached",
+					"code":  "TOO_MANY_TOKENS",
+					"limit": maxTokensPerUser,
+				})
+				return
+			}
 			slog.Error("failed to create API token", "error", err, "user_id", user.ID)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

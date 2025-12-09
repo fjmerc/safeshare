@@ -40,6 +40,12 @@ type AutoBackupConfig struct {
 	RetentionDays int    // Days to keep backups, 0 = unlimited (default: 30)
 }
 
+// APITokenConfig holds API token limit configuration.
+type APITokenConfig struct {
+	MaxTokensPerUser int // Maximum API tokens per user (default: 10)
+	MaxExpiryDays    int // Maximum token expiration in days (default: 365)
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -52,6 +58,7 @@ type Config struct {
 	StorageType              string            // "filesystem" or "s3" (default: filesystem)
 	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
 	AutoBackup               *AutoBackupConfig // Automatic backup configuration
+	APIToken                 *APITokenConfig   // API token limit configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -130,6 +137,9 @@ func Load() (*Config, error) {
 
 		// Automatic backup configuration (loaded if AUTO_BACKUP_ENABLED=true)
 		AutoBackup: loadAutoBackupConfig(),
+
+		// API token limit configuration
+		APIToken: loadAPITokenConfig(),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -368,6 +378,10 @@ func (c *Config) validate() error {
 		return err
 	}
 
+	if err := c.validateAPITokenSettings(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -522,6 +536,25 @@ func (c *Config) validateAutoBackupSettings() error {
 	return nil
 }
 
+// validateAPITokenSettings validates API token limit configuration
+func (c *Config) validateAPITokenSettings() error {
+	if c.APIToken == nil {
+		return nil // APIToken config is optional (will use defaults)
+	}
+
+	// Validate max tokens per user (reasonable bounds: 1-1000)
+	if c.APIToken.MaxTokensPerUser < 1 || c.APIToken.MaxTokensPerUser > 1000 {
+		return fmt.Errorf("MAX_API_TOKENS_PER_USER must be between 1 and 1000, got %d", c.APIToken.MaxTokensPerUser)
+	}
+
+	// Validate max expiry days (reasonable bounds: 1-3650, about 10 years)
+	if c.APIToken.MaxExpiryDays < 1 || c.APIToken.MaxExpiryDays > 3650 {
+		return fmt.Errorf("MAX_API_TOKEN_EXPIRY_DAYS must be between 1 and 3650, got %d", c.APIToken.MaxExpiryDays)
+	}
+
+	return nil
+}
+
 // validateDatabaseSettings validates database type and PostgreSQL configuration
 func (c *Config) validateDatabaseSettings() error {
 	// Validate database type
@@ -633,6 +666,17 @@ func loadAutoBackupConfig() *AutoBackupConfig {
 		Schedule:      getEnv("AUTO_BACKUP_SCHEDULE", "0 2 * * *"),
 		Mode:          getEnv("AUTO_BACKUP_MODE", "full"),
 		RetentionDays: getEnvInt("AUTO_BACKUP_RETENTION_DAYS", 30),
+	}
+}
+
+// loadAPITokenConfig loads API token limit configuration from environment variables.
+// Environment variables:
+//   - MAX_API_TOKENS_PER_USER: Maximum tokens per user (default: 10)
+//   - MAX_API_TOKEN_EXPIRY_DAYS: Maximum token expiration in days (default: 365)
+func loadAPITokenConfig() *APITokenConfig {
+	return &APITokenConfig{
+		MaxTokensPerUser: getEnvInt("MAX_API_TOKENS_PER_USER", 10),
+		MaxExpiryDays:    getEnvInt("MAX_API_TOKEN_EXPIRY_DAYS", 365),
 	}
 }
 

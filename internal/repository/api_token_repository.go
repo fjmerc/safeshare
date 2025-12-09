@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
@@ -15,12 +16,20 @@ type UsageFilter struct {
 	Offset    int        // Number of records to skip (for pagination)
 }
 
+// ErrTooManyTokens is returned when a user has reached their token limit.
+var ErrTooManyTokens = errors.New("maximum number of tokens reached")
+
 // APITokenRepository defines the interface for API token database operations.
 // All methods accept a context for cancellation and timeout support.
 type APITokenRepository interface {
 	// Create inserts a new API token into the database.
 	// Returns the created token with populated ID and timestamps.
 	Create(ctx context.Context, userID int64, name, tokenHash, tokenPrefix, scopes, createdIP string, expiresAt *time.Time) (*models.APIToken, error)
+
+	// CreateWithLimit creates a new API token with atomic limit enforcement.
+	// Uses a database transaction to prevent race conditions between count check and insert.
+	// Returns ErrTooManyTokens if the user has reached or exceeded maxTokens.
+	CreateWithLimit(ctx context.Context, userID int64, name, tokenHash, tokenPrefix, scopes, createdIP string, expiresAt *time.Time, maxTokens int) (*models.APIToken, error)
 
 	// GetByHash retrieves an API token by its hash (for validation during auth).
 	// Returns nil, nil if token not found or inactive.

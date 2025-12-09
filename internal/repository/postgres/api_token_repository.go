@@ -86,6 +86,89 @@ func (r *APITokenRepository) Create(ctx context.Context, userID int64, name, tok
 	return token, nil
 }
 
+// CreateWithLimit creates a new API token with atomic limit enforcement.
+// Uses a database transaction to prevent race conditions between count check and insert.
+// Returns repository.ErrTooManyTokens if the user has reached or exceeded maxTokens.
+func (r *APITokenRepository) CreateWithLimit(ctx context.Context, userID int64, name, tokenHash, tokenPrefix, scopes, createdIP string, expiresAt *time.Time, maxTokens int) (*models.APIToken, error) {
+	// Validate inputs (same as Create)
+	if userID <= 0 {
+		return nil, fmt.Errorf("user_id must be positive")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name cannot be empty")
+	}
+	if len(name) > maxAPITokenNameLen {
+		return nil, fmt.Errorf("name too long (max %d chars)", maxAPITokenNameLen)
+	}
+	if tokenHash == "" || len(tokenHash) != expectedTokenHashLen {
+		return nil, fmt.Errorf("token_hash must be %d characters", expectedTokenHashLen)
+	}
+	if tokenPrefix == "" || len(tokenPrefix) > expectedTokenPrefixLen {
+		return nil, fmt.Errorf("token_prefix invalid length")
+	}
+	if len(scopes) > maxAPITokenScopesLen {
+		return nil, fmt.Errorf("scopes too long (max %d chars)", maxAPITokenScopesLen)
+	}
+	if len(createdIP) > maxIPAddressLen {
+		return nil, fmt.Errorf("created_ip too long (max %d chars)", maxIPAddressLen)
+	}
+	if maxTokens <= 0 {
+		return nil, fmt.Errorf("maxTokens must be positive")
+	}
+
+	// Use a transaction to ensure atomicity between count check and insert
+	tx, err := r.pool.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Count existing active tokens for user within the transaction
+	// Use FOR UPDATE to lock the rows and prevent concurrent inserts
+	var count int
+	err = tx.QueryRow(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = $1 AND is_active = true`, userID).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count tokens: %w", err)
+	}
+
+	// Check limit
+	if count >= maxTokens {
+		return nil, repository.ErrTooManyTokens
+	}
+
+	// Insert the new token within the same transaction
+	var id int64
+	var createdAt time.Time
+	err = tx.QueryRow(ctx, `
+		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, scopes, expires_at, created_ip)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, created_at
+	`, userID, name, tokenHash, tokenPrefix, scopes, expiresAt, createdIP).Scan(&id, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create API token: %w", err)
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	token := &models.APIToken{
+		ID:          id,
+		UserID:      userID,
+		Name:        name,
+		TokenHash:   tokenHash,
+		TokenPrefix: tokenPrefix,
+		Scopes:      scopes,
+		ExpiresAt:   expiresAt,
+		CreatedAt:   createdAt,
+		CreatedIP:   createdIP,
+		IsActive:    true,
+	}
+
+	return token, nil
+}
+
 // GetByHash retrieves an API token by its hash (for validation during auth).
 // Returns nil, nil if token not found or inactive.
 func (r *APITokenRepository) GetByHash(ctx context.Context, tokenHash string) (*models.APIToken, error) {

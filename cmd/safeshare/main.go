@@ -333,7 +333,7 @@ func run() error {
 	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			// Create token - requires session auth only (no token audit needed for session-only ops)
-			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(repos.DB, cfg))).ServeHTTP(w, r)
+			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(repos, cfg))).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
 			// List tokens with usage stats - allows both session and token auth (with token audit logging)
 			userAuth(tokenAudit(http.HandlerFunc(handlers.ListAPITokensWithStatsHandler(repos)))).ServeHTTP(w, r)

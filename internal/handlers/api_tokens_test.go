@@ -15,6 +15,8 @@ import (
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,9 +57,22 @@ func setupTestAdmin(t *testing.T, db *sql.DB) (*models.User, context.Context) {
 	return user, ctx
 }
 
+// setupTestReposAndConfig creates test repositories and config for API token tests
+func setupTestReposAndConfig(t *testing.T, db *sql.DB) (*repository.Repositories, *config.Config) {
+	t.Helper()
+
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	return repos, cfg
+}
+
 func TestCreateAPITokenHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	user, ctx := setupTestUserWithSession(t, db)
 
@@ -67,7 +82,7 @@ func TestCreateAPITokenHandler_Success(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
@@ -107,7 +122,7 @@ func TestCreateAPITokenHandler_Success(t *testing.T) {
 
 func TestCreateAPITokenHandler_WithExpiration(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -117,7 +132,7 @@ func TestCreateAPITokenHandler_WithExpiration(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
@@ -141,7 +156,7 @@ func TestCreateAPITokenHandler_WithExpiration(t *testing.T) {
 
 func TestCreateAPITokenHandler_ExpirationTooLong(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -151,7 +166,7 @@ func TestCreateAPITokenHandler_ExpirationTooLong(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -170,7 +185,7 @@ func TestCreateAPITokenHandler_ExpirationTooLong(t *testing.T) {
 
 func TestCreateAPITokenHandler_MissingName(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -180,7 +195,7 @@ func TestCreateAPITokenHandler_MissingName(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -190,7 +205,7 @@ func TestCreateAPITokenHandler_MissingName(t *testing.T) {
 
 func TestCreateAPITokenHandler_MissingScopes(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -200,7 +215,7 @@ func TestCreateAPITokenHandler_MissingScopes(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -210,7 +225,7 @@ func TestCreateAPITokenHandler_MissingScopes(t *testing.T) {
 
 func TestCreateAPITokenHandler_InvalidScopes(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -220,7 +235,7 @@ func TestCreateAPITokenHandler_InvalidScopes(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -239,7 +254,7 @@ func TestCreateAPITokenHandler_InvalidScopes(t *testing.T) {
 
 func TestCreateAPITokenHandler_AdminScopeByNonAdmin(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db) // Regular user, not admin
 
@@ -249,7 +264,7 @@ func TestCreateAPITokenHandler_AdminScopeByNonAdmin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusForbidden {
@@ -259,7 +274,7 @@ func TestCreateAPITokenHandler_AdminScopeByNonAdmin(t *testing.T) {
 
 func TestCreateAPITokenHandler_AdminScopeByAdmin(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestAdmin(t, db)
 
@@ -269,7 +284,7 @@ func TestCreateAPITokenHandler_AdminScopeByAdmin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
@@ -279,7 +294,7 @@ func TestCreateAPITokenHandler_AdminScopeByAdmin(t *testing.T) {
 
 func TestCreateAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -301,7 +316,7 @@ func TestCreateAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusForbidden {
@@ -311,7 +326,7 @@ func TestCreateAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 
 func TestListAPITokensHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	user, ctx := setupTestUserWithSession(t, db)
 
@@ -321,7 +336,7 @@ func TestListAPITokensHandler_Success(t *testing.T) {
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	CreateAPITokenHandler(db, cfg).ServeHTTP(rr, req)
+	CreateAPITokenHandler(repos, cfg).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("failed to create token: %s", rr.Body.String())
@@ -396,7 +411,7 @@ func TestListAPITokensHandler_Empty(t *testing.T) {
 
 func TestRevokeAPITokenHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -406,7 +421,7 @@ func TestRevokeAPITokenHandler_Success(t *testing.T) {
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	CreateAPITokenHandler(db, cfg).ServeHTTP(rr, req)
+	CreateAPITokenHandler(repos, cfg).ServeHTTP(rr, req)
 
 	var createResp models.CreateAPITokenResponse
 	if err := json.NewDecoder(rr.Body).Decode(&createResp); err != nil {
@@ -504,7 +519,7 @@ func TestRevokeAPITokenHandler_InvalidID(t *testing.T) {
 
 func TestCreateAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	cfg := &config.Config{}
+	repos, cfg := setupTestReposAndConfig(t, db)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -512,7 +527,7 @@ func TestCreateAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 
-	handler := CreateAPITokenHandler(db, cfg)
+	handler := CreateAPITokenHandler(repos, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -551,5 +566,104 @@ func TestRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
 
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestCreateAPITokenHandler_MaxTokensPerUser(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	// Set a low limit for testing
+	cfg.APIToken.MaxTokensPerUser = 2
+
+	_, ctx := setupTestUserWithSession(t, db)
+
+	// Create first token - should succeed
+	reqBody := `{"name": "Token 1", "scopes": ["upload"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(reqBody))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	CreateAPITokenHandler(repos, cfg).ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("first token creation failed: %s", rr.Body.String())
+	}
+
+	// Create second token - should succeed
+	reqBody = `{"name": "Token 2", "scopes": ["download"]}`
+	req = httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(reqBody))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	CreateAPITokenHandler(repos, cfg).ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("second token creation failed: %s", rr.Body.String())
+	}
+
+	// Create third token - should fail with TOO_MANY_TOKENS
+	reqBody = `{"name": "Token 3", "scopes": ["upload"]}`
+	req = httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(reqBody))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	CreateAPITokenHandler(repos, cfg).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["code"] != "TOO_MANY_TOKENS" {
+		t.Errorf("error code = %v, want TOO_MANY_TOKENS", resp["code"])
+	}
+}
+
+func TestCreateAPITokenHandler_ConfigurableExpiryLimit(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	// Set a low expiry limit for testing
+	cfg.APIToken.MaxExpiryDays = 30
+
+	_, ctx := setupTestUserWithSession(t, db)
+
+	// Try to create a token with expiration beyond the limit
+	reqBody := `{"name": "Long Expiry Token", "scopes": ["upload"], "expires_in_days": 60}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(reqBody))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	handler := CreateAPITokenHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["code"] != "EXPIRATION_TOO_LONG" {
+		t.Errorf("error code = %v, want EXPIRATION_TOO_LONG", resp["code"])
+	}
+
+	// Now try with a valid expiration
+	reqBody = `{"name": "Valid Expiry Token", "scopes": ["upload"], "expires_in_days": 25}`
+	req = httptest.NewRequest(http.MethodPost, "/api/tokens", bytes.NewBufferString(reqBody))
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusCreated, rr.Body.String())
 	}
 }
