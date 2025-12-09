@@ -1183,9 +1183,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadDeliveries();
             } else if (btn.dataset.tab === 'backups') {
                 loadBackups();
+            } else if (btn.dataset.tab === 'apiTokens') {
+                loadAdminTokens();
             }
         });
     });
+
+    // API Tokens event listeners
+    document.getElementById('refreshTokensAdminBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadAdminTokens();
+    });
+    document.getElementById('tokenSearchInput')?.addEventListener('input', debounce((e) => {
+        currentTokenFilters.search = e.target.value;
+        loadAdminTokens();
+    }, 300));
+    document.getElementById('tokenUserFilter')?.addEventListener('change', (e) => {
+        currentTokenFilters.userId = e.target.value;
+        loadAdminTokens();
+    });
+    document.getElementById('selectAllTokensCheckbox')?.addEventListener('change', (e) => {
+        const checkboxes = document.querySelectorAll('.token-checkbox');
+        checkboxes.forEach(cb => cb.checked = e.target.checked);
+        updateBulkTokenButtons();
+    });
+    document.getElementById('bulkRevokeBtn')?.addEventListener('click', bulkRevokeTokens);
+    document.getElementById('bulkExtendBtn')?.addEventListener('click', showBulkExtendModal);
 
     // Webhook event listeners
     document.getElementById('createWebhookBtn')?.addEventListener('click', showCreateWebhookModal);
@@ -2947,4 +2972,299 @@ async function deleteBackup(filename) {
         console.error('Error deleting backup:', error);
         showError('Failed to delete backup');
     }
+}
+
+// ==================== API TOKENS ADMIN FUNCTIONS ====================
+
+// Token filters state
+let currentTokenFilters = {
+    search: '',
+    userId: ''
+};
+
+// Debounce helper
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Load admin tokens with stats
+async function loadAdminTokens() {
+    try {
+        // Build query params
+        const params = new URLSearchParams();
+        if (currentTokenFilters.search) {
+            params.append('search', currentTokenFilters.search);
+        }
+        if (currentTokenFilters.userId) {
+            params.append('user_id', currentTokenFilters.userId);
+        }
+
+        const response = await fetch(`/admin/api/tokens?${params.toString()}`, {
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load tokens');
+        }
+
+        const data = await response.json();
+        displayAdminTokens(data.tokens || []);
+        updateTokenStats(data.tokens || []);
+        loadTokenUserFilter();
+
+    } catch (error) {
+        console.error('Error loading tokens:', error);
+        showError('Failed to load API tokens');
+    }
+}
+
+// Load user filter dropdown
+async function loadTokenUserFilter() {
+    try {
+        const response = await fetch('/admin/api/users', {
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const select = document.getElementById('tokenUserFilter');
+            if (select && data.users) {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">All Users</option>';
+                data.users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.username;
+                    select.appendChild(option);
+                });
+                select.value = currentValue;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading user filter:', error);
+    }
+}
+
+// Update token statistics
+function updateTokenStats(tokens) {
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    let totalRequests = 0;
+    let activeCount = 0;
+    let expiringCount = 0;
+
+    tokens.forEach(token => {
+        // Count requests
+        if (token.usage_stats && token.usage_stats.total_requests) {
+            totalRequests += token.usage_stats.total_requests;
+        }
+
+        // Check if active (not expired)
+        if (token.expires_at) {
+            const expiresDate = new Date(token.expires_at);
+            if (expiresDate.getFullYear() !== 9999 && expiresDate > now) {
+                activeCount++;
+                // Check if expiring soon
+                if (expiresDate <= sevenDaysFromNow) {
+                    expiringCount++;
+                }
+            } else if (expiresDate.getFullYear() === 9999) {
+                activeCount++; // Never expires = active
+            }
+        } else {
+            activeCount++; // No expiration = active
+        }
+    });
+
+    document.getElementById('statTotalTokens').textContent = tokens.length;
+    document.getElementById('statActiveTokens').textContent = activeCount;
+    document.getElementById('statExpiringTokens').textContent = expiringCount;
+    document.getElementById('statTotalRequests').textContent = totalRequests.toLocaleString();
+}
+
+// Display admin tokens in table
+function displayAdminTokens(tokens) {
+    const tbody = document.getElementById('tokensTableBody');
+    if (!tbody) return;
+
+    if (!tokens || tokens.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="empty">No API tokens found</td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = tokens.map(token => {
+        const createdDate = formatDate(token.created_at);
+        const expiresDisplay = formatTokenExpiry(token.expires_at);
+        const lastUsed = token.last_used_at ? formatDate(token.last_used_at) : '<span class="text-muted">Never</span>';
+
+        // Scopes
+        let scopesBadges = '';
+        if (token.scopes && token.scopes.length > 0) {
+            scopesBadges = token.scopes.map(scope => {
+                const badgeClass = `scope-badge-${escapeHtml(scope)}`;
+                return `<span class="badge ${badgeClass}">${escapeHtml(scope)}</span>`;
+            }).join(' ');
+        } else {
+            scopesBadges = '<span class="text-muted">None</span>';
+        }
+
+        // Usage stats
+        const requests = token.usage_stats?.total_requests || 0;
+        const bytesTransferred = token.usage_stats?.total_bytes_transferred || 0;
+
+        return `
+            <tr>
+                <td>
+                    <input type="checkbox" class="token-checkbox" value="${token.id}" onchange="updateBulkTokenButtons()">
+                </td>
+                <td><strong>${escapeHtml(token.name)}</strong></td>
+                <td>${escapeHtml(token.username || 'Unknown')}</td>
+                <td>${scopesBadges}</td>
+                <td>${requests.toLocaleString()}</td>
+                <td>${formatBytes(bytesTransferred)}</td>
+                <td>${createdDate}</td>
+                <td>${expiresDisplay}</td>
+                <td>${lastUsed}</td>
+                <td>
+                    <div style="display: flex; gap: 6px; justify-content: center;">
+                        <button class="btn-small btn-danger" onclick="adminRevokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="15" y1="9" x2="9" y2="15"></line>
+                                <line x1="9" y1="9" x2="15" y2="15"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Format token expiry with warning
+function formatTokenExpiry(expiresAt) {
+    if (!expiresAt) {
+        return '<span class="badge badge-success">Never</span>';
+    }
+
+    const expirationDate = new Date(expiresAt);
+    if (expirationDate.getFullYear() === 9999) {
+        return '<span class="badge badge-success">Never</span>';
+    }
+
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+    const dateStr = formatDate(expiresAt);
+
+    if (daysUntilExpiry < 0) {
+        return `<span class="badge badge-danger">Expired</span>`;
+    } else if (daysUntilExpiry <= 3) {
+        return `<span title="${dateStr}" class="badge badge-danger">${daysUntilExpiry}d left</span>`;
+    } else if (daysUntilExpiry <= 7) {
+        return `<span title="${dateStr}" class="badge badge-warning">${daysUntilExpiry}d left</span>`;
+    }
+
+    return `<span>${dateStr}</span>`;
+}
+
+// Update bulk action buttons visibility
+function updateBulkTokenButtons() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const bulkRevokeBtn = document.getElementById('bulkRevokeBtn');
+    const bulkExtendBtn = document.getElementById('bulkExtendBtn');
+
+    if (checkboxes.length > 0) {
+        bulkRevokeBtn.style.display = 'inline-flex';
+        bulkExtendBtn.style.display = 'inline-flex';
+    } else {
+        bulkRevokeBtn.style.display = 'none';
+        bulkExtendBtn.style.display = 'none';
+    }
+}
+
+// Admin revoke token
+async function adminRevokeToken(tokenId, tokenName) {
+    if (!await confirm(`Revoke token "${tokenName}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/api/tokens/${tokenId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            showSuccess('Token revoked successfully');
+            loadAdminTokens();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Failed to revoke token');
+        }
+    } catch (error) {
+        console.error('Error revoking token:', error);
+        showError('Failed to revoke token');
+    }
+}
+
+// Bulk revoke tokens
+async function bulkRevokeTokens() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+    if (tokenIds.length === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    if (!await confirm(`Revoke ${tokenIds.length} token(s)? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/tokens/bulk-revoke', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ token_ids: tokenIds, confirm: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess(`${data.revoked_count || tokenIds.length} token(s) revoked successfully`);
+            loadAdminTokens();
+        } else {
+            showError(data.error || 'Failed to revoke tokens');
+        }
+    } catch (error) {
+        console.error('Error bulk revoking tokens:', error);
+        showError('Failed to revoke tokens');
+    }
+}
+
+// Show bulk extend modal (placeholder - bulk extend endpoint doesn't exist yet)
+function showBulkExtendModal() {
+    showError('Bulk extend feature is not yet implemented');
 }
