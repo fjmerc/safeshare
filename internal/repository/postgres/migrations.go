@@ -367,6 +367,34 @@ VALUES ('default', FALSE, '0 2 * * *', 'full', 30)
 ON CONFLICT (name) DO NOTHING;
 `,
 	},
+	{
+		Version:     5,
+		Name:        "005_api_token_usage",
+		Description: "API token usage audit logging table",
+		SQL: `
+-- ============================================================================
+-- API TOKEN USAGE TABLE (audit logging for API token usage)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS api_token_usage (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    endpoint TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT,
+    response_status INTEGER NOT NULL
+);
+
+-- Composite index for efficient queries by token_id with timestamp ordering
+-- Most queries will filter by token_id and order/filter by timestamp
+CREATE INDEX IF NOT EXISTS idx_api_token_usage_token_timestamp 
+    ON api_token_usage(token_id, timestamp DESC);
+
+-- Index on timestamp alone for cleanup operations
+CREATE INDEX IF NOT EXISTS idx_api_token_usage_timestamp 
+    ON api_token_usage(timestamp);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

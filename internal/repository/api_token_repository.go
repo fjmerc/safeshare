@@ -7,6 +7,14 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 )
 
+// UsageFilter defines the filter parameters for token usage log queries.
+type UsageFilter struct {
+	StartDate *time.Time // Filter logs from this date
+	EndDate   *time.Time // Filter logs until this date
+	Limit     int        // Maximum number of records to return
+	Offset    int        // Number of records to skip (for pagination)
+}
+
 // APITokenRepository defines the interface for API token database operations.
 // All methods accept a context for cancellation and timeout support.
 type APITokenRepository interface {
@@ -56,4 +64,16 @@ type APITokenRepository interface {
 	// Clears last_used_at and last_used_ip since the new token hasn't been used yet.
 	// Returns ErrNotFound if token doesn't exist, doesn't belong to user, or is inactive.
 	Rotate(ctx context.Context, tokenID, userID int64, newHash, newPrefix string) (*models.APIToken, error)
+
+	// LogUsage records a token usage event for audit purposes.
+	// This should be called after each API request authenticated with this token.
+	LogUsage(ctx context.Context, tokenID int64, endpoint, ip, userAgent string, status int) error
+
+	// GetUsageLogs retrieves paginated usage logs for a specific token.
+	// Returns (logs, totalCount, error) with optional date filtering.
+	GetUsageLogs(ctx context.Context, tokenID int64, filter UsageFilter) ([]models.APITokenUsageLog, int, error)
+
+	// CleanupOldUsageLogs removes usage logs older than the specified retention period.
+	// Returns the number of logs deleted.
+	CleanupOldUsageLogs(ctx context.Context, olderThan time.Time) (int64, error)
 }

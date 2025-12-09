@@ -621,5 +621,154 @@ func (r *APITokenRepository) Rotate(ctx context.Context, tokenID, userID int64, 
 	return &token, nil
 }
 
+// LogUsage records a token usage event for audit purposes.
+// This should be called after each API request authenticated with this token.
+func (r *APITokenRepository) LogUsage(ctx context.Context, tokenID int64, endpoint, ip, userAgent string, status int) error {
+	// Validate inputs
+	if tokenID <= 0 {
+		return fmt.Errorf("token_id must be positive")
+	}
+	if endpoint == "" {
+		return fmt.Errorf("endpoint cannot be empty")
+	}
+	// Truncate fields if too long (defensive)
+	const maxEndpointLen = 500
+	const maxUserAgentLen = 1000
+	if len(endpoint) > maxEndpointLen {
+		endpoint = endpoint[:maxEndpointLen]
+	}
+	if len(ip) > maxIPAddressLen {
+		ip = ip[:maxIPAddressLen]
+	}
+	if len(userAgent) > maxUserAgentLen {
+		userAgent = userAgent[:maxUserAgentLen]
+	}
+	// Validate status code is in reasonable range
+	if status < 100 || status > 599 {
+		return fmt.Errorf("invalid HTTP status code")
+	}
+
+	query := `INSERT INTO api_token_usage (token_id, endpoint, ip_address, user_agent, response_status)
+		VALUES (?, ?, ?, ?, ?)`
+
+	_, err := r.db.ExecContext(ctx, query, tokenID, endpoint, ip, userAgent, status)
+	if err != nil {
+		return fmt.Errorf("failed to log token usage: %w", err)
+	}
+	return nil
+}
+
+// GetUsageLogs retrieves paginated usage logs for a specific token.
+// Returns (logs, totalCount, error) with optional date filtering.
+func (r *APITokenRepository) GetUsageLogs(ctx context.Context, tokenID int64, filter repository.UsageFilter) ([]models.APITokenUsageLog, int, error) {
+	if tokenID <= 0 {
+		return nil, 0, fmt.Errorf("token_id must be positive")
+	}
+
+	// Validate and apply limits
+	if filter.Limit <= 0 {
+		filter.Limit = 50 // Default limit
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000 // Maximum limit
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	if filter.Offset > maxAdminOffset {
+		filter.Offset = maxAdminOffset
+	}
+
+	// Build query with optional date filters
+	var args []interface{}
+	args = append(args, tokenID)
+
+	whereClause := "WHERE token_id = ?"
+	if filter.StartDate != nil {
+		whereClause += " AND timestamp >= ?"
+		args = append(args, filter.StartDate.Format(time.RFC3339))
+	}
+	if filter.EndDate != nil {
+		whereClause += " AND timestamp <= ?"
+		args = append(args, filter.EndDate.Format(time.RFC3339))
+	}
+
+	// Get total count
+	var total int
+	countQuery := "SELECT COUNT(*) FROM api_token_usage " + whereClause
+	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count usage logs: %w", err)
+	}
+
+	// Get paginated results
+	query := `SELECT id, token_id, timestamp, endpoint, ip_address, user_agent, response_status
+		FROM api_token_usage ` + whereClause + `
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`
+
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query usage logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []models.APITokenUsageLog
+	for rows.Next() {
+		var log models.APITokenUsageLog
+		var timestamp string
+		var userAgent sql.NullString
+
+		err := rows.Scan(
+			&log.ID,
+			&log.TokenID,
+			&timestamp,
+			&log.Endpoint,
+			&log.IPAddress,
+			&userAgent,
+			&log.ResponseStatus,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan usage log: %w", err)
+		}
+
+		// Parse timestamp
+		log.Timestamp, err = time.Parse(time.RFC3339, timestamp)
+		if err != nil {
+			// Try parsing as SQLite datetime format
+			log.Timestamp, err = time.Parse("2006-01-02 15:04:05", timestamp)
+			if err != nil {
+				return nil, 0, fmt.Errorf("failed to parse timestamp: %w", err)
+			}
+		}
+
+		if userAgent.Valid {
+			log.UserAgent = userAgent.String
+		}
+
+		logs = append(logs, log)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating usage logs: %w", err)
+	}
+
+	return logs, total, nil
+}
+
+// CleanupOldUsageLogs removes usage logs older than the specified retention period.
+// Returns the number of logs deleted.
+func (r *APITokenRepository) CleanupOldUsageLogs(ctx context.Context, olderThan time.Time) (int64, error) {
+	query := `DELETE FROM api_token_usage WHERE datetime(timestamp) < datetime(?)`
+	result, err := r.db.ExecContext(ctx, query, olderThan.Format(time.RFC3339))
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup old usage logs: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	return rows, nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

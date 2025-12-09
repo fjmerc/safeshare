@@ -187,6 +187,7 @@ func run() error {
 	ipBlockMw := middleware.IPBlockCheck(repos, cfg)
 	optionalUserAuth := middleware.OptionalUserAuth(repos)
 	userAuth := middleware.UserAuth(repos)
+	tokenAudit := middleware.APITokenAuditLog(repos)
 
 	// Select authentication middleware for uploads based on configuration
 	var uploadAuthMw func(http.Handler) http.Handler
@@ -198,26 +199,26 @@ func run() error {
 		slog.Info("anonymous uploads enabled", "require_auth_for_upload", false)
 	}
 
-	// Upload endpoint with conditional authentication
+	// Upload endpoint with conditional authentication and token audit logging
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadHandler(repos, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
-	// Chunked upload endpoints with conditional authentication
+	// Chunked upload endpoints with conditional authentication and token audit logging
 	mux.HandleFunc("/api/upload/init", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadInitHandler(repos, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadInitHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/chunk/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadChunkHandler(repos, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadChunkHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/complete/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadCompleteHandler(repos, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadCompleteHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/upload/status/", func(w http.ResponseWriter, r *http.Request) {
-		ipBlockMw(uploadAuthMw(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg)))).ServeHTTP(w, r)
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
 	// Note: Order matters - info endpoint must be registered before catch-all claim handler
@@ -283,23 +284,24 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserChangePasswordHandler(repos))).ServeHTTP(w, r)
 	})
 
+	// User file management routes (with token audit logging)
 	mux.HandleFunc("/api/user/files", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserDashboardDataHandler(repos, cfg))).ServeHTTP(w, r)
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserDashboardDataHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/delete", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserDeleteFileHandler(repos, cfg))).ServeHTTP(w, r)
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserDeleteFileHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/rename", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserRenameFileHandler(repos, cfg))).ServeHTTP(w, r)
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserRenameFileHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/files/update-expiration", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserEditExpirationHandler(repos, cfg))).ServeHTTP(w, r)
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserEditExpirationHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/api/user/files/regenerate-claim-code", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	// SDK-compatible user file management routes (claim code in URL path)
@@ -310,17 +312,17 @@ func run() error {
 	mux.HandleFunc("/api/user/files/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Route based on path suffix and method
+		// Route based on path suffix and method (with token audit logging)
 		switch {
 		case strings.HasSuffix(path, "/rename") && r.Method == http.MethodPut:
-			userAuth(http.HandlerFunc(handlers.UserRenameFileByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.UserRenameFileByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/expiration") && r.Method == http.MethodPut:
-			userAuth(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/regenerate") && r.Method == http.MethodPost:
-			userAuth(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 		case r.Method == http.MethodDelete:
 			// DELETE /api/user/files/{claimCode}
-			userAuth(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(repos, cfg))).ServeHTTP(w, r)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -331,11 +333,11 @@ func run() error {
 	// Note: API Token handlers still use *sql.DB - use repos.DB for backward compatibility
 	mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			// Create token - requires session auth only
+			// Create token - requires session auth only (no token audit needed for session-only ops)
 			userAuth(http.HandlerFunc(handlers.CreateAPITokenHandler(repos.DB, cfg))).ServeHTTP(w, r)
 		} else if r.Method == http.MethodGet {
-			// List tokens - allows both session and token auth
-			userAuth(http.HandlerFunc(handlers.ListAPITokensHandler(repos.DB))).ServeHTTP(w, r)
+			// List tokens - allows both session and token auth (with token audit logging)
+			userAuth(tokenAudit(http.HandlerFunc(handlers.ListAPITokensHandler(repos.DB)))).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -556,6 +558,20 @@ func run() error {
 
 		mux.HandleFunc("/admin/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+		})
+
+		// Token usage audit logs
+		mux.HandleFunc("/admin/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
+			// Only handle /admin/api/tokens/{id}/usage pattern
+			if !handlers.IsTokenUsagePath(r.URL.Path) {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminGetTokenUsageHandler(repos))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
 		})
 
 		// Backup management routes
