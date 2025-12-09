@@ -901,3 +901,648 @@ func TestAPITokenRepository_GetUsageStatsBatch_NoUsage(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// Token Rotation Tests (Task 3.3.1)
+// ============================================================================
+
+func TestAPITokenRepository_Rotate(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create a token with specific scopes and expiration
+	originalHash := generateTokenHash(t, "original-token")
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	token, err := repo.Create(ctx, user.ID, "Test Token", originalHash, "safeshare_old1", "upload,download", "192.168.1.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Update last used to verify it gets cleared
+	_ = repo.UpdateLastUsed(ctx, token.ID, "192.168.1.100")
+
+	// Rotate the token
+	newHash := generateTokenHash(t, "new-token")
+	newPrefix := "safeshare_new1"
+	rotatedToken, err := repo.Rotate(ctx, token.ID, user.ID, newHash, newPrefix)
+	if err != nil {
+		t.Fatalf("Rotate failed: %v", err)
+	}
+
+	// Verify metadata is preserved
+	if rotatedToken.ID != token.ID {
+		t.Errorf("ID should be preserved: got %d, want %d", rotatedToken.ID, token.ID)
+	}
+	if rotatedToken.Name != "Test Token" {
+		t.Errorf("Name should be preserved: got %s", rotatedToken.Name)
+	}
+	if rotatedToken.Scopes != "upload,download" {
+		t.Errorf("Scopes should be preserved: got %s", rotatedToken.Scopes)
+	}
+	if rotatedToken.ExpiresAt == nil {
+		t.Error("ExpiresAt should be preserved")
+	}
+
+	// Verify credentials are updated
+	if rotatedToken.TokenHash != newHash {
+		t.Error("TokenHash should be updated")
+	}
+	if rotatedToken.TokenPrefix != newPrefix {
+		t.Errorf("TokenPrefix should be updated: got %s, want %s", rotatedToken.TokenPrefix, newPrefix)
+	}
+
+	// Verify last_used is cleared
+	if rotatedToken.LastUsedAt != nil {
+		t.Error("LastUsedAt should be cleared after rotation")
+	}
+	if rotatedToken.LastUsedIP != nil {
+		t.Error("LastUsedIP should be cleared after rotation")
+	}
+
+	// Verify old token no longer works
+	oldTokenLookup, _ := repo.GetByHash(ctx, originalHash)
+	if oldTokenLookup != nil {
+		t.Error("Old token hash should not be found")
+	}
+
+	// Verify new token works
+	newTokenLookup, err := repo.GetByHash(ctx, newHash)
+	if err != nil {
+		t.Fatalf("GetByHash failed: %v", err)
+	}
+	if newTokenLookup == nil {
+		t.Error("New token hash should be found")
+	}
+}
+
+func TestAPITokenRepository_Rotate_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user1, _ := userRepo.Create(ctx, "user1", "user1@example.com", "hashedpassword", "user", false)
+	user2, _ := userRepo.Create(ctx, "user2", "user2@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+	token, _ := repo.Create(ctx, user1.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Try to rotate with wrong user
+	newHash := generateTokenHash(t, "new-token")
+	_, err := repo.Rotate(ctx, token.ID, user2.ID, newHash, "safeshare_new")
+	if err != repository.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestAPITokenRepository_Rotate_InactiveToken(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+	token, _ := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Revoke the token first
+	_ = repo.Revoke(ctx, token.ID, user.ID)
+
+	// Try to rotate revoked token
+	newHash := generateTokenHash(t, "new-token")
+	_, err := repo.Rotate(ctx, token.ID, user.ID, newHash, "safeshare_new")
+	if err != repository.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestAPITokenRepository_Rotate_NonExistent(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	newHash := generateTokenHash(t, "new-token")
+	_, err := repo.Rotate(ctx, 99999, 1, newHash, "safeshare_new")
+	if err != repository.ErrNotFound {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestAPITokenRepository_Rotate_InvalidInputs(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+	validHash := generateTokenHash(t, "valid-token")
+
+	tests := []struct {
+		name      string
+		tokenID   int64
+		userID    int64
+		newHash   string
+		newPrefix string
+	}{
+		{"zero token_id", 0, 1, validHash, "safeshare_new"},
+		{"negative token_id", -1, 1, validHash, "safeshare_new"},
+		{"zero user_id", 1, 0, validHash, "safeshare_new"},
+		{"negative user_id", 1, -1, validHash, "safeshare_new"},
+		{"empty hash", 1, 1, "", "safeshare_new"},
+		{"short hash", 1, 1, "tooshort", "safeshare_new"},
+		{"empty prefix", 1, 1, validHash, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := repo.Rotate(ctx, tt.tokenID, tt.userID, tt.newHash, tt.newPrefix)
+			if err == nil {
+				t.Error("expected error for invalid input")
+			}
+		})
+	}
+}
+
+// ============================================================================
+// CreateWithLimit Tests (Task 3.3.4)
+// ============================================================================
+
+func TestAPITokenRepository_CreateWithLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create first token with limit of 3
+	tokenHash := generateTokenHash(t, "token-1")
+	token, err := repo.CreateWithLimit(ctx, user.ID, "Token 1", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 3)
+	if err != nil {
+		t.Fatalf("CreateWithLimit failed: %v", err)
+	}
+
+	if token.ID == 0 {
+		t.Error("expected ID to be set")
+	}
+	if token.Name != "Token 1" {
+		t.Errorf("Name mismatch: got %s", token.Name)
+	}
+	if !token.IsActive {
+		t.Error("expected IsActive to be true")
+	}
+}
+
+func TestAPITokenRepository_CreateWithLimit_AtLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create 2 tokens with limit of 2
+	for i := 0; i < 2; i++ {
+		tokenHash := generateTokenHash(t, "token-"+string(rune('a'+i)))
+		_, err := repo.CreateWithLimit(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 2)
+		if err != nil {
+			t.Fatalf("CreateWithLimit failed for token %d: %v", i+1, err)
+		}
+	}
+
+	// Try to create a third token - should fail
+	tokenHash := generateTokenHash(t, "token-c")
+	_, err := repo.CreateWithLimit(ctx, user.ID, "Token 3", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 2)
+	if err != repository.ErrTooManyTokens {
+		t.Errorf("expected ErrTooManyTokens, got %v", err)
+	}
+}
+
+func TestAPITokenRepository_CreateWithLimit_InvalidMaxTokens(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "token")
+
+	// Zero maxTokens should error
+	_, err := repo.CreateWithLimit(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 0)
+	if err == nil {
+		t.Error("expected error for zero maxTokens")
+	}
+
+	// Negative maxTokens should error
+	_, err = repo.CreateWithLimit(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, -1)
+	if err == nil {
+		t.Error("expected error for negative maxTokens")
+	}
+}
+
+func TestAPITokenRepository_CreateWithLimit_RevokedTokensDontCount(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create 2 tokens with limit of 2
+	for i := 0; i < 2; i++ {
+		tokenHash := generateTokenHash(t, "token-"+string(rune('a'+i)))
+		_, _ = repo.CreateWithLimit(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 2)
+	}
+
+	// Revoke one token
+	tokens, _ := repo.GetByUserID(ctx, user.ID)
+	if len(tokens) > 0 {
+		_ = repo.Revoke(ctx, tokens[0].ID, user.ID)
+	}
+
+	// Now should be able to create another token (revoked don't count)
+	tokenHash := generateTokenHash(t, "token-c")
+	_, err := repo.CreateWithLimit(ctx, user.ID, "Token 3", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil, 2)
+	if err != nil {
+		t.Errorf("CreateWithLimit should succeed after revoking: %v", err)
+	}
+}
+
+// ============================================================================
+// Audit Logging Tests (Task 3.3.2)
+// ============================================================================
+
+func TestAPITokenRepository_LogUsage(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+	token, _ := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Log usage
+	err := repo.LogUsage(ctx, token.ID, "/api/upload", "192.168.1.100", "curl/7.68.0", 200)
+	if err != nil {
+		t.Fatalf("LogUsage failed: %v", err)
+	}
+
+	// Verify log was created
+	logs, total, err := repo.GetUsageLogs(ctx, token.ID, repository.UsageFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("GetUsageLogs failed: %v", err)
+	}
+
+	if total != 1 {
+		t.Errorf("expected total 1, got %d", total)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(logs))
+	}
+	if logs[0].Endpoint != "/api/upload" {
+		t.Errorf("Endpoint mismatch: got %s", logs[0].Endpoint)
+	}
+	if logs[0].IPAddress != "192.168.1.100" {
+		t.Errorf("IPAddress mismatch: got %s", logs[0].IPAddress)
+	}
+	if logs[0].ResponseStatus != 200 {
+		t.Errorf("ResponseStatus mismatch: got %d", logs[0].ResponseStatus)
+	}
+}
+
+func TestAPITokenRepository_LogUsage_Validation(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		tokenID  int64
+		endpoint string
+		ip       string
+		agent    string
+		status   int
+		wantErr  bool
+	}{
+		{"zero token_id", 0, "/api/test", "192.168.1.1", "agent", 200, true},
+		{"negative token_id", -1, "/api/test", "192.168.1.1", "agent", 200, true},
+		{"empty endpoint", 1, "", "192.168.1.1", "agent", 200, true},
+		{"invalid status too low", 1, "/api/test", "192.168.1.1", "agent", 99, true},
+		{"invalid status too high", 1, "/api/test", "192.168.1.1", "agent", 600, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.LogUsage(ctx, tt.tokenID, tt.endpoint, tt.ip, tt.agent, tt.status)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LogUsage() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAPITokenRepository_GetUsageLogs_DateFilter(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+	token, _ := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Log multiple usage entries
+	for i := 0; i < 5; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/endpoint"+string(rune('A'+i)), "192.168.1.100", "agent", 200)
+	}
+
+	// Get all logs
+	logs, total, err := repo.GetUsageLogs(ctx, token.ID, repository.UsageFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("GetUsageLogs failed: %v", err)
+	}
+
+	if total != 5 {
+		t.Errorf("expected total 5, got %d", total)
+	}
+	if len(logs) != 5 {
+		t.Errorf("expected 5 logs, got %d", len(logs))
+	}
+
+	// Test pagination
+	logs, _, err = repo.GetUsageLogs(ctx, token.ID, repository.UsageFilter{Limit: 2, Offset: 0})
+	if err != nil {
+		t.Fatalf("GetUsageLogs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Errorf("expected 2 logs with limit, got %d", len(logs))
+	}
+
+	logs, _, err = repo.GetUsageLogs(ctx, token.ID, repository.UsageFilter{Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("GetUsageLogs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Errorf("expected 2 logs with offset, got %d", len(logs))
+	}
+}
+
+func TestAPITokenRepository_GetUsageLogs_InvalidTokenID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	_, _, err := repo.GetUsageLogs(ctx, 0, repository.UsageFilter{})
+	if err == nil {
+		t.Error("expected error for zero token_id")
+	}
+
+	_, _, err = repo.GetUsageLogs(ctx, -1, repository.UsageFilter{})
+	if err == nil {
+		t.Error("expected error for negative token_id")
+	}
+}
+
+func TestAPITokenRepository_CleanupOldUsageLogs(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+	tokenHash := generateTokenHash(t, "test-token")
+	token, _ := repo.Create(ctx, user.ID, "Test Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Log some usage
+	for i := 0; i < 3; i++ {
+		_ = repo.LogUsage(ctx, token.ID, "/api/test", "192.168.1.100", "agent", 200)
+	}
+
+	// Cleanup with future date (should delete all)
+	deleted, err := repo.CleanupOldUsageLogs(ctx, time.Now().Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("CleanupOldUsageLogs failed: %v", err)
+	}
+
+	if deleted != 3 {
+		t.Errorf("expected 3 deleted, got %d", deleted)
+	}
+
+	// Verify logs are deleted
+	_, total, _ := repo.GetUsageLogs(ctx, token.ID, repository.UsageFilter{})
+	if total != 0 {
+		t.Errorf("expected 0 logs after cleanup, got %d", total)
+	}
+}
+
+// ============================================================================
+// Bulk Operations Tests (Task 3.3.5)
+// ============================================================================
+
+func TestAPITokenRepository_RevokeMultiple(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create multiple tokens
+	var tokenIDs []int64
+	for i := 0; i < 5; i++ {
+		tokenHash := generateTokenHash(t, "token-"+string(rune('a'+i)))
+		token, _ := repo.Create(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+		tokenIDs = append(tokenIDs, token.ID)
+	}
+
+	// Revoke some tokens
+	revoked, err := repo.RevokeMultiple(ctx, tokenIDs[:3])
+	if err != nil {
+		t.Fatalf("RevokeMultiple failed: %v", err)
+	}
+
+	if revoked != 3 {
+		t.Errorf("expected 3 revoked, got %d", revoked)
+	}
+
+	// Verify count of active tokens
+	count, _ := repo.CountByUserID(ctx, user.ID)
+	if count != 2 {
+		t.Errorf("expected 2 active tokens remaining, got %d", count)
+	}
+}
+
+func TestAPITokenRepository_RevokeMultiple_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	revoked, err := repo.RevokeMultiple(ctx, []int64{})
+	if err != nil {
+		t.Fatalf("RevokeMultiple failed: %v", err)
+	}
+
+	if revoked != 0 {
+		t.Errorf("expected 0 revoked for empty list, got %d", revoked)
+	}
+}
+
+func TestAPITokenRepository_RevokeMultiple_SomeNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create one token
+	tokenHash := generateTokenHash(t, "token")
+	token, _ := repo.Create(ctx, user.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+
+	// Revoke with mix of real and non-existent IDs
+	revoked, err := repo.RevokeMultiple(ctx, []int64{token.ID, 99999, 99998})
+	if err != nil {
+		t.Fatalf("RevokeMultiple failed: %v", err)
+	}
+
+	// Should only revoke the one real token
+	if revoked != 1 {
+		t.Errorf("expected 1 revoked, got %d", revoked)
+	}
+}
+
+func TestAPITokenRepository_RevokeMultiple_InvalidTokenID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	_, err := repo.RevokeMultiple(ctx, []int64{1, 0, 3})
+	if err == nil {
+		t.Error("expected error for zero token_id in list")
+	}
+
+	_, err = repo.RevokeMultiple(ctx, []int64{1, -1, 3})
+	if err == nil {
+		t.Error("expected error for negative token_id in list")
+	}
+}
+
+func TestAPITokenRepository_RevokeAllByUserID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user1, _ := userRepo.Create(ctx, "user1", "user1@example.com", "hashedpassword", "user", false)
+	user2, _ := userRepo.Create(ctx, "user2", "user2@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Create tokens for both users
+	for i := 0; i < 3; i++ {
+		tokenHash := generateTokenHash(t, "user1-token-"+string(rune('a'+i)))
+		_, _ = repo.Create(ctx, user1.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+	}
+	for i := 0; i < 2; i++ {
+		tokenHash := generateTokenHash(t, "user2-token-"+string(rune('a'+i)))
+		_, _ = repo.Create(ctx, user2.ID, "Token", tokenHash, "safeshare_abc", "upload", "192.168.1.1", nil)
+	}
+
+	// Revoke all tokens for user1
+	revoked, err := repo.RevokeAllByUserID(ctx, user1.ID)
+	if err != nil {
+		t.Fatalf("RevokeAllByUserID failed: %v", err)
+	}
+
+	if revoked != 3 {
+		t.Errorf("expected 3 revoked, got %d", revoked)
+	}
+
+	// Verify user1 has no active tokens
+	count1, _ := repo.CountByUserID(ctx, user1.ID)
+	if count1 != 0 {
+		t.Errorf("expected 0 active tokens for user1, got %d", count1)
+	}
+
+	// Verify user2 still has tokens
+	count2, _ := repo.CountByUserID(ctx, user2.ID)
+	if count2 != 2 {
+		t.Errorf("expected 2 active tokens for user2, got %d", count2)
+	}
+}
+
+func TestAPITokenRepository_RevokeAllByUserID_NoTokens(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	userRepo := NewUserRepository(db)
+	ctx := context.Background()
+	user, _ := userRepo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+
+	repo := NewAPITokenRepository(db)
+
+	// Revoke for user with no tokens
+	revoked, err := repo.RevokeAllByUserID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("RevokeAllByUserID failed: %v", err)
+	}
+
+	if revoked != 0 {
+		t.Errorf("expected 0 revoked, got %d", revoked)
+	}
+}
+
+func TestAPITokenRepository_RevokeAllByUserID_InvalidUserID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewAPITokenRepository(db)
+	ctx := context.Background()
+
+	_, err := repo.RevokeAllByUserID(ctx, 0)
+	if err == nil {
+		t.Error("expected error for zero user_id")
+	}
+
+	_, err = repo.RevokeAllByUserID(ctx, -1)
+	if err == nil {
+		t.Error("expected error for negative user_id")
+	}
+}
