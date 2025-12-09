@@ -341,11 +341,21 @@ func run() error {
 		}
 	})
 
+	// User CSRF protection for sensitive token operations
+	userCSRF := middleware.CSRFProtection(repos)
+
 	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			// Revoke token - allows both session and token auth
-			userAuth(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB))).ServeHTTP(w, r)
-		} else {
+		path := r.URL.Path
+
+		// Route based on path suffix and method
+		switch {
+		case strings.HasSuffix(path, "/rotate") && r.Method == http.MethodPost:
+			// Rotate token - requires session auth + CSRF protection
+			userAuth(userCSRF(http.HandlerFunc(handlers.RotateTokenHandler(repos, cfg)))).ServeHTTP(w, r)
+		case r.Method == http.MethodDelete:
+			// Revoke token - requires session auth + CSRF protection
+			userAuth(userCSRF(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})

@@ -18,6 +18,12 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		return nil, repository.ErrNilDatabase
 	}
 
+	// Handle nil config gracefully for testing scenarios
+	dbPath := ""
+	if cfg != nil {
+		dbPath = cfg.DBPath
+	}
+
 	return &repository.Repositories{
 		Files:           NewFileRepository(db),
 		Users:           NewUserRepository(db),
@@ -28,7 +34,7 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		APITokens:       NewAPITokenRepository(db),
 		RateLimits:      NewRateLimitRepository(db),
 		Locks:           NewLockRepository(db),
-		Health:          NewHealthRepository(db, cfg.DBPath),
+		Health:          NewHealthRepository(db, dbPath),
 		BackupScheduler: NewBackupSchedulerRepository(db),
 		DB:              db, // DEPRECATED: for backward compatibility during migration
 		DatabaseType:    repository.DatabaseTypeSQLite,

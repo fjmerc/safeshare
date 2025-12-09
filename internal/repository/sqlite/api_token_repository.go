@@ -517,5 +517,109 @@ func (r *APITokenRepository) CleanupExpired(ctx context.Context) (int64, error) 
 	return rows, nil
 }
 
+// Rotate regenerates token credentials while preserving metadata.
+// Returns ErrNotFound if token doesn't exist, doesn't belong to user, or is inactive.
+// Uses a transaction to ensure atomicity and prevent race conditions.
+func (r *APITokenRepository) Rotate(ctx context.Context, tokenID, userID int64, newHash, newPrefix string) (*models.APIToken, error) {
+	// Validate inputs
+	if tokenID <= 0 {
+		return nil, fmt.Errorf("token_id must be positive")
+	}
+	if userID <= 0 {
+		return nil, fmt.Errorf("user_id must be positive")
+	}
+	if newHash == "" || len(newHash) != expectedTokenHashLen {
+		return nil, fmt.Errorf("invalid token credentials")
+	}
+	if newPrefix == "" || len(newPrefix) > expectedTokenPrefixLen {
+		return nil, fmt.Errorf("invalid token credentials")
+	}
+
+	// Use transaction with IMMEDIATE to prevent concurrent modifications
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Update token credentials and clear usage tracking
+	query := `UPDATE api_tokens 
+		SET token_hash = ?, token_prefix = ?, last_used_at = NULL, last_used_ip = NULL 
+		WHERE id = ? AND user_id = ? AND is_active = 1`
+
+	result, err := tx.ExecContext(ctx, query, newHash, newPrefix, tokenID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to rotate token: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return nil, repository.ErrNotFound
+	}
+
+	// Fetch the updated token within the same transaction
+	selectQuery := `SELECT id, user_id, name, token_hash, token_prefix, scopes, expires_at, 
+		last_used_at, last_used_ip, created_at, created_ip, is_active
+		FROM api_tokens WHERE id = ?`
+
+	var token models.APIToken
+	var createdAt string
+	var expiresAt, lastUsedAt sql.NullString
+	var lastUsedIP sql.NullString
+
+	err = tx.QueryRowContext(ctx, selectQuery, tokenID).Scan(
+		&token.ID,
+		&token.UserID,
+		&token.Name,
+		&token.TokenHash,
+		&token.TokenPrefix,
+		&token.Scopes,
+		&expiresAt,
+		&lastUsedAt,
+		&lastUsedIP,
+		&createdAt,
+		&token.CreatedIP,
+		&token.IsActive,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch rotated token: %w", err)
+	}
+
+	// Parse timestamps
+	token.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse created_at: %w", err)
+	}
+
+	if expiresAt.Valid {
+		t, err := time.Parse(time.RFC3339, expiresAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse expires_at: %w", err)
+		}
+		token.ExpiresAt = &t
+	}
+	if lastUsedAt.Valid {
+		t, err := time.Parse(time.RFC3339, lastUsedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse last_used_at: %w", err)
+		}
+		token.LastUsedAt = &t
+	}
+	if lastUsedIP.Valid {
+		token.LastUsedIP = &lastUsedIP.String
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return &token, nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

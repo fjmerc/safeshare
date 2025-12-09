@@ -50,4 +50,10 @@ type APITokenRepository interface {
 	// CleanupExpired removes expired tokens.
 	// Returns the number of tokens deleted.
 	CleanupExpired(ctx context.Context) (int64, error)
+
+	// Rotate regenerates token credentials while preserving metadata (name, scopes, expiration).
+	// The old token is immediately invalidated and replaced with the new hash/prefix.
+	// Clears last_used_at and last_used_ip since the new token hasn't been used yet.
+	// Returns ErrNotFound if token doesn't exist, doesn't belong to user, or is inactive.
+	Rotate(ctx context.Context, tokenID, userID int64, newHash, newPrefix string) (*models.APIToken, error)
 }

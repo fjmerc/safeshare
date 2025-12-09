@@ -418,5 +418,64 @@ func (r *APITokenRepository) CleanupExpired(ctx context.Context) (int64, error) 
 	return tag.RowsAffected(), nil
 }
 
+// Rotate regenerates token credentials while preserving metadata.
+// Returns ErrNotFound if token doesn't exist, doesn't belong to user, or is inactive.
+// Uses RETURNING clause for atomic update-and-fetch to prevent race conditions.
+func (r *APITokenRepository) Rotate(ctx context.Context, tokenID, userID int64, newHash, newPrefix string) (*models.APIToken, error) {
+	// Validate inputs
+	if tokenID <= 0 {
+		return nil, fmt.Errorf("token_id must be positive")
+	}
+	if userID <= 0 {
+		return nil, fmt.Errorf("user_id must be positive")
+	}
+	if newHash == "" || len(newHash) != expectedTokenHashLen {
+		return nil, fmt.Errorf("invalid token credentials")
+	}
+	if newPrefix == "" || len(newPrefix) > expectedTokenPrefixLen {
+		return nil, fmt.Errorf("invalid token credentials")
+	}
+
+	// Update token credentials and clear usage tracking
+	// Use RETURNING clause for atomic update-and-fetch (prevents TOCTOU race)
+	var token models.APIToken
+	var expiresAt, lastUsedAt *time.Time
+	var lastUsedIP *string
+
+	err := r.pool.Pool.QueryRow(ctx, `
+		UPDATE api_tokens 
+		SET token_hash = $1, token_prefix = $2, last_used_at = NULL, last_used_ip = NULL 
+		WHERE id = $3 AND user_id = $4 AND is_active = true
+		RETURNING id, user_id, name, token_hash, token_prefix, scopes, expires_at, 
+			last_used_at, last_used_ip, created_at, created_ip, is_active
+	`, newHash, newPrefix, tokenID, userID).Scan(
+		&token.ID,
+		&token.UserID,
+		&token.Name,
+		&token.TokenHash,
+		&token.TokenPrefix,
+		&token.Scopes,
+		&expiresAt,
+		&lastUsedAt,
+		&lastUsedIP,
+		&token.CreatedAt,
+		&token.CreatedIP,
+		&token.IsActive,
+	)
+
+	if err == pgx.ErrNoRows {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to rotate token: %w", err)
+	}
+
+	token.ExpiresAt = expiresAt
+	token.LastUsedAt = lastUsedAt
+	token.LastUsedIP = lastUsedIP
+
+	return &token, nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

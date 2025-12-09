@@ -61,3 +61,16 @@ var APITokenScopeDescriptions = map[string]string{
 	"manage":   "Manage own files (delete, rename, update expiration)",
 	"admin":    "Full admin access (requires admin role)",
 }
+
+// RotateAPITokenResponse is the response after rotating a token
+type RotateAPITokenResponse struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Token       string     `json:"token"`        // New token - shown only once!
+	TokenPrefix string     `json:"token_prefix"` // New prefix for identification
+	Scopes      []string   `json:"scopes"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	CreatedAt   time.Time  `json:"created_at"` // Original creation time (preserved)
+	RotatedAt   time.Time  `json:"rotated_at"` // When rotation occurred
+	Warning     string     `json:"warning"`
+}

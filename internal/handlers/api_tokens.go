@@ -3,8 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +15,12 @@ import (
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
+
+// tokenRotatePathRegex matches /api/tokens/{id}/rotate where id is numeric
+var tokenRotatePathRegex = regexp.MustCompile(`^/api/tokens/([0-9]+)/rotate/?$`)
 
 // Maximum number of tokens per user to prevent abuse
 const maxTokensPerUser = 50
@@ -326,6 +332,126 @@ func RevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "Token revoked successfully",
 		})
+	}
+}
+
+// RotateTokenHandler regenerates an API token while preserving its metadata.
+// The old token is immediately invalidated and a new token is generated.
+// Tokens can only be rotated via session auth (security: compromised tokens can't rotate themselves).
+func RotateTokenHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Get user from context
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Only allow token rotation via session auth (security: compromised tokens can't rotate themselves)
+		authType := middleware.GetAuthTypeFromContext(r)
+		if authType != middleware.AuthTypeSession {
+			slog.Warn("API token rotation attempted via API token",
+				"user_id", user.ID,
+				"username", user.Username,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Token rotation requires session authentication (login via web)",
+				"code":  "SESSION_REQUIRED",
+			})
+			return
+		}
+
+		// Parse token ID from path using regex: /api/tokens/{id}/rotate
+		matches := tokenRotatePathRegex.FindStringSubmatch(r.URL.Path)
+		if len(matches) != 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request path",
+				"code":  "INVALID_PATH",
+			})
+			return
+		}
+
+		tokenID, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil || tokenID <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid token ID",
+				"code":  "INVALID_TOKEN_ID",
+			})
+			return
+		}
+
+		// Generate new token
+		newToken, newPrefix, err := utils.GenerateAPIToken()
+		if err != nil {
+			slog.Error("failed to generate new API token", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Hash the new token
+		newHash := utils.HashAPIToken(newToken)
+
+		// Rotate the token in the database
+		updatedToken, err := repos.APITokens.Rotate(ctx, tokenID, user.ID, newHash, newPrefix)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Token not found or does not belong to you",
+					"code":  "TOKEN_NOT_FOUND",
+				})
+				return
+			}
+			slog.Error("failed to rotate API token",
+				"error", err,
+				"token_id", tokenID,
+				"user_id", user.ID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("API token rotated",
+			"token_id", tokenID,
+			"user_id", user.ID,
+			"username", user.Username,
+			"new_prefix", newPrefix,
+			"ip", getClientIPWithConfig(r, cfg),
+		)
+
+		// Convert scopes string to slice
+		scopes := utils.StringToScopes(updatedToken.Scopes)
+
+		// Return the new token (shown only once!)
+		response := models.RotateAPITokenResponse{
+			ID:          updatedToken.ID,
+			Name:        updatedToken.Name,
+			Token:       newToken, // New token - shown only once!
+			TokenPrefix: newPrefix,
+			Scopes:      scopes,
+			ExpiresAt:   updatedToken.ExpiresAt,
+			CreatedAt:   updatedToken.CreatedAt,
+			RotatedAt:   time.Now(),
+			Warning:     "Save this token securely - it will not be shown again! The previous token has been invalidated.",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
