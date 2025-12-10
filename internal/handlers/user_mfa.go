@@ -739,6 +739,14 @@ func AdminGetUserMFAStatusHandler(repos *repository.Repositories) http.HandlerFu
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		if user == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "User not found",
+			})
+			return
+		}
 
 		// Get MFA status using admin method
 		status, err := repos.MFA.AdminGetMFAStatus(ctx, userID)
@@ -827,6 +835,14 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 				"user_id", userID,
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if user == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "User not found",
+			})
 			return
 		}
 

@@ -317,7 +317,14 @@ func (r *MFARepository) UseRecoveryCode(ctx context.Context, userID int64, code 
 		return repository.ErrInvalidRecoveryCode
 	}
 
-	// Get all unused codes for the user
+	// Collect all unused codes first to avoid SQLite deadlock
+	// (can't execute UPDATE while rows iterator is open)
+	type codeCandidate struct {
+		id   int64
+		hash string
+	}
+	var candidates []codeCandidate
+
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT id, code_hash FROM user_mfa_recovery_codes WHERE user_id = ? AND used_at IS NULL",
 		userID,
@@ -325,32 +332,34 @@ func (r *MFARepository) UseRecoveryCode(ctx context.Context, userID int64, code 
 	if err != nil {
 		return fmt.Errorf("failed to query recovery codes: %w", err)
 	}
-	defer rows.Close()
 
-	// Check each code hash
 	for rows.Next() {
-		var id int64
-		var hash string
-		if err := rows.Scan(&id, &hash); err != nil {
+		var c codeCandidate
+		if err := rows.Scan(&c.id, &c.hash); err != nil {
+			rows.Close()
 			return fmt.Errorf("failed to scan recovery code: %w", err)
 		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
 
-		// Compare using bcrypt
-		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(code)); err == nil {
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating recovery codes: %w", err)
+	}
+
+	// Now check each code hash (rows is closed, safe to UPDATE)
+	for _, c := range candidates {
+		if err := bcrypt.CompareHashAndPassword([]byte(c.hash), []byte(code)); err == nil {
 			// Match found - mark as used
 			_, err := r.db.ExecContext(ctx,
 				"UPDATE user_mfa_recovery_codes SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
-				id,
+				c.id,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to mark code as used: %w", err)
 			}
 			return nil
 		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating recovery codes: %w", err)
 	}
 
 	return repository.ErrInvalidRecoveryCode
