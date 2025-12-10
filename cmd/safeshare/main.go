@@ -532,6 +532,18 @@ func run() error {
 			// Route to appropriate handler based on HTTP method and path
 			path := r.URL.Path
 
+			// Admin MFA management routes
+			// GET /admin/api/users/{id}/mfa/status - Get user's MFA status
+			// POST /admin/api/users/{id}/mfa/reset - Disable MFA for user
+			// Note: Use HasSuffix for strict path matching to prevent path traversal
+			if strings.HasSuffix(path, "/mfa/status") && r.Method == "GET" {
+				adminAuth(http.HandlerFunc(handlers.AdminGetUserMFAStatusHandler(repos))).ServeHTTP(w, r)
+				return
+			} else if strings.HasSuffix(path, "/mfa/reset") && r.Method == "POST" {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserMFAHandler(repos, cfg)))).ServeHTTP(w, r)
+				return
+			}
+
 			if r.Method == "PUT" || r.Method == "PATCH" {
 				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(repos)))).ServeHTTP(w, r)
 			} else if r.Method == "DELETE" {

@@ -35,6 +35,15 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+- **MFA Management UI**: User dashboard now includes a Security section for managing Two-Factor Authentication (TOTP)
+  - View MFA status with enabled/disabled indicator and recovery codes count
+  - Enable MFA with guided setup wizard (QR code, manual key entry, verification)
+  - Recovery codes display with download and copy options (shown once during setup)
+  - Warning indicator when recovery codes are running low (< 3 remaining)
+  - Disable MFA with TOTP code verification for security
+  - Full dark mode support
+
 ## [1.4.1] - 2025-12-02
 
 ### Fixed

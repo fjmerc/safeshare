@@ -2162,6 +2162,484 @@
             border-left-color: #ef4444;
             color: #fca5a5;
         }
+
+        /* ===== MFA SECURITY SECTION STYLES ===== */
+
+        /* MFA Status Card */
+        .mfa-status-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .mfa-status-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .mfa-status-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .mfa-status-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mfa-status-icon.enabled {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .mfa-status-icon.disabled {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .mfa-status-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .mfa-status-text h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 4px 0;
+        }
+
+        .mfa-status-text p {
+            font-size: 13px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        .mfa-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .mfa-detail-item {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .mfa-detail-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+
+        .mfa-detail-value {
+            font-size: 14px;
+            font-weight: 500;
+            color: #1e293b;
+        }
+
+        .mfa-detail-value.success {
+            color: #16a34a;
+        }
+
+        .mfa-detail-value.warning {
+            color: #d97706;
+        }
+
+        .mfa-detail-value.danger {
+            color: #dc2626;
+        }
+
+        .mfa-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* MFA Not Available State */
+        .mfa-not-available {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px dashed #e2e8f0;
+        }
+
+        .mfa-not-available svg {
+            flex-shrink: 0;
+            color: #94a3b8;
+        }
+
+        .mfa-not-available-text {
+            flex: 1;
+        }
+
+        .mfa-not-available-text h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #475569;
+            margin: 0 0 4px 0;
+        }
+
+        .mfa-not-available-text p {
+            font-size: 13px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        /* MFA Wizard Modal */
+        .mfa-wizard-content {
+            max-width: 520px;
+        }
+
+        .mfa-wizard-steps {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .mfa-wizard-step {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            background: #e2e8f0;
+            color: #64748b;
+            transition: all 0.2s;
+        }
+
+        .mfa-wizard-step.active {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .mfa-wizard-step.completed {
+            background: #10b981;
+            color: white;
+        }
+
+        .mfa-wizard-step-connector {
+            width: 24px;
+            height: 2px;
+            background: #e2e8f0;
+            align-self: center;
+        }
+
+        .mfa-wizard-step-connector.completed {
+            background: #10b981;
+        }
+
+        .mfa-step-content {
+            display: none;
+        }
+
+        .mfa-step-content.active {
+            display: block;
+        }
+
+        .mfa-qr-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .mfa-qr-code {
+            display: inline-block;
+            padding: 16px;
+            background: white;
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+        }
+
+        .mfa-qr-code img {
+            display: block;
+            width: 200px;
+            height: 200px;
+        }
+
+        .mfa-manual-key {
+            margin-top: 16px;
+            padding: 16px;
+            background: #f1f5f9;
+            border-radius: 8px;
+        }
+
+        .mfa-manual-key-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+
+        .mfa-manual-key-value {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            letter-spacing: 2px;
+            word-break: break-all;
+        }
+
+        .mfa-verify-input {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin: 24px 0;
+        }
+
+        .mfa-code-input {
+            width: 100%;
+            max-width: 200px;
+            padding: 16px;
+            font-size: 24px;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            letter-spacing: 8px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .mfa-code-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .mfa-code-input.error {
+            border-color: #ef4444;
+            animation: shake 0.4s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        /* Recovery Codes Display */
+        .mfa-recovery-codes {
+            margin: 20px 0;
+        }
+
+        .mfa-recovery-codes-warning {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #fef3c7;
+            border-radius: 8px;
+            border: 1px solid #fcd34d;
+            margin-bottom: 16px;
+        }
+
+        .mfa-recovery-codes-warning svg {
+            flex-shrink: 0;
+            color: #d97706;
+        }
+
+        .mfa-recovery-codes-warning-text {
+            font-size: 13px;
+            color: #92400e;
+            line-height: 1.5;
+        }
+
+        .mfa-recovery-codes-warning-text strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .mfa-recovery-codes-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            padding: 16px;
+            background: #1e293b;
+            border-radius: 8px;
+        }
+
+        .mfa-recovery-code {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #22c55e;
+            padding: 8px;
+            background: #0f172a;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .mfa-recovery-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .mfa-confirm-checkbox {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            margin-top: 16px;
+            cursor: pointer;
+        }
+
+        .mfa-confirm-checkbox input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-top: 2px;
+            cursor: pointer;
+            accent-color: #3b82f6;
+        }
+
+        .mfa-confirm-checkbox-text {
+            font-size: 14px;
+            color: #374151;
+            line-height: 1.5;
+        }
+
+        /* Dark Mode - MFA Styles */
+        [data-theme="dark"] .mfa-status-card {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-status-icon.enabled {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .mfa-status-icon.disabled {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .mfa-status-text h3 {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-status-text p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-detail-item {
+            background: #111827;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-detail-value {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-not-available {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-not-available-text h4 {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .mfa-wizard-step {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-wizard-step-connector {
+            background: #374151;
+        }
+
+        [data-theme="dark"] .mfa-qr-code {
+            background: white;
+        }
+
+        [data-theme="dark"] .mfa-manual-key {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .mfa-manual-key-value {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-code-input {
+            background: #1f2937;
+            border-color: #374151;
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-code-input:focus {
+            border-color: #3b82f6;
+        }
+
+        [data-theme="dark"] .mfa-recovery-codes-warning {
+            background: #78350f;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .mfa-recovery-codes-warning-text {
+            color: #fde68a;
+        }
+
+        [data-theme="dark"] .mfa-confirm-checkbox {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .mfa-confirm-checkbox-text {
+            color: #e5e7eb;
+        }
+
+        /* Responsive - MFA */
+        @media (max-width: 768px) {
+            .mfa-status-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .mfa-actions {
+                width: 100%;
+            }
+
+            .mfa-actions .btn {
+                flex: 1;
+            }
+
+            .mfa-recovery-codes-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .mfa-recovery-actions {
+                flex-direction: column;
+            }
+
+            .mfa-recovery-actions .btn {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2272,6 +2750,25 @@
 
             <div id="tokensContainer">
                 <!-- Tokens will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Security Section -->
+        <div class="content-section" id="securitySection">
+            <div class="section-header">
+                <h2>Security</h2>
+                <button id="refreshMFABtn" class="btn btn-secondary" onclick="refreshMFAStatus()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div id="mfaContainer">
+                <!-- MFA status will be loaded here -->
             </div>
         </div>
     </div>
@@ -2460,10 +2957,20 @@
         // CSRF token helper
         function getCSRFToken() {
             const cookies = document.cookie.split(';');
+            // User dashboard uses user_csrf_token, admin uses csrf_token
             for (let cookie of cookies) {
                 const parts = cookie.trim().split('=');
                 const name = parts[0];
                 const value = parts.slice(1).join('='); // Handle '=' in token value
+                if (name === 'user_csrf_token') {
+                    return value;
+                }
+            }
+            // Fallback to admin csrf_token or sessionStorage
+            for (let cookie of cookies) {
+                const parts = cookie.trim().split('=');
+                const name = parts[0];
+                const value = parts.slice(1).join('=');
                 if (name === 'csrf_token') {
                     return value;
                 }
@@ -2501,6 +3008,7 @@
                     loadConfig();
                     loadFiles();
                     loadTokens();
+                    loadMFAStatus();
                 } else {
                     // Not authenticated, redirect to login
                     window.location.href = '/login';
@@ -3963,6 +4471,787 @@
 
         // ========== End API Token Management Functions ==========
 
+        // ========== MFA Management Functions ==========
+
+        // Simple QR Code generator - creates SVG data URL
+        // Based on QRCode.js algorithm, simplified for TOTP URLs
+        const QRCodeGenerator = (function() {
+            // QR Code encoding for alphanumeric data
+            const PAD0 = 0xEC, PAD1 = 0x11;
+            
+            // Error correction level L (7%)
+            const ECL = { ordinal: 1 };
+            
+            // Reed-Solomon error correction
+            const EXP = [], LOG = [];
+            (function() {
+                let x = 1;
+                for (let i = 0; i < 255; i++) {
+                    EXP[i] = x;
+                    LOG[x] = i;
+                    x <<= 1;
+                    if (x >= 256) x ^= 0x11D;
+                }
+            })();
+            
+            function rsGenPoly(n) {
+                let result = [1];
+                for (let i = 0; i < n; i++) {
+                    const newResult = new Array(result.length + 1).fill(0);
+                    for (let j = 0; j < result.length; j++) {
+                        newResult[j] ^= result[j];
+                        newResult[j + 1] ^= (result[j] * EXP[i]) % 255 === 0 ? 0 : EXP[(LOG[result[j]] + i) % 255];
+                    }
+                    result = newResult.map(v => v & 255 ? EXP[LOG[v] % 255] : 0);
+                }
+                return result;
+            }
+            
+            function rsEncode(data, poly) {
+                const result = new Array(poly.length - 1).fill(0);
+                for (const b of data) {
+                    const factor = b ^ result[0];
+                    result.shift();
+                    result.push(0);
+                    if (factor) {
+                        for (let i = 0; i < result.length; i++) {
+                            result[i] ^= EXP[(LOG[poly[i + 1]] + LOG[factor]) % 255] || 0;
+                        }
+                    }
+                }
+                return result;
+            }
+            
+            function encodeBytes(text) {
+                // Byte mode encoding
+                const bytes = new TextEncoder().encode(text);
+                const bits = [];
+                // Mode indicator (0100 = byte)
+                bits.push(0, 1, 0, 0);
+                // Character count (8 bits for version 1-9)
+                for (let i = 7; i >= 0; i--) bits.push((bytes.length >> i) & 1);
+                // Data
+                for (const b of bytes) {
+                    for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
+                }
+                // Terminator
+                while (bits.length < 8) bits.push(0);
+                return bits;
+            }
+            
+            function getVersion(dataLen) {
+                // Version capacities for byte mode, ECL L
+                const caps = [0, 17, 32, 53, 78, 106, 134, 154, 192, 230, 271, 321, 367, 425, 458, 520, 586, 644, 718, 792, 858];
+                for (let v = 1; v <= 20; v++) {
+                    if (dataLen <= caps[v]) return v;
+                }
+                return 20;
+            }
+            
+            function getDataCodewords(version) {
+                // Total data codewords for ECL L
+                const total = [0, 19, 34, 55, 80, 108, 136, 156, 194, 232, 274, 324, 370, 428, 461, 523, 589, 647, 721, 795, 861];
+                return total[version];
+            }
+            
+            function getECCodewords(version) {
+                // EC codewords for ECL L
+                const ec = [0, 7, 10, 15, 20, 26, 36, 40, 48, 60, 72, 80, 96, 104, 120, 132, 144, 168, 180, 196, 224];
+                return ec[version];
+            }
+            
+            function createMatrix(version) {
+                const size = version * 4 + 17;
+                const matrix = Array(size).fill(null).map(() => Array(size).fill(null));
+                
+                // Finder patterns
+                function setFinder(row, col) {
+                    for (let r = -1; r <= 7; r++) {
+                        for (let c = -1; c <= 7; c++) {
+                            const rr = row + r, cc = col + c;
+                            if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+                            const isBlack = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
+                                           (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
+                                           (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+                            matrix[rr][cc] = isBlack ? 1 : 0;
+                        }
+                    }
+                }
+                setFinder(0, 0);
+                setFinder(0, size - 7);
+                setFinder(size - 7, 0);
+                
+                // Timing patterns
+                for (let i = 8; i < size - 8; i++) {
+                    if (matrix[6][i] === null) matrix[6][i] = i % 2 === 0 ? 1 : 0;
+                    if (matrix[i][6] === null) matrix[i][6] = i % 2 === 0 ? 1 : 0;
+                }
+                
+                // Dark module
+                matrix[size - 8][8] = 1;
+                
+                // Alignment patterns for version >= 2
+                if (version >= 2) {
+                    const positions = [6, Math.floor((size - 13) / 2) + 6, size - 7];
+                    for (const r of positions) {
+                        for (const c of positions) {
+                            if (matrix[r][c] !== null) continue;
+                            for (let dr = -2; dr <= 2; dr++) {
+                                for (let dc = -2; dc <= 2; dc++) {
+                                    const isBlack = dr === -2 || dr === 2 || dc === -2 || dc === 2 || (dr === 0 && dc === 0);
+                                    matrix[r + dr][c + dc] = isBlack ? 1 : 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                return { matrix, size };
+            }
+            
+            function placeData(matrix, size, bits) {
+                let bitIdx = 0;
+                let upward = true;
+                
+                for (let col = size - 1; col >= 0; col -= 2) {
+                    if (col === 6) col = 5;
+                    
+                    for (let i = 0; i < size; i++) {
+                        const row = upward ? size - 1 - i : i;
+                        
+                        for (let c = 0; c <= 1; c++) {
+                            const cc = col - c;
+                            if (matrix[row][cc] === null) {
+                                matrix[row][cc] = bitIdx < bits.length ? bits[bitIdx] : 0;
+                                bitIdx++;
+                            }
+                        }
+                    }
+                    upward = !upward;
+                }
+            }
+            
+            function applyMask(matrix, size) {
+                // Apply mask pattern 0 (simple checkerboard)
+                for (let r = 0; r < size; r++) {
+                    for (let c = 0; c < size; c++) {
+                        if (matrix[r][c] !== null && (r + c) % 2 === 0) {
+                            matrix[r][c] ^= 1;
+                        }
+                    }
+                }
+            }
+            
+            function addFormatInfo(matrix, size) {
+                // Format info for ECL L, mask 0
+                const formatBits = [1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0];
+                let bitIdx = 0;
+                
+                // Horizontal and vertical
+                for (let i = 0; i <= 5; i++) matrix[8][i] = formatBits[bitIdx++];
+                matrix[8][7] = formatBits[bitIdx++];
+                matrix[8][8] = formatBits[bitIdx++];
+                matrix[7][8] = formatBits[bitIdx++];
+                for (let i = 5; i >= 0; i--) matrix[i][8] = formatBits[bitIdx++];
+                
+                bitIdx = 0;
+                for (let i = size - 1; i >= size - 8; i--) matrix[8][i] = formatBits[bitIdx++];
+                for (let i = size - 7; i < size; i++) matrix[i][8] = formatBits[bitIdx++];
+            }
+            
+            function toSvgDataUrl(matrix, size) {
+                const scale = 4;
+                const margin = 4;
+                const fullSize = (size + margin * 2) * scale;
+                
+                let paths = '';
+                for (let r = 0; r < size; r++) {
+                    for (let c = 0; c < size; c++) {
+                        if (matrix[r][c] === 1) {
+                            const x = (c + margin) * scale;
+                            const y = (r + margin) * scale;
+                            paths += `M${x},${y}h${scale}v${scale}h-${scale}z`;
+                        }
+                    }
+                }
+                
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${fullSize} ${fullSize}" width="200" height="200"><rect width="100%" height="100%" fill="white"/><path d="${paths}" fill="black"/></svg>`;
+                return 'data:image/svg+xml;base64,' + btoa(svg);
+            }
+            
+            return function generate(text) {
+                const version = getVersion(text.length);
+                const { matrix, size } = createMatrix(version);
+                
+                // Encode data
+                const bits = encodeBytes(text);
+                const dataCodewords = getDataCodewords(version);
+                const ecCodewords = getECCodewords(version);
+                
+                // Pad to capacity
+                while (bits.length < dataCodewords * 8) {
+                    const pad = bits.length % 16 < 8 ? PAD0 : PAD1;
+                    for (let i = 7; i >= 0; i--) bits.push((pad >> i) & 1);
+                }
+                
+                // Convert to bytes and add error correction
+                const dataBytes = [];
+                for (let i = 0; i < bits.length; i += 8) {
+                    let byte = 0;
+                    for (let j = 0; j < 8; j++) byte = (byte << 1) | (bits[i + j] || 0);
+                    dataBytes.push(byte);
+                }
+                
+                const poly = rsGenPoly(ecCodewords);
+                const ecBytes = rsEncode(dataBytes, poly);
+                
+                // Interleave and convert to bits
+                const allBytes = [...dataBytes, ...ecBytes];
+                const allBits = [];
+                for (const b of allBytes) {
+                    for (let i = 7; i >= 0; i--) allBits.push((b >> i) & 1);
+                }
+                
+                // Place data and apply mask
+                placeData(matrix, size, allBits);
+                applyMask(matrix, size);
+                addFormatInfo(matrix, size);
+                
+                return toSvgDataUrl(matrix, size);
+            };
+        })();
+
+        // MFA state
+        let mfaStatus = null;
+        let mfaSetupData = null;
+        let mfaRecoveryCodes = [];
+        let mfaWizardStep = 1;
+
+        // Load MFA status
+        async function loadMFAStatus() {
+            try {
+                const response = await fetch('/api/user/mfa/status', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    mfaStatus = await response.json();
+                    displayMFAStatus(mfaStatus);
+                } else {
+                    // MFA might not be enabled on server
+                    const data = await response.json();
+                    displayMFANotAvailable(data.error || 'MFA is not available');
+                }
+            } catch (error) {
+                console.error('Failed to load MFA status:', error);
+                displayMFANotAvailable('Failed to load MFA status');
+            }
+        }
+
+        // Refresh MFA status
+        function refreshMFAStatus() {
+            const btn = document.getElementById('refreshMFABtn');
+            btn.classList.add('btn-refreshing');
+            loadMFAStatus().finally(() => {
+                btn.classList.remove('btn-refreshing');
+            });
+        }
+
+        // Display MFA status in the UI
+        function displayMFAStatus(status) {
+            const container = document.getElementById('mfaContainer');
+
+            if (!status.enabled) {
+                // MFA feature is disabled on the server
+                container.innerHTML = `
+                    <div class="mfa-not-available">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <div class="mfa-not-available-text">
+                            <h4>Two-Factor Authentication Not Available</h4>
+                            <p>MFA is currently disabled on this server. Contact your administrator to enable it.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const isTOTPEnabled = status.totp_enabled;
+            const recoveryCodesRemaining = status.recovery_codes_remaining || 0;
+            const verifiedAt = status.totp_verified_at ? new Date(status.totp_verified_at).toLocaleDateString() : 'N/A';
+
+            // Determine recovery codes status class
+            let recoveryClass = 'success';
+            if (recoveryCodesRemaining === 0) {
+                recoveryClass = 'danger';
+            } else if (recoveryCodesRemaining < 3) {
+                recoveryClass = 'warning';
+            }
+
+            if (isTOTPEnabled) {
+                // MFA is enabled - show status and disable option
+                container.innerHTML = `
+                    <div class="mfa-status-card">
+                        <div class="mfa-status-header">
+                            <div class="mfa-status-title">
+                                <div class="mfa-status-icon enabled">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="mfa-status-text">
+                                    <h3>Two-Factor Authentication Enabled</h3>
+                                    <p>Your account is protected with an extra layer of security</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mfa-details">
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Method</div>
+                                <div class="mfa-detail-value">Authenticator App (TOTP)</div>
+                            </div>
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Enabled Since</div>
+                                <div class="mfa-detail-value">${escapeHtml(verifiedAt)}</div>
+                            </div>
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Recovery Codes</div>
+                                <div class="mfa-detail-value ${recoveryClass}">${recoveryCodesRemaining} remaining</div>
+                            </div>
+                        </div>
+                        ${recoveryCodesRemaining < 3 ? `
+                        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0;">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <span style="color: #92400e; font-size: 13px;">You have few recovery codes left. Consider regenerating them to avoid being locked out.</span>
+                        </div>
+                        ` : ''}
+                        <div class="mfa-actions">
+                            <button class="btn btn-danger" onclick="showDisableMFAModal()">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                    <line x1="9" y1="15" x2="15" y2="19"></line>
+                                    <line x1="15" y1="15" x2="9" y2="19"></line>
+                                </svg>
+                                Disable MFA
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // MFA is not enabled - show setup option
+                container.innerHTML = `
+                    <div class="mfa-status-card">
+                        <div class="mfa-status-header">
+                            <div class="mfa-status-title">
+                                <div class="mfa-status-icon disabled">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                        <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                                    </svg>
+                                </div>
+                                <div class="mfa-status-text">
+                                    <h3>Two-Factor Authentication Not Enabled</h3>
+                                    <p>Add an extra layer of security to your account</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                            <h4 style="font-size: 13px; font-weight: 600; color: #166534; margin: 0 0 8px 0;">Why enable two-factor authentication?</h4>
+                            <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
+                                <li>Protects your account even if your password is compromised</li>
+                                <li>Required code from your phone for each login</li>
+                                <li>Works with popular authenticator apps</li>
+                            </ul>
+                        </div>
+                        <div class="mfa-actions">
+                            <button class="btn btn-success" onclick="showMFASetupModal()">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                </svg>
+                                Enable MFA
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Display MFA not available state
+        function displayMFANotAvailable(message) {
+            const container = document.getElementById('mfaContainer');
+            container.innerHTML = `
+                <div class="mfa-not-available">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <div class="mfa-not-available-text">
+                        <h4>MFA Status Unavailable</h4>
+                        <p>${escapeHtml(message)}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Show MFA setup wizard modal
+        function showMFASetupModal() {
+            mfaWizardStep = 1;
+            mfaSetupData = null;
+            mfaRecoveryCodes = [];
+            updateMFAWizardUI();
+            document.getElementById('mfaSetupModal').classList.add('show');
+        }
+
+        // Hide MFA setup modal
+        function hideMFASetupModal() {
+            document.getElementById('mfaSetupModal').classList.remove('show');
+            // Reset wizard state
+            mfaWizardStep = 1;
+            mfaSetupData = null;
+            mfaRecoveryCodes = [];
+            document.getElementById('mfaVerifyCode').value = '';
+            document.getElementById('mfaVerifyError').style.display = 'none';
+            document.getElementById('mfaRecoveryConfirm').checked = false;
+        }
+
+        // Update MFA wizard UI based on current step
+        function updateMFAWizardUI() {
+            // Update step indicators
+            for (let i = 1; i <= 4; i++) {
+                const stepEl = document.getElementById(`mfaStep${i}Indicator`);
+                const stepContent = document.getElementById(`mfaStep${i}`);
+                const connector = document.getElementById(`mfaConnector${i - 1}`);
+
+                if (i < mfaWizardStep) {
+                    stepEl.classList.add('completed');
+                    stepEl.classList.remove('active');
+                    stepEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    if (connector) connector.classList.add('completed');
+                } else if (i === mfaWizardStep) {
+                    stepEl.classList.add('active');
+                    stepEl.classList.remove('completed');
+                    stepEl.textContent = i;
+                    if (connector) connector.classList.remove('completed');
+                } else {
+                    stepEl.classList.remove('active', 'completed');
+                    stepEl.textContent = i;
+                    if (connector) connector.classList.remove('completed');
+                }
+
+                // Show/hide step content
+                if (i === mfaWizardStep) {
+                    stepContent.classList.add('active');
+                } else {
+                    stepContent.classList.remove('active');
+                }
+            }
+
+            // Update buttons
+            const cancelBtn = document.getElementById('mfaSetupCancelBtn');
+            const backBtn = document.getElementById('mfaSetupBackBtn');
+            const nextBtn = document.getElementById('mfaSetupNextBtn');
+
+            // Show/hide back button
+            if (mfaWizardStep > 1 && mfaWizardStep < 4) {
+                backBtn.style.display = 'inline-flex';
+            } else {
+                backBtn.style.display = 'none';
+            }
+
+            // Update next button text
+            switch (mfaWizardStep) {
+                case 1:
+                    nextBtn.textContent = 'Get Started';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 2:
+                    nextBtn.textContent = 'Continue';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 3:
+                    nextBtn.textContent = 'Verify';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 4:
+                    nextBtn.textContent = 'Done';
+                    nextBtn.classList.remove('btn-primary');
+                    nextBtn.classList.add('btn-success');
+                    cancelBtn.style.display = 'none';
+                    backBtn.style.display = 'none';
+                    break;
+            }
+        }
+
+        // Navigate to next step in wizard
+        async function mfaWizardNextStep() {
+            const nextBtn = document.getElementById('mfaSetupNextBtn');
+
+            switch (mfaWizardStep) {
+                case 1:
+                    // Start TOTP setup
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Setting up...';
+                    try {
+                        const response = await fetch('/api/user/mfa/totp/setup', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'X-CSRF-Token': getCSRFToken()
+                            }
+                        });
+
+                        if (response.ok) {
+                            mfaSetupData = await response.json();
+                            // Generate QR code locally using SVG data URL (CSP compliant, no third-party)
+                            const qrUrl = QRCodeGenerator(mfaSetupData.url);
+                            document.getElementById('mfaQRCodeImg').src = qrUrl;
+                            // Format secret key for display (add spaces every 4 chars)
+                            const formattedSecret = mfaSetupData.secret.match(/.{1,4}/g).join(' ');
+                            document.getElementById('mfaSecretKey').textContent = formattedSecret;
+                            mfaWizardStep = 2;
+                            updateMFAWizardUI();
+                        } else {
+                            const data = await response.json();
+                            showToast(data.error || 'Failed to start MFA setup', 'error');
+                        }
+                    } catch (error) {
+                        console.error('MFA setup failed:', error);
+                        showToast('Network error during MFA setup', 'error');
+                    } finally {
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Get Started';
+                    }
+                    break;
+
+                case 2:
+                    // Move to verification step
+                    mfaWizardStep = 3;
+                    updateMFAWizardUI();
+                    // Focus the input
+                    setTimeout(() => document.getElementById('mfaVerifyCode').focus(), 100);
+                    break;
+
+                case 3:
+                    // Verify TOTP code
+                    const code = document.getElementById('mfaVerifyCode').value.trim();
+                    const errorEl = document.getElementById('mfaVerifyError');
+
+                    // Validate code format
+                    if (!/^\d{6}$/.test(code)) {
+                        errorEl.textContent = 'Please enter a 6-digit code';
+                        errorEl.style.display = 'block';
+                        document.getElementById('mfaVerifyCode').classList.add('error');
+                        setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
+                        return;
+                    }
+
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Verifying...';
+                    errorEl.style.display = 'none';
+
+                    try {
+                        const response = await fetch('/api/user/mfa/totp/verify', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': getCSRFToken()
+                            },
+                            body: JSON.stringify({ code: code })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            mfaRecoveryCodes = data.recovery_codes || [];
+                            // Display recovery codes
+                            displayRecoveryCodes(mfaRecoveryCodes);
+                            mfaWizardStep = 4;
+                            updateMFAWizardUI();
+                        } else {
+                            const data = await response.json();
+                            errorEl.textContent = data.error || 'Invalid code. Please try again.';
+                            errorEl.style.display = 'block';
+                            document.getElementById('mfaVerifyCode').classList.add('error');
+                            setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
+                        }
+                    } catch (error) {
+                        console.error('MFA verification failed:', error);
+                        errorEl.textContent = 'Network error. Please try again.';
+                        errorEl.style.display = 'block';
+                    } finally {
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Verify';
+                    }
+                    break;
+
+                case 4:
+                    // Check if user confirmed they saved codes
+                    if (!document.getElementById('mfaRecoveryConfirm').checked) {
+                        showToast('Please confirm that you have saved your recovery codes', 'error');
+                        return;
+                    }
+                    // Done - close modal and refresh status
+                    hideMFASetupModal();
+                    showToast('Two-factor authentication has been enabled!', 'success');
+                    loadMFAStatus();
+                    break;
+            }
+        }
+
+        // Navigate to previous step in wizard
+        function mfaWizardPrevStep() {
+            if (mfaWizardStep > 1 && mfaWizardStep < 4) {
+                mfaWizardStep--;
+                updateMFAWizardUI();
+            }
+        }
+
+        // Display recovery codes in the grid
+        function displayRecoveryCodes(codes) {
+            const grid = document.getElementById('mfaRecoveryCodesGrid');
+            grid.innerHTML = codes.map(code => `<div class="mfa-recovery-code">${escapeHtml(code)}</div>`).join('');
+        }
+
+        // Copy MFA secret to clipboard
+        function copyMFASecret() {
+            if (!mfaSetupData || !mfaSetupData.secret) return;
+            navigator.clipboard.writeText(mfaSetupData.secret).then(() => {
+                showToast('Secret key copied to clipboard', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showToast('Failed to copy secret key', 'error');
+            });
+        }
+
+        // Download recovery codes as text file
+        function downloadRecoveryCodes() {
+            if (!mfaRecoveryCodes || mfaRecoveryCodes.length === 0) return;
+
+            const content = `SafeShare Recovery Codes
+================================
+Generated: ${new Date().toISOString()}
+
+These codes can be used to access your account if you lose
+access to your authenticator app. Each code can only be used once.
+
+KEEP THESE CODES SAFE AND SECURE!
+
+${mfaRecoveryCodes.join('\n')}
+
+================================
+If you lose these codes and your authenticator app,
+you may be locked out of your account.
+`;
+
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'safeshare-recovery-codes.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Recovery codes downloaded', 'success');
+        }
+
+        // Copy all recovery codes to clipboard
+        function copyRecoveryCodes() {
+            if (!mfaRecoveryCodes || mfaRecoveryCodes.length === 0) return;
+            const codesText = mfaRecoveryCodes.join('\n');
+            navigator.clipboard.writeText(codesText).then(() => {
+                showToast('Recovery codes copied to clipboard', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showToast('Failed to copy recovery codes', 'error');
+            });
+        }
+
+        // Show MFA disable confirmation modal
+        function showDisableMFAModal() {
+            document.getElementById('mfaDisableCode').value = '';
+            document.getElementById('mfaDisableError').style.display = 'none';
+            document.getElementById('mfaDisableModal').classList.add('show');
+            setTimeout(() => document.getElementById('mfaDisableCode').focus(), 100);
+        }
+
+        // Hide MFA disable modal
+        function hideMFADisableModal() {
+            document.getElementById('mfaDisableModal').classList.remove('show');
+            document.getElementById('mfaDisableCode').value = '';
+            document.getElementById('mfaDisableError').style.display = 'none';
+        }
+
+        // Confirm and disable MFA
+        async function confirmDisableMFA() {
+            const code = document.getElementById('mfaDisableCode').value.trim();
+            const errorEl = document.getElementById('mfaDisableError');
+            const confirmBtn = document.getElementById('mfaDisableConfirmBtn');
+
+            // Validate code format
+            if (!/^\d{6}$/.test(code)) {
+                errorEl.textContent = 'Please enter a 6-digit code';
+                errorEl.style.display = 'block';
+                document.getElementById('mfaDisableCode').classList.add('error');
+                setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
+                return;
+            }
+
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Disabling...';
+            errorEl.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/user/mfa/totp', {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCSRFToken()
+                    },
+                    body: JSON.stringify({ code: code })
+                });
+
+                if (response.ok) {
+                    hideMFADisableModal();
+                    showToast('Two-factor authentication has been disabled', 'success');
+                    loadMFAStatus();
+                } else {
+                    const data = await response.json();
+                    errorEl.textContent = data.error || 'Invalid code. Please try again.';
+                    errorEl.style.display = 'block';
+                    document.getElementById('mfaDisableCode').classList.add('error');
+                    setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
+                }
+            } catch (error) {
+                console.error('MFA disable failed:', error);
+                errorEl.textContent = 'Network error. Please try again.';
+                errorEl.style.display = 'block';
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Disable MFA';
+            }
+        }
+
+        // ========== End MFA Management Functions ==========
+
         // Initialize theme icons on load
         document.addEventListener('DOMContentLoaded', () => {
             const theme = document.documentElement.getAttribute('data-theme');
@@ -4346,6 +5635,162 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideRegenerateConfirmation()">Cancel</button>
                 <button class="btn btn-danger" onclick="executeRegenerateClaim()" id="confirmRegenerateBtn">Regenerate Code</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MFA Setup Wizard Modal -->
+    <div id="mfaSetupModal" class="modal">
+        <div class="modal-content mfa-wizard-content">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>Enable Two-Factor Authentication</span>
+            </div>
+            <div class="modal-body">
+                <!-- Step indicators -->
+                <div class="mfa-wizard-steps">
+                    <div class="mfa-wizard-step active" id="mfaStep1Indicator">1</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector1"></div>
+                    <div class="mfa-wizard-step" id="mfaStep2Indicator">2</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector2"></div>
+                    <div class="mfa-wizard-step" id="mfaStep3Indicator">3</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector3"></div>
+                    <div class="mfa-wizard-step" id="mfaStep4Indicator">4</div>
+                </div>
+
+                <!-- Step 1: Introduction -->
+                <div class="mfa-step-content active" id="mfaStep1">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Protect Your Account</h3>
+                    <p style="color: #64748b; margin-bottom: 16px; line-height: 1.6;">
+                        Two-factor authentication adds an extra layer of security by requiring a code from your authenticator app in addition to your password.
+                    </p>
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                        <h4 style="font-size: 13px; font-weight: 600; color: #166534; margin: 0 0 8px 0;">Before you begin, make sure you have:</h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
+                            <li>An authenticator app installed (Google Authenticator, Authy, 1Password, etc.)</li>
+                            <li>Access to your phone or device with the authenticator app</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Step 2: QR Code -->
+                <div class="mfa-step-content" id="mfaStep2">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Scan QR Code</h3>
+                    <p style="color: #64748b; margin-bottom: 16px; font-size: 14px;">
+                        Open your authenticator app and scan the QR code below, or manually enter the key.
+                    </p>
+                    <div class="mfa-qr-container">
+                        <div class="mfa-qr-code">
+                            <img id="mfaQRCodeImg" src="" alt="MFA QR Code">
+                        </div>
+                    </div>
+                    <div class="mfa-manual-key">
+                        <div class="mfa-manual-key-label">Manual entry key</div>
+                        <div class="mfa-manual-key-value" id="mfaSecretKey">XXXX XXXX XXXX XXXX</div>
+                        <button class="btn btn-secondary" onclick="copyMFASecret()" style="margin-top: 12px; width: 100%;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy Secret Key
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Verify Code -->
+                <div class="mfa-step-content" id="mfaStep3">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Verify Setup</h3>
+                    <p style="color: #64748b; margin-bottom: 8px; font-size: 14px; text-align: center;">
+                        Enter the 6-digit code from your authenticator app to verify the setup.
+                    </p>
+                    <div class="mfa-verify-input">
+                        <input type="text" id="mfaVerifyCode" class="mfa-code-input" maxlength="6" placeholder="000000" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+                    </div>
+                    <p id="mfaVerifyError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+                </div>
+
+                <!-- Step 4: Recovery Codes -->
+                <div class="mfa-step-content" id="mfaStep4">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Save Recovery Codes</h3>
+                    <div class="mfa-recovery-codes">
+                        <div class="mfa-recovery-codes-warning">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <div class="mfa-recovery-codes-warning-text">
+                                <strong>Save these recovery codes now!</strong>
+                                These codes can be used to access your account if you lose your authenticator device. Each code can only be used once. You will NOT be able to see these codes again.
+                            </div>
+                        </div>
+                        <div class="mfa-recovery-codes-grid" id="mfaRecoveryCodesGrid">
+                            <!-- Recovery codes will be inserted here -->
+                        </div>
+                        <div class="mfa-recovery-actions">
+                            <button class="btn btn-secondary" onclick="downloadRecoveryCodes()" style="flex: 1;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                Download Codes
+                            </button>
+                            <button class="btn btn-secondary" onclick="copyRecoveryCodes()" style="flex: 1;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                                Copy All
+                            </button>
+                        </div>
+                    </div>
+                    <label class="mfa-confirm-checkbox">
+                        <input type="checkbox" id="mfaRecoveryConfirm">
+                        <span class="mfa-confirm-checkbox-text">
+                            I have saved my recovery codes in a secure location. I understand that if I lose access to my authenticator app and recovery codes, I may be locked out of my account.
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideMFASetupModal()" id="mfaSetupCancelBtn">Cancel</button>
+                <button class="btn btn-secondary" onclick="mfaWizardPrevStep()" id="mfaSetupBackBtn" style="display: none;">Back</button>
+                <button class="btn btn-primary" onclick="mfaWizardNextStep()" id="mfaSetupNextBtn">Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MFA Disable Confirmation Modal -->
+    <div id="mfaDisableModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Disable Two-Factor Authentication?</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-warning-box danger" style="margin-bottom: 16px;">
+                    <strong style="display: block; margin-bottom: 8px;">Warning: This will make your account less secure</strong>
+                    Disabling two-factor authentication removes an important security layer from your account. Anyone with your password will be able to access your account.
+                </div>
+                <p style="margin-bottom: 16px; color: #374151; font-size: 14px;">
+                    To confirm, enter the current 6-digit code from your authenticator app:
+                </p>
+                <div class="mfa-verify-input">
+                    <input type="text" id="mfaDisableCode" class="mfa-code-input" maxlength="6" placeholder="000000" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+                </div>
+                <p id="mfaDisableError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideMFADisableModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDisableMFA()" id="mfaDisableConfirmBtn">Disable MFA</button>
             </div>
         </div>
     </div>
