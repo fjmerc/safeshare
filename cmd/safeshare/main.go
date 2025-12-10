@@ -460,6 +460,55 @@ func run() error {
 		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg, webauthnSvc))).ServeHTTP(w, r)
 	})
 
+	// SSO authentication routes
+	// Public routes: providers list, login initiation, callback
+	// Protected routes: link/unlink account, get linked providers
+	// Rate limited to prevent state exhaustion and provider enumeration
+	ssoRateLimit := middleware.RateLimitUserLogin() // Reuse user login rate limiting
+
+	// GET /api/auth/sso/providers - List enabled SSO providers (public)
+	mux.HandleFunc("/api/auth/sso/providers", handlers.ListSSOProvidersHandler(repos, cfg))
+
+	// GET /api/auth/sso/{provider}/login - Initiate SSO login (public, rate limited)
+	// GET /api/auth/sso/{provider}/callback - Handle IdP callback (public, rate limited)
+	mux.HandleFunc("/api/auth/sso/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Route based on path suffix
+		switch {
+		case strings.HasSuffix(path, "/login"):
+			ssoRateLimit(http.HandlerFunc(handlers.SSOLoginHandler(repos, cfg))).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/callback"):
+			ssoRateLimit(http.HandlerFunc(handlers.SSOCallbackHandler(repos, cfg))).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Not found", http.StatusNotFound)
+		}
+	})
+
+	// POST /api/auth/sso/link - Initiate SSO account linking (auth + CSRF required)
+	// Note: mfaCSRF already defined above for MFA routes
+	mux.HandleFunc("/api/auth/sso/link", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			userAuth(mfaCSRF(http.HandlerFunc(handlers.SSOLinkAccountHandler(repos, cfg)))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// DELETE /api/auth/sso/link/{provider} - Unlink SSO account (auth + CSRF required)
+	mux.HandleFunc("/api/auth/sso/link/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			userAuth(mfaCSRF(http.HandlerFunc(handlers.SSOUnlinkAccountHandler(repos, cfg)))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// GET /api/auth/sso/linked - Get linked SSO providers for current user (auth required)
+	mux.HandleFunc("/api/auth/sso/linked", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.SSOGetLinkedProvidersHandler(repos, cfg))).ServeHTTP(w, r)
+	})
+
 	// Admin routes (only enabled if admin credentials are configured)
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)
