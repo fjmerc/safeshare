@@ -36,6 +36,7 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		Locks:           NewLockRepository(db),
 		Health:          NewHealthRepository(db, dbPath),
 		BackupScheduler: NewBackupSchedulerRepository(db),
+		MFA:             NewMFARepository(db),
 		DB:              db, // DEPRECATED: for backward compatibility during migration
 		DatabaseType:    repository.DatabaseTypeSQLite,
 		Cleanup: func() {

@@ -46,6 +46,17 @@ type APITokenConfig struct {
 	MaxExpiryDays    int // Maximum token expiration in days (default: 365)
 }
 
+// MFAConfig holds Multi-Factor Authentication configuration.
+type MFAConfig struct {
+	Enabled                bool   // Enable MFA feature (default: false)
+	Required               bool   // Require MFA for all users (default: false)
+	Issuer                 string // TOTP issuer name shown in authenticator apps (default: "SafeShare")
+	TOTPEnabled            bool   // Enable TOTP as MFA method (default: true when MFA enabled)
+	WebAuthnEnabled        bool   // Enable WebAuthn as MFA method (default: true when MFA enabled)
+	RecoveryCodesCount     int    // Number of recovery codes to generate (default: 10)
+	ChallengeExpiryMinutes int    // How long MFA challenges are valid (default: 5 minutes)
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -59,6 +70,7 @@ type Config struct {
 	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
 	AutoBackup               *AutoBackupConfig // Automatic backup configuration
 	APIToken                 *APITokenConfig   // API token limit configuration
+	MFA                      *MFAConfig        // MFA configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -140,6 +152,9 @@ func Load() (*Config, error) {
 
 		// API token limit configuration
 		APIToken: loadAPITokenConfig(),
+
+		// MFA configuration
+		MFA: loadMFAConfig(),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -380,6 +395,44 @@ func (c *Config) validate() error {
 
 	if err := c.validateAPITokenSettings(); err != nil {
 		return err
+	}
+
+	if err := c.validateMFASettings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMFASettings validates MFA configuration
+func (c *Config) validateMFASettings() error {
+	if c.MFA == nil {
+		return nil // MFA config is optional (will use defaults)
+	}
+
+	// If MFA is not enabled, skip further validation
+	if !c.MFA.Enabled {
+		return nil
+	}
+
+	// Validate issuer name length
+	if len(c.MFA.Issuer) == 0 || len(c.MFA.Issuer) > 64 {
+		return fmt.Errorf("MFA_ISSUER must be between 1 and 64 characters, got %d", len(c.MFA.Issuer))
+	}
+
+	// Validate recovery codes count (reasonable bounds: 5-20)
+	if c.MFA.RecoveryCodesCount < 5 || c.MFA.RecoveryCodesCount > 20 {
+		return fmt.Errorf("MFA_RECOVERY_CODES_COUNT must be between 5 and 20, got %d", c.MFA.RecoveryCodesCount)
+	}
+
+	// Validate challenge expiry (reasonable bounds: 1-30 minutes)
+	if c.MFA.ChallengeExpiryMinutes < 1 || c.MFA.ChallengeExpiryMinutes > 30 {
+		return fmt.Errorf("MFA_CHALLENGE_EXPIRY_MINUTES must be between 1 and 30, got %d", c.MFA.ChallengeExpiryMinutes)
+	}
+
+	// At least one MFA method must be enabled
+	if !c.MFA.TOTPEnabled && !c.MFA.WebAuthnEnabled {
+		return fmt.Errorf("at least one MFA method must be enabled (MFA_TOTP_ENABLED or MFA_WEBAUTHN_ENABLED)")
 	}
 
 	return nil
@@ -677,6 +730,27 @@ func loadAPITokenConfig() *APITokenConfig {
 	return &APITokenConfig{
 		MaxTokensPerUser: getEnvInt("MAX_API_TOKENS_PER_USER", 10),
 		MaxExpiryDays:    getEnvInt("MAX_API_TOKEN_EXPIRY_DAYS", 365),
+	}
+}
+
+// loadMFAConfig loads MFA configuration from environment variables.
+// Environment variables:
+//   - MFA_ENABLED: Enable MFA feature (default: false)
+//   - MFA_REQUIRED: Require MFA for all users (default: false)
+//   - MFA_ISSUER: TOTP issuer name shown in authenticator apps (default: "SafeShare")
+//   - MFA_TOTP_ENABLED: Enable TOTP as MFA method (default: true)
+//   - MFA_WEBAUTHN_ENABLED: Enable WebAuthn as MFA method (default: true)
+//   - MFA_RECOVERY_CODES_COUNT: Number of recovery codes to generate (default: 10)
+//   - MFA_CHALLENGE_EXPIRY_MINUTES: How long MFA challenges are valid (default: 5)
+func loadMFAConfig() *MFAConfig {
+	return &MFAConfig{
+		Enabled:                getEnvBool("MFA_ENABLED", false),
+		Required:               getEnvBool("MFA_REQUIRED", false),
+		Issuer:                 getEnv("MFA_ISSUER", "SafeShare"),
+		TOTPEnabled:            getEnvBool("MFA_TOTP_ENABLED", true),
+		WebAuthnEnabled:        getEnvBool("MFA_WEBAUTHN_ENABLED", true),
+		RecoveryCodesCount:     getEnvInt("MFA_RECOVERY_CODES_COUNT", 10),
+		ChallengeExpiryMinutes: getEnvInt("MFA_CHALLENGE_EXPIRY_MINUTES", 5),
 	}
 }
 

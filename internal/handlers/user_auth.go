@@ -130,6 +130,12 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			Expires:  expiresAt,
 		})
 
+		// Set user CSRF cookie for MFA and other protected user operations
+		if _, err := middleware.SetUserCSRFCookie(w, cfg); err != nil {
+			slog.Error("failed to set user CSRF cookie", "error", err)
+			// Continue anyway - not critical for login success
+		}
+
 		slog.Info("user login successful",
 			"username", req.Username,
 			"user_id", user.ID,

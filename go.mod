@@ -18,6 +18,7 @@ require (
 	github.com/google/uuid v1.5.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/mattn/go-sqlite3 v1.14.16
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.44.0
 	golang.org/x/net v0.47.0
@@ -41,6 +42,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.4 // indirect
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

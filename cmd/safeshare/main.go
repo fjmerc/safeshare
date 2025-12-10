@@ -188,6 +188,7 @@ func run() error {
 	optionalUserAuth := middleware.OptionalUserAuth(repos)
 	userAuth := middleware.UserAuth(repos)
 	tokenAudit := middleware.APITokenAuditLog(repos)
+	totpRateLimit := middleware.RateLimitTOTPVerify() // Rate limit for TOTP verification
 
 	// Select authentication middleware for uploads based on configuration
 	var uploadAuthMw func(http.Handler) http.Handler
@@ -261,8 +262,21 @@ func run() error {
 		// Not authenticated, serve login page
 		serveUserPage("login.html")(w, r)
 	})
+	// Login endpoint with MFA support
+	// If MFA is enabled globally, uses the MFA-aware handler
+	// Otherwise, falls back to standard login handler
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
+		if cfg.MFA != nil && cfg.MFA.Enabled {
+			middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginWithMFAHandler(repos, cfg))).ServeHTTP(w, r)
+		} else {
+			middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
+		}
+	})
+
+	// MFA login verification endpoint (no auth required - uses challenge token)
+	// Rate limited to prevent brute-force attacks on TOTP codes
+	mux.HandleFunc("/api/auth/mfa/verify", func(w http.ResponseWriter, r *http.Request) {
+		totpRateLimit(http.HandlerFunc(handlers.MFAVerifyLoginHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	// User dashboard routes (auth required)
@@ -357,6 +371,33 @@ func run() error {
 			// Revoke token - requires session auth + CSRF protection
 			userAuth(userCSRF(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
 		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// MFA routes (TOTP enrollment and status)
+	// Note: MFA routes require user authentication and user-specific CSRF protection
+	mfaCSRF := middleware.UserCSRFProtection(repos)
+	// Note: totpRateLimit already defined above with other middleware
+
+	mux.HandleFunc("/api/user/mfa/status", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.MFAStatusHandler(repos, cfg))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/totp/setup", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFATOTPSetupHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/totp/verify", func(w http.ResponseWriter, r *http.Request) {
+		// Rate limit TOTP verification to prevent brute-force attacks
+		userAuth(mfaCSRF(totpRateLimit(http.HandlerFunc(handlers.MFATOTPVerifyHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/totp", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			// Rate limit TOTP disable to prevent brute-force attacks
+			userAuth(mfaCSRF(totpRateLimit(http.HandlerFunc(handlers.MFATOTPDisableHandler(repos, cfg))))).ServeHTTP(w, r)
+		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})

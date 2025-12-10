@@ -395,6 +395,92 @@ CREATE INDEX IF NOT EXISTS idx_api_token_usage_timestamp
     ON api_token_usage(timestamp);
 `,
 	},
+	{
+		Version:     6,
+		Name:        "006_mfa",
+		Description: "Multi-Factor Authentication support (TOTP and WebAuthn)",
+		SQL: `
+-- ============================================================================
+-- USER MFA TABLE (TOTP configuration per user)
+-- ============================================================================
+-- Stores TOTP configuration for each user.
+-- The totp_secret is encrypted with the system encryption key.
+-- A user can only have one TOTP configuration at a time.
+CREATE TABLE IF NOT EXISTS user_mfa (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    totp_secret TEXT,                         -- Encrypted TOTP secret (base32 format before encryption)
+    totp_enabled BOOLEAN NOT NULL DEFAULT FALSE, -- Whether TOTP is verified and active
+    totp_verified_at TIMESTAMPTZ,             -- When TOTP was verified/enabled
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_mfa_user_id ON user_mfa(user_id);
+
+-- ============================================================================
+-- USER MFA RECOVERY CODES TABLE
+-- ============================================================================
+-- Stores single-use recovery codes for users with MFA enabled.
+-- Each user gets 10 codes during MFA setup.
+-- Codes are bcrypt hashed for security (like passwords).
+-- Once used, the used_at timestamp is set.
+CREATE TABLE IF NOT EXISTS user_mfa_recovery_codes (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,                  -- bcrypt hash of the recovery code
+    used_at TIMESTAMPTZ,                      -- NULL if not used yet
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_mfa_recovery_codes_user_id ON user_mfa_recovery_codes(user_id);
+-- Composite index for efficient lookup of unused codes
+CREATE INDEX IF NOT EXISTS idx_user_mfa_recovery_codes_user_unused 
+    ON user_mfa_recovery_codes(user_id, used_at) WHERE used_at IS NULL;
+
+-- ============================================================================
+-- USER WEBAUTHN CREDENTIALS TABLE
+-- ============================================================================
+-- Stores WebAuthn/FIDO2 credentials (hardware security keys, passkeys, etc.)
+-- A user can have multiple WebAuthn credentials (e.g., multiple Yubikeys)
+CREATE TABLE IF NOT EXISTS user_webauthn_credentials (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,                       -- User-friendly name (e.g., "My YubiKey 5")
+    credential_id TEXT NOT NULL UNIQUE,       -- Base64-encoded credential ID from authenticator
+    public_key TEXT NOT NULL,                 -- Base64-encoded COSE public key
+    aaguid TEXT,                              -- Authenticator Attestation GUID (identifies device type)
+    sign_count INTEGER NOT NULL DEFAULT 0,    -- Counter to detect cloned keys
+    transports TEXT,                          -- Comma-separated transports (usb, nfc, ble, internal)
+    user_verified BOOLEAN NOT NULL DEFAULT FALSE, -- Whether user verification was performed at registration
+    backup_eligible BOOLEAN NOT NULL DEFAULT FALSE, -- Whether credential is backup eligible
+    backup_state BOOLEAN NOT NULL DEFAULT FALSE,    -- Whether credential is currently backed up
+    attestation_type TEXT,                    -- Attestation type (none, indirect, direct, etc.)
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_webauthn_credentials_user_id ON user_webauthn_credentials(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_webauthn_credentials_credential_id ON user_webauthn_credentials(credential_id);
+
+-- ============================================================================
+-- MFA CHALLENGES TABLE (for WebAuthn authentication flow)
+-- ============================================================================
+-- Stores temporary challenges for WebAuthn authentication.
+-- Challenges expire after a short time (typically 5 minutes).
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    challenge TEXT NOT NULL UNIQUE,           -- Base64-encoded random challenge
+    challenge_type TEXT NOT NULL,             -- 'registration' or 'authentication'
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_user_id ON mfa_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_expires_at ON mfa_challenges(expires_at);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.
