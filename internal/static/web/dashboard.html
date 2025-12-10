@@ -2272,6 +2272,138 @@
             flex-wrap: wrap;
         }
 
+        /* MFA Method Header */
+        .mfa-method-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .mfa-method-header svg {
+            flex-shrink: 0;
+            color: #6b7280;
+        }
+
+        .mfa-method-header > div {
+            flex: 1;
+        }
+
+        .mfa-method-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .mfa-method-badge.enabled {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .mfa-method-badge.disabled {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        /* WebAuthn Credentials List */
+        .webauthn-loading {
+            color: #6b7280;
+            font-size: 13px;
+            padding: 12px 0;
+        }
+
+        .webauthn-credential-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .webauthn-credential-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .webauthn-credential-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e5e7eb;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+
+        .webauthn-credential-icon svg {
+            color: #6b7280;
+        }
+
+        .webauthn-credential-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .webauthn-credential-name {
+            font-weight: 500;
+            font-size: 14px;
+            color: #111827;
+            margin: 0 0 2px 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .webauthn-credential-meta {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .webauthn-credential-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .webauthn-credential-actions button {
+            padding: 6px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 4px;
+            color: #6b7280;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .webauthn-credential-actions button:hover {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
+        .webauthn-credential-actions button.delete:hover {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .webauthn-no-credentials {
+            color: #6b7280;
+            font-size: 13px;
+            padding: 16px;
+            text-align: center;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        /* Button size variant */
+        .btn-sm {
+            padding: 8px 14px;
+            font-size: 13px;
+        }
+
         /* MFA Not Available State */
         .mfa-not-available {
             display: flex;
@@ -2563,6 +2695,63 @@
 
         [data-theme="dark"] .mfa-not-available-text h4 {
             color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .mfa-method-header {
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-method-header h4 {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-method-header p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-method-badge.enabled {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .mfa-method-badge.disabled {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-item {
+            background: #111827;
+        }
+
+        [data-theme="dark"] .webauthn-credential-icon {
+            background: #374151;
+        }
+
+        [data-theme="dark"] .webauthn-credential-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .webauthn-credential-meta {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button:hover {
+            background: #374151;
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button.delete:hover {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .webauthn-no-credentials {
+            background: #111827;
+            color: #9ca3af;
         }
 
         [data-theme="dark"] .mfa-wizard-step {
@@ -4727,6 +4916,12 @@
         let mfaRecoveryCodes = [];
         let mfaWizardStep = 1;
 
+        // WebAuthn state
+        let webauthnCredentials = [];
+        let webauthnRegistrationInProgress = false;
+        let webauthnCredentialToDelete = null;
+        let webauthnCredentialToRename = null;
+
         // Load MFA status
         async function loadMFAStatus() {
             try {
@@ -4780,8 +4975,12 @@
             }
 
             const isTOTPEnabled = status.totp_enabled;
+            const isTOTPServerEnabled = status.totp_server_enabled;
+            const isWebAuthnServerEnabled = status.webauthn_server_enabled;
+            const webauthnCredCount = status.webauthn_credentials || 0;
             const recoveryCodesRemaining = status.recovery_codes_remaining || 0;
             const verifiedAt = status.totp_verified_at ? new Date(status.totp_verified_at).toLocaleDateString() : 'N/A';
+            const hasMFAEnabled = isTOTPEnabled || webauthnCredCount > 0;
 
             // Determine recovery codes status class
             let recoveryClass = 'success';
@@ -4791,9 +4990,11 @@
                 recoveryClass = 'warning';
             }
 
-            if (isTOTPEnabled) {
-                // MFA is enabled - show status and disable option
-                container.innerHTML = `
+            let html = '';
+
+            // Overall MFA status header
+            if (hasMFAEnabled) {
+                html += `
                     <div class="mfa-status-card">
                         <div class="mfa-status-header">
                             <div class="mfa-status-title">
@@ -4809,46 +5010,10 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="mfa-details">
-                            <div class="mfa-detail-item">
-                                <div class="mfa-detail-label">Method</div>
-                                <div class="mfa-detail-value">Authenticator App (TOTP)</div>
-                            </div>
-                            <div class="mfa-detail-item">
-                                <div class="mfa-detail-label">Enabled Since</div>
-                                <div class="mfa-detail-value">${escapeHtml(verifiedAt)}</div>
-                            </div>
-                            <div class="mfa-detail-item">
-                                <div class="mfa-detail-label">Recovery Codes</div>
-                                <div class="mfa-detail-value ${recoveryClass}">${recoveryCodesRemaining} remaining</div>
-                            </div>
-                        </div>
-                        ${recoveryCodesRemaining < 3 ? `
-                        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0;">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                                <line x1="12" y1="9" x2="12" y2="13"></line>
-                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                            </svg>
-                            <span style="color: #92400e; font-size: 13px;">You have few recovery codes left. Consider regenerating them to avoid being locked out.</span>
-                        </div>
-                        ` : ''}
-                        <div class="mfa-actions">
-                            <button class="btn btn-danger" onclick="showDisableMFAModal()">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                                    <line x1="9" y1="15" x2="15" y2="19"></line>
-                                    <line x1="15" y1="15" x2="9" y2="19"></line>
-                                </svg>
-                                Disable MFA
-                            </button>
-                        </div>
                     </div>
                 `;
             } else {
-                // MFA is not enabled - show setup option
-                container.innerHTML = `
+                html += `
                     <div class="mfa-status-card">
                         <div class="mfa-status-header">
                             <div class="mfa-status-title">
@@ -4869,21 +5034,119 @@
                             <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
                                 <li>Protects your account even if your password is compromised</li>
                                 <li>Required code from your phone for each login</li>
-                                <li>Works with popular authenticator apps</li>
+                                <li>Works with popular authenticator apps or hardware keys</li>
                             </ul>
-                        </div>
-                        <div class="mfa-actions">
-                            <button class="btn btn-success" onclick="showMFASetupModal()">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                                </svg>
-                                Enable MFA
-                            </button>
                         </div>
                     </div>
                 `;
             }
+
+            // TOTP Section (if TOTP is enabled on server)
+            if (isTOTPServerEnabled) {
+                html += `
+                    <div class="mfa-status-card" style="margin-top: 16px;">
+                        <div class="mfa-method-header">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                                <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                            </svg>
+                            <div>
+                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Authenticator App (TOTP)</h4>
+                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">Use an app like Google Authenticator or Authy</p>
+                            </div>
+                            <span class="mfa-method-badge ${isTOTPEnabled ? 'enabled' : 'disabled'}">
+                                ${isTOTPEnabled ? 'Enabled' : 'Not Set Up'}
+                            </span>
+                        </div>
+                `;
+
+                if (isTOTPEnabled) {
+                    html += `
+                        <div class="mfa-details" style="margin-top: 12px;">
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Enabled Since</div>
+                                <div class="mfa-detail-value">${escapeHtml(verifiedAt)}</div>
+                            </div>
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Recovery Codes</div>
+                                <div class="mfa-detail-value ${recoveryClass}">${recoveryCodesRemaining} remaining</div>
+                            </div>
+                        </div>
+                        ${recoveryCodesRemaining < 3 ? `
+                        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-top: 12px; display: flex; align-items: center; gap: 10px;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0;">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <span style="color: #92400e; font-size: 13px;">You have few recovery codes left. Consider regenerating them.</span>
+                        </div>
+                        ` : ''}
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-danger btn-sm" onclick="showDisableMFAModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                                Disable TOTP
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-success btn-sm" onclick="showMFASetupModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Set Up Authenticator App
+                            </button>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            // WebAuthn Section (if WebAuthn is enabled on server)
+            if (isWebAuthnServerEnabled) {
+                html += `
+                    <div class="mfa-status-card" style="margin-top: 16px;">
+                        <div class="mfa-method-header">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                            <div>
+                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Hardware Security Keys</h4>
+                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">YubiKey, Touch ID, Windows Hello, or other FIDO2 devices</p>
+                            </div>
+                            <span class="mfa-method-badge ${webauthnCredCount > 0 ? 'enabled' : 'disabled'}">
+                                ${webauthnCredCount > 0 ? webauthnCredCount + ' key' + (webauthnCredCount > 1 ? 's' : '') : 'Not Set Up'}
+                            </span>
+                        </div>
+                        <div id="webauthnCredentialsList" style="margin-top: 12px;">
+                            <!-- Credentials will be loaded here -->
+                            <div class="webauthn-loading">Loading security keys...</div>
+                        </div>
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-success btn-sm" onclick="showWebAuthnRegisterModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Add Security Key
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                // Load WebAuthn credentials after rendering
+                setTimeout(() => loadWebAuthnCredentials(), 0);
+            }
+
+            container.innerHTML = html;
         }
 
         // Display MFA not available state
@@ -4903,6 +5166,347 @@
                 </div>
             `;
         }
+
+        // ========================================
+        // WebAuthn Functions
+        // ========================================
+
+        // Load WebAuthn credentials list
+        async function loadWebAuthnCredentials() {
+            const container = document.getElementById('webauthnCredentialsList');
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/user/mfa/webauthn/credentials', {
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    container.innerHTML = `<div class="webauthn-no-credentials">Failed to load credentials: ${escapeHtml(data.error || 'Unknown error')}</div>`;
+                    return;
+                }
+
+                webauthnCredentials = await response.json();
+                displayWebAuthnCredentials(webauthnCredentials);
+            } catch (error) {
+                console.error('Failed to load WebAuthn credentials:', error);
+                container.innerHTML = '<div class="webauthn-no-credentials">Failed to load security keys</div>';
+            }
+        }
+
+        // Display WebAuthn credentials in the list
+        function displayWebAuthnCredentials(credentials) {
+            const container = document.getElementById('webauthnCredentialsList');
+            if (!container) return;
+
+            if (!credentials || credentials.length === 0) {
+                container.innerHTML = '<div class="webauthn-no-credentials">No security keys registered. Add one to enhance your account security.</div>';
+                return;
+            }
+
+            let html = '';
+            for (const cred of credentials) {
+                const createdDate = new Date(cred.created_at).toLocaleDateString();
+                const lastUsed = cred.last_used_at ? new Date(cred.last_used_at).toLocaleDateString() : 'Never';
+                
+                html += `
+                    <div class="webauthn-credential-item" data-credential-id="${cred.id}">
+                        <div class="webauthn-credential-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                        </div>
+                        <div class="webauthn-credential-info">
+                            <div class="webauthn-credential-name">${escapeHtml(cred.name)}</div>
+                            <div class="webauthn-credential-meta">Added ${createdDate} • Last used: ${lastUsed}</div>
+                        </div>
+                        <div class="webauthn-credential-actions">
+                            <button onclick="showWebAuthnRenameModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                                    title="Rename">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                            </button>
+                            <button class="delete" onclick="showWebAuthnDeleteModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                                    title="Delete">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        // Show WebAuthn registration modal
+        function showWebAuthnRegisterModal() {
+            document.getElementById('webauthnKeyName').value = '';
+            document.getElementById('webauthnRegisterError').style.display = 'none';
+            document.getElementById('webauthnRegisterBtn').disabled = false;
+            document.getElementById('webauthnRegisterBtn').textContent = 'Register Key';
+            document.getElementById('webauthnRegisterModal').classList.add('show');
+        }
+
+        // Hide WebAuthn registration modal
+        function hideWebAuthnRegisterModal() {
+            document.getElementById('webauthnRegisterModal').classList.remove('show');
+            webauthnRegistrationInProgress = false;
+        }
+
+        // Base64URL encoding/decoding utilities for WebAuthn
+        function base64URLEncode(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        function base64URLDecode(str) {
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (str.length % 4) str += '=';
+            const binary = atob(str);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Register a new WebAuthn credential
+        async function registerWebAuthnCredential() {
+            if (webauthnRegistrationInProgress) return;
+
+            const keyName = document.getElementById('webauthnKeyName').value.trim();
+            const errorEl = document.getElementById('webauthnRegisterError');
+            const btn = document.getElementById('webauthnRegisterBtn');
+
+            if (!keyName) {
+                errorEl.textContent = 'Please enter a name for your security key';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            webauthnRegistrationInProgress = true;
+            errorEl.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Starting registration...';
+
+            try {
+                // Get CSRF token
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+                // Step 1: Begin registration - get challenge from server
+                const beginResponse = await fetch('/api/user/mfa/webauthn/register/begin', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({ name: keyName })
+                });
+
+                if (!beginResponse.ok) {
+                    const data = await beginResponse.json();
+                    throw new Error(data.error || 'Failed to start registration');
+                }
+
+                const options = await beginResponse.json();
+                
+                // Convert challenge and user ID from base64url to ArrayBuffer
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+                options.publicKey.user.id = base64URLDecode(options.publicKey.user.id);
+
+                // Convert excludeCredentials if present
+                if (options.publicKey.excludeCredentials) {
+                    options.publicKey.excludeCredentials = options.publicKey.excludeCredentials.map(cred => ({
+                        ...cred,
+                        id: base64URLDecode(cred.id)
+                    }));
+                }
+
+                btn.textContent = 'Touch your security key...';
+
+                // Step 2: Create credential using browser WebAuthn API
+                const credential = await navigator.credentials.create(options);
+
+                btn.textContent = 'Completing registration...';
+
+                // Step 3: Send credential to server to complete registration
+                const attestationResponse = {
+                    id: credential.id,
+                    rawId: base64URLEncode(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        attestationObject: base64URLEncode(credential.response.attestationObject),
+                        clientDataJSON: base64URLEncode(credential.response.clientDataJSON)
+                    }
+                };
+
+                // Include transports if available
+                if (credential.response.getTransports) {
+                    attestationResponse.response.transports = credential.response.getTransports();
+                }
+
+                const finishResponse = await fetch('/api/user/mfa/webauthn/register/finish', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify(attestationResponse)
+                });
+
+                if (!finishResponse.ok) {
+                    const data = await finishResponse.json();
+                    throw new Error(data.error || 'Failed to complete registration');
+                }
+
+                // Success!
+                hideWebAuthnRegisterModal();
+                showToast('Security key registered successfully', 'success');
+                loadMFAStatus(); // Refresh MFA status
+
+            } catch (error) {
+                console.error('WebAuthn registration failed:', error);
+                errorEl.textContent = error.message || 'Registration failed. Please try again.';
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Register Key';
+            } finally {
+                webauthnRegistrationInProgress = false;
+            }
+        }
+
+        // Show delete confirmation modal
+        function showWebAuthnDeleteModal(credentialId, credentialName) {
+            webauthnCredentialToDelete = credentialId;
+            document.getElementById('webauthnDeleteName').textContent = credentialName;
+            document.getElementById('webauthnDeleteModal').classList.add('show');
+        }
+
+        // Hide delete confirmation modal
+        function hideWebAuthnDeleteModal() {
+            document.getElementById('webauthnDeleteModal').classList.remove('show');
+            webauthnCredentialToDelete = null;
+        }
+
+        // Delete WebAuthn credential
+        async function confirmWebAuthnDelete() {
+            if (!webauthnCredentialToDelete) return;
+
+            const btn = document.getElementById('webauthnDeleteConfirmBtn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+                const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToDelete}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': csrfToken
+                    }
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete security key');
+                }
+
+                hideWebAuthnDeleteModal();
+                showToast('Security key deleted', 'success');
+                loadMFAStatus(); // Refresh MFA status
+
+            } catch (error) {
+                console.error('Failed to delete WebAuthn credential:', error);
+                showToast(error.message || 'Failed to delete security key', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
+
+        // Show rename modal
+        function showWebAuthnRenameModal(credentialId, currentName) {
+            webauthnCredentialToRename = credentialId;
+            document.getElementById('webauthnNewName').value = currentName;
+            document.getElementById('webauthnRenameError').style.display = 'none';
+            document.getElementById('webauthnRenameModal').classList.add('show');
+        }
+
+        // Hide rename modal
+        function hideWebAuthnRenameModal() {
+            document.getElementById('webauthnRenameModal').classList.remove('show');
+            webauthnCredentialToRename = null;
+        }
+
+        // Rename WebAuthn credential
+        async function confirmWebAuthnRename() {
+            if (!webauthnCredentialToRename) return;
+
+            const newName = document.getElementById('webauthnNewName').value.trim();
+            const errorEl = document.getElementById('webauthnRenameError');
+            const btn = document.getElementById('webauthnRenameConfirmBtn');
+
+            if (!newName) {
+                errorEl.textContent = 'Please enter a name';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            errorEl.style.display = 'none';
+
+            try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+                const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToRename}`, {
+                    method: 'PATCH',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({ name: newName })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to rename security key');
+                }
+
+                hideWebAuthnRenameModal();
+                showToast('Security key renamed', 'success');
+                loadWebAuthnCredentials(); // Just refresh the credentials list
+
+            } catch (error) {
+                console.error('Failed to rename WebAuthn credential:', error);
+                errorEl.textContent = error.message || 'Failed to rename security key';
+                errorEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Rename';
+            }
+        }
+
+        // ========================================
+        // End WebAuthn Functions
+        // ========================================
 
         // Show MFA setup wizard modal
         function showMFASetupModal() {
@@ -5760,6 +6364,81 @@ you may be locked out of your account.
                 <button class="btn btn-secondary" onclick="hideMFASetupModal()" id="mfaSetupCancelBtn">Cancel</button>
                 <button class="btn btn-secondary" onclick="mfaWizardPrevStep()" id="mfaSetupBackBtn" style="display: none;">Back</button>
                 <button class="btn btn-primary" onclick="mfaWizardNextStep()" id="mfaSetupNextBtn">Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Register Modal -->
+    <div id="webauthnRegisterModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2">
+                    <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                    <line x1="8" y1="12" x2="16" y2="12"></line>
+                </svg>
+                <span>Register Security Key</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: #374151; font-size: 14px;">
+                    Add a hardware security key like YubiKey, Touch ID, Windows Hello, or any FIDO2-compatible device.
+                </p>
+                <div class="form-group">
+                    <label>Security Key Name</label>
+                    <input type="text" id="webauthnKeyName" placeholder="e.g., YubiKey, Touch ID" maxlength="50">
+                    <small style="color: #6b7280; font-size: 12px;">A friendly name to identify this key</small>
+                </div>
+                <p id="webauthnRegisterError" style="color: #ef4444; text-align: center; font-size: 13px; display: none; margin-top: 12px;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnRegisterModal()">Cancel</button>
+                <button class="btn btn-success" onclick="registerWebAuthnCredential()" id="webauthnRegisterBtn">Register Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Delete Confirmation Modal -->
+    <div id="webauthnDeleteModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                <span>Delete Security Key?</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-warning-box danger" style="margin-bottom: 16px;">
+                    <strong style="display: block; margin-bottom: 8px;">Warning</strong>
+                    This will permanently remove the security key "<span id="webauthnDeleteName"></span>" from your account. You will no longer be able to use it for authentication.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmWebAuthnDelete()" id="webauthnDeleteConfirmBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Rename Modal -->
+    <div id="webauthnRenameModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>Rename Security Key</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>New Name</label>
+                    <input type="text" id="webauthnNewName" maxlength="50">
+                </div>
+                <p id="webauthnRenameError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnRenameModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmWebAuthnRename()" id="webauthnRenameConfirmBtn">Rename</button>
             </div>
         </div>
     </div>

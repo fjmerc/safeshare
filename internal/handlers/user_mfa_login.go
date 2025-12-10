@@ -11,10 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
+	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webauthn"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -208,11 +212,12 @@ func (s *MFALoginStore) Delete(challengeID string) {
 
 // MFALoginResponse is the response when MFA is required
 type MFALoginResponse struct {
-	MFARequired   bool   `json:"mfa_required"`
-	ChallengeID   string `json:"challenge_id"`
-	ChallengeType string `json:"challenge_type"` // "totp" or "webauthn"
-	ExpiresIn     int    `json:"expires_in"`     // Seconds until challenge expires
-	Message       string `json:"message"`
+	MFARequired      bool     `json:"mfa_required"`
+	ChallengeID      string   `json:"challenge_id"`
+	ChallengeType    string   `json:"challenge_type,omitempty"`    // Deprecated: use available_methods
+	AvailableMethods []string `json:"available_methods,omitempty"` // ["totp", "webauthn", "recovery"]
+	ExpiresIn        int      `json:"expires_in"`                  // Seconds until challenge expires
+	Message          string   `json:"message"`
 }
 
 // MFAVerifyLoginRequest is the request body for MFA login verification
@@ -305,6 +310,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 
 		// Check if MFA is enabled for this user
 		mfaEnabled := false
+		var availableMethods []string
 		if cfg.MFA != nil && cfg.MFA.Enabled {
 			// Check if user has TOTP enabled
 			totpEnabled, err := repos.MFA.IsTOTPEnabled(ctx, user.ID)
@@ -313,7 +319,34 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
-			mfaEnabled = totpEnabled
+
+			// Check if user has WebAuthn credentials
+			hasWebAuthn := false
+			if cfg.MFA.WebAuthnEnabled {
+				webauthnCreds, err := repos.MFA.GetWebAuthnCredentials(ctx, user.ID)
+				if err != nil {
+					slog.Error("failed to check WebAuthn credentials", "error", err, "user_id", user.ID)
+					// Continue without WebAuthn - don't fail login
+				} else {
+					hasWebAuthn = len(webauthnCreds) > 0
+				}
+			}
+
+			// Build available methods list
+			if totpEnabled {
+				availableMethods = append(availableMethods, "totp")
+			}
+			if hasWebAuthn {
+				availableMethods = append(availableMethods, "webauthn")
+			}
+
+			// MFA is enabled if user has at least one method set up
+			mfaEnabled = len(availableMethods) > 0
+
+			// Recovery codes are always available if MFA is enabled
+			if mfaEnabled {
+				availableMethods = append(availableMethods, "recovery")
+			}
 
 			// Also check if MFA is required but user hasn't set it up
 			if cfg.MFA.Required && !mfaEnabled {
@@ -356,15 +389,23 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 			slog.Info("MFA challenge created for login",
 				"username", req.Username,
 				"user_id", user.ID,
+				"available_methods", availableMethods,
 				"ip", clientIP,
 			)
 
+			// Determine primary challenge type for backward compatibility
+			challengeType := "totp"
+			if len(availableMethods) > 0 && availableMethods[0] == "webauthn" {
+				challengeType = "webauthn"
+			}
+
 			response := MFALoginResponse{
-				MFARequired:   true,
-				ChallengeID:   challengeID,
-				ChallengeType: "totp",
-				ExpiresIn:     expiryMinutes * 60,
-				Message:       "Please enter your authenticator code to complete login",
+				MFARequired:      true,
+				ChallengeID:      challengeID,
+				ChallengeType:    challengeType,
+				AvailableMethods: availableMethods,
+				ExpiresIn:        expiryMinutes * 60,
+				Message:          "Please verify your identity to complete login",
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -708,4 +749,452 @@ func isValidRecoveryCodeFormat(code string) bool {
 // VerifyRecoveryCodeHash checks if a plaintext code matches a bcrypt hash
 func VerifyRecoveryCodeHash(code, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(code)) == nil
+}
+
+// ===========================================================================
+// WebAuthn Login Flow Handlers
+// ===========================================================================
+
+// MFAWebAuthnLoginBeginRequest is the request body for starting WebAuthn login MFA
+type MFAWebAuthnLoginBeginRequest struct {
+	ChallengeID string `json:"challenge_id"`
+}
+
+// MFAWebAuthnLoginBeginResponse is returned when starting WebAuthn login MFA
+type MFAWebAuthnLoginBeginResponse struct {
+	Options         *protocol.CredentialAssertion `json:"options"`
+	WebAuthnChallenge string                        `json:"webauthn_challenge"` // Base64-encoded WebAuthn challenge
+}
+
+// MFAWebAuthnLoginFinishRequest is the request body for completing WebAuthn login MFA
+type MFAWebAuthnLoginFinishRequest struct {
+	ChallengeID string          `json:"challenge_id"`
+	Credential  json.RawMessage `json:"credential"`
+}
+
+// MFAWebAuthnLoginBeginHandler handles POST /api/auth/mfa/webauthn/begin
+// Starts the WebAuthn authentication ceremony during login
+func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+		clientIP := getClientIP(r)
+
+		// Parse request
+		r.Body = http.MaxBytesReader(w, r.Body, 1024) // 1KB limit
+		var req MFAWebAuthnLoginBeginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+			})
+			return
+		}
+
+		// Validate challenge ID
+		if req.ChallengeID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Challenge ID is required",
+			})
+			return
+		}
+
+		// Check if WebAuthn is enabled
+		if cfg.MFA == nil || !cfg.MFA.Enabled || !cfg.MFA.WebAuthnEnabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is not enabled on this server",
+			})
+			return
+		}
+
+		if webauthnSvc == nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Get and validate the MFA login challenge with IP binding
+		challenge, exists, ipMismatch := mfaLoginStore.GetAndValidateIP(req.ChallengeID, clientIP)
+		if !exists {
+			slog.Warn("WebAuthn login begin failed - invalid or expired challenge",
+				"challenge_id", req.ChallengeID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "MFA challenge has expired. Please log in again.",
+			})
+			return
+		}
+
+		// Check IP binding
+		if ipMismatch {
+			slog.Warn("WebAuthn login begin from different IP",
+				"challenge_id", req.ChallengeID,
+				"original_ip", challenge.ClientIP,
+				"request_ip", clientIP,
+				"user_id", challenge.UserID,
+			)
+			mfaLoginStore.Delete(req.ChallengeID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Session validation failed. Please log in again.",
+			})
+			return
+		}
+
+		// Get user's WebAuthn credentials
+		existingCreds, err := repos.MFA.GetWebAuthnCredentials(ctx, challenge.UserID)
+		if err != nil {
+			slog.Error("failed to get WebAuthn credentials",
+				"error", err,
+				"user_id", challenge.UserID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		if len(existingCreds) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "No WebAuthn credentials registered",
+			})
+			return
+		}
+
+		// Get user details
+		user, err := repos.Users.GetByID(ctx, challenge.UserID)
+		if err != nil || user == nil {
+			slog.Error("failed to get user for WebAuthn login", "error", err, "user_id", challenge.UserID)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Convert to gowebauthn.Credential format
+		var credentials []gowebauthn.Credential
+		for _, cred := range existingCreds {
+			waCred, err := webauthn.CredentialToWebAuthn(&cred)
+			if err != nil {
+				slog.Warn("failed to convert credential",
+					"error", err,
+					"credential_id", cred.ID,
+				)
+				continue
+			}
+			credentials = append(credentials, *waCred)
+		}
+
+		// Create WebAuthn user
+		waUser := &webauthn.WebAuthnUser{
+			ID:          user.ID,
+			Name:        user.Username,
+			DisplayName: user.Username,
+			Credentials: credentials,
+		}
+
+		// Begin WebAuthn authentication ceremony
+		assertion, session, err := webauthnSvc.BeginLogin(waUser)
+		if err != nil {
+			slog.Error("failed to begin WebAuthn login authentication",
+				"error", err,
+				"user_id", user.ID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Store WebAuthn challenge in database (session.Challenge is already base64url encoded)
+		expiresAt := time.Now().Add(time.Duration(cfg.MFA.ChallengeExpiryMinutes) * time.Minute)
+
+		_, err = repos.MFA.CreateChallenge(ctx, user.ID, session.Challenge, "login_authentication", expiresAt)
+		if err != nil {
+			slog.Error("failed to store WebAuthn challenge",
+				"error", err,
+				"user_id", user.ID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("WebAuthn login authentication started",
+			"user_id", user.ID,
+			"username", user.Username,
+			"ip", clientIP,
+		)
+
+		response := MFAWebAuthnLoginBeginResponse{
+			Options:           assertion,
+			WebAuthnChallenge: session.Challenge,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// MFAWebAuthnLoginFinishHandler handles POST /api/auth/mfa/webauthn/finish
+// Completes the WebAuthn authentication ceremony during login
+func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Apply timing attack protection
+		startTime := time.Now()
+		defer func() {
+			elapsed := time.Since(startTime)
+			if elapsed < mfaLoginVerificationMinTime {
+				time.Sleep(mfaLoginVerificationMinTime - elapsed)
+			}
+		}()
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+		clientIP := getClientIP(r)
+
+		// Parse request
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64KB limit
+		var req MFAWebAuthnLoginFinishRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+			})
+			return
+		}
+
+		// Validate challenge ID
+		if req.ChallengeID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Challenge ID is required",
+			})
+			return
+		}
+
+		// Check if WebAuthn is enabled
+		if cfg.MFA == nil || !cfg.MFA.Enabled || !cfg.MFA.WebAuthnEnabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is not enabled on this server",
+			})
+			return
+		}
+
+		if webauthnSvc == nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Get and validate the MFA login challenge with IP binding
+		challenge, exists, ipMismatch := mfaLoginStore.GetAndValidateIP(req.ChallengeID, clientIP)
+		if !exists {
+			slog.Warn("WebAuthn login finish failed - invalid or expired challenge",
+				"challenge_id", req.ChallengeID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "MFA challenge has expired. Please log in again.",
+			})
+			return
+		}
+
+		// Check IP binding
+		if ipMismatch {
+			slog.Warn("WebAuthn login finish from different IP",
+				"challenge_id", req.ChallengeID,
+				"original_ip", challenge.ClientIP,
+				"request_ip", clientIP,
+				"user_id", challenge.UserID,
+			)
+			mfaLoginStore.Delete(req.ChallengeID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Session validation failed. Please log in again.",
+			})
+			return
+		}
+
+		// Check if too many attempts
+		if !mfaLoginStore.IncrementAttempts(req.ChallengeID) {
+			mfaLoginStore.Delete(req.ChallengeID)
+			slog.Warn("WebAuthn login verification failed - too many attempts",
+				"challenge_id", req.ChallengeID,
+				"user_id", challenge.UserID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Too many failed attempts. Please log in again.",
+			})
+			return
+		}
+
+		// Get the stored WebAuthn challenge
+		webAuthnChallenge, err := repos.MFA.GetChallenge(ctx, challenge.UserID, "login_authentication")
+		if err != nil {
+			if err == repository.ErrChallengeNotFound || err == repository.ErrChallengeExpired {
+				slog.Warn("WebAuthn login finish failed - WebAuthn challenge not found or expired",
+					"user_id", challenge.UserID,
+					"ip", clientIP,
+				)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "WebAuthn session expired. Please try again.",
+				})
+				return
+			}
+			slog.Error("failed to get WebAuthn challenge",
+				"error", err,
+				"user_id", challenge.UserID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Get user details
+		user, err := repos.Users.GetByID(ctx, challenge.UserID)
+		if err != nil || user == nil {
+			slog.Error("failed to get user for WebAuthn login", "error", err, "user_id", challenge.UserID)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Get user's WebAuthn credentials
+		existingCreds, err := repos.MFA.GetWebAuthnCredentials(ctx, challenge.UserID)
+		if err != nil {
+			slog.Error("failed to get WebAuthn credentials",
+				"error", err,
+				"user_id", challenge.UserID,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Convert to gowebauthn.Credential format
+		var credentials []gowebauthn.Credential
+		credentialMap := make(map[string]int64) // Map credential ID to database ID
+		for _, cred := range existingCreds {
+			waCred, err := webauthn.CredentialToWebAuthn(&cred)
+			if err != nil {
+				continue
+			}
+			credentials = append(credentials, *waCred)
+			credentialMap[base64.StdEncoding.EncodeToString(waCred.ID)] = cred.ID
+		}
+
+		// Create WebAuthn user
+		waUser := &webauthn.WebAuthnUser{
+			ID:          user.ID,
+			Name:        user.Username,
+			DisplayName: user.Username,
+			Credentials: credentials,
+		}
+
+		// Parse the credential assertion response
+		parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(req.Credential)
+		if err != nil {
+			slog.Warn("failed to parse WebAuthn assertion response for login",
+				"error", err,
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid authentication response",
+			})
+			return
+		}
+
+		// Create session data from stored challenge (already base64url encoded)
+		sessionData := gowebauthn.SessionData{
+			Challenge: webAuthnChallenge.Challenge,
+			UserID:    waUser.WebAuthnID(),
+		}
+
+		// Finish WebAuthn authentication
+		validatedCredential, err := webauthnSvc.FinishLogin(waUser, sessionData, parsedResponse)
+		if err != nil {
+			slog.Warn("WebAuthn login verification failed",
+				"error", err,
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Authentication failed. Please try again.",
+			})
+			return
+		}
+
+		// Delete the WebAuthn challenge (single use)
+		if err := repos.MFA.DeleteChallenge(ctx, user.ID, "login_authentication"); err != nil {
+			slog.Warn("failed to delete WebAuthn challenge",
+				"error", err,
+				"user_id", user.ID,
+			)
+		}
+
+		// Find and update the credential's sign count
+		credIDBase64 := base64.StdEncoding.EncodeToString(validatedCredential.ID)
+		if dbCredID, ok := credentialMap[credIDBase64]; ok {
+			// Validate sign count to detect cloned authenticators
+			for _, cred := range existingCreds {
+				if cred.ID == dbCredID {
+					if !webauthn.ValidateSignCount(cred.SignCount, validatedCredential.Authenticator.SignCount) {
+						slog.Warn("SECURITY: Potential cloned authenticator detected during login",
+							"user_id", user.ID,
+							"credential_id", dbCredID,
+							"stored_count", cred.SignCount,
+							"new_count", validatedCredential.Authenticator.SignCount,
+							"ip", clientIP,
+						)
+						// Allow authentication to continue but log the warning
+					}
+					break
+				}
+			}
+
+			if err := repos.MFA.UpdateWebAuthnCredentialSignCount(ctx, dbCredID, validatedCredential.Authenticator.SignCount); err != nil {
+				slog.Warn("failed to update WebAuthn sign count",
+					"error", err,
+					"credential_id", dbCredID,
+				)
+			}
+		}
+
+		// MFA verified - delete the login challenge and complete login
+		mfaLoginStore.Delete(req.ChallengeID)
+
+		slog.Info("WebAuthn login MFA verification successful",
+			"user_id", user.ID,
+			"username", user.Username,
+			"ip", clientIP,
+		)
+
+		// Complete the login
+		completeLogin(w, r, repos, cfg, user, challenge.ClientIP, challenge.UserAgent)
+	}
 }

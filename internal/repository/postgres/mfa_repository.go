@@ -664,8 +664,8 @@ func (r *MFARepository) CreateChallenge(ctx context.Context, userID int64, chall
 	if len(challenge) == 0 || len(challenge) > mfaMaxChallengeLen {
 		return nil, fmt.Errorf("invalid challenge length")
 	}
-	if challengeType != "registration" && challengeType != "authentication" {
-		return nil, fmt.Errorf("invalid challenge type: must be 'registration' or 'authentication'")
+	if challengeType != "registration" && challengeType != "authentication" && challengeType != "login_authentication" {
+		return nil, fmt.Errorf("invalid challenge type: must be 'registration', 'authentication', or 'login_authentication'")
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -714,7 +714,7 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 	if userID <= 0 {
 		return nil, fmt.Errorf("invalid user ID")
 	}
-	if challengeType != "registration" && challengeType != "authentication" {
+	if challengeType != "registration" && challengeType != "authentication" && challengeType != "login_authentication" {
 		return nil, fmt.Errorf("invalid challenge type")
 	}
 

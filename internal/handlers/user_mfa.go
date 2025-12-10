@@ -51,12 +51,14 @@ type TOTPDisableRequest struct {
 
 // MFAStatusResponse represents the MFA status for a user
 type MFAStatusResponse struct {
-	Enabled                bool   `json:"enabled"`                    // Whether MFA feature is enabled globally
-	TOTPEnabled            bool   `json:"totp_enabled"`               // Whether user has TOTP enabled
-	TOTPVerifiedAt         string `json:"totp_verified_at,omitempty"` // When TOTP was verified
-	WebAuthnEnabled        bool   `json:"webauthn_enabled"`           // Whether user has WebAuthn enabled
-	WebAuthnCredentials    int    `json:"webauthn_credentials"`       // Number of WebAuthn credentials
-	RecoveryCodesRemaining int    `json:"recovery_codes_remaining"`   // Remaining unused recovery codes
+	Enabled                bool   `json:"enabled"`                      // Whether MFA feature is enabled globally
+	TOTPServerEnabled      bool   `json:"totp_server_enabled"`         // Whether TOTP is enabled on server
+	TOTPEnabled            bool   `json:"totp_enabled"`                 // Whether user has TOTP enabled
+	TOTPVerifiedAt         string `json:"totp_verified_at,omitempty"`   // When TOTP was verified
+	WebAuthnServerEnabled  bool   `json:"webauthn_server_enabled"`     // Whether WebAuthn is enabled on server
+	WebAuthnEnabled        bool   `json:"webauthn_enabled"`             // Whether user has WebAuthn enabled
+	WebAuthnCredentials    int    `json:"webauthn_credentials"`         // Number of WebAuthn credentials
+	RecoveryCodesRemaining int    `json:"recovery_codes_remaining"`     // Remaining unused recovery codes
 }
 
 // MFATOTPSetupHandler handles POST /api/user/mfa/totp/setup
@@ -586,10 +588,16 @@ func MFAStatusHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			return
 		}
 
+		// Determine server-level feature flags
+		totpServerEnabled := cfg.MFA != nil && cfg.MFA.TOTPEnabled
+		webauthnServerEnabled := cfg.MFA != nil && cfg.MFA.WebAuthnEnabled
+
 		response := MFAStatusResponse{
 			Enabled:                mfaEnabled,
+			TOTPServerEnabled:      totpServerEnabled,
 			TOTPEnabled:            status.TOTPEnabled,
 			TOTPVerifiedAt:         status.TOTPVerifiedAt,
+			WebAuthnServerEnabled:  webauthnServerEnabled,
 			WebAuthnEnabled:        status.WebAuthnEnabled,
 			WebAuthnCredentials:    status.WebAuthnCredentials,
 			RecoveryCodesRemaining: status.RecoveryCodesRemaining,

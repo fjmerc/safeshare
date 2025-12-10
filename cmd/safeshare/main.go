@@ -24,6 +24,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/storage"
 	"github.com/fjmerc/safeshare/internal/storage/filesystem"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webauthn"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -159,6 +160,22 @@ func run() error {
 
 	// Make webhook dispatcher available to handlers
 	handlers.SetWebhookDispatcher(webhookDispatcher)
+
+	// Initialize WebAuthn service if MFA + WebAuthn is enabled
+	var webauthnSvc *webauthn.Service
+	if cfg.MFA != nil && cfg.MFA.Enabled && cfg.MFA.WebAuthnEnabled {
+		var err error
+		webauthnSvc, err = webauthn.NewService(cfg)
+		if err != nil {
+			slog.Error("failed to initialize WebAuthn service", "error", err)
+			// Don't fail startup - WebAuthn is optional, TOTP can still work
+		} else {
+			slog.Info("WebAuthn service initialized",
+				"rpid", webauthnSvc.GetRPID(),
+				"origins", webauthnSvc.GetRPOrigins(),
+			)
+		}
+	}
 
 	// Initialize backup scheduler
 	backupScheduler := backup.NewScheduler(cfg, repos)
@@ -400,6 +417,47 @@ func run() error {
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// WebAuthn MFA routes (credential management - requires user auth + CSRF)
+	mux.HandleFunc("/api/user/mfa/webauthn/register/begin", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterBeginHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/webauthn/register/finish", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterFinishHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/webauthn/auth/begin", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthBeginHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/webauthn/auth/finish", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthFinishHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/user/mfa/webauthn/credentials", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(http.HandlerFunc(handlers.MFAWebAuthnCredentialsHandler(repos, cfg))).ServeHTTP(w, r)
+	})
+
+	// WebAuthn credential management (DELETE/PATCH with ID in path)
+	mux.HandleFunc("/api/user/mfa/webauthn/credentials/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnCredentialDeleteHandler(repos, cfg)))).ServeHTTP(w, r)
+		} else if r.Method == http.MethodPatch {
+			userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnCredentialUpdateHandler(repos, cfg)))).ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// WebAuthn login flow routes (no auth required - uses challenge token)
+	mux.HandleFunc("/api/auth/mfa/webauthn/begin", func(w http.ResponseWriter, r *http.Request) {
+		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg, webauthnSvc))).ServeHTTP(w, r)
+	})
+
+	mux.HandleFunc("/api/auth/mfa/webauthn/finish", func(w http.ResponseWriter, r *http.Request) {
+		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg, webauthnSvc))).ServeHTTP(w, r)
 	})
 
 	// Admin routes (only enabled if admin credentials are configured)
