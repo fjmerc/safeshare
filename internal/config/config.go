@@ -71,6 +71,7 @@ type Config struct {
 	AutoBackup               *AutoBackupConfig // Automatic backup configuration
 	APIToken                 *APITokenConfig   // API token limit configuration
 	MFA                      *MFAConfig        // MFA configuration
+	SSO                      *SSOConfig        // SSO/OIDC configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -155,6 +156,9 @@ func Load() (*Config, error) {
 
 		// MFA configuration
 		MFA: loadMFAConfig(),
+
+		// SSO configuration
+		SSO: loadSSOConfig(),
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -398,6 +402,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.validateMFASettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateSSOSettings(); err != nil {
 		return err
 	}
 
