@@ -63,6 +63,68 @@ func generateSecureToken(n int) (string, error) {
 // Prevents log injection and path manipulation attacks.
 var providerSlugRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
+// isValidReturnURL validates that a return URL is safe (relative path only).
+// Prevents open redirect attacks by disallowing absolute URLs and protocol-relative URLs.
+func isValidReturnURL(returnURL string) bool {
+	if returnURL == "" {
+		return true
+	}
+
+	// Must start with / (relative path)
+	if !strings.HasPrefix(returnURL, "/") {
+		return false
+	}
+
+	// Prevent protocol-relative URLs (//evil.com)
+	if strings.HasPrefix(returnURL, "//") {
+		return false
+	}
+
+	// Parse to catch URL encoding tricks
+	parsed, err := url.Parse(returnURL)
+	if err != nil {
+		return false
+	}
+
+	// Must have no host (relative path only)
+	return parsed.Host == ""
+}
+
+// isValidPostLogoutURL validates that a post-logout URL is safe.
+// Only allows relative URLs or URLs matching the configured public URL.
+func isValidPostLogoutURL(postLogoutURL string, cfg *config.Config) bool {
+	if postLogoutURL == "" {
+		return true
+	}
+
+	// Allow relative URLs starting with /
+	if strings.HasPrefix(postLogoutURL, "/") && !strings.HasPrefix(postLogoutURL, "//") {
+		parsed, err := url.Parse(postLogoutURL)
+		if err != nil {
+			return false
+		}
+		return parsed.Host == ""
+	}
+
+	// For absolute URLs, validate against PublicURL
+	if cfg != nil && cfg.PublicURL != "" {
+		parsedPublic, err := url.Parse(cfg.PublicURL)
+		if err != nil {
+			return false
+		}
+
+		parsedLogout, err := url.Parse(postLogoutURL)
+		if err != nil {
+			return false
+		}
+
+		// Must match the public URL host
+		return parsedLogout.Host == parsedPublic.Host
+	}
+
+	return false
+}
+
 // extractProviderSlug extracts the provider slug from a URL path.
 // For example, "/api/auth/sso/google/login" with prefix "/api/auth/sso/" returns "google".
 // Returns empty string for invalid or malformed slugs.
@@ -221,9 +283,9 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 			return
 		}
 
-		// Get optional return URL from query parameter
+		// Get optional return URL and validate it (prevent open redirect)
 		returnURL := r.URL.Query().Get("return_url")
-		if returnURL == "" {
+		if returnURL == "" || !isValidReturnURL(returnURL) {
 			returnURL = "/dashboard"
 		}
 
@@ -465,9 +527,9 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 			)
 		}
 
-		// Redirect to return URL or dashboard
+		// Redirect to return URL or dashboard (validate to prevent open redirect)
 		returnURL := "/dashboard"
-		if ssoState != nil && ssoState.ReturnURL != "" {
+		if ssoState != nil && ssoState.ReturnURL != "" && isValidReturnURL(ssoState.ReturnURL) {
 			returnURL = ssoState.ReturnURL
 		}
 
@@ -898,14 +960,14 @@ func SSOUnlinkAccountHandler(repos *repository.Repositories, cfg *config.Config)
 			return
 		}
 
-		// Extract provider slug from URL path
+		// Extract provider slug from URL path using safe validation
 		// Expected path: /api/auth/sso/link/{provider}
-		providerSlug := strings.TrimPrefix(r.URL.Path, "/api/auth/sso/link/")
-		if providerSlug == "" || providerSlug == r.URL.Path {
+		providerSlug := extractProviderSlug(r.URL.Path, "/api/auth/sso/link/")
+		if providerSlug == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Provider slug is required",
+				"error": "Invalid provider slug",
 			})
 			return
 		}
@@ -1051,4 +1113,359 @@ func SSOGetLinkedProvidersHandler(repos *repository.Repositories, cfg *config.Co
 			"linked_providers": linkedProviders,
 		})
 	}
+}
+
+// SSORefreshTokenHandler returns a handler that refreshes SSO OAuth2 tokens.
+// POST /api/auth/sso/refresh
+// Requires user authentication. Refreshes expired tokens for all linked SSO providers.
+func SSORefreshTokenHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+		clientIP := getClientIP(r)
+
+		// Check if SSO is globally enabled
+		if cfg.SSO == nil || !cfg.SSO.Enabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "SSO is not enabled",
+			})
+			return
+		}
+
+		// Get authenticated user from context
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Get user's SSO links
+		links, err := repos.SSO.GetLinksByUserID(ctx, user.ID)
+		if err != nil {
+			slog.Error("failed to get user SSO links",
+				"user_id", user.ID,
+				"error", err,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		if len(links) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"message":         "No SSO links found",
+				"refreshed":       0,
+				"total_links":     0,
+				"refresh_results": []interface{}{},
+			})
+			return
+		}
+
+		type refreshResult struct {
+			ProviderSlug string `json:"provider_slug"`
+			Success      bool   `json:"success"`
+			Message      string `json:"message,omitempty"`
+		}
+
+		results := make([]refreshResult, 0, len(links))
+		refreshedCount := 0
+
+		for _, link := range links {
+			// Skip links without refresh tokens
+			if link.RefreshToken == "" {
+				provider, _ := repos.SSO.GetProvider(ctx, link.ProviderID)
+				providerSlug := "unknown"
+				if provider != nil {
+					providerSlug = provider.Slug
+				}
+				results = append(results, refreshResult{
+					ProviderSlug: providerSlug,
+					Success:      false,
+					Message:      "No refresh token available",
+				})
+				continue
+			}
+
+			// Check if token needs refresh (within 5 minutes of expiry or already expired)
+			if link.TokenExpiresAt != nil && time.Until(*link.TokenExpiresAt) > 5*time.Minute {
+				provider, _ := repos.SSO.GetProvider(ctx, link.ProviderID)
+				providerSlug := "unknown"
+				if provider != nil {
+					providerSlug = provider.Slug
+				}
+				results = append(results, refreshResult{
+					ProviderSlug: providerSlug,
+					Success:      true,
+					Message:      "Token still valid",
+				})
+				continue
+			}
+
+			// Get the provider
+			provider, err := repos.SSO.GetProvider(ctx, link.ProviderID)
+			if err != nil {
+				slog.Error("failed to get SSO provider for token refresh",
+					"provider_id", link.ProviderID,
+					"error", err,
+				)
+				results = append(results, refreshResult{
+					ProviderSlug: "unknown",
+					Success:      false,
+					Message:      "Provider not found",
+				})
+				continue
+			}
+
+			// Check if provider is still enabled
+			if !provider.Enabled {
+				results = append(results, refreshResult{
+					ProviderSlug: provider.Slug,
+					Success:      false,
+					Message:      "Provider is disabled",
+				})
+				continue
+			}
+
+			// Create OIDC provider instance
+			oidcProvider, err := sso.NewOIDCProvider(ctx, provider, repos.SSO)
+			if err != nil {
+				slog.Error("failed to create OIDC provider for token refresh",
+					"provider", provider.Slug,
+					"error", err,
+				)
+				results = append(results, refreshResult{
+					ProviderSlug: provider.Slug,
+					Success:      false,
+					Message:      "Failed to initialize provider",
+				})
+				continue
+			}
+
+			// Refresh the token
+			newToken, err := oidcProvider.RefreshToken(ctx, link.RefreshToken)
+			if err != nil {
+				slog.Warn("failed to refresh SSO token",
+					"provider", provider.Slug,
+					"user_id", user.ID,
+					"error", err,
+				)
+				results = append(results, refreshResult{
+					ProviderSlug: provider.Slug,
+					Success:      false,
+					Message:      "Token refresh failed",
+				})
+				continue
+			}
+
+			// Update tokens in database
+			var expiresAt *time.Time
+			if !newToken.Expiry.IsZero() {
+				expiresAt = &newToken.Expiry
+			}
+
+			// Use new refresh token if provided, otherwise keep the old one
+			refreshToken := newToken.RefreshToken
+			if refreshToken == "" {
+				refreshToken = link.RefreshToken
+			}
+
+			if err := repos.SSO.UpdateLinkTokens(ctx, link.ID, newToken.AccessToken, refreshToken, expiresAt); err != nil {
+				slog.Error("failed to update SSO link tokens",
+					"link_id", link.ID,
+					"error", err,
+				)
+				results = append(results, refreshResult{
+					ProviderSlug: provider.Slug,
+					Success:      false,
+					Message:      "Failed to store updated tokens",
+				})
+				continue
+			}
+
+			refreshedCount++
+			results = append(results, refreshResult{
+				ProviderSlug: provider.Slug,
+				Success:      true,
+				Message:      "Token refreshed successfully",
+			})
+
+			slog.Info("SSO token refreshed",
+				"provider", provider.Slug,
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":         fmt.Sprintf("Refreshed %d of %d SSO tokens", refreshedCount, len(links)),
+			"refreshed":       refreshedCount,
+			"total_links":     len(links),
+			"refresh_results": results,
+		})
+	}
+}
+
+// SSOLogoutHandler returns a handler that logs out from SSO.
+// POST /api/auth/sso/logout
+// Requires user authentication + CSRF. Logs out from local session and optionally from IdP.
+func SSOLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+		clientIP := getClientIP(r)
+
+		// Check if SSO is globally enabled
+		if cfg.SSO == nil || !cfg.SSO.Enabled {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "SSO is not enabled",
+			})
+			return
+		}
+
+		// Get authenticated user from context
+		user := middleware.GetUserFromContext(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Parse optional request body for logout options
+		type logoutRequest struct {
+			ProviderSlug     string `json:"provider_slug,omitempty"`      // Specific provider to logout from
+			IdPLogout        bool   `json:"idp_logout,omitempty"`         // Whether to redirect to IdP logout
+			PostLogoutURL    string `json:"post_logout_url,omitempty"`    // URL to redirect after IdP logout
+			ClearAllSessions bool   `json:"clear_all_sessions,omitempty"` // Clear all user sessions
+		}
+
+		var req logoutRequest
+		if r.ContentLength > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				// Ignore decode errors, use defaults
+			}
+		}
+
+		// Delete local user session
+		sessionCookie, err := r.Cookie("user_session")
+		if err == nil && sessionCookie.Value != "" {
+			if err := repos.Users.DeleteSession(ctx, sessionCookie.Value); err != nil {
+				slog.Error("failed to delete user session during SSO logout",
+					"error", err,
+				)
+				// Continue anyway - session will expire
+			}
+		}
+
+		// Note: ClearAllSessions feature requires implementing DeleteAllUserSessions in UserRepository
+		// For now, only the current session is cleared
+		if req.ClearAllSessions {
+			slog.Warn("clear_all_sessions requested but not yet implemented",
+				"user_id", user.ID,
+			)
+		}
+
+		// Clear session cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "user_session",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   cfg.HTTPSEnabled,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1, // Delete cookie
+		})
+
+		// Clear CSRF cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "user_csrf",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: false, // CSRF cookies must be readable by JS
+			Secure:   cfg.HTTPSEnabled,
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   -1, // Delete cookie
+		})
+
+		slog.Info("SSO logout successful",
+			"user_id", user.ID,
+			"username", user.Username,
+			"idp_logout", req.IdPLogout,
+			"ip", clientIP,
+		)
+
+		// If IdP logout requested, try to get the logout URL
+		if req.IdPLogout {
+			var idpLogoutURL string
+
+			// If specific provider requested, use that one
+			if req.ProviderSlug != "" {
+				provider, err := repos.SSO.GetProviderBySlug(ctx, req.ProviderSlug)
+				if err == nil && provider != nil && provider.Enabled {
+					idpLogoutURL = buildIdPLogoutURL(provider, req.PostLogoutURL, cfg)
+				}
+			} else {
+				// Try to find an SSO link for the user and use that provider
+				links, err := repos.SSO.GetLinksByUserID(ctx, user.ID)
+				if err == nil && len(links) > 0 {
+					// Use the first link's provider
+					provider, err := repos.SSO.GetProvider(ctx, links[0].ProviderID)
+					if err == nil && provider != nil && provider.Enabled {
+						idpLogoutURL = buildIdPLogoutURL(provider, req.PostLogoutURL, cfg)
+					}
+				}
+			}
+
+			if idpLogoutURL != "" {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"message":        "Logged out successfully",
+					"idp_logout_url": idpLogoutURL,
+				})
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Logged out successfully",
+		})
+	}
+}
+
+// buildIdPLogoutURL constructs the IdP logout URL for RP-Initiated Logout.
+// This follows the OpenID Connect RP-Initiated Logout spec.
+func buildIdPLogoutURL(provider *repository.SSOProvider, postLogoutURL string, cfg *config.Config) string {
+	// For OIDC providers, the logout endpoint is typically at {issuer}/logout
+	if provider.IssuerURL == "" {
+		return ""
+	}
+
+	// Generic OIDC logout pattern
+	logoutURL := provider.IssuerURL + "/logout"
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("client_id", provider.ClientID)
+
+	// Validate and set post-logout redirect URI (prevent open redirect)
+	if postLogoutURL != "" && isValidPostLogoutURL(postLogoutURL, cfg) {
+		params.Set("post_logout_redirect_uri", postLogoutURL)
+	} else if cfg != nil && cfg.PublicURL != "" {
+		params.Set("post_logout_redirect_uri", cfg.PublicURL+"/login")
+	}
+
+	return logoutURL + "?" + params.Encode()
 }

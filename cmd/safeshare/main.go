@@ -509,6 +509,16 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.SSOGetLinkedProvidersHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
+	// POST /api/auth/sso/refresh - Refresh SSO OAuth2 tokens (auth + CSRF required)
+	mux.HandleFunc("/api/auth/sso/refresh", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.SSORefreshTokenHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
+	// POST /api/auth/sso/logout - SSO logout with optional IdP redirect (auth + CSRF required)
+	mux.HandleFunc("/api/auth/sso/logout", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.SSOLogoutHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
 	// Admin routes (only enabled if admin credentials are configured)
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
 		slog.Info("admin dashboard enabled", "username", cfg.AdminUsername)
@@ -804,6 +814,55 @@ func run() error {
 
 		mux.HandleFunc("/admin/api/backup-running", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(backupSchedulerHandler.GetRunningBackup())).ServeHTTP(w, r)
+		})
+
+		// Admin SSO Management endpoints
+		// GET /admin/api/sso/providers - List all SSO providers with stats
+		mux.HandleFunc("/admin/api/sso/providers", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				adminAuth(http.HandlerFunc(handlers.AdminListSSOProvidersHandler(repos, cfg))).ServeHTTP(w, r)
+			case http.MethodPost:
+				// POST /admin/api/sso/providers - Create new SSO provider
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateSSOProviderHandler(repos, cfg)))).ServeHTTP(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		// GET/PUT/DELETE /admin/api/sso/providers/{id} - CRUD operations on specific provider
+		// POST /admin/api/sso/providers/{id}/test - Test OIDC connection
+		mux.HandleFunc("/admin/api/sso/providers/", func(w http.ResponseWriter, r *http.Request) {
+			// Check if this is a /test endpoint
+			if strings.HasSuffix(r.URL.Path, "/test") {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminTestSSOProviderHandler(repos, cfg)))).ServeHTTP(w, r)
+				return
+			}
+
+			switch r.Method {
+			case http.MethodGet:
+				adminAuth(http.HandlerFunc(handlers.AdminGetSSOProviderHandler(repos, cfg))).ServeHTTP(w, r)
+			case http.MethodPut:
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSSOProviderHandler(repos, cfg)))).ServeHTTP(w, r)
+			case http.MethodDelete:
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteSSOProviderHandler(repos, cfg)))).ServeHTTP(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		// GET /admin/api/sso/links - List all SSO links with pagination
+		mux.HandleFunc("/admin/api/sso/links", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminListSSOLinksHandler(repos, cfg))).ServeHTTP(w, r)
+		})
+
+		// DELETE /admin/api/sso/links/{id} - Admin unlink user's SSO
+		mux.HandleFunc("/admin/api/sso/links/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteSSOLinkHandler(repos, cfg)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
 		})
 
 		// Admin static assets
