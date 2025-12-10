@@ -23,6 +23,7 @@ type Repositories struct {
 	Health          HealthRepository
 	BackupScheduler BackupSchedulerRepository
 	MFA             MFARepository
+	SSO             SSORepository
 
 	// DB provides direct database access for code that hasn't been migrated to use repositories yet.
 	// DEPRECATED: This field will be removed once all database access is migrated to use repositories.

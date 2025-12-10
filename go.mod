@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.4
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.1
+	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0
 	github.com/gabriel-vasile/mimetype v1.4.3
 	github.com/go-webauthn/webauthn v0.12.3
@@ -23,6 +24,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/crypto v0.44.0
 	golang.org/x/net v0.47.0
+	golang.org/x/oauth2 v0.34.0
 	modernc.org/sqlite v1.28.0
 )
 
