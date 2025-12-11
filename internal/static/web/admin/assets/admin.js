@@ -3268,3 +3268,295 @@ async function bulkRevokeTokens() {
 function showBulkExtendModal() {
     showError('Bulk extend feature is not yet implemented');
 }
+
+// ============ ENTERPRISE FEATURES MANAGEMENT ============
+
+// Global state for enterprise features
+let enterpriseConfigLoaded = false;
+
+// Load enterprise configuration (feature flags + MFA/SSO config)
+async function loadEnterpriseConfig() {
+    try {
+        // Load feature flags
+        const flagsResponse = await fetch('/admin/api/features');
+        if (!flagsResponse.ok) {
+            throw new Error('Failed to load feature flags');
+        }
+        const flags = await flagsResponse.json();
+
+        // Populate feature flag checkboxes
+        document.getElementById('featureMFA').checked = flags.enable_mfa || false;
+        document.getElementById('featureSSO').checked = flags.enable_sso || false;
+        document.getElementById('featureWebhooks').checked = flags.enable_webhooks || false;
+        document.getElementById('featureAPITokens').checked = flags.enable_api_tokens || false;
+        document.getElementById('featureBackups').checked = flags.enable_backups || false;
+        document.getElementById('featurePostgreSQL').checked = flags.enable_postgresql || false;
+        document.getElementById('featureS3Storage').checked = flags.enable_s3_storage || false;
+        document.getElementById('featureMalwareScan').checked = flags.enable_malware_scan || false;
+
+        // Update status display
+        updateEnterpriseStatusDisplay(flags);
+
+        // Show/hide config sections based on enabled features
+        toggleMFAConfigSection(flags.enable_mfa);
+        toggleSSOConfigSection(flags.enable_sso);
+
+        // Load detailed config if MFA or SSO is enabled
+        if (flags.enable_mfa || flags.enable_sso) {
+            await loadEnterpriseDetailedConfig();
+        }
+
+        enterpriseConfigLoaded = true;
+    } catch (error) {
+        console.error('Error loading enterprise config:', error);
+        showError('Failed to load enterprise configuration');
+    }
+}
+
+// Load detailed MFA/SSO config
+async function loadEnterpriseDetailedConfig() {
+    try {
+        const response = await fetch('/admin/api/config/enterprise');
+        if (!response.ok) {
+            throw new Error('Failed to load enterprise config');
+        }
+        const config = await response.json();
+
+        // Populate MFA config form
+        if (config.mfa) {
+            document.getElementById('mfaRequired').checked = config.mfa.required || false;
+            document.getElementById('mfaIssuer').value = config.mfa.issuer || 'SafeShare';
+            document.getElementById('mfaTOTPEnabled').checked = config.mfa.totp_enabled !== false;
+            document.getElementById('mfaWebAuthnEnabled').checked = config.mfa.webauthn_enabled !== false;
+            document.getElementById('mfaRecoveryCodesCount').value = config.mfa.recovery_codes_count || 10;
+            document.getElementById('mfaChallengeExpiry').value = config.mfa.challenge_expiry_minutes || 5;
+        }
+
+        // Populate SSO config form
+        if (config.sso) {
+            document.getElementById('ssoAutoProvision').checked = config.sso.auto_provision || false;
+            document.getElementById('ssoDefaultRole').value = config.sso.default_role || 'user';
+            document.getElementById('ssoSessionLifetime').value = config.sso.session_lifetime || 480;
+            document.getElementById('ssoStateExpiry').value = config.sso.state_expiry_minutes || 10;
+        }
+    } catch (error) {
+        console.error('Error loading detailed enterprise config:', error);
+        // Don't show error - this is optional
+    }
+}
+
+// Update enterprise status display
+function updateEnterpriseStatusDisplay(flags) {
+    const statusElements = {
+        mfaStatusText: flags.enable_mfa,
+        ssoStatusText: flags.enable_sso,
+        webhooksStatusText: flags.enable_webhooks,
+        apiTokensStatusText: flags.enable_api_tokens,
+        backupsStatusText: flags.enable_backups
+    };
+
+    for (const [elementId, enabled] of Object.entries(statusElements)) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = enabled ? 'Enabled' : 'Disabled';
+            element.style.color = enabled ? 'var(--success-color)' : 'var(--text-secondary)';
+        }
+    }
+}
+
+// Toggle MFA config section visibility
+function toggleMFAConfigSection(show) {
+    const section = document.getElementById('mfaConfigSection');
+    if (section) {
+        section.style.display = show ? 'block' : 'none';
+    }
+}
+
+// Toggle SSO config section visibility
+function toggleSSOConfigSection(show) {
+    const section = document.getElementById('ssoConfigSection');
+    if (section) {
+        section.style.display = show ? 'block' : 'none';
+    }
+}
+
+// Save feature flags
+async function saveFeatureFlags() {
+    const flags = {
+        enable_mfa: document.getElementById('featureMFA').checked,
+        enable_sso: document.getElementById('featureSSO').checked,
+        enable_webhooks: document.getElementById('featureWebhooks').checked,
+        enable_api_tokens: document.getElementById('featureAPITokens').checked,
+        enable_backups: document.getElementById('featureBackups').checked
+        // PostgreSQL, S3, and Malware scan are coming soon - disabled in UI
+    };
+
+    try {
+        const response = await fetch('/admin/api/features', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(flags)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save feature flags');
+        }
+
+        showSuccess('Feature flags saved successfully');
+        
+        // Update UI based on new flags
+        updateEnterpriseStatusDisplay(flags);
+        toggleMFAConfigSection(flags.enable_mfa);
+        toggleSSOConfigSection(flags.enable_sso);
+
+        // Load detailed config if features were enabled
+        if (flags.enable_mfa || flags.enable_sso) {
+            await loadEnterpriseDetailedConfig();
+        }
+    } catch (error) {
+        console.error('Error saving feature flags:', error);
+        showError(error.message);
+    }
+}
+
+// Save MFA configuration
+async function saveMFAConfig() {
+    const config = {
+        required: document.getElementById('mfaRequired').checked,
+        issuer: document.getElementById('mfaIssuer').value || 'SafeShare',
+        totp_enabled: document.getElementById('mfaTOTPEnabled').checked,
+        webauthn_enabled: document.getElementById('mfaWebAuthnEnabled').checked,
+        recovery_codes_count: parseInt(document.getElementById('mfaRecoveryCodesCount').value) || 10,
+        challenge_expiry_minutes: parseInt(document.getElementById('mfaChallengeExpiry').value) || 5
+    };
+
+    // Validation
+    if (!config.totp_enabled && !config.webauthn_enabled) {
+        showError('At least one MFA method (TOTP or WebAuthn) must be enabled');
+        return;
+    }
+
+    if (config.recovery_codes_count < 5 || config.recovery_codes_count > 20) {
+        showError('Recovery codes count must be between 5 and 20');
+        return;
+    }
+
+    if (config.challenge_expiry_minutes < 1 || config.challenge_expiry_minutes > 30) {
+        showError('Challenge expiry must be between 1 and 30 minutes');
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/config/mfa', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(config)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save MFA configuration');
+        }
+
+        showSuccess('MFA configuration saved successfully');
+    } catch (error) {
+        console.error('Error saving MFA config:', error);
+        showError(error.message);
+    }
+}
+
+// Save SSO configuration
+async function saveSSOConfig() {
+    const config = {
+        auto_provision: document.getElementById('ssoAutoProvision').checked,
+        default_role: document.getElementById('ssoDefaultRole').value || 'user',
+        session_lifetime: parseInt(document.getElementById('ssoSessionLifetime').value) || 480,
+        state_expiry_minutes: parseInt(document.getElementById('ssoStateExpiry').value) || 10
+    };
+
+    // Validation
+    if (config.session_lifetime < 30 || config.session_lifetime > 43200) {
+        showError('Session lifetime must be between 30 minutes and 30 days (43200 minutes)');
+        return;
+    }
+
+    if (config.state_expiry_minutes < 1 || config.state_expiry_minutes > 30) {
+        showError('State expiry must be between 1 and 30 minutes');
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/config/sso', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(config)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save SSO configuration');
+        }
+
+        showSuccess('SSO configuration saved successfully');
+    } catch (error) {
+        console.error('Error saving SSO config:', error);
+        showError(error.message);
+    }
+}
+
+// Initialize enterprise features event listeners
+function initEnterpriseFeatures() {
+    // Feature flags form submission
+    document.getElementById('featureFlagsForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveFeatureFlags();
+    });
+
+    // MFA config form submission
+    document.getElementById('mfaConfigForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveMFAConfig();
+    });
+
+    // SSO config form submission
+    document.getElementById('ssoConfigForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveSSOConfig();
+    });
+
+    // Load enterprise config when tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'enterpriseFeatures') {
+                loadEnterpriseConfig();
+            }
+        });
+    });
+
+    // Listen for feature flag checkbox changes to show/hide config sections
+    document.getElementById('featureMFA')?.addEventListener('change', (e) => {
+        // Don't toggle until saved - just visual feedback
+    });
+
+    document.getElementById('featureSSO')?.addEventListener('change', (e) => {
+        // Don't toggle until saved - just visual feedback
+    });
+}
+
+// Call initEnterpriseFeatures on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+    // Only initialize if we're on the dashboard page
+    if (document.querySelector('.dashboard-page')) {
+        initEnterpriseFeatures();
+    }
+});

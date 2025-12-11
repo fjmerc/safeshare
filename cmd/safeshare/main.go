@@ -109,6 +109,48 @@ func run() error {
 			EnableBackups:     dbSettings.FeatureBackups,
 		})
 
+		// Load MFA configuration from database (syncs with feature flag)
+		if dbSettings.FeatureMFA {
+			cfg.SetMFAEnabled(true)
+			cfg.SetMFARequired(dbSettings.MFARequired)
+			if dbSettings.MFAIssuer != "" {
+				cfg.SetMFAIssuer(dbSettings.MFAIssuer)
+			}
+			cfg.SetMFATOTPEnabled(dbSettings.MFATOTPEnabled)
+			cfg.SetMFAWebAuthnEnabled(dbSettings.MFAWebAuthnEnabled)
+			if dbSettings.MFARecoveryCodesCount > 0 {
+				cfg.SetMFARecoveryCodesCount(dbSettings.MFARecoveryCodesCount)
+			}
+			if dbSettings.MFAChallengeExpiryMinutes > 0 {
+				cfg.SetMFAChallengeExpiryMinutes(dbSettings.MFAChallengeExpiryMinutes)
+			}
+			slog.Info("loaded MFA config from database",
+				"enabled", true,
+				"required", dbSettings.MFARequired,
+				"issuer", dbSettings.MFAIssuer,
+			)
+		}
+
+		// Load SSO configuration from database (syncs with feature flag)
+		if dbSettings.FeatureSSO {
+			cfg.SetSSOEnabled(true)
+			cfg.SetSSOAutoProvision(dbSettings.SSOAutoProvision)
+			if dbSettings.SSODefaultRole != "" {
+				cfg.SetSSODefaultRole(dbSettings.SSODefaultRole)
+			}
+			if dbSettings.SSOSessionLifetime > 0 {
+				cfg.SetSSOSessionLifetime(dbSettings.SSOSessionLifetime)
+			}
+			if dbSettings.SSOStateExpiryMinutes > 0 {
+				cfg.SetSSOStateExpiryMinutes(dbSettings.SSOStateExpiryMinutes)
+			}
+			slog.Info("loaded SSO config from database",
+				"enabled", true,
+				"auto_provision", dbSettings.SSOAutoProvision,
+				"default_role", dbSettings.SSODefaultRole,
+			)
+		}
+
 		slog.Info("loaded settings from database",
 			"quota_limit_gb", dbSettings.QuotaLimitGB,
 			"max_file_size_bytes", dbSettings.MaxFileSizeBytes,
@@ -626,6 +668,31 @@ func run() error {
 				adminAuth(http.HandlerFunc(handlers.AdminGetFeatureFlagsHandler(repos, cfg))).ServeHTTP(w, r)
 			} else if r.Method == http.MethodPut {
 				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateFeatureFlagsHandler(repos, cfg)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		// Enterprise configuration management (MFA, SSO config details)
+		mux.HandleFunc("/admin/api/config/enterprise", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				adminAuth(http.HandlerFunc(handlers.AdminGetEnterpriseConfigHandler(repos, cfg))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/config/mfa", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateMFAConfigHandler(repos, cfg)))).ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		})
+
+		mux.HandleFunc("/admin/api/config/sso", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSSOConfigHandler(repos, cfg)))).ServeHTTP(w, r)
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}

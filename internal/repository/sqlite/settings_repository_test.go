@@ -18,7 +18,8 @@ func setupSettingsTestDB(t *testing.T) *sql.DB {
 	}
 
 	// Create settings table (matching the schema from internal/database/db.go)
-	// Including feature flag columns added in migration 011_feature_flags.sql
+	// Including feature flag columns from migration 011_feature_flags.sql
+	// and enterprise config columns from migration 019_enterprise_config.sql
 	_, err = db.Exec(`
 		CREATE TABLE settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -37,7 +38,17 @@ func setupSettingsTestDB(t *testing.T) *sql.DB {
 			feature_webhooks INTEGER NOT NULL DEFAULT 0,
 			feature_api_tokens INTEGER NOT NULL DEFAULT 0,
 			feature_malware_scan INTEGER NOT NULL DEFAULT 0,
-			feature_backups INTEGER NOT NULL DEFAULT 0
+			feature_backups INTEGER NOT NULL DEFAULT 0,
+			mfa_required INTEGER NOT NULL DEFAULT 0,
+			mfa_issuer TEXT NOT NULL DEFAULT 'SafeShare',
+			mfa_totp_enabled INTEGER NOT NULL DEFAULT 1,
+			mfa_webauthn_enabled INTEGER NOT NULL DEFAULT 1,
+			mfa_recovery_codes_count INTEGER NOT NULL DEFAULT 10,
+			mfa_challenge_expiry_minutes INTEGER NOT NULL DEFAULT 5,
+			sso_auto_provision INTEGER NOT NULL DEFAULT 0,
+			sso_default_role TEXT NOT NULL DEFAULT 'user',
+			sso_session_lifetime INTEGER NOT NULL DEFAULT 480,
+			sso_state_expiry_minutes INTEGER NOT NULL DEFAULT 10
 		)
 	`)
 	if err != nil {

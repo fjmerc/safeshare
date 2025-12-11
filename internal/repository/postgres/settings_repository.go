@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -14,8 +15,9 @@ import (
 
 // Maximum allowed values for settings to prevent integer overflow and DoS.
 const (
-	pgMaxExtensionLen       = 20
+	pgMaxExtensionLen        = 20
 	pgMaxBlockedExtsTotalLen = 10000
+	pgMaxIssuerLen           = 64
 )
 
 // SettingsRepository implements repository.SettingsRepository for PostgreSQL.
@@ -38,7 +40,12 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 		       COALESCE(feature_postgresql, false), COALESCE(feature_s3_storage, false),
 		       COALESCE(feature_sso, false), COALESCE(feature_mfa, false),
 		       COALESCE(feature_webhooks, false), COALESCE(feature_api_tokens, false),
-		       COALESCE(feature_malware_scan, false), COALESCE(feature_backups, false)
+		       COALESCE(feature_malware_scan, false), COALESCE(feature_backups, false),
+		       COALESCE(mfa_required, false), COALESCE(mfa_issuer, 'SafeShare'),
+		       COALESCE(mfa_totp_enabled, true), COALESCE(mfa_webauthn_enabled, true),
+		       COALESCE(mfa_recovery_codes_count, 10), COALESCE(mfa_challenge_expiry_minutes, 5),
+		       COALESCE(sso_auto_provision, false), COALESCE(sso_default_role, 'user'),
+		       COALESCE(sso_session_lifetime, 480), COALESCE(sso_state_expiry_minutes, 10)
 		FROM settings WHERE id = 1
 	`
 
@@ -61,6 +68,16 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 		&s.FeatureAPITokens,
 		&s.FeatureMalwareScan,
 		&s.FeatureBackups,
+		&s.MFARequired,
+		&s.MFAIssuer,
+		&s.MFATOTPEnabled,
+		&s.MFAWebAuthnEnabled,
+		&s.MFARecoveryCodesCount,
+		&s.MFAChallengeExpiryMinutes,
+		&s.SSOAutoProvision,
+		&s.SSODefaultRole,
+		&s.SSOSessionLifetime,
+		&s.SSOStateExpiryMinutes,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -306,6 +323,202 @@ func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repo
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update feature flags: %w", err)
+	}
+	return nil
+}
+
+// GetMFAConfig retrieves MFA configuration from the database.
+// Returns default values if no settings exist.
+func (r *SettingsRepository) GetMFAConfig(ctx context.Context) (*repository.MFAConfig, error) {
+	query := `
+		SELECT COALESCE(feature_mfa, false),
+		       COALESCE(mfa_required, false), COALESCE(mfa_issuer, 'SafeShare'),
+		       COALESCE(mfa_totp_enabled, true), COALESCE(mfa_webauthn_enabled, true),
+		       COALESCE(mfa_recovery_codes_count, 10), COALESCE(mfa_challenge_expiry_minutes, 5)
+		FROM settings WHERE id = 1
+	`
+
+	var cfg repository.MFAConfig
+
+	err := r.pool.QueryRow(ctx, query).Scan(
+		&cfg.Enabled, &cfg.Required, &cfg.Issuer,
+		&cfg.TOTPEnabled, &cfg.WebAuthnEnabled,
+		&cfg.RecoveryCodesCount, &cfg.ChallengeExpiryMinutes,
+	)
+
+	if err == pgx.ErrNoRows {
+		// No settings exist - return defaults
+		return &repository.MFAConfig{
+			Enabled:                false,
+			Required:               false,
+			Issuer:                 "SafeShare",
+			TOTPEnabled:            true,
+			WebAuthnEnabled:        true,
+			RecoveryCodesCount:     10,
+			ChallengeExpiryMinutes: 5,
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MFA config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// UpdateMFAConfig saves MFA configuration to the database.
+func (r *SettingsRepository) UpdateMFAConfig(ctx context.Context, cfg *repository.MFAConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("MFA config cannot be nil")
+	}
+
+	// Validate issuer length
+	if len(cfg.Issuer) == 0 {
+		return fmt.Errorf("MFA issuer cannot be empty")
+	}
+	if len(cfg.Issuer) > pgMaxIssuerLen {
+		return fmt.Errorf("MFA issuer too long (max %d chars)", pgMaxIssuerLen)
+	}
+
+	// Validate issuer contains only safe characters for TOTP URIs
+	// Only allow alphanumeric, spaces, dashes, underscores, and periods
+	issuerRegex := regexp.MustCompile(`^[a-zA-Z0-9 _.-]+$`)
+	if !issuerRegex.MatchString(cfg.Issuer) {
+		return fmt.Errorf("MFA issuer contains invalid characters; only alphanumeric, space, underscore, dash, and period are allowed")
+	}
+
+	// Validate recovery codes count (5-20)
+	if cfg.RecoveryCodesCount < 5 || cfg.RecoveryCodesCount > 20 {
+		return fmt.Errorf("recovery codes count must be between 5 and 20")
+	}
+
+	// Validate challenge expiry (1-30 minutes)
+	if cfg.ChallengeExpiryMinutes < 1 || cfg.ChallengeExpiryMinutes > 30 {
+		return fmt.Errorf("challenge expiry must be between 1 and 30 minutes")
+	}
+
+	// At least one MFA method must be enabled if MFA is enabled
+	if cfg.Enabled && !cfg.TOTPEnabled && !cfg.WebAuthnEnabled {
+		return fmt.Errorf("at least one MFA method must be enabled")
+	}
+
+	query := `
+		INSERT INTO settings (
+			id, feature_mfa, mfa_required, mfa_issuer,
+			mfa_totp_enabled, mfa_webauthn_enabled,
+			mfa_recovery_codes_count, mfa_challenge_expiry_minutes,
+			updated_at
+		) VALUES (1, $1, $2, $3, $4, $5, $6, $7, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			feature_mfa = EXCLUDED.feature_mfa,
+			mfa_required = EXCLUDED.mfa_required,
+			mfa_issuer = EXCLUDED.mfa_issuer,
+			mfa_totp_enabled = EXCLUDED.mfa_totp_enabled,
+			mfa_webauthn_enabled = EXCLUDED.mfa_webauthn_enabled,
+			mfa_recovery_codes_count = EXCLUDED.mfa_recovery_codes_count,
+			mfa_challenge_expiry_minutes = EXCLUDED.mfa_challenge_expiry_minutes,
+			updated_at = NOW()
+	`
+
+	_, err := r.pool.Exec(ctx, query,
+		cfg.Enabled,
+		cfg.Required,
+		cfg.Issuer,
+		cfg.TOTPEnabled,
+		cfg.WebAuthnEnabled,
+		cfg.RecoveryCodesCount,
+		cfg.ChallengeExpiryMinutes,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update MFA config: %w", err)
+	}
+	return nil
+}
+
+// GetSSOConfig retrieves SSO configuration from the database.
+// Returns default values if no settings exist.
+func (r *SettingsRepository) GetSSOConfig(ctx context.Context) (*repository.SSOConfig, error) {
+	query := `
+		SELECT COALESCE(feature_sso, false),
+		       COALESCE(sso_auto_provision, false), COALESCE(sso_default_role, 'user'),
+		       COALESCE(sso_session_lifetime, 480), COALESCE(sso_state_expiry_minutes, 10)
+		FROM settings WHERE id = 1
+	`
+
+	var cfg repository.SSOConfig
+
+	err := r.pool.QueryRow(ctx, query).Scan(
+		&cfg.Enabled, &cfg.AutoProvision, &cfg.DefaultRole,
+		&cfg.SessionLifetime, &cfg.StateExpiryMinutes,
+	)
+
+	if err == pgx.ErrNoRows {
+		// No settings exist - return defaults
+		return &repository.SSOConfig{
+			Enabled:            false,
+			AutoProvision:      false,
+			DefaultRole:        "user",
+			SessionLifetime:    480,
+			StateExpiryMinutes: 10,
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SSO config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// UpdateSSOConfig saves SSO configuration to the database.
+func (r *SettingsRepository) UpdateSSOConfig(ctx context.Context, cfg *repository.SSOConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("SSO config cannot be nil")
+	}
+
+	// Validate default role
+	if cfg.DefaultRole != "user" && cfg.DefaultRole != "admin" {
+		return fmt.Errorf("default role must be 'user' or 'admin'")
+	}
+
+	// Security: Prevent auto-provisioning with admin role to avoid privilege escalation
+	// All users from the IdP would automatically become admins, which is a significant security risk
+	if cfg.AutoProvision && cfg.DefaultRole == "admin" {
+		return fmt.Errorf("auto-provisioning with admin role is not allowed for security reasons; please manually promote users to admin after SSO login")
+	}
+
+	// Validate session lifetime (5-43200 minutes = 5 min to 30 days)
+	if cfg.SessionLifetime < 5 || cfg.SessionLifetime > 43200 {
+		return fmt.Errorf("session lifetime must be between 5 and 43200 minutes")
+	}
+
+	// Validate state expiry (5-60 minutes)
+	if cfg.StateExpiryMinutes < 5 || cfg.StateExpiryMinutes > 60 {
+		return fmt.Errorf("state expiry must be between 5 and 60 minutes")
+	}
+
+	query := `
+		INSERT INTO settings (
+			id, feature_sso, sso_auto_provision, sso_default_role,
+			sso_session_lifetime, sso_state_expiry_minutes,
+			updated_at
+		) VALUES (1, $1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			feature_sso = EXCLUDED.feature_sso,
+			sso_auto_provision = EXCLUDED.sso_auto_provision,
+			sso_default_role = EXCLUDED.sso_default_role,
+			sso_session_lifetime = EXCLUDED.sso_session_lifetime,
+			sso_state_expiry_minutes = EXCLUDED.sso_state_expiry_minutes,
+			updated_at = NOW()
+	`
+
+	_, err := r.pool.Exec(ctx, query,
+		cfg.Enabled,
+		cfg.AutoProvision,
+		cfg.DefaultRole,
+		cfg.SessionLifetime,
+		cfg.StateExpiryMinutes,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update SSO config: %w", err)
 	}
 	return nil
 }

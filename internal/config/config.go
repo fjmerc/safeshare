@@ -359,6 +359,109 @@ func (c *Config) SetAdminPassword(password string) error {
 	return nil
 }
 
+// MFA Config Setters - allow runtime updates to MFA configuration
+
+// SetMFAEnabled enables or disables the MFA feature.
+func (c *Config) SetMFAEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA == nil {
+		c.MFA = &MFAConfig{
+			Issuer:                 "SafeShare",
+			TOTPEnabled:            true,
+			WebAuthnEnabled:        true,
+			RecoveryCodesCount:     10,
+			ChallengeExpiryMinutes: 5,
+		}
+	}
+	c.MFA.Enabled = enabled
+}
+
+// SetMFARequired sets whether MFA is required for all users.
+func (c *Config) SetMFARequired(required bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.Required = required
+	}
+}
+
+// SetMFAIssuer sets the TOTP issuer name.
+func (c *Config) SetMFAIssuer(issuer string) error {
+	if len(issuer) == 0 || len(issuer) > 64 {
+		return fmt.Errorf("MFA issuer must be between 1 and 64 characters")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.Issuer = issuer
+	}
+	return nil
+}
+
+// SetMFATOTPEnabled enables or disables TOTP as an MFA method.
+func (c *Config) SetMFATOTPEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.TOTPEnabled = enabled
+	}
+}
+
+// SetMFAWebAuthnEnabled enables or disables WebAuthn as an MFA method.
+func (c *Config) SetMFAWebAuthnEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.WebAuthnEnabled = enabled
+	}
+}
+
+// SetMFARecoveryCodesCount sets the number of recovery codes to generate.
+func (c *Config) SetMFARecoveryCodesCount(count int) error {
+	if count < 5 || count > 20 {
+		return fmt.Errorf("recovery codes count must be between 5 and 20")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.RecoveryCodesCount = count
+	}
+	return nil
+}
+
+// SetMFAChallengeExpiryMinutes sets how long MFA challenges are valid.
+func (c *Config) SetMFAChallengeExpiryMinutes(minutes int) error {
+	if minutes < 1 || minutes > 30 {
+		return fmt.Errorf("challenge expiry must be between 1 and 30 minutes")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.ChallengeExpiryMinutes = minutes
+	}
+	return nil
+}
+
+// GetMFAConfig returns a copy of the current MFA configuration.
+func (c *Config) GetMFAConfig() *MFAConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.MFA == nil {
+		return nil
+	}
+	// Return a copy
+	return &MFAConfig{
+		Enabled:                c.MFA.Enabled,
+		Required:               c.MFA.Required,
+		Issuer:                 c.MFA.Issuer,
+		TOTPEnabled:            c.MFA.TOTPEnabled,
+		WebAuthnEnabled:        c.MFA.WebAuthnEnabled,
+		RecoveryCodesCount:     c.MFA.RecoveryCodesCount,
+		ChallengeExpiryMinutes: c.MFA.ChallengeExpiryMinutes,
+	}
+}
+
 // validate ensures configuration values are sensible
 func (c *Config) validate() error {
 	if err := c.validatePaths(); err != nil {

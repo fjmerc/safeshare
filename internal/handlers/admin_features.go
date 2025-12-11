@@ -137,6 +137,15 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 			EnableBackups:     currentFlags.EnableBackups,
 		})
 
+		// Sync MFA and SSO enabled state with their config structs
+		// This ensures existing code that checks cfg.MFA.Enabled continues to work
+		if req.EnableMFA != nil {
+			cfg.SetMFAEnabled(currentFlags.EnableMFA)
+		}
+		if req.EnableSSO != nil {
+			cfg.SetSSOEnabled(currentFlags.EnableSSO)
+		}
+
 		slog.Info("feature flags updated",
 			"ip", clientIP,
 			"postgresql", currentFlags.EnablePostgreSQL,

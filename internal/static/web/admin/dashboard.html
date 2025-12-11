@@ -112,6 +112,7 @@
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
             <button class="tab-btn" data-tab="webhooks">Webhooks</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="enterpriseFeatures">Enterprise Features</button>
             <button class="tab-btn" data-tab="apiTokens">API Tokens</button>
             <button class="tab-btn" data-tab="backups">Backups</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
@@ -556,6 +557,225 @@
                     </button>
                 </div>
             </div>
+            </div>
+        </div>
+
+        <!-- Enterprise Features Tab -->
+        <div id="enterpriseFeaturesTab" class="tab-content">
+            <div class="settings-grid">
+                <!-- Feature Flags Section -->
+                <div class="settings-section">
+                    <h2>Enterprise Feature Flags</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Enable or disable enterprise features. Changes take effect immediately.
+                    </p>
+                    <form id="featureFlagsForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureMFA" name="enable_mfa">
+                                <span>Multi-Factor Authentication (MFA)</span>
+                            </label>
+                            <small>Enable TOTP and WebAuthn authentication for users</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureSSO" name="enable_sso">
+                                <span>Single Sign-On (SSO)</span>
+                            </label>
+                            <small>Enable OIDC-based single sign-on with external providers</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureWebhooks" name="enable_webhooks">
+                                <span>Webhooks</span>
+                            </label>
+                            <small>Enable webhook notifications for file events</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureAPITokens" name="enable_api_tokens">
+                                <span>API Tokens</span>
+                            </label>
+                            <small>Enable API token authentication for programmatic access</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureBackups" name="enable_backups">
+                                <span>Backups</span>
+                            </label>
+                            <small>Enable backup and restore functionality</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featurePostgreSQL" name="enable_postgresql" disabled>
+                                <span>PostgreSQL (Coming Soon)</span>
+                            </label>
+                            <small>Use PostgreSQL instead of SQLite for the database</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureS3Storage" name="enable_s3_storage" disabled>
+                                <span>S3 Storage (Coming Soon)</span>
+                            </label>
+                            <small>Use S3-compatible storage for file uploads</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureMalwareScan" name="enable_malware_scan" disabled>
+                                <span>Malware Scanning (Coming Soon)</span>
+                            </label>
+                            <small>Enable ClamAV malware scanning for uploaded files</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save Feature Flags
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- MFA Configuration Section -->
+                <div class="settings-section" id="mfaConfigSection" style="display: none;">
+                    <h2>MFA Configuration</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Configure multi-factor authentication settings.
+                    </p>
+                    <form id="mfaConfigForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaRequired" name="required">
+                                <span>Require MFA for All Users</span>
+                            </label>
+                            <small>Force all users to set up MFA before accessing their account</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaIssuer">Issuer Name</label>
+                            <input type="text" id="mfaIssuer" name="issuer" placeholder="SafeShare">
+                            <small>The name shown in authenticator apps (e.g., "MyCompany SafeShare")</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaTOTPEnabled" name="totp_enabled" checked>
+                                <span>Enable TOTP (Time-based One-Time Password)</span>
+                            </label>
+                            <small>Allow users to use authenticator apps like Google Authenticator</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaWebAuthnEnabled" name="webauthn_enabled" checked>
+                                <span>Enable WebAuthn (Security Keys)</span>
+                            </label>
+                            <small>Allow users to use hardware security keys like YubiKey</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaRecoveryCodesCount">Recovery Codes Count</label>
+                            <input type="number" id="mfaRecoveryCodesCount" name="recovery_codes_count" min="5" max="20" value="10">
+                            <small>Number of one-time recovery codes generated for users (5-20)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaChallengeExpiry">Challenge Expiry (minutes)</label>
+                            <input type="number" id="mfaChallengeExpiry" name="challenge_expiry_minutes" min="1" max="30" value="5">
+                            <small>How long MFA challenges remain valid (1-30 minutes)</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save MFA Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="settings-grid">
+                <!-- SSO Configuration Section -->
+                <div class="settings-section" id="ssoConfigSection" style="display: none;">
+                    <h2>SSO Configuration</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Configure single sign-on settings. SSO providers are managed in the SSO Providers section.
+                    </p>
+                    <form id="ssoConfigForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="ssoAutoProvision" name="auto_provision">
+                                <span>Auto-Provision Users</span>
+                            </label>
+                            <small>Automatically create user accounts for new SSO logins</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoDefaultRole">Default Role for New Users</label>
+                            <select id="ssoDefaultRole" name="default_role">
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                            <small>Role assigned to auto-provisioned users</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoSessionLifetime">Session Lifetime (minutes)</label>
+                            <input type="number" id="ssoSessionLifetime" name="session_lifetime" min="30" max="43200" value="480">
+                            <small>How long SSO sessions remain valid (30 min - 30 days)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoStateExpiry">State Expiry (minutes)</label>
+                            <input type="number" id="ssoStateExpiry" name="state_expiry_minutes" min="1" max="30" value="10">
+                            <small>How long SSO state tokens remain valid during login (1-30 minutes)</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save SSO Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Enterprise Info Section -->
+                <div class="settings-section">
+                    <h2>Enterprise Feature Status</h2>
+                    <div class="info-grid" id="enterpriseStatusGrid">
+                        <div class="info-item">
+                            <strong>MFA Status:</strong>
+                            <span id="mfaStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>SSO Status:</strong>
+                            <span id="ssoStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Webhooks Status:</strong>
+                            <span id="webhooksStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>API Tokens Status:</strong>
+                            <span id="apiTokensStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Backups Status:</strong>
+                            <span id="backupsStatusText">Disabled</span>
+                        </div>
+                    </div>
+                    <div class="alert-info" style="margin-top: 16px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span>Enterprise features can be enabled without environment variables. Enable a feature above, then configure its settings.</span>
+                    </div>
+                </div>
             </div>
         </div>
 

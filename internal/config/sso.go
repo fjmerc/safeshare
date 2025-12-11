@@ -59,3 +59,84 @@ func (c *Config) validateSSOSettings() error {
 
 	return nil
 }
+
+// SSO Config Setters - allow runtime updates to SSO configuration
+
+// SetSSOEnabled enables or disables the SSO feature.
+func (c *Config) SetSSOEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SSO == nil {
+		c.SSO = &SSOConfig{
+			DefaultRole:        "user",
+			SessionLifetime:    480,
+			StateExpiryMinutes: 10,
+		}
+	}
+	c.SSO.Enabled = enabled
+}
+
+// SetSSOAutoProvision sets whether users are auto-provisioned on first SSO login.
+func (c *Config) SetSSOAutoProvision(autoProvision bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SSO != nil {
+		c.SSO.AutoProvision = autoProvision
+	}
+}
+
+// SetSSODefaultRole sets the default role for auto-provisioned users.
+func (c *Config) SetSSODefaultRole(role string) error {
+	if role != "user" && role != "admin" {
+		return fmt.Errorf("SSO default role must be 'user' or 'admin'")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SSO != nil {
+		c.SSO.DefaultRole = role
+	}
+	return nil
+}
+
+// SetSSOSessionLifetime sets the SSO session lifetime in minutes.
+func (c *Config) SetSSOSessionLifetime(minutes int) error {
+	if minutes < 5 || minutes > 43200 {
+		return fmt.Errorf("SSO session lifetime must be between 5 and 43200 minutes")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SSO != nil {
+		c.SSO.SessionLifetime = minutes
+	}
+	return nil
+}
+
+// SetSSOStateExpiryMinutes sets how long OAuth2 state tokens are valid.
+func (c *Config) SetSSOStateExpiryMinutes(minutes int) error {
+	if minutes < 5 || minutes > 60 {
+		return fmt.Errorf("SSO state expiry must be between 5 and 60 minutes")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SSO != nil {
+		c.SSO.StateExpiryMinutes = minutes
+	}
+	return nil
+}
+
+// GetSSOConfig returns a copy of the current SSO configuration.
+func (c *Config) GetSSOConfig() *SSOConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.SSO == nil {
+		return nil
+	}
+	// Return a copy
+	return &SSOConfig{
+		Enabled:            c.SSO.Enabled,
+		AutoProvision:      c.SSO.AutoProvision,
+		DefaultRole:        c.SSO.DefaultRole,
+		SessionLifetime:    c.SSO.SessionLifetime,
+		StateExpiryMinutes: c.SSO.StateExpiryMinutes,
+	}
+}
