@@ -3282,17 +3282,27 @@ async function loadEnterpriseConfig() {
         if (!flagsResponse.ok) {
             throw new Error('Failed to load feature flags');
         }
-        const flags = await flagsResponse.json();
+        const response = await flagsResponse.json();
+        if (!response || typeof response !== 'object') {
+            throw new Error('Invalid API response format');
+        }
+        const flags = response.feature_flags || {};
+
+        // Helper function for safe checkbox setting
+        const setCheckbox = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!value;
+        };
 
         // Populate feature flag checkboxes
-        document.getElementById('featureMFA').checked = flags.enable_mfa || false;
-        document.getElementById('featureSSO').checked = flags.enable_sso || false;
-        document.getElementById('featureWebhooks').checked = flags.enable_webhooks || false;
-        document.getElementById('featureAPITokens').checked = flags.enable_api_tokens || false;
-        document.getElementById('featureBackups').checked = flags.enable_backups || false;
-        document.getElementById('featurePostgreSQL').checked = flags.enable_postgresql || false;
-        document.getElementById('featureS3Storage').checked = flags.enable_s3_storage || false;
-        document.getElementById('featureMalwareScan').checked = flags.enable_malware_scan || false;
+        setCheckbox('featureMFA', flags.enable_mfa);
+        setCheckbox('featureSSO', flags.enable_sso);
+        setCheckbox('featureWebhooks', flags.enable_webhooks);
+        setCheckbox('featureAPITokens', flags.enable_api_tokens);
+        setCheckbox('featureBackups', flags.enable_backups);
+        setCheckbox('featurePostgreSQL', flags.enable_postgresql);
+        setCheckbox('featureS3Storage', flags.enable_s3_storage);
+        setCheckbox('featureMalwareScan', flags.enable_malware_scan);
 
         // Update status display
         updateEnterpriseStatusDisplay(flags);
@@ -3383,11 +3393,11 @@ function toggleSSOConfigSection(show) {
 // Save feature flags
 async function saveFeatureFlags() {
     const flags = {
-        enable_mfa: document.getElementById('featureMFA').checked,
-        enable_sso: document.getElementById('featureSSO').checked,
-        enable_webhooks: document.getElementById('featureWebhooks').checked,
-        enable_api_tokens: document.getElementById('featureAPITokens').checked,
-        enable_backups: document.getElementById('featureBackups').checked
+        enable_mfa: document.getElementById('featureMFA')?.checked || false,
+        enable_sso: document.getElementById('featureSSO')?.checked || false,
+        enable_webhooks: document.getElementById('featureWebhooks')?.checked || false,
+        enable_api_tokens: document.getElementById('featureAPITokens')?.checked || false,
+        enable_backups: document.getElementById('featureBackups')?.checked || false
         // PostgreSQL, S3, and Malware scan are coming soon - disabled in UI
     };
 
@@ -3558,5 +3568,476 @@ document.addEventListener('DOMContentLoaded', () => {
     // Only initialize if we're on the dashboard page
     if (document.querySelector('.dashboard-page')) {
         initEnterpriseFeatures();
+        initSSOProviderManagement();
     }
 });
+
+// ============ SSO PROVIDER MANAGEMENT FUNCTIONS ============
+
+let ssoProvidersData = [];
+let ssoLinksData = [];
+
+// Initialize SSO Provider Management
+function initSSOProviderManagement() {
+    // Create provider button
+    document.getElementById('createSSOProviderBtn')?.addEventListener('click', showCreateSSOProviderModal);
+    
+    // Refresh button
+    document.getElementById('refreshSSOProvidersBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadSSOProviders();
+        loadSSOLinks();
+    });
+    
+    // Provider form submission
+    document.getElementById('ssoProviderForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveSSOProvider();
+    });
+    
+    // Load SSO providers when tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'ssoProviders') {
+                loadSSOProviders();
+                loadSSOLinks();
+                checkSSOEnabled();
+            }
+        });
+    });
+    
+    // Set up redirect URL when modal opens
+    const redirectURLInput = document.getElementById('ssoRedirectURL');
+    if (redirectURLInput) {
+        redirectURLInput.value = window.location.origin + '/api/auth/sso/callback';
+    }
+}
+
+// Check if SSO is enabled and show warning if not
+async function checkSSOEnabled() {
+    try {
+        const response = await fetch('/admin/api/features');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const flags = data.feature_flags || {};
+        const ssoEnabled = flags.enable_sso || false;
+        
+        const alert = document.getElementById('ssoDisabledAlert');
+        if (alert) {
+            alert.style.display = ssoEnabled ? 'none' : 'flex';
+        }
+    } catch (error) {
+        console.error('Error checking SSO status:', error);
+    }
+}
+
+// Switch to a different tab programmatically
+function switchToTab(tabName) {
+    const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+    if (tabBtn) {
+        tabBtn.click();
+    }
+}
+
+// Load SSO providers
+async function loadSSOProviders() {
+    try {
+        const response = await fetch('/admin/api/sso/providers');
+        
+        if (!response.ok) {
+            throw new Error('Failed to load SSO providers');
+        }
+        
+        const data = await response.json();
+        ssoProvidersData = data.providers || [];
+        
+        // Update stats
+        const totalProviders = ssoProvidersData.length;
+        const activeProviders = ssoProvidersData.filter(p => p.enabled).length;
+        
+        document.getElementById('statTotalProviders').textContent = totalProviders;
+        document.getElementById('statActiveProviders').textContent = activeProviders;
+        
+        // Update providers table
+        updateSSOProvidersTable(ssoProvidersData);
+    } catch (error) {
+        console.error('Error loading SSO providers:', error);
+        showError('Failed to load SSO providers');
+        document.getElementById('ssoProvidersTableBody').innerHTML = 
+            '<tr><td colspan="7" class="loading">Failed to load providers</td></tr>';
+    }
+}
+
+// Load SSO links (user-provider associations)
+async function loadSSOLinks() {
+    try {
+        const response = await fetch('/admin/api/sso/links');
+        
+        if (!response.ok) {
+            throw new Error('Failed to load SSO links');
+        }
+        
+        const data = await response.json();
+        ssoLinksData = data.links || [];
+        
+        // Update linked accounts stat
+        document.getElementById('statLinkedAccounts').textContent = ssoLinksData.length;
+        
+        // Update links table
+        updateSSOLinksTable(ssoLinksData);
+    } catch (error) {
+        console.error('Error loading SSO links:', error);
+        showError('Failed to load SSO links');
+        document.getElementById('ssoLinksTableBody').innerHTML = 
+            '<tr><td colspan="6" class="loading">Failed to load links</td></tr>';
+    }
+}
+
+// Update SSO providers table
+function updateSSOProvidersTable(providers) {
+    const tbody = document.getElementById('ssoProvidersTableBody');
+    
+    if (!providers || providers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No SSO providers configured</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = providers.map(provider => {
+        const issuerUrl = provider.issuer_url || '';
+        const truncatedIssuer = issuerUrl.length > 40 
+            ? issuerUrl.substring(0, 40) + '...' 
+            : issuerUrl;
+        
+        // Count linked users for this provider
+        const linkedCount = ssoLinksData.filter(l => l.provider_id === provider.id).length;
+        
+        return `
+            <tr>
+                <td><strong>${escapeHtml(provider.name)}</strong></td>
+                <td><span class="badge badge-info">${escapeHtml((provider.type || 'oidc').toUpperCase())}</span></td>
+                <td title="${escapeHtml(provider.issuer_url)}">${escapeHtml(truncatedIssuer)}</td>
+                <td><span class="badge ${provider.enabled ? 'badge-yes' : 'badge-no'}">${provider.enabled ? 'Active' : 'Disabled'}</span></td>
+                <td>${linkedCount}</td>
+                <td>${formatDate(provider.created_at)}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-primary" onclick="editSSOProvider(${provider.id})" title="Edit provider">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-warning" onclick="testSSOProvider(${provider.id})" title="Test connection">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger" onclick="deleteSSOProvider(${provider.id})" title="Delete provider">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Update SSO links table
+function updateSSOLinksTable(links) {
+    const tbody = document.getElementById('ssoLinksTableBody');
+    
+    if (!links || links.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No user SSO links found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = links.map(link => {
+        // Find provider name
+        const provider = ssoProvidersData.find(p => p.id === link.provider_id);
+        const providerName = provider ? provider.name : `Provider #${link.provider_id}`;
+        
+        return `
+            <tr>
+                <td><strong>${escapeHtml(link.username || 'Unknown')}</strong></td>
+                <td>${escapeHtml(providerName)}</td>
+                <td><code>${escapeHtml((link.external_id || '').substring(0, 20))}${(link.external_id || '').length > 20 ? '...' : ''}</code></td>
+                <td>${formatDate(link.linked_at)}</td>
+                <td>${link.last_login ? formatDate(link.last_login) : 'Never'}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-danger" onclick="unlinkSSOAccount(${link.id}, '${escapeHtml(link.username)}')" title="Unlink account">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Show create SSO provider modal
+function showCreateSSOProviderModal() {
+    document.getElementById('ssoProviderModalTitle').textContent = 'Add SSO Provider';
+    document.getElementById('ssoProviderId').value = '';
+    document.getElementById('ssoProviderForm').reset();
+    document.getElementById('ssoProviderEnabled').checked = true;
+    document.getElementById('ssoScopes').value = 'openid profile email';
+    document.getElementById('ssoRedirectURL').value = window.location.origin + '/api/auth/sso/callback';
+    // Reset client secret field for new provider
+    const secretField = document.getElementById('ssoClientSecret');
+    secretField.placeholder = 'Enter client secret';
+    secretField.required = true; // Required for new providers
+    document.getElementById('ssoProviderModal').style.display = 'flex';
+    
+    // Re-initialize password toggle for the modal
+    initModalPasswordToggle();
+}
+
+// Initialize password toggle within the modal
+function initModalPasswordToggle() {
+    const toggleBtn = document.querySelector('#ssoProviderModal [data-password-toggle="ssoClientSecret"]');
+    if (toggleBtn && !toggleBtn.dataset.initialized) {
+        toggleBtn.dataset.initialized = 'true';
+        toggleBtn.addEventListener('click', () => {
+            const input = document.getElementById('ssoClientSecret');
+            const eyeIcon = toggleBtn.querySelector('.eye-icon');
+            const eyeOffIcon = toggleBtn.querySelector('.eye-off-icon');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                eyeIcon.style.display = 'none';
+                eyeOffIcon.style.display = 'block';
+            } else {
+                input.type = 'password';
+                eyeIcon.style.display = 'block';
+                eyeOffIcon.style.display = 'none';
+            }
+        });
+    }
+}
+
+// Hide SSO provider modal
+function hideSSOProviderModal() {
+    document.getElementById('ssoProviderModal').style.display = 'none';
+}
+
+// Edit SSO provider
+function editSSOProvider(providerId) {
+    const provider = ssoProvidersData.find(p => p.id === providerId);
+    if (!provider) {
+        showError('Provider not found');
+        return;
+    }
+    
+    document.getElementById('ssoProviderModalTitle').textContent = 'Edit SSO Provider';
+    document.getElementById('ssoProviderId').value = provider.id;
+    document.getElementById('ssoProviderName').value = provider.name;
+    document.getElementById('ssoProviderType').value = provider.type || 'oidc';
+    document.getElementById('ssoIssuerURL').value = provider.issuer_url;
+    document.getElementById('ssoClientID').value = provider.client_id;
+    // For edits, never populate the client secret - it should not come from the API
+    // The server never returns client_secret, and the field should indicate to leave blank
+    document.getElementById('ssoClientSecret').value = '';
+    document.getElementById('ssoClientSecret').placeholder = 'Leave blank to keep existing secret';
+    document.getElementById('ssoClientSecret').required = false; // Not required for edits
+    document.getElementById('ssoScopes').value = provider.scopes || 'openid profile email';
+    document.getElementById('ssoProviderEnabled').checked = provider.enabled;
+    document.getElementById('ssoRedirectURL').value = window.location.origin + '/api/auth/sso/callback';
+    
+    document.getElementById('ssoProviderModal').style.display = 'flex';
+    initModalPasswordToggle();
+}
+
+// Save SSO provider (create or update)
+async function saveSSOProvider() {
+    const providerId = document.getElementById('ssoProviderId').value;
+    const isEdit = !!providerId;
+    
+    const payload = {
+        name: document.getElementById('ssoProviderName').value.trim(),
+        provider_type: document.getElementById('ssoProviderType').value,
+        issuer_url: document.getElementById('ssoIssuerURL').value.trim(),
+        client_id: document.getElementById('ssoClientID').value.trim(),
+        client_secret: document.getElementById('ssoClientSecret').value,
+        scopes: document.getElementById('ssoScopes').value.trim() || 'openid profile email',
+        enabled: document.getElementById('ssoProviderEnabled').checked
+    };
+    
+    // Validation
+    if (!payload.name) {
+        showError('Provider name is required');
+        return;
+    }
+    if (!payload.issuer_url) {
+        showError('Issuer URL is required');
+        return;
+    }
+    if (!payload.client_id) {
+        showError('Client ID is required');
+        return;
+    }
+    if (!payload.client_secret && !isEdit) {
+        showError('Client secret is required');
+        return;
+    }
+    
+    try {
+        let response;
+        if (isEdit) {
+            response = await fetch(`/admin/api/sso/providers/${providerId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            response = await fetch('/admin/api/sso/providers', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        }
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save SSO provider');
+        }
+        
+        hideSSOProviderModal();
+        loadSSOProviders();
+        showSuccess(isEdit ? 'SSO provider updated successfully' : 'SSO provider created successfully');
+    } catch (error) {
+        console.error('Error saving SSO provider:', error);
+        showError(error.message);
+    }
+}
+
+// Test SSO provider connection
+async function testSSOProvider(providerId) {
+    try {
+        showSuccess('Testing SSO provider connection...');
+        
+        const response = await fetch(`/admin/api/sso/providers/${providerId}/test`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        const data = await response.json();
+        
+        // Show result in modal
+        const content = document.getElementById('ssoTestResultContent');
+        if (data.success) {
+            content.innerHTML = `
+                <div class="alert-success" style="padding: 16px; border-radius: 8px; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success-color);">
+                    <h4 style="color: var(--success-color); margin-bottom: 8px;">Connection Successful</h4>
+                    <p>Successfully connected to the OIDC discovery endpoint.</p>
+                    ${data.issuer ? `<p><strong>Issuer:</strong> ${escapeHtml(data.issuer)}</p>` : ''}
+                    ${data.endpoints ? `
+                        <div style="margin-top: 12px;">
+                            <strong>Discovered Endpoints:</strong>
+                            <ul style="margin-top: 8px; padding-left: 20px;">
+                                ${data.endpoints.authorization ? `<li>Authorization: ✓</li>` : ''}
+                                ${data.endpoints.token ? `<li>Token: ✓</li>` : ''}
+                                ${data.endpoints.userinfo ? `<li>UserInfo: ✓</li>` : ''}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } else {
+            content.innerHTML = `
+                <div class="alert-error" style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger-color);">
+                    <h4 style="color: var(--danger-color); margin-bottom: 8px;">Connection Failed</h4>
+                    <p>${escapeHtml(data.error || 'Unknown error occurred')}</p>
+                </div>
+            `;
+        }
+        
+        document.getElementById('ssoTestResultModal').style.display = 'flex';
+    } catch (error) {
+        console.error('Error testing SSO provider:', error);
+        showError('Failed to test SSO provider: ' + error.message);
+    }
+}
+
+// Hide SSO test result modal
+function hideSSOTestResultModal() {
+    document.getElementById('ssoTestResultModal').style.display = 'none';
+}
+
+// Delete SSO provider
+async function deleteSSOProvider(providerId) {
+    const provider = ssoProvidersData.find(p => p.id === providerId);
+    const providerName = provider ? provider.name : `Provider #${providerId}`;
+    
+    // Check if there are linked users
+    const linkedCount = ssoLinksData.filter(l => l.provider_id === providerId).length;
+    let message = `Delete SSO provider "${providerName}"?`;
+    if (linkedCount > 0) {
+        message += `\n\nWarning: ${linkedCount} user(s) are linked to this provider. They will no longer be able to log in using SSO until they link to another provider.`;
+    }
+    
+    if (!await confirm(message)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/sso/providers/${providerId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to delete SSO provider');
+        }
+        
+        loadSSOProviders();
+        loadSSOLinks();
+        showSuccess('SSO provider deleted successfully');
+    } catch (error) {
+        console.error('Error deleting SSO provider:', error);
+        showError(error.message);
+    }
+}
+
+// Unlink SSO account
+async function unlinkSSOAccount(linkId, username) {
+    if (!await confirm(`Unlink SSO account for user "${username}"?\n\nThe user will need to log in with their password or re-link their SSO account.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/sso/links/${linkId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to unlink SSO account');
+        }
+        
+        loadSSOLinks();
+        loadSSOProviders(); // Refresh to update linked count
+        showSuccess('SSO account unlinked successfully');
+    } catch (error) {
+        console.error('Error unlinking SSO account:', error);
+        showError(error.message);
+    }
+}

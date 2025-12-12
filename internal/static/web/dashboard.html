@@ -2439,7 +2439,7 @@
 
         /* MFA Wizard Modal */
         .mfa-wizard-content {
-            max-width: 520px;
+            max-width: 580px;
         }
 
         .mfa-wizard-steps {
@@ -2829,6 +2829,298 @@
                 width: 100%;
             }
         }
+
+        /* ===== SSO LINKED ACCOUNTS STYLES ===== */
+
+        .sso-loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        .sso-providers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .sso-provider-card {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+
+        .sso-provider-card:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .sso-provider-card.linked {
+            border-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .sso-provider-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .sso-provider-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e0e7ff;
+            color: #4f46e5;
+            flex-shrink: 0;
+        }
+
+        .sso-provider-icon.google {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .sso-provider-icon.microsoft {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+
+        .sso-provider-icon.okta {
+            background: #f0fdf4;
+            color: #16a34a;
+        }
+
+        .sso-provider-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .sso-provider-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sso-provider-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 4px 0;
+        }
+
+        .sso-provider-type {
+            font-size: 12px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .sso-provider-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .sso-provider-status.linked {
+            background: #dcfce7;
+            border-color: #bbf7d0;
+        }
+
+        .sso-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #94a3b8;
+        }
+
+        .sso-status-dot.linked {
+            background: #10b981;
+        }
+
+        .sso-status-text {
+            font-size: 13px;
+            color: #64748b;
+        }
+
+        .sso-status-text.linked {
+            color: #166534;
+            font-weight: 500;
+        }
+
+        .sso-link-info {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 12px;
+        }
+
+        .sso-link-info div {
+            margin-bottom: 4px;
+        }
+
+        .sso-link-info strong {
+            color: #374151;
+        }
+
+        .sso-provider-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .sso-provider-actions .btn {
+            flex: 1;
+            justify-content: center;
+        }
+
+        .sso-empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #64748b;
+            background: #f8fafc;
+            border: 2px dashed #e2e8f0;
+            border-radius: 12px;
+        }
+
+        .sso-empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        .sso-empty-state h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #475569;
+            margin: 0 0 8px 0;
+        }
+
+        .sso-empty-state p {
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .sso-disabled-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+        }
+
+        .sso-disabled-notice svg {
+            flex-shrink: 0;
+            color: #d97706;
+        }
+
+        .sso-disabled-notice-text {
+            font-size: 14px;
+            color: #92400e;
+        }
+
+        .sso-disabled-notice-text strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* Dark mode - SSO Linked Accounts */
+        [data-theme="dark"] .sso-loading {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-provider-card {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-provider-card:hover {
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .sso-provider-card.linked {
+            background: #064e3b;
+            border-color: #059669;
+        }
+
+        [data-theme="dark"] .sso-provider-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .sso-provider-type {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-provider-status {
+            background: #111827;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-provider-status.linked {
+            background: #064e3b;
+            border-color: #065f46;
+        }
+
+        [data-theme="dark"] .sso-status-text {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-status-text.linked {
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .sso-link-info {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-link-info strong {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .sso-empty-state {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-empty-state h4 {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .sso-empty-state p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-disabled-notice {
+            background: #78350f;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .sso-disabled-notice-text {
+            color: #fde68a;
+        }
+
+        /* Responsive - SSO Linked Accounts */
+        @media (max-width: 768px) {
+            .sso-providers-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .sso-provider-actions {
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2958,6 +3250,26 @@
 
             <div id="mfaContainer">
                 <!-- MFA status will be loaded here -->
+            </div>
+        </div>
+
+        <!-- SSO Linked Accounts Section -->
+        <div class="content-section" id="ssoLinkedAccountsSection" style="display: none;">
+            <div class="section-header">
+                <h2>SSO Linked Accounts</h2>
+                <button id="refreshSSOBtn" class="btn btn-secondary" onclick="refreshSSOLinkedAccounts()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div id="ssoLinkedAccountsContainer">
+                <!-- SSO providers and linked accounts will be loaded here -->
+                <div class="sso-loading">Loading SSO providers...</div>
             </div>
         </div>
     </div>
@@ -3198,6 +3510,7 @@
                     loadFiles();
                     loadTokens();
                     loadMFAStatus();
+                    initSSOLinkedAccounts();
                 } else {
                     // Not authenticated, redirect to login
                     window.location.href = '/login';
@@ -5291,6 +5604,13 @@
             const errorEl = document.getElementById('webauthnRegisterError');
             const btn = document.getElementById('webauthnRegisterBtn');
 
+            // Check for secure context (required for WebAuthn)
+            if (!window.isSecureContext || !navigator.credentials) {
+                errorEl.textContent = 'Security keys require HTTPS or localhost. Please access this site via HTTPS or localhost to register a security key.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
             if (!keyName) {
                 errorEl.textContent = 'Please enter a name for your security key';
                 errorEl.style.display = 'block';
@@ -5303,8 +5623,8 @@
             btn.textContent = 'Starting registration...';
 
             try {
-                // Get CSRF token
-                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+                // Get CSRF token from user_csrf_token cookie
+                const csrfToken = getCSRFToken();
 
                 // Step 1: Begin registration - get challenge from server
                 const beginResponse = await fetch('/api/user/mfa/webauthn/register/begin', {
@@ -5322,7 +5642,8 @@
                     throw new Error(data.error || 'Failed to start registration');
                 }
 
-                const options = await beginResponse.json();
+                const response = await beginResponse.json();
+                const options = response.options; // Server wraps options in 'options' field
                 
                 // Convert challenge and user ID from base64url to ArrayBuffer
                 options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
@@ -5412,7 +5733,7 @@
             btn.textContent = 'Deleting...';
 
             try {
-                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+                const csrfToken = getCSRFToken();
 
                 const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToDelete}`, {
                     method: 'DELETE',
@@ -5473,7 +5794,7 @@
             errorEl.style.display = 'none';
 
             try {
-                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+                const csrfToken = getCSRFToken();
 
                 const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToRename}`, {
                     method: 'PATCH',
@@ -5736,12 +6057,44 @@
         // Copy MFA secret to clipboard
         function copyMFASecret() {
             if (!mfaSetupData || !mfaSetupData.secret) return;
-            navigator.clipboard.writeText(mfaSetupData.secret).then(() => {
-                showToast('Secret key copied to clipboard', 'success');
-            }).catch(err => {
-                console.error('Failed to copy:', err);
-                showToast('Failed to copy secret key', 'error');
-            });
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(mfaSetupData.secret).then(() => {
+                    showToast('Secret key copied to clipboard', 'success');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    fallbackCopyToClipboard(mfaSetupData.secret);
+                });
+            } else {
+                fallbackCopyToClipboard(mfaSetupData.secret);
+            }
+        }
+        
+        // Fallback copy method for non-secure contexts (HTTP on LAN)
+        function fallbackCopyToClipboard(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            textArea.style.top = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showToast('Secret key copied to clipboard', 'success');
+                } else {
+                    showToast('Failed to copy. Please select and copy manually.', 'error');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                showToast('Failed to copy. Please select and copy manually.', 'error');
+            }
+            
+            document.body.removeChild(textArea);
         }
 
         // Download recovery codes as text file
@@ -5914,8 +6267,323 @@ you may be locked out of your account.
             });
         });
 
+        // ===== SSO LINKED ACCOUNTS MANAGEMENT =====
+
+        // SSO state variables
+        let ssoEnabled = false;
+        let ssoProviders = [];
+        let userSSOLinks = [];
+
+        // Initialize SSO Linked Accounts section
+        async function initSSOLinkedAccounts() {
+            try {
+                // First check if SSO is enabled
+                const configResponse = await fetch('/api/config', {
+                    credentials: 'include'
+                });
+
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    ssoEnabled = config.sso_enabled === true;
+                }
+
+                if (ssoEnabled) {
+                    // Show the SSO section
+                    const ssoSection = document.getElementById('ssoLinkedAccountsSection');
+                    if (ssoSection) {
+                        ssoSection.style.display = 'block';
+                    }
+                    // Load SSO providers and user links
+                    await loadUserSSOData();
+                }
+            } catch (error) {
+                console.error('Failed to initialize SSO linked accounts:', error);
+            }
+        }
+
+        // Load SSO providers and user's linked accounts
+        async function loadUserSSOData() {
+            const container = document.getElementById('ssoLinkedAccountsContainer');
+            if (!container) return;
+
+            container.innerHTML = '<div class="sso-loading">Loading SSO providers...</div>';
+
+            try {
+                // Fetch available SSO providers (only enabled ones)
+                const providersResponse = await fetch('/api/sso/providers', {
+                    credentials: 'include'
+                });
+
+                if (!providersResponse.ok) {
+                    throw new Error('Failed to load SSO providers');
+                }
+
+                ssoProviders = await providersResponse.json();
+
+                // Fetch user's linked SSO accounts
+                const linksResponse = await fetch('/api/sso/links', {
+                    credentials: 'include'
+                });
+
+                if (linksResponse.ok) {
+                    userSSOLinks = await linksResponse.json();
+                } else {
+                    userSSOLinks = [];
+                }
+
+                // Render the UI
+                renderSSOLinkedAccountsUI();
+            } catch (error) {
+                console.error('Failed to load SSO data:', error);
+                container.innerHTML = `
+                    <div class="sso-disabled-notice">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <div class="sso-disabled-notice-text">
+                            <strong>Unable to Load SSO Data</strong>
+                            ${escapeHtml(error.message)}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Render the SSO linked accounts UI
+        function renderSSOLinkedAccountsUI() {
+            const container = document.getElementById('ssoLinkedAccountsContainer');
+            if (!container) return;
+
+            // Filter to only show enabled providers
+            const enabledProviders = ssoProviders.filter(p => p.enabled);
+
+            if (enabledProviders.length === 0) {
+                container.innerHTML = `
+                    <div class="sso-empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="8.5" cy="7" r="4"></circle>
+                            <line x1="20" y1="8" x2="20" y2="14"></line>
+                            <line x1="23" y1="11" x2="17" y2="11"></line>
+                        </svg>
+                        <h4>No SSO Providers Available</h4>
+                        <p>Your administrator has not configured any SSO providers yet.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Create a map of user's linked providers
+            const linkedProvidersMap = new Map();
+            userSSOLinks.forEach(link => {
+                linkedProvidersMap.set(link.provider_id, link);
+            });
+
+            let html = '<div class="sso-providers-grid">';
+
+            for (const provider of enabledProviders) {
+                const link = linkedProvidersMap.get(provider.id);
+                const isLinked = !!link;
+                const providerTypeClass = getProviderTypeClass(provider.provider_type);
+
+                html += `
+                    <div class="sso-provider-card ${isLinked ? 'linked' : ''}">
+                        <div class="sso-provider-header">
+                            <div class="sso-provider-icon ${providerTypeClass}">
+                                ${getProviderIcon(provider.provider_type)}
+                            </div>
+                            <div class="sso-provider-info">
+                                <h4 class="sso-provider-name">${escapeHtml(provider.name)}</h4>
+                                <div class="sso-provider-type">${escapeHtml(provider.provider_type)}</div>
+                            </div>
+                        </div>
+                        <div class="sso-provider-status ${isLinked ? 'linked' : ''}">
+                            <div class="sso-status-dot ${isLinked ? 'linked' : ''}"></div>
+                            <span class="sso-status-text ${isLinked ? 'linked' : ''}">
+                                ${isLinked ? 'Linked' : 'Not Linked'}
+                            </span>
+                        </div>
+                `;
+
+                if (isLinked) {
+                    const linkedAt = new Date(link.linked_at).toLocaleDateString();
+                    const lastLogin = link.last_login_at
+                        ? new Date(link.last_login_at).toLocaleDateString()
+                        : 'Never';
+
+                    html += `
+                        <div class="sso-link-info">
+                            <div><strong>External ID:</strong> ${escapeHtml(link.external_id || 'N/A')}</div>
+                            <div><strong>Linked:</strong> ${linkedAt}</div>
+                            <div><strong>Last Login:</strong> ${lastLogin}</div>
+                        </div>
+                        <div class="sso-provider-actions">
+                            <button class="btn btn-danger btn-sm sso-unlink-btn"
+                                data-link-id="${link.id}"
+                                data-provider-name="${escapeHtml(provider.name)}"
+                                title="Unlink this SSO account">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"></path>
+                                </svg>
+                                Unlink
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="sso-provider-actions">
+                            <button class="btn btn-primary btn-sm sso-link-btn"
+                                data-provider-id="${provider.id}"
+                                data-provider-name="${escapeHtml(provider.name)}"
+                                title="Link your account with ${escapeHtml(provider.name)}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                                </svg>
+                                Link Account
+                            </button>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+            // Attach event listeners using event delegation (safer than inline onclick)
+            container.addEventListener('click', handleSSOButtonClick);
+        }
+
+        // Handle SSO button clicks via event delegation (prevents XSS)
+        function handleSSOButtonClick(e) {
+            // Handle unlink button
+            const unlinkBtn = e.target.closest('.sso-unlink-btn');
+            if (unlinkBtn) {
+                const linkId = parseInt(unlinkBtn.dataset.linkId, 10);
+                const providerName = unlinkBtn.dataset.providerName;
+                unlinkSSOProvider(linkId, providerName);
+                return;
+            }
+
+            // Handle link button
+            const linkBtn = e.target.closest('.sso-link-btn');
+            if (linkBtn) {
+                const providerId = parseInt(linkBtn.dataset.providerId, 10);
+                const providerName = linkBtn.dataset.providerName;
+                linkSSOProvider(providerId, providerName);
+                return;
+            }
+        }
+
+        // Get CSS class for provider type
+        function getProviderTypeClass(providerType) {
+            const type = (providerType || '').toLowerCase();
+            if (type.includes('google')) return 'google';
+            if (type.includes('microsoft') || type.includes('azure')) return 'microsoft';
+            if (type.includes('okta')) return 'okta';
+            return '';
+        }
+
+        // Get icon for provider type
+        function getProviderIcon(providerType) {
+            const type = (providerType || '').toLowerCase();
+
+            // Generic SSO/OIDC icon
+            return `
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+            `;
+        }
+
+        // Link SSO provider
+        async function linkSSOProvider(providerId, providerName) {
+            try {
+                // Store return URL for after SSO flow
+                sessionStorage.setItem('sso_link_return', window.location.href);
+
+                // Redirect to SSO link endpoint
+                window.location.href = `/api/sso/link/${providerId}`;
+            } catch (error) {
+                console.error('Failed to initiate SSO link:', error);
+                showToast('Failed to initiate SSO link: ' + error.message, 'error');
+            }
+        }
+
+        // Unlink SSO provider
+        async function unlinkSSOProvider(linkId, providerName) {
+            if (!confirm(`Are you sure you want to unlink your ${providerName} account? You will no longer be able to sign in using this provider.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/sso/links/${linkId}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': getCSRFToken()
+                    }
+                });
+
+                if (response.ok) {
+                    showToast(`Successfully unlinked ${providerName} account`, 'success');
+                    await loadUserSSOData();
+                } else {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to unlink account');
+                }
+            } catch (error) {
+                console.error('Failed to unlink SSO account:', error);
+                showToast('Failed to unlink account: ' + error.message, 'error');
+            }
+        }
+
+        // Refresh SSO linked accounts
+        async function refreshSSOLinkedAccounts() {
+            const btn = document.getElementById('refreshSSOBtn');
+            if (btn) {
+                btn.classList.add('btn-refreshing');
+                btn.disabled = true;
+            }
+
+            try {
+                await loadUserSSOData();
+                showToast('SSO accounts refreshed', 'success');
+            } catch (error) {
+                showToast('Failed to refresh SSO accounts', 'error');
+            } finally {
+                if (btn) {
+                    btn.classList.remove('btn-refreshing');
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        // Check for SSO link callback on page load
+        function checkSSOLinkCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const ssoLinked = urlParams.get('sso_linked');
+            const ssoError = urlParams.get('sso_error');
+
+            if (ssoLinked === 'true') {
+                showToast('SSO account linked successfully!', 'success');
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (ssoError) {
+                showToast('SSO link failed: ' + decodeURIComponent(ssoError), 'error');
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
         // Initialize
         checkAuth();
+        checkSSOLinkCallback();
     </script>
 
     <!-- Create Token Modal -->

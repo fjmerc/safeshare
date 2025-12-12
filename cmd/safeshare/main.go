@@ -342,7 +342,7 @@ func run() error {
 	// Note: userAuth already defined above for conditional upload middleware
 
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(serveUserPage("dashboard.html"))).ServeHTTP(w, r)
+		userAuth(http.HandlerFunc(serveUserDashboard(cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -1187,6 +1187,22 @@ func serveAdminDashboard(cfg *config.Config) http.HandlerFunc {
 
 		// Serve the dashboard page
 		serveAdminPage("admin/dashboard.html")(w, r)
+	}
+}
+
+// serveUserDashboard serves the user dashboard and ensures CSRF token is set
+func serveUserDashboard(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set user CSRF token for all dashboard access
+		// This ensures the token is available for WebAuthn and other MFA operations
+		_, err := middleware.SetUserCSRFCookie(w, cfg)
+		if err != nil {
+			slog.Error("failed to set user CSRF cookie for dashboard", "error", err)
+			// Continue anyway - token might already be set
+		}
+
+		// Serve the dashboard page
+		serveUserPage("dashboard.html")(w, r)
 	}
 }
 
