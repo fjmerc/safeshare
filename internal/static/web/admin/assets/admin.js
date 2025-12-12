@@ -3103,7 +3103,7 @@ function displayAdminTokens(tokens) {
     if (!tokens || tokens.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="10" class="empty">No API tokens found</td>
+                <td colspan="11" class="empty">No API tokens found</td>
             </tr>
         `;
         return;
@@ -3113,14 +3113,14 @@ function displayAdminTokens(tokens) {
         const createdDate = formatDate(token.created_at);
         const expiresDisplay = formatTokenExpiry(token.expires_at);
         const lastUsed = token.last_used_at ? formatDate(token.last_used_at) : '<span class="text-muted">Never</span>';
+        const isActive = token.is_active !== false; // Default to active if not specified
 
-        // Scopes
+        // Scopes - styled like Webhooks Events column for consistency
         let scopesBadges = '';
         if (token.scopes && token.scopes.length > 0) {
-            scopesBadges = token.scopes.map(scope => {
-                const badgeClass = `scope-badge-${escapeHtml(scope)}`;
-                return `<span class="badge ${badgeClass}">${escapeHtml(scope)}</span>`;
-            }).join(' ');
+            scopesBadges = token.scopes.map(scope => 
+                `<span class="badge badge-info" style="margin: 2px; font-size: 11px;">${escapeHtml(scope)}</span>`
+            ).join('');
         } else {
             scopesBadges = '<span class="text-muted">None</span>';
         }
@@ -3129,29 +3129,50 @@ function displayAdminTokens(tokens) {
         const requests = token.usage_stats?.total_requests || 0;
         const bytesTransferred = token.usage_stats?.total_bytes_transferred || 0;
 
+        // Status badge
+        const statusBadge = isActive 
+            ? '<span class="badge badge-success">Active</span>'
+            : '<span class="badge badge-danger">Revoked</span>';
+
+        // Row styling for revoked tokens
+        const rowClass = isActive ? '' : 'token-revoked';
+
+        // Action buttons - show revoke only for active tokens, delete for all
+        const revokeButton = isActive ? `
+            <button class="btn-icon btn-warning" onclick="adminRevokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+                </svg>
+            </button>` : '';
+
+        const deleteButton = `
+            <button class="btn-icon btn-danger" onclick="adminDeleteToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Delete Token Permanently">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+            </button>`;
+
         return `
-            <tr>
+            <tr class="${rowClass}">
                 <td>
                     <input type="checkbox" class="token-checkbox" value="${token.id}" onchange="updateBulkTokenButtons()">
                 </td>
                 <td><strong>${escapeHtml(token.name)}</strong></td>
                 <td>${escapeHtml(token.username || 'Unknown')}</td>
+                <td>${statusBadge}</td>
                 <td>${scopesBadges}</td>
                 <td>${requests.toLocaleString()}</td>
                 <td>${formatBytes(bytesTransferred)}</td>
                 <td>${createdDate}</td>
                 <td>${expiresDisplay}</td>
                 <td>${lastUsed}</td>
-                <td>
-                    <div style="display: flex; gap: 6px; justify-content: center;">
-                        <button class="btn-small btn-danger" onclick="adminRevokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <line x1="15" y1="9" x2="9" y2="15"></line>
-                                <line x1="9" y1="9" x2="15" y2="15"></line>
-                            </svg>
-                        </button>
-                    </div>
+                <td class="actions">
+                    ${revokeButton}
+                    ${deleteButton}
                 </td>
             </tr>
         `;
@@ -3206,7 +3227,7 @@ async function adminRevokeToken(tokenId, tokenName) {
     }
 
     try {
-        const response = await fetch(`/admin/api/tokens/${tokenId}`, {
+        const response = await fetch(`/admin/api/tokens/revoke?id=${tokenId}`, {
             method: 'DELETE',
             headers: {
                 'X-CSRF-Token': getCSRFToken()
@@ -3223,6 +3244,33 @@ async function adminRevokeToken(tokenId, tokenName) {
     } catch (error) {
         console.error('Error revoking token:', error);
         showError('Failed to revoke token');
+    }
+}
+
+// Admin delete token permanently
+async function adminDeleteToken(tokenId, tokenName) {
+    if (!await confirm(`Permanently delete token "${tokenName}"? This will remove all associated data and cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/api/tokens/delete?id=${tokenId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            showSuccess('Token deleted permanently');
+            loadAdminTokens();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Failed to delete token');
+        }
+    } catch (error) {
+        console.error('Error deleting token:', error);
+        showError('Failed to delete token');
     }
 }
 
@@ -3264,9 +3312,79 @@ async function bulkRevokeTokens() {
     }
 }
 
-// Show bulk extend modal (placeholder - bulk extend endpoint doesn't exist yet)
+// Show bulk extend modal
 function showBulkExtendModal() {
-    showError('Bulk extend feature is not yet implemented');
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenCount = checkboxes.length;
+
+    if (tokenCount === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    // Update modal text with selected count
+    const modalText = document.getElementById('extendTokensCount');
+    if (modalText) {
+        modalText.textContent = tokenCount === 1 ? '1 token' : `${tokenCount} tokens`;
+    }
+
+    // Reset select to default
+    const daysSelect = document.getElementById('extendDaysSelect');
+    if (daysSelect) {
+        daysSelect.value = '30';
+    }
+
+    // Show modal
+    document.getElementById('extendTokensModal').style.display = 'flex';
+}
+
+// Hide bulk extend modal
+function hideExtendTokensModal() {
+    document.getElementById('extendTokensModal').style.display = 'none';
+}
+
+// Confirm and execute bulk extend
+async function confirmExtendTokens() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    const daysSelect = document.getElementById('extendDaysSelect');
+    const days = parseInt(daysSelect.value);
+
+    if (tokenIds.length === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    if (!days || days <= 0) {
+        showError('Please select extension duration');
+        return;
+    }
+
+    // Hide modal immediately
+    hideExtendTokensModal();
+
+    try {
+        const response = await fetch('/admin/api/tokens/bulk-extend', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ token_ids: tokenIds, days: days, confirm: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess(`${data.extended_count || tokenIds.length} token(s) extended by ${days} days`);
+            loadAdminTokens();
+        } else {
+            showError(data.error || 'Failed to extend tokens');
+        }
+    } catch (error) {
+        console.error('Error extending tokens:', error);
+        showError('Failed to extend tokens');
+    }
 }
 
 // ============ ENTERPRISE FEATURES MANAGEMENT ============

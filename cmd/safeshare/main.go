@@ -416,7 +416,7 @@ func run() error {
 	})
 
 	// User CSRF protection for sensitive token operations
-	userCSRF := middleware.CSRFProtection(repos)
+	userCSRF := middleware.UserCSRFProtection(repos)
 
 	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -796,9 +796,19 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		// Permanently delete a token
+		mux.HandleFunc("/admin/api/tokens/delete", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+		})
+
 		// Bulk token revocation - revoke multiple tokens by IDs
 		mux.HandleFunc("/admin/api/tokens/bulk-revoke", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBulkRevokeTokensHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
+		// Bulk token extension - extend expiration of multiple tokens by IDs
+		mux.HandleFunc("/admin/api/tokens/bulk-extend", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBulkExtendTokensHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		// Revoke all tokens for a specific user

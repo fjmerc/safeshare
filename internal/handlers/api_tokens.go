@@ -697,6 +697,70 @@ func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// AdminDeleteAPITokenHandler permanently deletes any API token (admin only)
+// DELETE /admin/api/tokens/delete?id=123
+func AdminDeleteAPITokenHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		tokenIDStr := r.URL.Query().Get("id")
+		tokenID, err := strconv.ParseInt(tokenIDStr, 10, 64)
+		if err != nil || tokenID <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid token ID",
+				"code":  "INVALID_TOKEN_ID",
+			})
+			return
+		}
+
+		// Get token info for logging before deletion
+		token, _ := database.GetAPITokenByID(db, tokenID)
+
+		err = database.DeleteAPITokenAdmin(db, tokenID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Token not found",
+					"code":  "TOKEN_NOT_FOUND",
+				})
+				return
+			}
+			slog.Error("failed to delete API token (admin)", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to delete token",
+				"code":  "INTERNAL_ERROR",
+			})
+			return
+		}
+
+		slog.Info("API token permanently deleted by admin",
+			"token_id", tokenID,
+			"token_owner_id", func() int64 {
+				if token != nil {
+					return token.UserID
+				} else {
+					return 0
+				}
+			}(),
+			"ip", getClientIP(r),
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "Token deleted permanently",
+		})
+	}
+}
+
 // BulkRevokeRequest represents the request body for bulk token revocation.
 type BulkRevokeRequest struct {
 	TokenIDs []int64 `json:"token_ids"`
@@ -812,6 +876,149 @@ func AdminBulkRevokeTokensHandler(repos *repository.Repositories, cfg *config.Co
 		json.NewEncoder(w).Encode(BulkRevokeResponse{
 			Message:      "Tokens revoked successfully",
 			RevokedCount: revokedCount,
+		})
+	}
+}
+
+// BulkExtendRequest represents the request body for bulk token expiration extension.
+type BulkExtendRequest struct {
+	TokenIDs []int64 `json:"token_ids"`
+	Days     int     `json:"days"`
+	Confirm  bool    `json:"confirm"`
+}
+
+// BulkExtendResponse represents the response for bulk token expiration extension.
+type BulkExtendResponse struct {
+	Message       string `json:"message"`
+	ExtendedCount int    `json:"extended_count"`
+}
+
+// AdminBulkExtendTokensHandler extends the expiration date of multiple API tokens (admin only).
+// Requires explicit confirmation in the request body for safety.
+// POST /admin/api/tokens/bulk-extend
+func AdminBulkExtendTokensHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Get admin info from context for logging
+		adminUsername := getAdminUsernameFromContext(r)
+		clientIP := getClientIPWithConfig(r, cfg)
+
+		// Parse request body
+		var req BulkExtendRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024) // 1MB limit
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Error("failed to parse bulk extend request", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid request format",
+				"code":  "INVALID_JSON",
+			})
+			return
+		}
+
+		// Require explicit confirmation for safety
+		if !req.Confirm {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Confirmation required: set 'confirm' to true",
+				"code":  "CONFIRMATION_REQUIRED",
+			})
+			return
+		}
+
+		// Validate token_ids array
+		if len(req.TokenIDs) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "At least one token ID is required",
+				"code":  "MISSING_TOKEN_IDS",
+			})
+			return
+		}
+
+		// Validate days (must be positive and reasonable)
+		if req.Days <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Days must be a positive number",
+				"code":  "INVALID_DAYS",
+			})
+			return
+		}
+		if req.Days > 365 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Days cannot exceed 365",
+				"code":  "DAYS_TOO_LARGE",
+			})
+			return
+		}
+
+		// Limit number of tokens that can be extended at once
+		if len(req.TokenIDs) > 100 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Cannot extend more than 100 tokens at once",
+				"code":  "TOO_MANY_TOKENS",
+			})
+			return
+		}
+
+		// Validate all IDs are positive
+		for _, id := range req.TokenIDs {
+			if id <= 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Invalid token ID: all IDs must be positive integers",
+					"code":  "INVALID_TOKEN_ID",
+				})
+				return
+			}
+		}
+
+		// Convert days to duration
+		duration := time.Duration(req.Days) * 24 * time.Hour
+
+		// Perform bulk extension
+		extendedCount, err := repos.APITokens.ExtendMultiple(ctx, req.TokenIDs, duration)
+		if err != nil {
+			slog.Error("failed to bulk extend tokens",
+				"error", err,
+				"requested_count", len(req.TokenIDs),
+				"days", req.Days,
+				"admin", adminUsername,
+				"ip", clientIP,
+			)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		slog.Info("bulk token extension completed",
+			"requested_count", len(req.TokenIDs),
+			"extended_count", extendedCount,
+			"days", req.Days,
+			"token_ids", req.TokenIDs,
+			"admin", adminUsername,
+			"ip", clientIP,
+		)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BulkExtendResponse{
+			Message:       "Token expiration extended successfully",
+			ExtendedCount: extendedCount,
 		})
 	}
 }

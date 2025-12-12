@@ -1107,5 +1107,65 @@ func (r *APITokenRepository) RevokeAllByUserID(ctx context.Context, userID int64
 	return int(rows), nil
 }
 
+// ExtendMultiple extends the expiration date of multiple tokens by the specified duration.
+// Only extends active, non-expired tokens. Returns the count of tokens actually extended.
+func (r *APITokenRepository) ExtendMultiple(ctx context.Context, tokenIDs []int64, duration time.Duration) (int, error) {
+	if len(tokenIDs) == 0 {
+		return 0, nil
+	}
+
+	// Validate all token IDs are positive
+	for _, id := range tokenIDs {
+		if id <= 0 {
+			return 0, fmt.Errorf("token_id must be positive")
+		}
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(tokenIDs))
+	args := make([]interface{}, len(tokenIDs)+1)
+	for i, id := range tokenIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Duration in seconds for SQLite datetime function
+	durationSeconds := int64(duration.Seconds())
+	args[len(tokenIDs)] = durationSeconds
+
+	// Only extend active tokens that have an expiration date
+	// Add the duration to the current expires_at value
+	// SQLite can't parse ISO8601 with 'T' and 'Z' directly, so we:
+	// 1. Extract first 19 chars and replace 'T' with space for datetime parsing
+	// 2. Add seconds using datetime modifier
+	// 3. Format back to ISO8601 with strftime
+	query := `UPDATE api_tokens 
+		SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 
+			datetime(replace(substr(expires_at, 1, 19), 'T', ' '), '+' || ? || ' seconds'))
+		WHERE id IN (` + inClause + `) 
+		AND is_active = 1 
+		AND expires_at IS NOT NULL`
+
+	// Reorder args: duration first, then token IDs
+	reorderedArgs := make([]interface{}, len(args))
+	reorderedArgs[0] = durationSeconds
+	for i, id := range tokenIDs {
+		reorderedArgs[i+1] = id
+	}
+
+	result, err := r.db.ExecContext(ctx, query, reorderedArgs...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to extend tokens: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return int(rows), nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

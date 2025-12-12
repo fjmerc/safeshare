@@ -952,5 +952,45 @@ func (r *APITokenRepository) RevokeAllByUserID(ctx context.Context, userID int64
 	return int(result.RowsAffected()), nil
 }
 
+// ExtendMultiple extends the expiration date of multiple tokens by the specified duration.
+// Only extends active, non-expired tokens. Returns the count of tokens actually extended.
+func (r *APITokenRepository) ExtendMultiple(ctx context.Context, tokenIDs []int64, duration time.Duration) (int, error) {
+	if len(tokenIDs) == 0 {
+		return 0, nil
+	}
+
+	// Validate all token IDs are positive
+	for _, id := range tokenIDs {
+		if id <= 0 {
+			return 0, fmt.Errorf("token_id must be positive")
+		}
+	}
+
+	// Build parameterized IN clause - duration is $1, token IDs start at $2
+	placeholders := make([]string, len(tokenIDs))
+	args := make([]interface{}, len(tokenIDs)+1)
+	args[0] = duration // PostgreSQL interval can accept Go duration
+	for i, id := range tokenIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = id
+	}
+	inClause := strings.Join(placeholders, ",")
+
+	// Only extend active tokens that have an expiration date
+	// Add the duration as an interval to the current expires_at value
+	query := `UPDATE api_tokens 
+		SET expires_at = expires_at + $1 
+		WHERE id IN (` + inClause + `) 
+		AND is_active = true 
+		AND expires_at IS NOT NULL`
+
+	result, err := r.pool.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to extend tokens: %w", err)
+	}
+
+	return int(result.RowsAffected()), nil
+}
+
 // Ensure APITokenRepository implements repository.APITokenRepository.
 var _ repository.APITokenRepository = (*APITokenRepository)(nil)

@@ -4948,7 +4948,8 @@
         // Copy rotated token to clipboard
         function copyRotatedToken() {
             const tokenValue = document.getElementById('rotatedTokenValue').textContent;
-            navigator.clipboard.writeText(tokenValue).then(() => {
+            
+            const showCopySuccess = () => {
                 const btn = document.getElementById('copyRotatedTokenBtn');
                 const originalHTML = btn.innerHTML;
                 btn.innerHTML = `
@@ -4960,10 +4961,45 @@
                 setTimeout(() => {
                     btn.innerHTML = originalHTML;
                 }, 2000);
-            }).catch(err => {
-                console.error('Failed to copy token:', err);
+            };
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(tokenValue).then(() => {
+                    showCopySuccess();
+                }).catch(err => {
+                    console.error('Failed to copy token:', err);
+                    fallbackCopyRotatedToken(tokenValue, showCopySuccess);
+                });
+            } else {
+                fallbackCopyRotatedToken(tokenValue, showCopySuccess);
+            }
+        }
+        
+        // Fallback copy for rotated token (non-secure contexts)
+        function fallbackCopyRotatedToken(text, onSuccess) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    onSuccess();
+                } else {
+                    showToast('Failed to copy token to clipboard', 'error');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
                 showToast('Failed to copy token to clipboard', 'error');
-            });
+            }
+            
+            document.body.removeChild(textArea);
         }
 
         // Hide rotated token modal
@@ -6072,7 +6108,7 @@
         }
         
         // Fallback copy method for non-secure contexts (HTTP on LAN)
-        function fallbackCopyToClipboard(text) {
+        function fallbackCopyToClipboard(text, successMessage = 'Copied to clipboard') {
             const textArea = document.createElement('textarea');
             textArea.value = text;
             textArea.style.position = 'fixed';
@@ -6085,7 +6121,7 @@
             try {
                 const successful = document.execCommand('copy');
                 if (successful) {
-                    showToast('Secret key copied to clipboard', 'success');
+                    showToast(successMessage, 'success');
                 } else {
                     showToast('Failed to copy. Please select and copy manually.', 'error');
                 }
@@ -6133,12 +6169,18 @@ you may be locked out of your account.
         function copyRecoveryCodes() {
             if (!mfaRecoveryCodes || mfaRecoveryCodes.length === 0) return;
             const codesText = mfaRecoveryCodes.join('\n');
-            navigator.clipboard.writeText(codesText).then(() => {
-                showToast('Recovery codes copied to clipboard', 'success');
-            }).catch(err => {
-                console.error('Failed to copy:', err);
-                showToast('Failed to copy recovery codes', 'error');
-            });
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(codesText).then(() => {
+                    showToast('Recovery codes copied to clipboard', 'success');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    fallbackCopyToClipboard(codesText);
+                });
+            } else {
+                fallbackCopyToClipboard(codesText);
+            }
         }
 
         // Show MFA disable confirmation modal

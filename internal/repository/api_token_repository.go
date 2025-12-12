@@ -103,4 +103,8 @@ type APITokenRepository interface {
 	// RevokeAllByUserID revokes all active tokens for a specific user.
 	// Returns the count of tokens revoked.
 	RevokeAllByUserID(ctx context.Context, userID int64) (int, error)
+
+	// ExtendMultiple extends the expiration date of multiple tokens by the specified duration.
+	// Only extends active, non-expired tokens. Returns the count of tokens actually extended.
+	ExtendMultiple(ctx context.Context, tokenIDs []int64, duration time.Duration) (int, error)
 }
