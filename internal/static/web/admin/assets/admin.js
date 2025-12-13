@@ -3418,12 +3418,13 @@ async function loadEnterpriseConfig() {
         setCheckbox('featureWebhooks', flags.enable_webhooks);
         setCheckbox('featureAPITokens', flags.enable_api_tokens);
         setCheckbox('featureBackups', flags.enable_backups);
-        setCheckbox('featurePostgreSQL', flags.enable_postgresql);
-        setCheckbox('featureS3Storage', flags.enable_s3_storage);
         setCheckbox('featureMalwareScan', flags.enable_malware_scan);
 
         // Update status display
         updateEnterpriseStatusDisplay(flags);
+
+        // Update enterprise feature tabs visibility
+        updateEnterpriseTabs(flags);
 
         // Show/hide config sections based on enabled features
         toggleMFAConfigSection(flags.enable_mfa);
@@ -3492,6 +3493,53 @@ function updateEnterpriseStatusDisplay(flags) {
     }
 }
 
+// Update enterprise feature tabs visibility based on feature flags
+function updateEnterpriseTabs(flags) {
+    // Map feature flags to tab data-tab attributes
+    const tabMapping = {
+        'webhooks': flags.enable_webhooks,
+        'ssoProviders': flags.enable_sso,
+        'apiTokens': flags.enable_api_tokens,
+        'backups': flags.enable_backups
+    };
+
+    // Get the currently active tab
+    const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+    let needsTabSwitch = false;
+
+    // Show/hide tabs based on feature flags
+    for (const [tabName, enabled] of Object.entries(tabMapping)) {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+        const tabContent = document.getElementById(`${tabName}Tab`);
+        
+        if (tabBtn) {
+            tabBtn.style.display = enabled ? '' : 'none';
+        }
+        if (tabContent && !enabled) {
+            tabContent.classList.remove('active');
+        }
+        
+        // Check if we need to switch away from a hidden tab
+        if (activeTab === tabName && !enabled) {
+            needsTabSwitch = true;
+        }
+    }
+
+    // If current tab was hidden, switch to Files tab
+    if (needsTabSwitch) {
+        const filesTabBtn = document.querySelector('.tab-btn[data-tab="files"]');
+        const filesTabContent = document.getElementById('filesTab');
+        
+        // Remove active from all tabs
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        
+        // Activate Files tab
+        if (filesTabBtn) filesTabBtn.classList.add('active');
+        if (filesTabContent) filesTabContent.classList.add('active');
+    }
+}
+
 // Toggle MFA config section visibility
 function toggleMFAConfigSection(show) {
     const section = document.getElementById('mfaConfigSection');
@@ -3516,7 +3564,7 @@ async function saveFeatureFlags() {
         enable_webhooks: document.getElementById('featureWebhooks')?.checked || false,
         enable_api_tokens: document.getElementById('featureAPITokens')?.checked || false,
         enable_backups: document.getElementById('featureBackups')?.checked || false
-        // PostgreSQL, S3, and Malware scan are coming soon - disabled in UI
+        // Malware scan is coming soon - disabled in UI
     };
 
     try {
@@ -3538,6 +3586,7 @@ async function saveFeatureFlags() {
         
         // Update UI based on new flags
         updateEnterpriseStatusDisplay(flags);
+        updateEnterpriseTabs(flags);
         toggleMFAConfigSection(flags.enable_mfa);
         toggleSSOConfigSection(flags.enable_sso);
 
@@ -3679,6 +3728,10 @@ function initEnterpriseFeatures() {
     document.getElementById('featureSSO')?.addEventListener('change', (e) => {
         // Don't toggle until saved - just visual feedback
     });
+
+    // Load feature flags on page load to set initial tab visibility
+    // This ensures enterprise tabs are hidden/shown correctly from the start
+    loadEnterpriseConfig();
 }
 
 // Call initEnterpriseFeatures on DOMContentLoaded

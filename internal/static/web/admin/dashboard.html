@@ -110,12 +110,12 @@
             <button class="tab-btn active" data-tab="files">Files</button>
             <button class="tab-btn" data-tab="users">Users</button>
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
-            <button class="tab-btn" data-tab="webhooks">Webhooks</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="enterpriseFeatures">Enterprise Features</button>
+            <button class="tab-btn" data-tab="webhooks">Webhooks</button>
             <button class="tab-btn" data-tab="ssoProviders">SSO Providers</button>
             <button class="tab-btn" data-tab="apiTokens">API Tokens</button>
             <button class="tab-btn" data-tab="backups">Backups</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
 
@@ -606,20 +606,7 @@
                             </label>
                             <small>Enable backup and restore functionality</small>
                         </div>
-                        <div class="form-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="featurePostgreSQL" name="enable_postgresql" disabled>
-                                <span>PostgreSQL (Coming Soon)</span>
-                            </label>
-                            <small>Use PostgreSQL instead of SQLite for the database</small>
-                        </div>
-                        <div class="form-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="featureS3Storage" name="enable_s3_storage" disabled>
-                                <span>S3 Storage (Coming Soon)</span>
-                            </label>
-                            <small>Use S3-compatible storage for file uploads</small>
-                        </div>
+
                         <div class="form-group">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="featureMalwareScan" name="enable_malware_scan" disabled>

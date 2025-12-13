@@ -1225,6 +1225,20 @@ input[type="checkbox"] {
     accent-color: var(--primary-color);
 }
 
+/* Checkbox with label alignment */
+.form-group label.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    margin-bottom: 0;
+}
+
+.form-group label.checkbox-label input[type="checkbox"] {
+    flex-shrink: 0;
+    margin: 0;
+}
+
 /* Pagination */
 .pagination {
     display: flex;
