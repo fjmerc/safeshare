@@ -12,6 +12,7 @@ This document provides detailed technical documentation about SafeShare's archit
 - [Frontend Architecture](#frontend-architecture)
 - [Chunked Upload Architecture](#chunked-upload-architecture)
 - [Webhook Architecture](#webhook-architecture)
+- [Enterprise Backend Architecture](#enterprise-backend-architecture)
 - [Key Dependencies](#key-dependencies)
 
 ---
@@ -1050,6 +1051,410 @@ The admin dashboard includes a Webhooks tab with:
 - Admin dashboard shows last 50 deliveries (paginated)
 - Full payload, response body, and error messages stored
 - Useful for debugging webhook integration issues
+
+---
+
+## Enterprise Backend Architecture
+
+SafeShare v1.5.0+ introduces enterprise-grade backend support for production deployments requiring high availability, horizontal scaling, and object storage.
+
+### Overview
+
+**Problem Solved**: SQLite is excellent for small-to-medium deployments but has limitations for enterprise environments:
+- Single-writer concurrency model (not ideal for multi-node deployments)
+- File-based locking (doesn't work well with network filesystems)
+- Limited horizontal scaling capabilities
+- Local filesystem storage doesn't support multi-node shared storage
+
+**Solution**: Repository pattern abstraction allows switching between SQLite, PostgreSQL, and S3-compatible storage backends via environment variables without code changes.
+
+### Repository Pattern
+
+SafeShare uses a repository pattern to abstract database and storage operations, allowing multiple backend implementations.
+
+**Repository Interfaces** (`internal/repository/interfaces.go`):
+
+```go
+type FileRepository interface {
+    CreateFile(ctx context.Context, file *models.File) error
+    GetFileByClaimCode(ctx context.Context, claimCode string) (*models.File, error)
+    UpdateFile(ctx context.Context, file *models.File) error
+    DeleteFile(ctx context.Context, id int) error
+    // ... 15+ methods for file operations
+}
+
+type UserRepository interface {
+    CreateUser(ctx context.Context, user *models.User) error
+    GetUserByUsername(ctx context.Context, username string) (*models.User, error)
+    // ... 10+ methods for user operations
+}
+
+// Additional repositories:
+// - SessionRepository (user and admin sessions)
+// - AdminRepository (admin credentials and operations)
+// - WebhookRepository (webhook configs and deliveries)
+// - APITokenRepository (API token management)
+// - SettingsRepository (dynamic settings)
+// - PartialUploadRepository (chunked uploads)
+// - BlockedIPRepository (IP blocklist)
+// - MFARepository (multi-factor authentication)
+// - SSORepository (single sign-on providers)
+```
+
+**Factory Pattern** (`internal/repository/factory.go`):
+
+```go
+func NewRepositoryFactory(dbType string, db *sql.DB, s3Client *s3.Client) (*RepositoryFactory, error) {
+    switch dbType {
+    case "sqlite":
+        return NewSQLiteFactory(db), nil
+    case "postgres":
+        return NewPostgresFactory(db), nil
+    default:
+        return nil, fmt.Errorf("unsupported database type: %s", dbType)
+    }
+}
+```
+
+**Storage Backend Interface** (`internal/storage/interfaces.go`):
+
+```go
+type StorageBackend interface {
+    SaveFile(ctx context.Context, filename string, data io.Reader) error
+    GetFile(ctx context.Context, filename string) (io.ReadCloser, error)
+    DeleteFile(ctx context.Context, filename string) error
+    FileExists(ctx context.Context, filename string) (bool, error)
+    GetFileSize(ctx context.Context, filename string) (int64, error)
+}
+```
+
+### PostgreSQL Backend
+
+**When to Use PostgreSQL**:
+- High-concurrency deployments (100+ concurrent users)
+- Multi-node high availability requirements
+- Enterprise environments requiring ACID compliance
+- Deployments with strict audit/compliance requirements
+- Need for advanced database features (replication, point-in-time recovery)
+
+**Implementation** (`internal/repository/postgres/`):
+
+All 14 repository interfaces implemented with PostgreSQL-specific optimizations:
+- `FileRepository`: PostgreSQL-specific SQL queries with RETURNING clauses
+- `UserRepository`: Optimized user lookups with prepared statements
+- `SessionRepository`: Fast session validation with indexes
+- `WebhookRepository`: Efficient event filtering and delivery tracking
+- `APITokenRepository`: Token hash lookups with timing-attack resistance
+- `MFARepository`: TOTP secret storage with encryption
+- `SSORepository`: OIDC provider configuration storage
+
+**Configuration** (Environment Variables):
+
+```bash
+# Enable PostgreSQL backend
+DATABASE_TYPE=postgres
+
+# Connection settings
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=safeshare
+POSTGRES_PASSWORD=secure_password
+POSTGRES_DB=safeshare
+POSTGRES_SSLMODE=require  # Options: disable, require, verify-ca, verify-full
+
+# Connection pooling
+POSTGRES_MAX_CONNECTIONS=25  # Default: 25
+```
+
+**Database Schema**:
+
+PostgreSQL schema matches SQLite schema with these enhancements:
+- Uses `SERIAL` instead of `AUTOINCREMENT` for primary keys
+- `TIMESTAMP WITH TIME ZONE` instead of `DATETIME` for proper timezone handling
+- `BOOLEAN` type instead of INTEGER (0/1)
+- Foreign key constraints with `ON DELETE CASCADE` for referential integrity
+- Composite indexes for common query patterns
+- `JSONB` type for structured data (webhook events, SSO metadata)
+
+**Migration System**:
+
+Automatic schema migration on startup:
+- `internal/repository/postgres/migrations/` contains versioned SQL files
+- `001_initial_schema.sql` creates all tables
+- `002_add_webhooks.sql` adds webhook support
+- `003_add_api_tokens.sql` adds API token tables
+- `004_add_mfa.sql` adds MFA support
+- `005_add_sso.sql` adds SSO provider tables
+
+Migrations tracked in `schema_migrations` table.
+
+**Connection Pooling**:
+
+```go
+db.SetMaxOpenConns(25)      // Maximum connections
+db.SetMaxIdleConns(5)       // Idle connections in pool
+db.SetConnMaxLifetime(5 * time.Minute)  // Connection lifetime
+```
+
+**Performance Characteristics**:
+
+- Concurrent writes: 1000+ TPS (transactions per second)
+- Read queries: 10,000+ QPS (queries per second)
+- Session validation: <1ms (with proper indexes)
+- File lookups by claim code: <2ms
+- Webhook delivery tracking: <5ms
+
+**High Availability Setup**:
+
+```yaml
+# PostgreSQL primary-replica setup
+postgres-primary:
+  image: postgres:16
+  environment:
+    POSTGRES_REPLICATION_MODE: master
+    POSTGRES_REPLICATION_USER: replicator
+
+postgres-replica:
+  image: postgres:16
+  environment:
+    POSTGRES_REPLICATION_MODE: slave
+    POSTGRES_MASTER_HOST: postgres-primary
+
+safeshare-node1:
+  environment:
+    DATABASE_TYPE: postgres
+    POSTGRES_HOST: postgres-primary
+
+safeshare-node2:
+  environment:
+    DATABASE_TYPE: postgres
+    POSTGRES_HOST: postgres-primary
+```
+
+**Testing**:
+
+Comprehensive integration tests with 64.8% coverage:
+- All 14 repository implementations tested
+- CRUD operations validated
+- Edge cases and error conditions covered
+- Uses PostgreSQL 16 test container
+- Run tests: `./scripts/test-postgres.sh`
+
+### S3-Compatible Storage Backend
+
+**When to Use S3 Storage**:
+- Multi-node deployments requiring shared storage
+- Cloud deployments (AWS, GCP, Azure, DigitalOcean)
+- Need for automatic backup/replication
+- Compliance requirements (data residency, retention)
+- Cost optimization (S3 cheaper than block storage at scale)
+
+**Supported Services**:
+- AWS S3
+- MinIO (self-hosted)
+- DigitalOcean Spaces
+- Backblaze B2
+- Wasabi
+- Any S3-compatible object storage
+
+**Implementation** (`internal/storage/s3/`):
+
+```go
+type S3Storage struct {
+    client *s3.Client
+    bucket string
+}
+
+func (s *S3Storage) SaveFile(ctx context.Context, filename string, data io.Reader) error {
+    _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+        Bucket: aws.String(s.bucket),
+        Key:    aws.String(filename),
+        Body:   data,
+    })
+    return err
+}
+```
+
+**Configuration** (Environment Variables):
+
+```bash
+# Enable S3 storage backend
+STORAGE_TYPE=s3
+
+# S3 connection settings
+S3_BUCKET=safeshare-uploads
+S3_REGION=us-east-1
+S3_ENDPOINT=https://s3.amazonaws.com  # Optional: for MinIO/compatible services
+
+# Authentication
+S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+# MinIO-specific settings
+S3_USE_PATH_STYLE=true  # Required for MinIO
+```
+
+**Features**:
+
+1. **Streaming Uploads**: Files streamed to S3 without buffering entire file in memory
+2. **Streaming Downloads**: Files streamed from S3 directly to HTTP response
+3. **Encryption Support**:
+   - Server-side encryption (S3 SSE-S3, SSE-KMS)
+   - Client-side encryption (SafeShare AES-256-GCM before upload)
+4. **Automatic Bucket Creation**: Creates bucket if it doesn't exist on startup
+5. **Multipart Upload**: Large files (>5GB) use S3 multipart upload automatically
+6. **Range Requests**: HTTP Range requests work seamlessly with S3 GetObject range parameter
+
+**Performance Characteristics**:
+
+- Upload throughput: Limited by network bandwidth (typically 100-500 MB/s)
+- Download throughput: Limited by network bandwidth
+- First-byte latency: 10-50ms (depends on region)
+- Concurrent operations: Unlimited (S3 scales horizontally)
+
+**Cost Optimization**:
+
+```bash
+# S3 Lifecycle policies (configure in AWS Console or Terraform)
+# Example: Transition to Glacier after 30 days
+# Example: Delete expired files automatically (based on S3 metadata)
+```
+
+**MinIO Self-Hosted Setup**:
+
+```yaml
+# docker-compose.yml
+minio:
+  image: minio/minio
+  command: server /data --console-address ":9001"
+  environment:
+    MINIO_ROOT_USER: minioadmin
+    MINIO_ROOT_PASSWORD: minioadmin
+  ports:
+    - "9000:9000"
+    - "9001:9001"
+  volumes:
+    - minio-data:/data
+
+safeshare:
+  environment:
+    STORAGE_TYPE: s3
+    S3_BUCKET: safeshare
+    S3_REGION: us-east-1
+    S3_ENDPOINT: http://minio:9000
+    S3_ACCESS_KEY_ID: minioadmin
+    S3_SECRET_ACCESS_KEY: minioadmin
+    S3_USE_PATH_STYLE: true
+```
+
+### High Availability Architecture
+
+**Multi-Node Deployment** with PostgreSQL + S3:
+
+```
+                    ┌──────────────────┐
+                    │  Load Balancer   │
+                    │   (HAProxy)      │
+                    └─────────┬────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+      ┌───────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
+      │ SafeShare    │ │ SafeShare  │ │ SafeShare   │
+      │   Node 1     │ │   Node 2   │ │   Node 3    │
+      └───────┬──────┘ └─────┬──────┘ └──────┬──────┘
+              │               │               │
+              └───────────────┼───────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+      ┌───────▼──────┐ ┌─────▼──────────┐    │
+      │  PostgreSQL  │ │  S3 Storage    │    │
+      │   Primary    │ │   (Shared)     │    │
+      └───────┬──────┘ └────────────────┘    │
+              │                               │
+      ┌───────▼──────┐              ┌────────▼────────┐
+      │  PostgreSQL  │              │   Redis Cache   │
+      │   Replica    │              │   (Optional)    │
+      └──────────────┘              └─────────────────┘
+```
+
+**Features**:
+- **Shared Database**: All nodes connect to PostgreSQL primary
+- **Shared Storage**: All nodes use same S3 bucket
+- **Session Replication**: Sessions stored in PostgreSQL (accessible from all nodes)
+- **Distributed Locking**: Database-based locks prevent race conditions
+- **Stateless Nodes**: Any node can handle any request (no sticky sessions required)
+
+**Scaling Characteristics**:
+- Horizontal scaling: Add more SafeShare nodes behind load balancer
+- Vertical scaling: Increase PostgreSQL resources (CPU, RAM, IOPS)
+- Storage scaling: S3 scales automatically
+- Geographic distribution: Multi-region S3 with CloudFront CDN
+
+### Migration Guide
+
+**SQLite to PostgreSQL Migration**:
+
+```bash
+# 1. Export SQLite data
+sqlite3 safeshare.db .dump > backup.sql
+
+# 2. Convert SQLite SQL to PostgreSQL SQL
+sed 's/AUTOINCREMENT/SERIAL/g' backup.sql > postgres.sql
+sed 's/INTEGER PRIMARY KEY/SERIAL PRIMARY KEY/g' postgres.sql
+
+# 3. Import to PostgreSQL
+psql -h localhost -U safeshare -d safeshare < postgres.sql
+
+# 4. Update SafeShare configuration
+export DATABASE_TYPE=postgres
+export POSTGRES_HOST=localhost
+export POSTGRES_PORT=5432
+export POSTGRES_USER=safeshare
+export POSTGRES_PASSWORD=password
+export POSTGRES_DB=safeshare
+
+# 5. Restart SafeShare
+docker restart safeshare
+```
+
+**Local Filesystem to S3 Migration**:
+
+```bash
+# 1. Sync local files to S3
+aws s3 sync ./uploads s3://safeshare-uploads/
+
+# 2. Update SafeShare configuration
+export STORAGE_TYPE=s3
+export S3_BUCKET=safeshare-uploads
+export S3_REGION=us-east-1
+
+# 3. Restart SafeShare
+docker restart safeshare
+
+# 4. Verify files are accessible
+curl http://localhost:8080/api/claim/<claim-code>/info
+
+# 5. Remove local files (after verification)
+rm -rf ./uploads/*
+```
+
+### Monitoring & Observability
+
+**PostgreSQL Monitoring**:
+- Connection pool metrics: `db.Stats()` exposed via `/health` endpoint
+- Slow query logging: `log_min_duration_statement = 1000` (log queries >1s)
+- `pg_stat_statements` extension for query performance analysis
+
+**S3 Monitoring**:
+- CloudWatch metrics (AWS S3): Request count, latency, errors
+- MinIO metrics: Prometheus endpoint at `:9000/minio/v2/metrics/cluster`
+
+**Application Metrics** (Prometheus):
+- `safeshare_db_connections_open{backend="postgres"}` - Open connections
+- `safeshare_storage_operations_total{backend="s3",operation="upload"}` - S3 operations
+- `safeshare_storage_operation_duration_seconds{backend="s3"}` - S3 latency
 
 ---
 

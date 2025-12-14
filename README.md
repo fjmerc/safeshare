@@ -43,6 +43,10 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 
 ### 🔒 Security Features
 - **Encryption at Rest** - AES-256-GCM authenticated encryption
+- **Multi-Factor Authentication (MFA/TOTP)** - Two-factor authentication with authenticator apps
+- **WebAuthn/FIDO2** - Hardware security key support (YubiKey, Windows Hello, Touch ID)
+- **Single Sign-On (SSO/OIDC)** - Enterprise SSO with Google, Azure AD, Okta, Auth0, Keycloak
+- **API Token Authentication** - Bearer tokens with scopes, rotation, audit logging, and expiration
 - **User Authentication** - Invite-only registration with role-based access
 - **Admin Dashboard** - Web-based administration with CSRF protection
 - **IP Blocking** - Block malicious IPs from uploads/downloads
@@ -66,7 +70,13 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 ### 🎛️ Admin Dashboard
 - **File Management** - View all files, search, bulk delete, download statistics
 - **User Administration** - Create, edit, enable/disable, reset passwords
+- **MFA Management** - View and manage user MFA status, disable MFA for emergency recovery
+- **SSO Provider Management** - Configure OIDC providers, test connections, auto-provisioning
+- **API Token Management** - View all tokens, bulk operations (revoke, extend), usage statistics
+- **Webhook Management** - Configure webhooks for file lifecycle events (uploaded, downloaded, deleted, expired)
+- **Backup Management** - Schedule automated backups, download backups, retention policies
 - **IP Blocking** - Block/unblock IPs with reason tracking
+- **Enterprise Features** - Runtime feature toggles (MFA, SSO, Webhooks, API Tokens, Backups)
 - **Dynamic Settings** - Adjust quotas, limits, security settings without restart
 - **Configuration Assistant** - Intelligent config recommendations based on environment
 - **Real-Time Statistics** - Storage usage, file counts, user counts, quota metrics
@@ -80,11 +90,22 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Background Workers** - Auto-cleanup of expired files and abandoned uploads
 - **Database Migrations** - Automatic schema versioning and upgrades
 
+### 🏢 Enterprise Features
+- **PostgreSQL Backend** - Production-grade database for high-availability deployments
+- **S3-Compatible Storage** - Object storage support (AWS S3, MinIO, DigitalOcean Spaces)
+- **High Availability** - Multi-node deployments with shared storage and distributed locking
+- **Automated Backups** - Scheduled backups with cron expressions and retention policies
+- **Webhook Notifications** - Real-time event notifications for integrations (Gotify, ntfy.sh, Discord)
+- **Advanced API Tokens** - Token rotation, usage tracking, bulk operations, expiration warnings
+- **Feature Flags** - Runtime feature toggles without container restarts
+
 ### 🚀 Deployment
 - **Single Binary** - No external dependencies (pure Go, embedded SQLite)
 - **Docker Container** - Minimal ~26MB Alpine-based image
 - **Reverse Proxy Ready** - Works with Traefik, nginx, Caddy, Apache
 - **CDN Compatible** - Supports Cloudflare and other CDNs
+- **PostgreSQL Support** - Optional PostgreSQL backend for enterprise deployments
+- **S3 Storage Support** - Optional S3-compatible object storage backend
 - **No CGO Required** - Portable across architectures (amd64, arm64)
 
 ---
@@ -254,12 +275,16 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 |----------|-------------|
 | **[API_REFERENCE.md](docs/API_REFERENCE.md)** | Complete API documentation with all endpoints, authentication, and examples |
 | **[SECURITY.md](docs/SECURITY.md)** | Enterprise security features, encryption, admin dashboard security, best practices |
+| **[SSO_SETUP.md](docs/SSO_SETUP.md)** | SSO/OIDC configuration guide with provider-specific examples |
+| **[MFA_SETUP.md](docs/MFA_SETUP.md)** | Multi-factor authentication setup guide |
+| **[BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md)** | Backup and restore system documentation |
 | **[CHUNKED_UPLOAD.md](docs/CHUNKED_UPLOAD.md)** | Chunked/resumable upload API, architecture, client implementation guide |
 | **[REVERSE_PROXY.md](docs/REVERSE_PROXY.md)** | Reverse proxy configuration (Traefik, nginx, Caddy, Apache) |
 | **[PROMETHEUS.md](docs/PROMETHEUS.md)** | Prometheus metrics, Grafana dashboards, alerting rules |
 | **[HTTP_RANGE_SUPPORT.md](docs/HTTP_RANGE_SUPPORT.md)** | Resumable downloads, HTTP Range requests (RFC 7233) |
 | **[PRODUCTION.md](docs/PRODUCTION.md)** | Production deployment guide with security hardening |
 | **[INFRASTRUCTURE_PLANNING.md](docs/INFRASTRUCTURE_PLANNING.md)** | CDN timeouts, upload speed testing, configuration planning |
+| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Detailed technical architecture, PostgreSQL/S3 backends |
 | **[FRONTEND.md](docs/FRONTEND.md)** | Web UI features, customization guide, browser compatibility |
 | **[TESTING.md](docs/TESTING.md)** | Testing guide, test suite, coverage requirements |
 | **[VERSION_STRATEGY.md](docs/VERSION_STRATEGY.md)** | Semantic versioning, Git Flow, release process |
@@ -268,6 +293,9 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 **Quick Links**:
 - 🔐 [Encryption Setup](docs/SECURITY.md#encryption-at-rest)
+- 🔑 [MFA Setup](docs/MFA_SETUP.md)
+- 🌐 [SSO Setup](docs/SSO_SETUP.md)
+- 💾 [Backup/Restore](docs/BACKUP_RESTORE.md)
 - 🎛️ [Admin Dashboard](docs/SECURITY.md#admin-dashboard-security)
 - 📊 [Monitoring Setup](docs/PROMETHEUS.md)
 - 🔧 [Reverse Proxy Config](docs/REVERSE_PROXY.md)
