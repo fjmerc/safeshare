@@ -110,9 +110,12 @@
             <button class="tab-btn active" data-tab="files">Files</button>
             <button class="tab-btn" data-tab="users">Users</button>
             <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
+            <button class="tab-btn" data-tab="enterpriseFeatures">Enterprise Features</button>
             <button class="tab-btn" data-tab="webhooks">Webhooks</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="ssoProviders">SSO Providers</button>
+            <button class="tab-btn" data-tab="apiTokens">API Tokens</button>
             <button class="tab-btn" data-tab="backups">Backups</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
 
@@ -558,6 +561,390 @@
             </div>
         </div>
 
+        <!-- Enterprise Features Tab -->
+        <div id="enterpriseFeaturesTab" class="tab-content">
+            <div class="settings-grid">
+                <!-- Feature Flags Section -->
+                <div class="settings-section">
+                    <h2>Enterprise Feature Flags</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Enable or disable enterprise features. Changes take effect immediately.
+                    </p>
+                    <form id="featureFlagsForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureMFA" name="enable_mfa">
+                                <span>Multi-Factor Authentication (MFA)</span>
+                            </label>
+                            <small>Enable TOTP and WebAuthn authentication for users</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureSSO" name="enable_sso">
+                                <span>Single Sign-On (SSO)</span>
+                            </label>
+                            <small>Enable OIDC-based single sign-on with external providers</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureWebhooks" name="enable_webhooks">
+                                <span>Webhooks</span>
+                            </label>
+                            <small>Enable webhook notifications for file events</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureAPITokens" name="enable_api_tokens">
+                                <span>API Tokens</span>
+                            </label>
+                            <small>Enable API token authentication for programmatic access</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureBackups" name="enable_backups">
+                                <span>Backups</span>
+                            </label>
+                            <small>Enable backup and restore functionality</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureMalwareScan" name="enable_malware_scan" disabled>
+                                <span>Malware Scanning (Coming Soon)</span>
+                            </label>
+                            <small>Enable ClamAV malware scanning for uploaded files</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save Feature Flags
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- MFA Configuration Section -->
+                <div class="settings-section" id="mfaConfigSection" style="display: none;">
+                    <h2>MFA Configuration</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Configure multi-factor authentication settings.
+                    </p>
+                    <form id="mfaConfigForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaRequired" name="required">
+                                <span>Require MFA for All Users</span>
+                            </label>
+                            <small>Force all users to set up MFA before accessing their account</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaIssuer">Issuer Name</label>
+                            <input type="text" id="mfaIssuer" name="issuer" placeholder="SafeShare">
+                            <small>The name shown in authenticator apps (e.g., "MyCompany SafeShare")</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaTOTPEnabled" name="totp_enabled" checked>
+                                <span>Enable TOTP (Time-based One-Time Password)</span>
+                            </label>
+                            <small>Allow users to use authenticator apps like Google Authenticator</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="mfaWebAuthnEnabled" name="webauthn_enabled" checked>
+                                <span>Enable WebAuthn (Security Keys)</span>
+                            </label>
+                            <small>Allow users to use hardware security keys like YubiKey</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaRecoveryCodesCount">Recovery Codes Count</label>
+                            <input type="number" id="mfaRecoveryCodesCount" name="recovery_codes_count" min="5" max="20" value="10">
+                            <small>Number of one-time recovery codes generated for users (5-20)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="mfaChallengeExpiry">Challenge Expiry (minutes)</label>
+                            <input type="number" id="mfaChallengeExpiry" name="challenge_expiry_minutes" min="1" max="30" value="5">
+                            <small>How long MFA challenges remain valid (1-30 minutes)</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save MFA Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="settings-grid">
+                <!-- SSO Configuration Section -->
+                <div class="settings-section" id="ssoConfigSection" style="display: none;">
+                    <h2>SSO Configuration</h2>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                        Configure single sign-on settings. SSO providers are managed in the <a href="#" onclick="switchToTab('ssoProviders'); return false;">SSO Providers</a> tab.
+                    </p>
+                    <form id="ssoConfigForm" class="settings-form">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="ssoAutoProvision" name="auto_provision">
+                                <span>Auto-Provision Users</span>
+                            </label>
+                            <small>Automatically create user accounts for new SSO logins</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoDefaultRole">Default Role for New Users</label>
+                            <select id="ssoDefaultRole" name="default_role">
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                            <small>Role assigned to auto-provisioned users</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoSessionLifetime">Session Lifetime (minutes)</label>
+                            <input type="number" id="ssoSessionLifetime" name="session_lifetime" min="30" max="43200" value="480">
+                            <small>How long SSO sessions remain valid (30 min - 30 days)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ssoStateExpiry">State Expiry (minutes)</label>
+                            <input type="number" id="ssoStateExpiry" name="state_expiry_minutes" min="1" max="30" value="10">
+                            <small>How long SSO state tokens remain valid during login (1-30 minutes)</small>
+                        </div>
+                        <div class="button-group">
+                            <button type="submit" class="btn-primary">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                    <polyline points="7 3 7 8 15 8"></polyline>
+                                </svg>
+                                Save SSO Settings
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Enterprise Info Section -->
+                <div class="settings-section">
+                    <h2>Enterprise Feature Status</h2>
+                    <div class="info-grid" id="enterpriseStatusGrid">
+                        <div class="info-item">
+                            <strong>MFA Status:</strong>
+                            <span id="mfaStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>SSO Status:</strong>
+                            <span id="ssoStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Webhooks Status:</strong>
+                            <span id="webhooksStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>API Tokens Status:</strong>
+                            <span id="apiTokensStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Backups Status:</strong>
+                            <span id="backupsStatusText">Disabled</span>
+                        </div>
+                    </div>
+                    <div class="alert-info" style="margin-top: 16px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        <span>Enterprise features can be enabled without environment variables. Enable a feature above, then configure its settings.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SSO Providers Tab -->
+        <div id="ssoProvidersTab" class="tab-content">
+            <div class="table-controls">
+                <button id="createSSOProviderBtn" class="btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14"></path>
+                    </svg>
+                    Add SSO Provider
+                </button>
+                <button id="refreshSSOProvidersBtn" class="btn-secondary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <!-- SSO Status Alert -->
+            <div id="ssoDisabledAlert" class="alert-warning" style="margin-bottom: 16px; display: none;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>SSO is currently disabled. Enable it in the <a href="#" onclick="switchToTab('enterpriseFeatures'); return false;">Enterprise Features</a> tab to allow users to log in with SSO providers.</span>
+            </div>
+
+            <!-- SSO Providers Stats -->
+            <div class="stats-grid" style="margin-bottom: 20px;">
+                <div class="stat-card">
+                    <h3>Total Providers</h3>
+                    <p class="stat-value" id="statTotalProviders">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Providers</h3>
+                    <p class="stat-value" id="statActiveProviders">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Linked Accounts</h3>
+                    <p class="stat-value" id="statLinkedAccounts">-</p>
+                </div>
+            </div>
+
+            <!-- SSO Providers Table -->
+            <div class="table-container">
+                <h3 style="margin-bottom: 16px; color: var(--text-primary);">SSO Provider Configurations</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Issuer URL</th>
+                            <th>Status</th>
+                            <th>Linked Users</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ssoProvidersTableBody">
+                        <tr>
+                            <td colspan="7" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- SSO Links Table -->
+            <div class="table-container" style="margin-top: 32px;">
+                <h3 style="margin-bottom: 16px; color: var(--text-primary);">User SSO Links</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Provider</th>
+                            <th>External ID</th>
+                            <th>Linked At</th>
+                            <th>Last Login</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ssoLinksTableBody">
+                        <tr>
+                            <td colspan="6" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- API Tokens Tab -->
+        <div id="apiTokensTab" class="tab-content">
+            <div class="table-controls">
+                <input type="text" id="tokenSearchInput" placeholder="Search by token name or user..." class="search-input">
+                <select id="tokenUserFilter" class="filter-select" style="min-width: 150px;">
+                    <option value="">All Users</option>
+                    <!-- Populated by JavaScript -->
+                </select>
+                <button id="refreshTokensAdminBtn" class="btn-secondary btn-sm">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+                <button id="bulkRevokeBtn" class="btn-danger btn-sm" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    Revoke Selected
+                </button>
+                <button id="bulkExtendBtn" class="btn-primary btn-sm" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    Extend Selected
+                </button>
+            </div>
+
+            <!-- Token Usage Summary -->
+            <div class="stats-grid" style="margin-bottom: 20px;">
+                <div class="stat-card">
+                    <h3>Total Tokens</h3>
+                    <p class="stat-value" id="statTotalTokens">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Tokens</h3>
+                    <p class="stat-value" id="statActiveTokens">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Expiring Soon</h3>
+                    <p class="stat-value" id="statExpiringTokens">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total API Requests</h3>
+                    <p class="stat-value" id="statTotalRequests">-</p>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="selectAllTokensCheckbox" title="Select all tokens">
+                            </th>
+                            <th>Token Name</th>
+                            <th>User</th>
+                            <th>Status</th>
+                            <th>Scopes</th>
+                            <th>Requests</th>
+                            <th>Data Transferred</th>
+                            <th>Created</th>
+                            <th>Expires</th>
+                            <th>Last Used</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tokensTableBody">
+                        <tr>
+                            <td colspan="11" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination" id="tokensPagination">
+                <!-- Pagination will be inserted here -->
+            </div>
+        </div>
+
         <!-- Backups Tab -->
         <div id="backupsTab" class="tab-content">
             <div class="table-controls">
@@ -993,6 +1380,27 @@
         </div>
     </div>
 
+    <!-- Extend Tokens Modal -->
+    <div id="extendTokensModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Extend Token Expiration</h3>
+            <p>Extend expiration for <strong id="extendTokensCount">0 tokens</strong> by:</p>
+            <div class="form-group">
+                <select id="extendDaysSelect" class="filter-select" style="width: 100%; padding: 10px;">
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days (6 months)</option>
+                    <option value="365">365 days (1 year)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-primary" onclick="confirmExtendTokens()">Extend</button>
+                <button type="button" class="btn-secondary" onclick="hideExtendTokensModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Create/Edit Webhook Modal -->
     <div id="webhookModal" class="modal" style="display: none;">
         <div class="modal-content">
@@ -1162,6 +1570,86 @@
             </div>
             <div class="modal-actions">
                 <button class="btn-primary" onclick="hideBackupResultModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit SSO Provider Modal -->
+    <div id="ssoProviderModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <h3 id="ssoProviderModalTitle">Add SSO Provider</h3>
+            <form id="ssoProviderForm">
+                <input type="hidden" id="ssoProviderId">
+                <div class="form-group">
+                    <label for="ssoProviderName">Provider Name *</label>
+                    <input type="text" id="ssoProviderName" name="name" required placeholder="e.g., Google, Okta, Azure AD">
+                    <small>A friendly name to identify this provider</small>
+                </div>
+                <div class="form-group">
+                    <label for="ssoProviderType">Provider Type *</label>
+                    <select id="ssoProviderType" name="provider_type" required>
+                        <option value="oidc">OIDC (OpenID Connect)</option>
+                        <option value="oauth2">OAuth 2.0</option>
+                    </select>
+                    <small>Most identity providers support OIDC</small>
+                </div>
+                <div class="form-group">
+                    <label for="ssoIssuerURL">Issuer URL *</label>
+                    <input type="url" id="ssoIssuerURL" name="issuer_url" required placeholder="https://accounts.google.com">
+                    <small>The OIDC issuer URL (also known as discovery URL)</small>
+                </div>
+                <div class="form-group">
+                    <label for="ssoClientID">Client ID *</label>
+                    <input type="text" id="ssoClientID" name="client_id" required placeholder="Your application's client ID">
+                </div>
+                <div class="form-group">
+                    <label for="ssoClientSecret">Client Secret *</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="ssoClientSecret" name="client_secret" required placeholder="Your application's client secret">
+                        <button type="button" class="password-toggle" data-password-toggle="ssoClientSecret" aria-label="Toggle secret visibility">
+                            <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                            <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                <line x1="1" y1="1" x2="23" y2="23"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="ssoRedirectURL">Redirect URL (Callback URL)</label>
+                    <input type="text" id="ssoRedirectURL" name="redirect_url" readonly>
+                    <small>Copy this URL to your identity provider's allowed redirect URIs</small>
+                </div>
+                <div class="form-group">
+                    <label for="ssoScopes">Scopes</label>
+                    <input type="text" id="ssoScopes" name="scopes" placeholder="openid profile email" value="openid profile email">
+                    <small>Space-separated list of OAuth scopes (defaults: openid profile email)</small>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="ssoProviderEnabled" name="enabled" checked>
+                        <span>Enabled</span>
+                    </label>
+                    <small>Disabled providers won't appear on the login page</small>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn-primary">Save Provider</button>
+                    <button type="button" class="btn-secondary" onclick="hideSSOProviderModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SSO Provider Test Result Modal -->
+    <div id="ssoTestResultModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h3>SSO Provider Test Result</h3>
+            <div id="ssoTestResultContent" style="margin: 20px 0;"></div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="hideSSOTestResultModal()">Close</button>
             </div>
         </div>
     </div>

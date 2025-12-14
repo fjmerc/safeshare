@@ -59,10 +59,12 @@ type HealthResponse struct {
 
 // DatabaseMetrics contains database performance and health information
 type DatabaseMetrics struct {
-	SizeBytes    int64   `json:"size_bytes"`               // Total database file size
-	SizeMB       float64 `json:"size_mb"`                  // Size in megabytes
-	WALSizeBytes int64   `json:"wal_size_bytes,omitempty"` // Write-Ahead Log size
-	PageCount    int64   `json:"page_count"`               // Total number of pages
-	PageSize     int64   `json:"page_size"`                // Size of each page in bytes
-	IndexCount   int     `json:"index_count"`              // Total number of indexes
+	SizeBytes       int64   `json:"size_bytes"`                  // Total database file size
+	SizeMB          float64 `json:"size_mb"`                     // Size in megabytes
+	WALSizeBytes    int64   `json:"wal_size_bytes,omitempty"`    // Write-Ahead Log size (SQLite only)
+	PageCount       int64   `json:"page_count,omitempty"`        // Total number of pages (SQLite only)
+	PageSize        int64   `json:"page_size,omitempty"`         // Size of each page in bytes (SQLite only)
+	IndexCount      int     `json:"index_count,omitempty"`       // Total number of indexes
+	OpenConnections int     `json:"open_connections,omitempty"` // Current open connections (PostgreSQL)
+	MaxConnections  int     `json:"max_connections,omitempty"`  // Maximum connection pool size (PostgreSQL)
 }

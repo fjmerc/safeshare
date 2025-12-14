@@ -35,6 +35,196 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- **Single Sign-On (SSO/OIDC) Support**: Complete SSO authentication system for enterprise deployments
+  - Support for OIDC providers (Google Workspace, Azure AD, Okta, Auth0, Keycloak, etc.)
+  - SSO provider management in Admin Dashboard with create/edit/delete/test functionality
+  - Automatic user provisioning from SSO (auto-create users on first login)
+  - SSO session management with proper logout flow
+  - Admin can configure multiple SSO providers simultaneously
+  - Security validations prevent SSO auto-provisioning with admin role
+  - Comprehensive test coverage with mock OIDC provider
+  - See `docs/SSO_SETUP.md` for configuration guide and provider-specific examples
+
+- **WebAuthn/FIDO2 Hardware Key Support**: Passwordless authentication using hardware security keys
+  - Support for YubiKey, Windows Hello, Touch ID, and FIDO2-compliant authenticators
+  - Multiple credentials per user (register multiple security keys)
+  - User-friendly credential naming and management in dashboard
+  - Secure context required (HTTPS) with helpful error messages
+  - Compatible with platform authenticators (biometric) and cross-platform authenticators (USB keys)
+  - Fallback to password authentication if WebAuthn fails
+  - Full integration with MFA system (WebAuthn + TOTP)
+
+- **Multi-Factor Authentication (MFA/TOTP)**: Two-factor authentication with authenticator apps
+  - TOTP support compatible with Google Authenticator, Authy, Microsoft Authenticator, etc.
+  - 10 recovery codes for backup access (downloadable and printable)
+  - MFA management UI in user dashboard Security section
+    - View MFA status with enabled/disabled indicator and recovery codes count
+    - Enable MFA with guided setup wizard (QR code, manual key entry, verification)
+    - Recovery codes display with download and copy options (shown once during setup)
+    - Warning indicator when recovery codes are running low (< 3 remaining)
+    - Disable MFA with TOTP code verification for security
+  - Admin can disable MFA for users if needed (emergency access recovery)
+  - MFA login flow with TOTP code verification and recovery code fallback
+  - Session management respects MFA status
+  - Full dark mode support
+  - See `docs/MFA_SETUP.md` for setup guide
+
+- **API Token Enhancements**: Advanced token management features for enterprise use
+  - **Token Rotation**: `/api/tokens/rotate/:id` endpoint for security best practices
+    - Invalidates old token and generates new token with same permissions
+    - Prevents token reuse after rotation
+  - **Token Usage Audit Logging**: Track token usage with timestamp, IP address, and user agent
+    - Comprehensive audit trail for security compliance
+    - Admin can view token usage history in Admin Dashboard
+  - **Token Usage Statistics**: Request counts, last used timestamp, and active status
+    - Helps identify unused tokens for revocation
+  - **Configurable Token Limits**: Per-user token creation limits
+    - Prevents token proliferation and resource exhaustion
+    - Admin can configure global limit via Admin Dashboard
+  - **Bulk Token Operations** (Admin only):
+    - Bulk revoke: Revoke multiple tokens at once
+    - Bulk extend: Extend expiration for multiple tokens (30/60/90/180/365 days)
+    - Simplifies token lifecycle management
+  - **Token Expiration Warning Headers**: `X-Token-Expires-In` response header
+    - Returns seconds until token expiration
+    - Allows clients to proactively rotate tokens before expiration
+  - **Enhanced Admin API Tokens UI**:
+    - Status column showing Active/Revoked state with color-coded badges
+    - Scopes displayed as pills (similar to Webhooks Events styling)
+    - Bulk extend dropdown with predefined durations
+    - Separate Delete functionality (permanent removal vs soft revoke)
+    - Fixed dark mode dropdown styling
+    - Centered table headers and content for better alignment
+  - **Enhanced User API Tokens UI**:
+    - Fixed token rotation CSRF middleware mismatch (no more 403 errors)
+    - Fixed clipboard copy errors in non-HTTPS contexts (graceful fallback)
+    - Improved token display with masked values and full token reveal on creation
+
+- **Automated Backup Scheduler**: Schedule automatic backups with retention policies
+  - Configurable backup frequency (daily, weekly, custom cron expressions)
+  - Retention policies for backup rotation (keep last N backups)
+  - Admin UI for backup schedule management in Admin Dashboard
+  - Background scheduler with cron-based execution
+  - Backup notifications via webhooks (file.backup.created event)
+  - Integration with existing backup system (see `docs/BACKUP_RESTORE.md`)
+
+- **High Availability Support**: Distributed deployment capabilities for production environments
+  - Multi-node deployment support with shared storage backend
+  - Distributed lock management using database-based locking
+  - Session replication across nodes
+  - Supports horizontal scaling for high-concurrency workloads
+  - Compatible with PostgreSQL backend for production HA deployments
+
+- **PostgreSQL Database Backend**: Production-grade database option for high-concurrency deployments
+  - Alternative to SQLite for enterprise environments requiring high availability
+  - Connection pooling support with configurable pool size
+  - All 14 repository interfaces implemented (files, users, sessions, webhooks, etc.)
+  - Configured via environment variables (see `docs/ARCHITECTURE.md` for details):
+    - `DATABASE_TYPE=postgres` to enable PostgreSQL backend
+    - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+    - `POSTGRES_SSLMODE` (disable, require, verify-ca, verify-full)
+    - `POSTGRES_MAX_CONNECTIONS` (default: 25)
+  - Automatic schema migration on startup
+  - Backward compatible: SQLite remains default (zero configuration change for existing deployments)
+  - Comprehensive integration tests with 64.8% coverage (see `scripts/test-postgres.sh`)
+
+- **S3-Compatible Storage Backend**: Object storage support for scalable file storage
+  - AWS S3, MinIO, DigitalOcean Spaces, and S3-compatible services
+  - Configured via environment variables:
+    - `STORAGE_TYPE=s3` to enable S3 backend
+    - `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT` (for MinIO/compatible services)
+    - `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`
+    - `S3_USE_PATH_STYLE` (for MinIO compatibility)
+  - Automatic bucket creation if not exists
+  - Streaming uploads and downloads for efficient memory usage
+  - Encryption support (server-side encryption for S3, client-side for on-prem)
+  - Backward compatible: local filesystem remains default
+
+- **Enterprise Feature Management UI**: Runtime feature toggle system in Admin Dashboard
+  - Enable/disable features without container restart:
+    - Multi-Factor Authentication (MFA)
+    - Single Sign-On (SSO)
+    - Webhooks
+    - API Tokens
+    - Automated Backups
+  - Security validations:
+    - Prevent enabling SSO auto-provisioning with admin role (prevents privilege escalation)
+    - Warn when disabling critical security features
+  - Feature status reflected in Admin Dashboard tabs (hide disabled features)
+  - Database-backed feature flag system (survives restarts)
+  - Comprehensive test coverage for validation logic
+
+- **Backup Download Functionality**: Download backups directly from Admin Dashboard
+  - One-click download button for each backup (green download icon)
+  - Backups served as zip files with proper MIME type
+  - CSRF protection for download endpoint (prevents CSRF attacks)
+  - Admin authentication required
+  - Integration with existing backup system (see `docs/BACKUP_RESTORE.md`)
+
+### Changed
+
+- **Admin Dashboard UI Improvements**: Enhanced enterprise feature management interface
+  - **Enterprise Feature Tabs**: Tabs now dynamically hidden when features disabled
+    - MFA tab hidden when MFA disabled
+    - SSO tab hidden when SSO disabled
+    - API Tokens tab hidden when API tokens disabled
+    - Webhooks tab hidden when webhooks disabled
+    - Backups tab hidden when backups disabled
+  - **Tab Reordering**: Settings tab moved to second-to-last position (before System Info)
+    - Improves navigation flow by grouping feature tabs together
+  - **Improved Checkbox Alignment**: Fixed vertical alignment issues with checkbox-label pairs
+    - Consistent spacing across all settings forms
+  - **Removed "Coming Soon" Items**: PostgreSQL and S3 storage options now configurable via environment variables
+    - No longer show as "Coming Soon" in Settings tab
+    - Documentation updated with configuration instructions
+
+- **API Tokens UI Improvements**: Enhanced user and admin token management interfaces
+  - **Bulk Extend Feature** (Admin only): Extend multiple tokens at once
+    - Dropdown with predefined durations (30/60/90/180/365 days)
+    - Multi-select checkboxes for bulk operations
+    - Confirmation dialog with count of affected tokens
+  - **Status Column**: Visual status badges (Active/Revoked) with color coding
+    - Green badge for active tokens
+    - Red badge for revoked tokens
+  - **Scopes as Pills**: Consistent styling with Webhooks Events display
+    - Color-coded pills for each scope (upload, download, manage, admin)
+  - **Fixed Dark Mode**: Dropdown styling now properly themed in dark mode
+  - **Centered Table Columns**: Improved visual alignment for all columns
+  - **Separate Delete Action**: Permanent deletion distinct from soft revoke
+    - Prevents accidental permanent deletion
+
+### Fixed
+
+- **WebAuthn and MFA Dashboard Issues**: Multiple fixes for security feature UX
+  - **CSRF Token Handling**: Fixed WebAuthn registration CSRF validation
+    - Proper CSRF token passing in registration requests
+  - **Response Format Parsing**: Fixed WebAuthn begin registration response handling
+    - Correctly parses JSON response from `/user/webauthn/register/begin`
+  - **Secure Context Check**: Added helpful error message when HTTPS not available
+    - WebAuthn requires HTTPS (or localhost for testing)
+    - Displays user-friendly error instead of cryptic browser error
+  - **MFA Wizard Modal Width**: Widened modal to fit TOTP secret on one line
+    - Prevents awkward text wrapping in setup wizard
+    - Better QR code visibility on mobile devices
+
+- **Admin Token Management Issues**: Fixed API endpoint mismatches
+  - **404 on Token Revoke**: Fixed endpoint URL mismatch
+    - `/admin/api/tokens/revoke/:id` now properly registered
+    - Previously returned 404 due to route not matching
+  - **Separate Delete Functionality**: Added permanent delete endpoint
+    - `/admin/api/tokens/delete/:id` for permanent removal
+    - Distinct from soft revoke (sets `is_active = 0`)
+
+- **User Dashboard Token Issues**: Fixed CSRF and clipboard errors
+  - **403 on Token Rotation**: Fixed CSRF middleware mismatch
+    - Token rotation now properly validates CSRF tokens
+    - No more 403 Forbidden errors on legitimate rotation requests
+  - **Clipboard Copy Errors**: Fixed clipboard API failures in non-HTTPS contexts
+    - Graceful fallback to legacy `document.execCommand('copy')`
+    - Prevents JavaScript errors when clipboard API unavailable
+
 ## [1.4.1] - 2025-12-02
 
 ### Fixed

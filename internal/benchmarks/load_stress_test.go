@@ -2,6 +2,7 @@ package benchmarks
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -23,11 +23,10 @@ func TestLoad_1000ConcurrentUploads(t *testing.T) {
 		t.Skip("Skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 	cfg.SetMaxFileSize(10 * 1024 * 1024) // 10MB max
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	numUploads := 1000
 	fileContent := bytes.Repeat([]byte("L"), 10*1024) // 10KB files
@@ -81,15 +80,14 @@ func TestLoad_QuotaEnforcementUnderLoad(t *testing.T) {
 		t.Skip("Skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Note: SetQuotaLimitGB() accepts int64 GB values, minimum is 1 GB
 	// To test quota with small files, we need 1GB quota with large number of small files
 	// OR skip this test since quota granularity is 1GB minimum
 	t.Skip("Quota test requires fractional GB which is not supported (minimum quota is 1GB)")
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	numUploads := 600                                 // Attempt more than quota allows
 	fileContent := bytes.Repeat([]byte("Q"), 10*1024) // 10KB files
@@ -146,8 +144,7 @@ func TestLoad_RateLimiterUnderHighLoad(t *testing.T) {
 		t.Skip("Skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Set low rate limit for testing
 	cfg.SetRateLimitUpload(50) // 50 uploads per hour per IP
@@ -155,7 +152,7 @@ func TestLoad_RateLimiterUnderHighLoad(t *testing.T) {
 	rl := middleware.NewRateLimiter(cfg)
 	defer rl.Stop()
 
-	handler := middleware.RateLimitMiddleware(rl)(handlers.UploadHandler(db, cfg))
+	handler := middleware.RateLimitMiddleware(rl)(handlers.UploadHandler(repos, cfg))
 
 	// Simulate 100 uploads from same IP (should hit rate limit)
 	numUploads := 100
@@ -210,8 +207,8 @@ func TestLoad_CleanupWorkerWithManyExpiredFiles(t *testing.T) {
 		t.Skip("Skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create 10,000 expired files
 	numFiles := 10000
@@ -231,7 +228,7 @@ func TestLoad_CleanupWorkerWithManyExpiredFiles(t *testing.T) {
 			ExpiresAt:        expiredTime,
 			UploaderIP:       "127.0.0.1",
 		}
-		database.CreateFile(db, &file)
+		repos.Files.Create(ctx, &file)
 
 		// Create physical file every 100 files to simulate realistic scenario
 		if i%100 == 0 {
@@ -248,7 +245,7 @@ func TestLoad_CleanupWorkerWithManyExpiredFiles(t *testing.T) {
 	t.Log("Running cleanup...")
 	startCleanup := time.Now()
 
-	deleted, err := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
+	deleted, err := repos.Files.DeleteExpired(ctx, cfg.UploadDir, nil)
 	if err != nil {
 		t.Fatalf("DeleteExpiredFiles() error: %v", err)
 	}
@@ -277,8 +274,8 @@ func TestLoad_ConcurrentDownloads(t *testing.T) {
 		t.Skip("Skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create test files for download
 	numFiles := 100
@@ -303,10 +300,10 @@ func TestLoad_ConcurrentDownloads(t *testing.T) {
 			ExpiresAt:        time.Now().Add(24 * time.Hour),
 			UploaderIP:       "127.0.0.1",
 		}
-		database.CreateFile(db, file)
+		repos.Files.Create(ctx, file)
 	}
 
-	handler := handlers.ClaimHandler(db, cfg)
+	handler := handlers.ClaimHandler(repos, cfg)
 
 	// Concurrent downloads (10 downloads per file = 1000 total)
 	downloadsPerFile := 10
@@ -358,7 +355,8 @@ func TestLoad_DatabaseConcurrency(t *testing.T) {
 	// start before create operations finish, causing high failure rates
 	t.Skip("Test has race condition: reads/updates start before creates finish")
 
-	db := testutil.SetupTestDB(t)
+	repos, _ := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Concurrent file creations, reads, and updates
 	numOperations := 1000
@@ -384,7 +382,7 @@ func TestLoad_DatabaseConcurrency(t *testing.T) {
 				UploaderIP:       "127.0.0.1",
 			}
 
-			if err := database.CreateFile(db, &file); err == nil {
+			if err := repos.Files.Create(ctx, &file); err == nil {
 				atomic.AddInt64(&createCount, 1)
 			}
 		}(i)
@@ -397,7 +395,7 @@ func TestLoad_DatabaseConcurrency(t *testing.T) {
 			defer wg.Done()
 
 			claimCode := fmt.Sprintf("db-create-%d", index%100)
-			if _, err := database.GetFileByClaimCode(db, claimCode); err == nil {
+			if _, err := repos.Files.GetByClaimCode(ctx, claimCode); err == nil {
 				atomic.AddInt64(&readCount, 1)
 			}
 		}(i)
@@ -410,8 +408,8 @@ func TestLoad_DatabaseConcurrency(t *testing.T) {
 			defer wg.Done()
 
 			claimCode := fmt.Sprintf("db-create-%d", index%100)
-			if file, err := database.GetFileByClaimCode(db, claimCode); err == nil && file != nil {
-				if err := database.IncrementDownloadCount(db, file.ID); err == nil {
+			if file, err := repos.Files.GetByClaimCode(ctx, claimCode); err == nil && file != nil {
+				if err := repos.Files.IncrementDownloadCount(ctx, file.ID); err == nil {
 					atomic.AddInt64(&updateCount, 1)
 				}
 			}
@@ -442,10 +440,9 @@ func TestStress_MemoryUsageUnderLoad(t *testing.T) {
 		t.Skip("Skipping stress test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Upload 100 files sequentially and track memory
 	numUploads := 100

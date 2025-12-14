@@ -8,6 +8,55 @@ import (
 	"sync"
 )
 
+// PostgreSQLConfig holds PostgreSQL-specific configuration options.
+type PostgreSQLConfig struct {
+	Host           string // PostgreSQL host (default: localhost)
+	Port           int    // PostgreSQL port (default: 5432)
+	User           string // PostgreSQL user
+	Password       string // PostgreSQL password
+	Database       string // PostgreSQL database name
+	SSLMode        string // SSL mode: disable, require, verify-ca, verify-full (default: prefer)
+	MaxConnections int    // Maximum pool connections (default: 25)
+	AutoMigrate    bool   // Automatically run migrations on startup (default: true)
+	Options        string // Additional connection options (e.g., "application_name=safeshare")
+}
+
+// S3Config holds S3-specific configuration options.
+type S3Config struct {
+	Bucket          string // S3 bucket name (required if STORAGE_TYPE=s3)
+	Region          string // AWS region (default: us-east-1)
+	Endpoint        string // Custom S3 endpoint for MinIO or other S3-compatible services
+	AccessKeyID     string // AWS access key ID (or use IAM roles)
+	SecretAccessKey string // AWS secret access key (or use IAM roles)
+	PathStyle       bool   // Use path-style addressing (required for MinIO, default: false)
+	StorageQuota    int64  // Optional storage quota in bytes (0 = unlimited)
+}
+
+// AutoBackupConfig holds automatic backup scheduler configuration.
+type AutoBackupConfig struct {
+	Enabled       bool   // Enable automatic backups (default: false)
+	Schedule      string // Cron expression (default: "0 2 * * *" = 2 AM daily)
+	Mode          string // Backup mode: full, database, config (default: full)
+	RetentionDays int    // Days to keep backups, 0 = unlimited (default: 30)
+}
+
+// APITokenConfig holds API token limit configuration.
+type APITokenConfig struct {
+	MaxTokensPerUser int // Maximum API tokens per user (default: 10)
+	MaxExpiryDays    int // Maximum token expiration in days (default: 365)
+}
+
+// MFAConfig holds Multi-Factor Authentication configuration.
+type MFAConfig struct {
+	Enabled                bool   // Enable MFA feature (default: false)
+	Required               bool   // Require MFA for all users (default: false)
+	Issuer                 string // TOTP issuer name shown in authenticator apps (default: "SafeShare")
+	TOTPEnabled            bool   // Enable TOTP as MFA method (default: true when MFA enabled)
+	WebAuthnEnabled        bool   // Enable WebAuthn as MFA method (default: true when MFA enabled)
+	RecoveryCodesCount     int    // Number of recovery codes to generate (default: 10)
+	ChallengeExpiryMinutes int    // How long MFA challenges are valid (default: 5 minutes)
+}
+
 // Config holds all application configuration with thread-safe access
 type Config struct {
 	mu sync.RWMutex // Protects mutable fields
@@ -15,6 +64,14 @@ type Config struct {
 	// Immutable fields (set at startup only)
 	Port                     string
 	DBPath                   string
+	DatabaseType             string            // "sqlite" or "postgresql" (default: sqlite)
+	PostgreSQL               *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
+	StorageType              string            // "filesystem" or "s3" (default: filesystem)
+	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
+	AutoBackup               *AutoBackupConfig // Automatic backup configuration
+	APIToken                 *APITokenConfig   // API token limit configuration
+	MFA                      *MFAConfig        // MFA configuration
+	SSO                      *SSOConfig        // SSO/OIDC configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -36,6 +93,9 @@ type Config struct {
 	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
 
+	// Feature flags (enterprise features - can be updated at runtime)
+	Features *FeatureFlags
+
 	// Mutable fields (can be updated at runtime via admin dashboard)
 	maxFileSize            int64
 	defaultExpirationHours int
@@ -56,6 +116,8 @@ func Load() (*Config, error) {
 		// Immutable fields
 		Port:                     getEnv("PORT", "8080"),
 		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
+		DatabaseType:             getEnv("DATABASE_TYPE", "sqlite"),
+		StorageType:              getEnv("STORAGE_TYPE", "filesystem"),
 		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
 		BackupDir:                getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
 		DataDir:                  getEnv("DATA_DIR", "./data"),
@@ -77,6 +139,27 @@ func Load() (*Config, error) {
 		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
 
+		// Feature flags (enterprise features - all default to false)
+		Features: loadFeatureFlags(),
+
+		// PostgreSQL configuration (loaded if DATABASE_TYPE=postgresql)
+		PostgreSQL: nil, // Will be populated below if needed
+
+		// S3 configuration (loaded if STORAGE_TYPE=s3)
+		S3: nil, // Will be populated below if needed
+
+		// Automatic backup configuration (loaded if AUTO_BACKUP_ENABLED=true)
+		AutoBackup: loadAutoBackupConfig(),
+
+		// API token limit configuration
+		APIToken: loadAPITokenConfig(),
+
+		// MFA configuration
+		MFA: loadMFAConfig(),
+
+		// SSO configuration
+		SSO: loadSSOConfig(),
+
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
 		defaultExpirationHours: getEnvInt("DEFAULT_EXPIRATION_HOURS", 24),
@@ -86,6 +169,16 @@ func Load() (*Config, error) {
 		rateLimitDownload:      getEnvInt("RATE_LIMIT_DOWNLOAD", 50), // 50 downloads per hour per IP
 		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),     // 0 = unlimited (default)
 		adminPassword:          getEnv("ADMIN_PASSWORD", ""),         // Required for admin access
+	}
+
+	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
+	if cfg.DatabaseType == "postgresql" {
+		cfg.PostgreSQL = loadPostgreSQLConfig()
+	}
+
+	// Load S3 configuration if STORAGE_TYPE=s3
+	if cfg.StorageType == "s3" {
+		cfg.S3 = loadS3Config()
 	}
 
 	// Validate configuration
@@ -266,9 +359,120 @@ func (c *Config) SetAdminPassword(password string) error {
 	return nil
 }
 
+// MFA Config Setters - allow runtime updates to MFA configuration
+
+// SetMFAEnabled enables or disables the MFA feature.
+func (c *Config) SetMFAEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA == nil {
+		c.MFA = &MFAConfig{
+			Issuer:                 "SafeShare",
+			TOTPEnabled:            true,
+			WebAuthnEnabled:        true,
+			RecoveryCodesCount:     10,
+			ChallengeExpiryMinutes: 5,
+		}
+	}
+	c.MFA.Enabled = enabled
+}
+
+// SetMFARequired sets whether MFA is required for all users.
+func (c *Config) SetMFARequired(required bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.Required = required
+	}
+}
+
+// SetMFAIssuer sets the TOTP issuer name.
+func (c *Config) SetMFAIssuer(issuer string) error {
+	if len(issuer) == 0 || len(issuer) > 64 {
+		return fmt.Errorf("MFA issuer must be between 1 and 64 characters")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.Issuer = issuer
+	}
+	return nil
+}
+
+// SetMFATOTPEnabled enables or disables TOTP as an MFA method.
+func (c *Config) SetMFATOTPEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.TOTPEnabled = enabled
+	}
+}
+
+// SetMFAWebAuthnEnabled enables or disables WebAuthn as an MFA method.
+func (c *Config) SetMFAWebAuthnEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.WebAuthnEnabled = enabled
+	}
+}
+
+// SetMFARecoveryCodesCount sets the number of recovery codes to generate.
+func (c *Config) SetMFARecoveryCodesCount(count int) error {
+	if count < 5 || count > 20 {
+		return fmt.Errorf("recovery codes count must be between 5 and 20")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.RecoveryCodesCount = count
+	}
+	return nil
+}
+
+// SetMFAChallengeExpiryMinutes sets how long MFA challenges are valid.
+func (c *Config) SetMFAChallengeExpiryMinutes(minutes int) error {
+	if minutes < 1 || minutes > 30 {
+		return fmt.Errorf("challenge expiry must be between 1 and 30 minutes")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.MFA != nil {
+		c.MFA.ChallengeExpiryMinutes = minutes
+	}
+	return nil
+}
+
+// GetMFAConfig returns a copy of the current MFA configuration.
+func (c *Config) GetMFAConfig() *MFAConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.MFA == nil {
+		return nil
+	}
+	// Return a copy
+	return &MFAConfig{
+		Enabled:                c.MFA.Enabled,
+		Required:               c.MFA.Required,
+		Issuer:                 c.MFA.Issuer,
+		TOTPEnabled:            c.MFA.TOTPEnabled,
+		WebAuthnEnabled:        c.MFA.WebAuthnEnabled,
+		RecoveryCodesCount:     c.MFA.RecoveryCodesCount,
+		ChallengeExpiryMinutes: c.MFA.ChallengeExpiryMinutes,
+	}
+}
+
 // validate ensures configuration values are sensible
 func (c *Config) validate() error {
 	if err := c.validatePaths(); err != nil {
+		return err
+	}
+
+	if err := c.validateDatabaseSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateStorageTypeSettings(); err != nil {
 		return err
 	}
 
@@ -290,6 +494,56 @@ func (c *Config) validate() error {
 
 	if err := c.validateProxySettings(); err != nil {
 		return err
+	}
+
+	if err := c.validateAutoBackupSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateAPITokenSettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateMFASettings(); err != nil {
+		return err
+	}
+
+	if err := c.validateSSOSettings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMFASettings validates MFA configuration
+func (c *Config) validateMFASettings() error {
+	if c.MFA == nil {
+		return nil // MFA config is optional (will use defaults)
+	}
+
+	// If MFA is not enabled, skip further validation
+	if !c.MFA.Enabled {
+		return nil
+	}
+
+	// Validate issuer name length
+	if len(c.MFA.Issuer) == 0 || len(c.MFA.Issuer) > 64 {
+		return fmt.Errorf("MFA_ISSUER must be between 1 and 64 characters, got %d", len(c.MFA.Issuer))
+	}
+
+	// Validate recovery codes count (reasonable bounds: 5-20)
+	if c.MFA.RecoveryCodesCount < 5 || c.MFA.RecoveryCodesCount > 20 {
+		return fmt.Errorf("MFA_RECOVERY_CODES_COUNT must be between 5 and 20, got %d", c.MFA.RecoveryCodesCount)
+	}
+
+	// Validate challenge expiry (reasonable bounds: 1-30 minutes)
+	if c.MFA.ChallengeExpiryMinutes < 1 || c.MFA.ChallengeExpiryMinutes > 30 {
+		return fmt.Errorf("MFA_CHALLENGE_EXPIRY_MINUTES must be between 1 and 30, got %d", c.MFA.ChallengeExpiryMinutes)
+	}
+
+	// At least one MFA method must be enabled
+	if !c.MFA.TOTPEnabled && !c.MFA.WebAuthnEnabled {
+		return fmt.Errorf("at least one MFA method must be enabled (MFA_TOTP_ENABLED or MFA_WEBAUTHN_ENABLED)")
 	}
 
 	return nil
@@ -414,6 +668,226 @@ func (c *Config) validateProxySettings() error {
 	}
 
 	return nil
+}
+
+// validateAutoBackupSettings validates automatic backup configuration
+func (c *Config) validateAutoBackupSettings() error {
+	if c.AutoBackup == nil {
+		return nil // AutoBackup is optional
+	}
+
+	// If not enabled, skip further validation
+	if !c.AutoBackup.Enabled {
+		return nil
+	}
+
+	// Validate schedule is not empty
+	if c.AutoBackup.Schedule == "" {
+		return fmt.Errorf("AUTO_BACKUP_SCHEDULE cannot be empty when AUTO_BACKUP_ENABLED=true")
+	}
+
+	// Validate backup mode
+	validModes := map[string]bool{"full": true, "database": true, "config": true}
+	if !validModes[c.AutoBackup.Mode] {
+		return fmt.Errorf("AUTO_BACKUP_MODE must be 'full', 'database', or 'config', got '%s'", c.AutoBackup.Mode)
+	}
+
+	// Validate retention days (0 = unlimited, positive = number of days)
+	if c.AutoBackup.RetentionDays < 0 {
+		return fmt.Errorf("AUTO_BACKUP_RETENTION_DAYS must be 0 (unlimited) or positive, got %d", c.AutoBackup.RetentionDays)
+	}
+
+	return nil
+}
+
+// validateAPITokenSettings validates API token limit configuration
+func (c *Config) validateAPITokenSettings() error {
+	if c.APIToken == nil {
+		return nil // APIToken config is optional (will use defaults)
+	}
+
+	// Validate max tokens per user (reasonable bounds: 1-1000)
+	if c.APIToken.MaxTokensPerUser < 1 || c.APIToken.MaxTokensPerUser > 1000 {
+		return fmt.Errorf("MAX_API_TOKENS_PER_USER must be between 1 and 1000, got %d", c.APIToken.MaxTokensPerUser)
+	}
+
+	// Validate max expiry days (reasonable bounds: 1-3650, about 10 years)
+	if c.APIToken.MaxExpiryDays < 1 || c.APIToken.MaxExpiryDays > 3650 {
+		return fmt.Errorf("MAX_API_TOKEN_EXPIRY_DAYS must be between 1 and 3650, got %d", c.APIToken.MaxExpiryDays)
+	}
+
+	return nil
+}
+
+// validateDatabaseSettings validates database type and PostgreSQL configuration
+func (c *Config) validateDatabaseSettings() error {
+	// Validate database type
+	validDBTypes := map[string]bool{"sqlite": true, "postgresql": true}
+	if !validDBTypes[c.DatabaseType] {
+		return fmt.Errorf("DATABASE_TYPE must be 'sqlite' or 'postgresql', got '%s'", c.DatabaseType)
+	}
+
+	// If PostgreSQL is selected, validate its configuration
+	if c.DatabaseType == "postgresql" {
+		if c.PostgreSQL == nil {
+			return fmt.Errorf("PostgreSQL configuration is required when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Host == "" {
+			return fmt.Errorf("PG_HOST cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Port <= 0 || c.PostgreSQL.Port > 65535 {
+			return fmt.Errorf("PG_PORT must be between 1 and 65535, got %d", c.PostgreSQL.Port)
+		}
+
+		if c.PostgreSQL.User == "" {
+			return fmt.Errorf("PG_USER cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		if c.PostgreSQL.Database == "" {
+			return fmt.Errorf("PG_DATABASE cannot be empty when DATABASE_TYPE=postgresql")
+		}
+
+		// Validate SSL mode
+		validSSLModes := map[string]bool{
+			"disable": true, "allow": true, "prefer": true,
+			"require": true, "verify-ca": true, "verify-full": true,
+		}
+		if c.PostgreSQL.SSLMode != "" && !validSSLModes[c.PostgreSQL.SSLMode] {
+			return fmt.Errorf("PG_SSL_MODE must be one of: disable, allow, prefer, require, verify-ca, verify-full")
+		}
+
+		// Validate max connections
+		if c.PostgreSQL.MaxConnections < 1 || c.PostgreSQL.MaxConnections > 1000 {
+			return fmt.Errorf("PG_MAX_CONNECTIONS must be between 1 and 1000, got %d", c.PostgreSQL.MaxConnections)
+		}
+	}
+
+	return nil
+}
+
+// validateStorageTypeSettings validates storage type and S3 configuration
+func (c *Config) validateStorageTypeSettings() error {
+	// Validate storage type
+	validStorageTypes := map[string]bool{"filesystem": true, "s3": true}
+	if !validStorageTypes[c.StorageType] {
+		return fmt.Errorf("STORAGE_TYPE must be 'filesystem' or 's3', got '%s'", c.StorageType)
+	}
+
+	// If S3 is selected, validate its configuration
+	if c.StorageType == "s3" {
+		if c.S3 == nil {
+			return fmt.Errorf("S3 configuration is required when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.Bucket == "" {
+			return fmt.Errorf("S3_BUCKET cannot be empty when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.Region == "" {
+			return fmt.Errorf("S3_REGION cannot be empty when STORAGE_TYPE=s3")
+		}
+
+		if c.S3.StorageQuota < 0 {
+			return fmt.Errorf("S3_STORAGE_QUOTA must be 0 (unlimited) or positive, got %d", c.S3.StorageQuota)
+		}
+	}
+
+	return nil
+}
+
+// loadS3Config loads S3 configuration from environment variables.
+// Environment variables:
+//   - S3_BUCKET: S3 bucket name (required)
+//   - S3_REGION: AWS region (default: us-east-1)
+//   - S3_ENDPOINT: Custom S3 endpoint for MinIO (optional)
+//   - S3_ACCESS_KEY_ID: AWS access key ID (optional, use IAM roles if not set)
+//   - S3_SECRET_ACCESS_KEY: AWS secret access key (optional)
+//   - S3_PATH_STYLE: Use path-style addressing (default: false, set true for MinIO)
+//   - S3_STORAGE_QUOTA: Storage quota in bytes (default: 0 = unlimited)
+func loadS3Config() *S3Config {
+	return &S3Config{
+		Bucket:          getEnv("S3_BUCKET", ""),
+		Region:          getEnv("S3_REGION", "us-east-1"),
+		Endpoint:        getEnv("S3_ENDPOINT", ""),
+		AccessKeyID:     getEnv("S3_ACCESS_KEY_ID", ""),
+		SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
+		PathStyle:       getEnvBool("S3_PATH_STYLE", false),
+		StorageQuota:    getEnvInt64("S3_STORAGE_QUOTA", 0),
+	}
+}
+
+// loadAutoBackupConfig loads automatic backup configuration from environment variables.
+// Environment variables:
+//   - AUTO_BACKUP_ENABLED: Enable automatic backups (default: false)
+//   - AUTO_BACKUP_SCHEDULE: Cron expression (default: "0 2 * * *" = 2 AM daily)
+//   - AUTO_BACKUP_MODE: Backup mode - full, database, config (default: full)
+//   - AUTO_BACKUP_RETENTION_DAYS: Days to keep backups, 0 = unlimited (default: 30)
+func loadAutoBackupConfig() *AutoBackupConfig {
+	return &AutoBackupConfig{
+		Enabled:       getEnvBool("AUTO_BACKUP_ENABLED", false),
+		Schedule:      getEnv("AUTO_BACKUP_SCHEDULE", "0 2 * * *"),
+		Mode:          getEnv("AUTO_BACKUP_MODE", "full"),
+		RetentionDays: getEnvInt("AUTO_BACKUP_RETENTION_DAYS", 30),
+	}
+}
+
+// loadAPITokenConfig loads API token limit configuration from environment variables.
+// Environment variables:
+//   - MAX_API_TOKENS_PER_USER: Maximum tokens per user (default: 10)
+//   - MAX_API_TOKEN_EXPIRY_DAYS: Maximum token expiration in days (default: 365)
+func loadAPITokenConfig() *APITokenConfig {
+	return &APITokenConfig{
+		MaxTokensPerUser: getEnvInt("MAX_API_TOKENS_PER_USER", 10),
+		MaxExpiryDays:    getEnvInt("MAX_API_TOKEN_EXPIRY_DAYS", 365),
+	}
+}
+
+// loadMFAConfig loads MFA configuration from environment variables.
+// Environment variables:
+//   - MFA_ENABLED: Enable MFA feature (default: false)
+//   - MFA_REQUIRED: Require MFA for all users (default: false)
+//   - MFA_ISSUER: TOTP issuer name shown in authenticator apps (default: "SafeShare")
+//   - MFA_TOTP_ENABLED: Enable TOTP as MFA method (default: true)
+//   - MFA_WEBAUTHN_ENABLED: Enable WebAuthn as MFA method (default: true)
+//   - MFA_RECOVERY_CODES_COUNT: Number of recovery codes to generate (default: 10)
+//   - MFA_CHALLENGE_EXPIRY_MINUTES: How long MFA challenges are valid (default: 5)
+func loadMFAConfig() *MFAConfig {
+	return &MFAConfig{
+		Enabled:                getEnvBool("MFA_ENABLED", false),
+		Required:               getEnvBool("MFA_REQUIRED", false),
+		Issuer:                 getEnv("MFA_ISSUER", "SafeShare"),
+		TOTPEnabled:            getEnvBool("MFA_TOTP_ENABLED", true),
+		WebAuthnEnabled:        getEnvBool("MFA_WEBAUTHN_ENABLED", true),
+		RecoveryCodesCount:     getEnvInt("MFA_RECOVERY_CODES_COUNT", 10),
+		ChallengeExpiryMinutes: getEnvInt("MFA_CHALLENGE_EXPIRY_MINUTES", 5),
+	}
+}
+
+// loadPostgreSQLConfig loads PostgreSQL configuration from environment variables.
+// Environment variables:
+//   - PG_HOST: PostgreSQL host (default: localhost)
+//   - PG_PORT: PostgreSQL port (default: 5432)
+//   - PG_USER: PostgreSQL user (required)
+//   - PG_PASSWORD: PostgreSQL password (default: empty)
+//   - PG_DATABASE: PostgreSQL database name (required)
+//   - PG_SSL_MODE: SSL mode (default: prefer)
+//   - PG_MAX_CONNECTIONS: Maximum pool connections (default: 25)
+//   - PG_AUTO_MIGRATE: Auto-run migrations on startup (default: true)
+//   - PG_OPTIONS: Additional connection options (default: empty)
+func loadPostgreSQLConfig() *PostgreSQLConfig {
+	return &PostgreSQLConfig{
+		Host:           getEnv("PG_HOST", "localhost"),
+		Port:           getEnvInt("PG_PORT", 5432),
+		User:           getEnv("PG_USER", ""),
+		Password:       getEnv("PG_PASSWORD", ""),
+		Database:       getEnv("PG_DATABASE", ""),
+		SSLMode:        getEnv("PG_SSL_MODE", "prefer"),
+		MaxConnections: getEnvInt("PG_MAX_CONNECTIONS", 25),
+		AutoMigrate:    getEnvBool("PG_AUTO_MIGRATE", true),
+		Options:        getEnv("PG_OPTIONS", ""),
+	}
 }
 
 // getEnv retrieves an environment variable or returns a default value

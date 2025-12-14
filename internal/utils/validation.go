@@ -7,11 +7,13 @@ import (
 	"strings"
 )
 
-// claimCodePattern matches valid claim codes: 8-32 alphanumeric characters
-var claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9]{8,32}$`)
+// claimCodePattern matches valid claim codes: 8-32 characters using URL-safe base64 alphabet.
+// The pattern includes alphanumeric characters plus hyphen (-) and underscore (_) which are
+// the additional characters used in base64url encoding (RFC 4648).
+var claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,32}$`)
 
 // ValidateClaimCode validates that a claim code has a valid format.
-// Claim codes must be 8-32 alphanumeric characters (a-z, A-Z, 0-9).
+// Claim codes must be 8-32 characters using URL-safe base64 alphabet (a-z, A-Z, 0-9, -, _).
 // This validation provides defense-in-depth to prevent log injection,
 // DoS via extremely long inputs, and ensures consistent behavior across clients.
 func ValidateClaimCode(claimCode string) error {
@@ -19,7 +21,7 @@ func ValidateClaimCode(claimCode string) error {
 		return fmt.Errorf("claim code cannot be empty")
 	}
 	if !claimCodePattern.MatchString(claimCode) {
-		return fmt.Errorf("claim code must be 8-32 alphanumeric characters")
+		return fmt.Errorf("claim code must be 8-32 characters (letters, numbers, hyphens, underscores)")
 	}
 	return nil
 }

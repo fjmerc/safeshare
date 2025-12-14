@@ -2,14 +2,15 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -17,7 +18,13 @@ import (
 // TestAdminCreateUserHandler_Success tests successful user creation
 func TestAdminCreateUserHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminCreateUserHandler(repos)
 
 	createReq := models.CreateUserRequest{
 		Username: "newuser",
@@ -52,7 +59,7 @@ func TestAdminCreateUserHandler_Success(t *testing.T) {
 	}
 
 	// Verify user exists in database
-	user, err := database.GetUserByUsername(db, "newuser")
+	user, err := repos.Users.GetByUsername(ctx, "newuser")
 	if err != nil {
 		t.Fatalf("failed to get user: %v", err)
 	}
@@ -64,7 +71,12 @@ func TestAdminCreateUserHandler_Success(t *testing.T) {
 // TestAdminCreateUserHandler_AutoGeneratePassword tests password auto-generation
 func TestAdminCreateUserHandler_AutoGeneratePassword(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminCreateUserHandler(repos)
 
 	createReq := models.CreateUserRequest{
 		Username: "autopassuser",
@@ -97,7 +109,12 @@ func TestAdminCreateUserHandler_AutoGeneratePassword(t *testing.T) {
 // TestAdminCreateUserHandler_ValidationErrors tests input validation
 func TestAdminCreateUserHandler_ValidationErrors(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminCreateUserHandler(repos)
 
 	tests := []struct {
 		name       string
@@ -174,11 +191,17 @@ func TestAdminCreateUserHandler_ValidationErrors(t *testing.T) {
 // TestAdminCreateUserHandler_DuplicateEmail tests duplicate email handling
 func TestAdminCreateUserHandler_DuplicateEmail(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminCreateUserHandler(repos)
 
 	// Create first user
 	passwordHash, _ := utils.HashPassword("password123")
-	_, _ = database.CreateUser(db, "user1", "duplicate@example.com", passwordHash, "user", false)
+	_, _ = repos.Users.Create(ctx, "user1", "duplicate@example.com", passwordHash, "user", false)
 
 	// Try to create user with same email
 	createReq := models.CreateUserRequest{
@@ -200,7 +223,12 @@ func TestAdminCreateUserHandler_DuplicateEmail(t *testing.T) {
 // TestAdminCreateUserHandler_InvalidJSON tests malformed request handling
 func TestAdminCreateUserHandler_InvalidJSON(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminCreateUserHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/create", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -214,7 +242,12 @@ func TestAdminCreateUserHandler_InvalidJSON(t *testing.T) {
 // TestAdminCreateUserHandler_MethodNotAllowed tests HTTP method validation
 func TestAdminCreateUserHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminCreateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminCreateUserHandler(repos)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -233,14 +266,20 @@ func TestAdminCreateUserHandler_MethodNotAllowed(t *testing.T) {
 // TestAdminListUsersHandler_Success tests user listing with pagination
 func TestAdminListUsersHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminListUsersHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminListUsersHandler(repos)
 
 	// Create test users
 	passwordHash, _ := utils.HashPassword("password123")
 	for i := 0; i < 5; i++ {
 		username := fmt.Sprintf("user%d", i)
 		email := fmt.Sprintf("user%d@example.com", i)
-		_, _ = database.CreateUser(db, username, email, passwordHash, "user", false)
+		_, _ = repos.Users.Create(ctx, username, email, passwordHash, "user", false)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/users?limit=10&offset=0", nil)
@@ -270,14 +309,20 @@ func TestAdminListUsersHandler_Success(t *testing.T) {
 // TestAdminListUsersHandler_Pagination tests pagination parameters
 func TestAdminListUsersHandler_Pagination(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminListUsersHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminListUsersHandler(repos)
 
 	// Create 25 test users
 	passwordHash, _ := utils.HashPassword("password123")
 	for i := 0; i < 25; i++ {
 		username := fmt.Sprintf("user%d", i)
 		email := fmt.Sprintf("user%d@example.com", i)
-		_, _ = database.CreateUser(db, username, email, passwordHash, "user", false)
+		_, _ = repos.Users.Create(ctx, username, email, passwordHash, "user", false)
 	}
 
 	tests := []struct {
@@ -337,7 +382,12 @@ func TestAdminListUsersHandler_Pagination(t *testing.T) {
 // TestAdminListUsersHandler_MethodNotAllowed tests HTTP method validation
 func TestAdminListUsersHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminListUsersHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminListUsersHandler(repos)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 
@@ -356,11 +406,17 @@ func TestAdminListUsersHandler_MethodNotAllowed(t *testing.T) {
 // TestAdminUpdateUserHandler_Success tests successful user update
 func TestAdminUpdateUserHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminUpdateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminUpdateUserHandler(repos)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "oldusername", "old@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "oldusername", "old@example.com", passwordHash, "user", false)
 
 	// Update user
 	updateReq := models.UpdateUserRequest{
@@ -380,7 +436,7 @@ func TestAdminUpdateUserHandler_Success(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Verify update
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if updatedUser.Username != "newusername" {
 		t.Errorf("username = %q, want newusername", updatedUser.Username)
 	}
@@ -395,11 +451,17 @@ func TestAdminUpdateUserHandler_Success(t *testing.T) {
 // TestAdminUpdateUserHandler_PartialUpdate tests partial field updates
 func TestAdminUpdateUserHandler_PartialUpdate(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminUpdateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminUpdateUserHandler(repos)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 
 	// Update only email
 	updateReq := models.UpdateUserRequest{
@@ -417,7 +479,7 @@ func TestAdminUpdateUserHandler_PartialUpdate(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Verify other fields unchanged
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if updatedUser.Username != "testuser" {
 		t.Errorf("username changed unexpectedly to %q", updatedUser.Username)
 	}
@@ -432,11 +494,17 @@ func TestAdminUpdateUserHandler_PartialUpdate(t *testing.T) {
 // TestAdminUpdateUserHandler_ConflictUsername tests username conflict handling
 func TestAdminUpdateUserHandler_ConflictUsername(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminUpdateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminUpdateUserHandler(repos)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
-	_, _ = database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+	user1, _ := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
+	_, _ = repos.Users.Create(ctx, "user2", "user2@example.com", passwordHash, "user", false)
 
 	// Try to update user1 to have user2's username
 	updateReq := models.UpdateUserRequest{
@@ -458,7 +526,12 @@ func TestAdminUpdateUserHandler_ConflictUsername(t *testing.T) {
 // TestAdminUpdateUserHandler_UserNotFound tests non-existent user
 func TestAdminUpdateUserHandler_UserNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminUpdateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminUpdateUserHandler(repos)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "newname",
@@ -477,7 +550,12 @@ func TestAdminUpdateUserHandler_UserNotFound(t *testing.T) {
 // TestAdminUpdateUserHandler_InvalidUserID tests invalid user ID handling
 func TestAdminUpdateUserHandler_InvalidUserID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminUpdateUserHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminUpdateUserHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/users/invalid", nil)
 	rr := httptest.NewRecorder()
@@ -490,14 +568,20 @@ func TestAdminUpdateUserHandler_InvalidUserID(t *testing.T) {
 // TestAdminToggleUserActiveHandler_EnableSuccess tests enabling a disabled user
 func TestAdminToggleUserActiveHandler_EnableSuccess(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminToggleUserActiveHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminToggleUserActiveHandler(repos)
 
 	// Create inactive user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "inactiveuser", "inactive@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "inactiveuser", "inactive@example.com", passwordHash, "user", false)
 
 	// Disable user first
-	database.SetUserActive(db, user.ID, false)
+	repos.Users.SetActive(ctx, user.ID, false)
 
 	// Enable user
 	url := fmt.Sprintf("/admin/api/users/%d/enable", user.ID)
@@ -509,7 +593,7 @@ func TestAdminToggleUserActiveHandler_EnableSuccess(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Verify user is enabled
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if !updatedUser.IsActive {
 		t.Error("user should be active after enable")
 	}
@@ -518,11 +602,17 @@ func TestAdminToggleUserActiveHandler_EnableSuccess(t *testing.T) {
 // TestAdminToggleUserActiveHandler_DisableSuccess tests disabling an active user
 func TestAdminToggleUserActiveHandler_DisableSuccess(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminToggleUserActiveHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminToggleUserActiveHandler(repos)
 
 	// Create active user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "activeuser", "active@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "activeuser", "active@example.com", passwordHash, "user", false)
 
 	// Disable user
 	url := fmt.Sprintf("/admin/api/users/%d/disable", user.ID)
@@ -534,7 +624,7 @@ func TestAdminToggleUserActiveHandler_DisableSuccess(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Verify user is disabled
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if updatedUser.IsActive {
 		t.Error("user should be inactive after disable")
 	}
@@ -543,7 +633,12 @@ func TestAdminToggleUserActiveHandler_DisableSuccess(t *testing.T) {
 // TestAdminToggleUserActiveHandler_UserNotFound tests toggling non-existent user
 func TestAdminToggleUserActiveHandler_UserNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminToggleUserActiveHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminToggleUserActiveHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/99999/enable", nil)
 	rr := httptest.NewRecorder()
@@ -556,7 +651,12 @@ func TestAdminToggleUserActiveHandler_UserNotFound(t *testing.T) {
 // TestAdminToggleUserActiveHandler_InvalidUserID tests invalid user ID
 func TestAdminToggleUserActiveHandler_InvalidUserID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminToggleUserActiveHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminToggleUserActiveHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/invalid/enable", nil)
 	rr := httptest.NewRecorder()
@@ -569,7 +669,12 @@ func TestAdminToggleUserActiveHandler_InvalidUserID(t *testing.T) {
 // TestAdminToggleUserActiveHandler_MethodNotAllowed tests HTTP method validation
 func TestAdminToggleUserActiveHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminToggleUserActiveHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminToggleUserActiveHandler(repos)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -588,11 +693,17 @@ func TestAdminToggleUserActiveHandler_MethodNotAllowed(t *testing.T) {
 // TestAdminResetUserPasswordHandler_Success tests password reset
 func TestAdminResetUserPasswordHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminResetUserPasswordHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminResetUserPasswordHandler(repos)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("oldpassword")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
 
 	// Reset password
 	url := fmt.Sprintf("/admin/api/users/%d/reset-password", user.ID)
@@ -619,7 +730,7 @@ func TestAdminResetUserPasswordHandler_Success(t *testing.T) {
 	}
 
 	// Verify old password no longer works
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if utils.VerifyPassword(updatedUser.PasswordHash, "oldpassword") {
 		t.Error("old password should not work")
 	}
@@ -633,7 +744,12 @@ func TestAdminResetUserPasswordHandler_Success(t *testing.T) {
 // TestAdminResetUserPasswordHandler_UserNotFound tests non-existent user
 func TestAdminResetUserPasswordHandler_UserNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminResetUserPasswordHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminResetUserPasswordHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/99999/reset-password", nil)
 	rr := httptest.NewRecorder()
@@ -646,7 +762,12 @@ func TestAdminResetUserPasswordHandler_UserNotFound(t *testing.T) {
 // TestAdminResetUserPasswordHandler_InvalidUserID tests invalid user ID
 func TestAdminResetUserPasswordHandler_InvalidUserID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminResetUserPasswordHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminResetUserPasswordHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/invalid/reset-password", nil)
 	rr := httptest.NewRecorder()
@@ -659,7 +780,12 @@ func TestAdminResetUserPasswordHandler_InvalidUserID(t *testing.T) {
 // TestAdminResetUserPasswordHandler_MethodNotAllowed tests HTTP method validation
 func TestAdminResetUserPasswordHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
-	handler := AdminResetUserPasswordHandler(db)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminResetUserPasswordHandler(repos)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -679,11 +805,16 @@ func TestAdminResetUserPasswordHandler_MethodNotAllowed(t *testing.T) {
 func TestAdminDeleteUserHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminDeleteUserHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "deleteuser", "delete@example.com", passwordHash, "user", false)
+	user, _ := repos.Users.Create(ctx, "deleteuser", "delete@example.com", passwordHash, "user", false)
 
 	// Delete user
 	url := fmt.Sprintf("/admin/api/users/%d", user.ID)
@@ -702,7 +833,7 @@ func TestAdminDeleteUserHandler_Success(t *testing.T) {
 	}
 
 	// Verify user no longer exists
-	deletedUser, _ := database.GetUserByID(db, user.ID)
+	deletedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if deletedUser != nil {
 		t.Error("user should be deleted")
 	}
@@ -712,7 +843,11 @@ func TestAdminDeleteUserHandler_Success(t *testing.T) {
 func TestAdminDeleteUserHandler_UserNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminDeleteUserHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/99999", nil)
 	rr := httptest.NewRecorder()
@@ -726,7 +861,11 @@ func TestAdminDeleteUserHandler_UserNotFound(t *testing.T) {
 func TestAdminDeleteUserHandler_InvalidUserID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminDeleteUserHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/invalid", nil)
 	rr := httptest.NewRecorder()
@@ -740,7 +879,11 @@ func TestAdminDeleteUserHandler_InvalidUserID(t *testing.T) {
 func TestAdminDeleteUserHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminDeleteUserHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut}
 

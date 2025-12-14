@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,18 +13,20 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UserDashboardDataHandler returns dashboard data for the logged-in user
-func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserDashboardDataHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context (set by middleware)
 		user := middleware.GetUserFromContext(r)
@@ -52,8 +54,8 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-		// Get user's files
-		files, total, err := database.GetFilesByUserID(db, user.ID, limit, offset)
+		// Get user's files from repository
+		files, total, err := repos.Users.GetFiles(ctx, user.ID, limit, offset)
 		if err != nil {
 			slog.Error("failed to get user files", "error", err, "user_id", user.ID)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -109,12 +111,14 @@ func UserDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserDeleteFileHandler allows users to delete their own files
-func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -148,8 +152,8 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Delete file (this will fail if file doesn't belong to user)
-		file, err := database.DeleteFileByIDAndUserID(db, req.FileID, user.ID)
+		// Delete file from repository (this will fail if file doesn't belong to user)
+		file, err := repos.Users.DeleteFile(ctx, req.FileID, user.ID)
 		if err != nil {
 			slog.Warn("user file deletion failed",
 				"user_id", user.ID,
@@ -211,12 +215,14 @@ func UserDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserRenameFileHandler allows users to rename their own files
-func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserRenameFileHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -272,8 +278,8 @@ func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Update filename in database
-		err := database.UpdateFileNameByIDAndUserID(db, req.FileID, user.ID, sanitizedFilename)
+		// Update filename in repository
+		err := repos.Users.UpdateFileName(ctx, req.FileID, user.ID, sanitizedFilename)
 		if err != nil {
 			slog.Warn("user file rename failed",
 				"user_id", user.ID,
@@ -305,12 +311,14 @@ func UserRenameFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UserEditExpirationHandler allows users to edit the expiration date of their own files
-func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserEditExpirationHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -394,8 +402,8 @@ func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			}
 		}
 
-		// Update expiration in database
-		err = database.UpdateFileExpirationByIDAndUserID(db, req.FileID, user.ID, newExpiration)
+		// Update expiration in repository
+		err = repos.Users.UpdateFileExpiration(ctx, req.FileID, user.ID, newExpiration)
 		if err != nil {
 			slog.Warn("user file expiration update failed",
 				"user_id", user.ID,
@@ -427,12 +435,14 @@ func UserEditExpirationHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 
 // UserDeleteFileByClaimCodeHandler allows users to delete their own files by claim code
 // SDK endpoint: DELETE /api/user/files/{claimCode}
-func UserDeleteFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -453,8 +463,8 @@ func UserDeleteFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handl
 			return
 		}
 
-		// Delete file (this will fail if file doesn't belong to user)
-		file, err := database.DeleteFileByClaimCodeAndUserID(db, claimCode, user.ID)
+		// Delete file from repository (this will fail if file doesn't belong to user)
+		file, err := repos.Users.DeleteFileByClaimCode(ctx, claimCode, user.ID)
 		if err != nil {
 			slog.Warn("user file deletion by claim code failed",
 				"user_id", user.ID,
@@ -512,12 +522,14 @@ func UserDeleteFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handl
 
 // UserRenameFileByClaimCodeHandler allows users to rename their files by claim code
 // SDK endpoint: PUT /api/user/files/{claimCode}/rename
-func UserRenameFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserRenameFileByClaimCodeHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -574,8 +586,8 @@ func UserRenameFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handl
 			return
 		}
 
-		// Update filename in database
-		err := database.UpdateFileNameByClaimCodeAndUserID(db, claimCode, user.ID, sanitizedFilename)
+		// Update filename in repository
+		err := repos.Users.UpdateFileNameByClaimCode(ctx, claimCode, user.ID, sanitizedFilename)
 		if err != nil {
 			slog.Warn("user file rename by claim code failed",
 				"user_id", user.ID,
@@ -607,12 +619,14 @@ func UserRenameFileByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handl
 
 // UserEditExpirationByClaimCodeHandler allows users to edit file expiration by claim code
 // SDK endpoint: PUT /api/user/files/{claimCode}/expiration
-func UserEditExpirationByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserEditExpirationByClaimCodeHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -680,8 +694,8 @@ func UserEditExpirationByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.H
 			}
 		}
 
-		// Update expiration in database
-		err := database.UpdateFileExpirationByClaimCodeAndUserID(db, claimCode, user.ID, newExpiration)
+		// Update expiration in repository
+		err := repos.Users.UpdateFileExpirationByClaimCode(ctx, claimCode, user.ID, newExpiration)
 		if err != nil {
 			slog.Warn("user file expiration update by claim code failed",
 				"user_id", user.ID,
@@ -713,12 +727,14 @@ func UserEditExpirationByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.H
 
 // UserRegenerateClaimCodeByClaimCodeHandler regenerates the claim code for a file identified by current claim code
 // SDK endpoint: POST /api/user/files/{claimCode}/regenerate
-func UserRegenerateClaimCodeByClaimCodeHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -742,120 +758,30 @@ func UserRegenerateClaimCodeByClaimCodeHandler(db *sql.DB, cfg *config.Config) h
 		// Get client IP for audit logging
 		clientIP := getClientIP(r)
 
-		// Begin transaction with IMMEDIATE lock to prevent race conditions
-		tx, err := database.BeginImmediateTx(db)
+		// Regenerate claim code via repository
+		result, err := repos.Users.RegenerateClaimCodeByClaimCode(ctx, claimCode, user.ID)
 		if err != nil {
-			slog.Error("failed to begin transaction", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Database error",
-			})
-			return
-		}
-		defer tx.Rollback() // Safe to call even after Commit()
-
-		// Verify file exists and belongs to user
-		var fileID int64
-		var filename string
-		err = tx.QueryRow(`
-			SELECT id, original_filename
-			FROM files
-			WHERE claim_code = ? AND user_id = ?
-		`, claimCode, user.ID).Scan(&fileID, &filename)
-
-		if err == sql.ErrNoRows {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "File not found or access denied",
-			})
-			return
-		} else if err != nil {
-			slog.Error("database query failed",
+			if errors.Is(err, repository.ErrNotFound) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "File not found or access denied",
+				})
+				return
+			}
+			if errors.Is(err, repository.ErrServiceUnavailable) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Service temporarily unavailable. Please try again later.",
+				})
+				return
+			}
+			slog.Error("failed to regenerate claim code",
 				"error", err,
 				"claim_code", claimCode,
 				"user_id", user.ID,
 			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Database error",
-			})
-			return
-		}
-
-		// Generate new unique claim code with exponential backoff
-		var newClaimCode string
-		maxAttempts := 10
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			if attempt > 0 {
-				backoff := time.Duration(10*(1<<uint(attempt-1))) * time.Millisecond
-				time.Sleep(backoff)
-			}
-
-			code, err := utils.GenerateClaimCode()
-			if err != nil {
-				slog.Error("failed to generate claim code", "error", err)
-				if attempt >= 2 {
-					break
-				}
-				continue
-			}
-
-			// Check if code already exists
-			var exists bool
-			err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM files WHERE claim_code = ?)", code).Scan(&exists)
-			if err != nil {
-				slog.Error("failed to check claim code uniqueness", "error", err)
-				continue
-			}
-
-			if !exists {
-				newClaimCode = code
-				break
-			}
-		}
-
-		if newClaimCode == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Service temporarily unavailable. Please try again later.",
-			})
-			return
-		}
-
-		// Update database with new claim code
-		result, err := tx.Exec(`
-			UPDATE files
-			SET claim_code = ?
-			WHERE claim_code = ? AND user_id = ?
-		`, newClaimCode, claimCode, user.ID)
-
-		if err != nil {
-			slog.Error("failed to update claim code", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Failed to update claim code",
-			})
-			return
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil || rowsAffected == 0 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "File not found or access denied",
-			})
-			return
-		}
-
-		// Commit transaction
-		if err := tx.Commit(); err != nil {
-			slog.Error("failed to commit transaction", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -867,20 +793,20 @@ func UserRegenerateClaimCodeByClaimCodeHandler(db *sql.DB, cfg *config.Config) h
 		slog.Info("claim code regenerated by claim code",
 			"user_id", user.ID,
 			"username", user.Username,
-			"file_id", fileID,
-			"filename", filename,
+			"file_id", result.FileID,
+			"filename", result.OriginalFilename,
 			"old_claim_code", claimCode,
-			"new_claim_code", newClaimCode,
+			"new_claim_code", result.NewClaimCode,
 			"client_ip", clientIP,
 		)
 
 		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, newClaimCode)
+		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"message":      "Claim code regenerated successfully",
-			"claim_code":   newClaimCode,
+			"claim_code":   result.NewClaimCode,
 			"download_url": downloadURL,
 		})
 	}
@@ -910,12 +836,14 @@ func extractClaimCodeFromPathWithSuffix(path, prefix, suffix string) string {
 }
 
 // UserRegenerateClaimCodeHandler regenerates the claim code for a user's file
-func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UserRegenerateClaimCodeHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user from context
 		user := middleware.GetUserFromContext(r)
@@ -953,150 +881,30 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 		// Get client IP for audit logging
 		clientIP := getClientIP(r)
 
-		// Begin transaction with IMMEDIATE lock to prevent race conditions.
-		// Using BeginImmediateTx to acquire a RESERVED lock immediately,
-		// which prevents SQLITE_BUSY errors from lock upgrade failures.
-		tx, err := database.BeginImmediateTx(db)
+		// Regenerate claim code via repository
+		result, err := repos.Users.RegenerateClaimCode(ctx, req.FileID, user.ID)
 		if err != nil {
-			slog.Error("failed to begin transaction", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Database error",
-			})
-			return
-		}
-		defer tx.Rollback() // Safe to call even after Commit()
-
-		// Verify file exists and belongs to user
-		var currentClaimCode string
-		var filename string
-		err = tx.QueryRow(`
-			SELECT claim_code, original_filename
-			FROM files
-			WHERE id = ? AND user_id = ?
-		`, req.FileID, user.ID).Scan(&currentClaimCode, &filename)
-
-		if err == sql.ErrNoRows {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "File not found or access denied",
-			})
-			return
-		} else if err != nil {
-			slog.Error("database query failed",
+			if errors.Is(err, repository.ErrNotFound) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "File not found or access denied",
+				})
+				return
+			}
+			if errors.Is(err, repository.ErrServiceUnavailable) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Service temporarily unavailable. Please try again later.",
+				})
+				return
+			}
+			slog.Error("failed to regenerate claim code",
 				"error", err,
 				"file_id", req.FileID,
 				"user_id", user.ID,
 			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Database error",
-			})
-			return
-		}
-
-		// Generate new unique claim code with exponential backoff
-		var newClaimCode string
-		maxAttempts := 10
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			// Add exponential backoff after first attempt
-			if attempt > 0 {
-				backoff := time.Duration(10*(1<<uint(attempt-1))) * time.Millisecond
-				time.Sleep(backoff)
-				slog.Debug("retrying claim code generation",
-					"attempt", attempt,
-					"backoff_ms", backoff.Milliseconds(),
-				)
-			}
-
-			code, err := utils.GenerateClaimCode()
-			if err != nil {
-				slog.Error("failed to generate claim code", "error", err)
-				// Abort after 3 crypto failures (indicates RNG failure)
-				if attempt >= 2 {
-					break
-				}
-				continue
-			}
-
-			// Check if code already exists (using transaction)
-			var exists bool
-			err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM files WHERE claim_code = ?)", code).Scan(&exists)
-			if err != nil {
-				slog.Error("failed to check claim code uniqueness", "error", err)
-				continue
-			}
-
-			if !exists {
-				newClaimCode = code
-				break
-			}
-
-			// Log collision (extremely rare - possible attack indicator)
-			slog.Warn("claim code collision detected",
-				"attempt", attempt,
-				"file_id", req.FileID,
-			)
-		}
-
-		if newClaimCode == "" {
-			slog.Error("failed to generate unique claim code after max attempts",
-				"max_attempts", maxAttempts,
-				"file_id", req.FileID,
-				"user_id", user.ID,
-			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Service temporarily unavailable. Please try again later.",
-			})
-			return
-		}
-
-		// Update database with new claim code (with user_id check for security)
-		result, err := tx.Exec(`
-			UPDATE files
-			SET claim_code = ?
-			WHERE id = ? AND user_id = ?
-		`, newClaimCode, req.FileID, user.ID)
-
-		if err != nil {
-			slog.Error("failed to update claim code",
-				"error", err,
-				"file_id", req.FileID,
-				"old_claim_code", currentClaimCode,
-				"new_claim_code", newClaimCode,
-			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Failed to update claim code",
-			})
-			return
-		}
-
-		// Verify row was actually updated (defense-in-depth)
-		rowsAffected, err := result.RowsAffected()
-		if err != nil || rowsAffected == 0 {
-			// File ownership changed during operation or file deleted
-			slog.Warn("claim code update affected 0 rows",
-				"file_id", req.FileID,
-				"user_id", user.ID,
-			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "File not found or access denied",
-			})
-			return
-		}
-
-		// Commit transaction
-		if err := tx.Commit(); err != nil {
-			slog.Error("failed to commit transaction", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -1110,20 +918,20 @@ func UserRegenerateClaimCodeHandler(db *sql.DB, cfg *config.Config) http.Handler
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", req.FileID,
-			"filename", filename,
-			"old_claim_code", currentClaimCode,
-			"new_claim_code", newClaimCode,
+			"filename", result.OriginalFilename,
+			"old_claim_code", result.OldClaimCode,
+			"new_claim_code", result.NewClaimCode,
 			"client_ip", clientIP,
 		)
 
 		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, newClaimCode)
+		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)
 
 		// Return success with new claim code and URL
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"message":      "Claim code regenerated successfully",
-			"claim_code":   newClaimCode,
+			"claim_code":   result.NewClaimCode,
 			"download_url": downloadURL,
 		})
 	}

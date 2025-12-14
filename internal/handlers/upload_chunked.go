@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,10 +14,10 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/google/uuid"
 )
@@ -28,8 +27,9 @@ import (
 var assemblySemaphore = make(chan struct{}, 10)
 
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
-func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept POST requests
 		if r.Method != http.MethodPost {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -39,6 +39,13 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Check if chunked uploads are enabled
 		if !cfg.ChunkedUploadEnabled {
 			sendError(w, "Chunked uploads are disabled", "FEATURE_DISABLED", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Check if server is shutting down
+		uploadTracker := utils.GetUploadTracker()
+		if uploadTracker.IsShuttingDown() {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -213,8 +220,8 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Use transactional quota check to prevent race conditions (P0 fix)
 		if quotaConfigured {
 			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
-			if err := database.CreatePartialUploadWithQuotaCheck(db, partialUpload, quotaBytes); err != nil {
-				if strings.Contains(err.Error(), "quota exceeded") {
+			if err := repos.PartialUploads.CreateWithQuotaCheck(ctx, partialUpload, quotaBytes); err != nil {
+				if err == repository.ErrQuotaExceeded || strings.Contains(err.Error(), "quota exceeded") {
 					slog.Warn("quota exceeded for chunked upload (transactional check)",
 						"file_size", req.TotalSize,
 						"quota_limit_gb", cfg.GetQuotaLimitGB(),
@@ -228,8 +235,8 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				return
 			}
 		} else {
-			// No quota configured - use regular CreatePartialUpload
-			if err := database.CreatePartialUpload(db, partialUpload); err != nil {
+			// No quota configured - use regular Create
+			if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
 				slog.Error("failed to create partial upload", "error", err)
 				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
@@ -268,8 +275,9 @@ func UploadInitHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UploadChunkHandler handles POST /api/upload/chunk/:upload_id/:chunk_number
-func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept POST requests
 		if r.Method != http.MethodPost {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -282,7 +290,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Extract upload_id and chunk_number from URL path
+		// Extract upload_id and chunk_number from URL path first for tracking
 		// Path format: /api/upload/chunk/{upload_id}/{chunk_number}
 		pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/upload/chunk/"), "/")
 		if len(pathParts) != 2 {
@@ -306,8 +314,17 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Track this chunk upload for graceful shutdown
+		uploadTracker := utils.GetUploadTracker()
+		chunkTrackID := fmt.Sprintf("chunk-%s-%d", uploadID, chunkNumber)
+		if !uploadTracker.StartUpload(chunkTrackID, "", 0) {
+			sendError(w, "Server is shutting down, not accepting new uploads", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+		defer uploadTracker.FinishUpload(chunkTrackID)
+
 		// Get partial upload from database
-		partialUpload, err := database.GetPartialUpload(db, uploadID)
+		partialUpload, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
 			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -451,7 +468,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				)
 
 				// Update activity time
-				if err := database.UpdatePartialUploadActivity(db, uploadID); err != nil {
+				if err := repos.PartialUploads.UpdateActivity(ctx, uploadID); err != nil {
 					slog.Error("failed to update partial upload activity", "error", err)
 				}
 
@@ -516,7 +533,7 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Update last_activity to prevent cleanup worker from removing active uploads
-		if err := database.UpdatePartialUploadActivity(db, uploadID); err != nil {
+		if err := repos.PartialUploads.UpdateActivity(ctx, uploadID); err != nil {
 			slog.Error("failed to update partial upload activity", "error", err)
 			// Non-fatal error - continue processing
 		}
@@ -562,8 +579,9 @@ func UploadChunkHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UploadCompleteHandler handles POST /api/upload/complete/:upload_id
-func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept POST requests
 		if r.Method != http.MethodPost {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -576,6 +594,9 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Get upload tracker for shutdown checks later
+		uploadTracker := utils.GetUploadTracker()
+
 		// Extract upload_id from URL path
 		uploadID := strings.TrimPrefix(r.URL.Path, "/api/upload/complete/")
 
@@ -586,7 +607,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get partial upload from database
-		partialUpload, err := database.GetPartialUpload(db, uploadID)
+		partialUpload, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
 			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -706,7 +727,7 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Try to atomically lock the upload for processing (prevents race conditions)
-		locked, err := database.TryLockUploadForProcessing(db, uploadID)
+		locked, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID)
 		if err != nil {
 			slog.Error("failed to lock upload for processing", "error", err, "upload_id", uploadID)
 			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -731,15 +752,23 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Get client IP for logging
 		clientIP := getClientIP(r)
 
+		// Track assembly for graceful shutdown - re-check shutdown status right before spawning
+		if !uploadTracker.StartAssembly(uploadID) {
+			sendError(w, "Server is shutting down, cannot start file assembly", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Spawn goroutine to assemble file asynchronously with concurrency limit
 		// Copy partialUpload to avoid data races (partialUpload is a pointer)
 		partialUploadCopy := *partialUpload
 		go func() {
+			defer uploadTracker.FinishAssembly(uploadID)
+
 			// Acquire semaphore slot (blocks if 10 assemblies already running)
 			assemblySemaphore <- struct{}{}
 			defer func() { <-assemblySemaphore }() // Release slot when done
 
-			AssembleUploadAsync(db, cfg, &partialUploadCopy, clientIP)
+			AssembleUploadAsync(repos, cfg, &partialUploadCopy, clientIP)
 		}()
 
 		// Record metrics
@@ -768,8 +797,9 @@ func UploadCompleteHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // UploadStatusHandler handles GET /api/upload/status/:upload_id
-func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept GET requests
 		if r.Method != http.MethodGet {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -792,7 +822,7 @@ func UploadStatusHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get partial upload from database
-		partialUpload, err := database.GetPartialUpload(db, uploadID)
+		partialUpload, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
 		if err != nil {
 			slog.Error("failed to get partial upload", "error", err)
 			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -19,7 +20,12 @@ import (
 func TestClaimHandler_ValidDownload(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create a test file
 	testContent := []byte("This is test file content for download")
@@ -41,7 +47,7 @@ func TestClaimHandler_ValidDownload(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	if err := database.CreateFile(db, file); err != nil {
+	if err := repos.Files.Create(ctx, file); err != nil {
 		t.Fatalf("failed to create file record: %v", err)
 	}
 
@@ -60,7 +66,7 @@ func TestClaimHandler_ValidDownload(t *testing.T) {
 	}
 
 	// Verify download count incremented
-	updatedFile, _ := database.GetFileByClaimCode(db, "test123")
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, "test123")
 	if updatedFile.DownloadCount != 1 {
 		t.Errorf("download_count = %d, want 1", updatedFile.DownloadCount)
 	}
@@ -69,7 +75,11 @@ func TestClaimHandler_ValidDownload(t *testing.T) {
 func TestClaimHandler_InvalidClaimCode(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/INVALID_CODE", nil)
 	rr := httptest.NewRecorder()
@@ -89,7 +99,12 @@ func TestClaimHandler_InvalidClaimCode(t *testing.T) {
 func TestClaimHandler_ExpiredFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create expired file record
 	file := &models.File{
@@ -102,7 +117,7 @@ func TestClaimHandler_ExpiredFile(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/expired123", nil)
 	rr := httptest.NewRecorder()
@@ -122,7 +137,12 @@ func TestClaimHandler_ExpiredFile(t *testing.T) {
 func TestClaimHandler_PasswordProtected(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("secret content")
@@ -145,7 +165,7 @@ func TestClaimHandler_PasswordProtected(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	tests := []struct {
 		name       string
@@ -206,7 +226,12 @@ func TestClaimHandler_PasswordProtected(t *testing.T) {
 func TestClaimHandler_DownloadLimit(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("limited content")
@@ -227,7 +252,7 @@ func TestClaimHandler_DownloadLimit(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Download 1: should succeed
 	req1 := httptest.NewRequest(http.MethodGet, "/api/claim/limited123", nil)
@@ -258,7 +283,11 @@ func TestClaimHandler_DownloadLimit(t *testing.T) {
 func TestClaimHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
 
 	methods := []string{
 		http.MethodPost,
@@ -289,7 +318,11 @@ func TestClaimHandler_MethodNotAllowed(t *testing.T) {
 func TestClaimHandler_MissingClaimCode(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/", nil)
 	rr := httptest.NewRecorder()
@@ -309,7 +342,12 @@ func TestClaimHandler_MissingClaimCode(t *testing.T) {
 func TestClaimHandler_DownloadCountTracking(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("tracking content")
@@ -328,7 +366,7 @@ func TestClaimHandler_DownloadCountTracking(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Download 5 times
 	for i := 1; i <= 5; i++ {
@@ -339,7 +377,7 @@ func TestClaimHandler_DownloadCountTracking(t *testing.T) {
 		testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 		// Verify count incremented
-		updatedFile, _ := database.GetFileByClaimCode(db, "track123")
+		updatedFile, _ := repos.Files.GetByClaimCode(ctx, "track123")
 		if updatedFile.DownloadCount != i {
 			t.Errorf("after download %d: count = %d, want %d", i, updatedFile.DownloadCount, i)
 		}
@@ -349,7 +387,12 @@ func TestClaimHandler_DownloadCountTracking(t *testing.T) {
 func TestClaimHandler_ContentDisposition(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	tests := []struct {
 		name             string
@@ -387,7 +430,7 @@ func TestClaimHandler_ContentDisposition(t *testing.T) {
 				UploaderIP:       "127.0.0.1",
 			}
 
-			database.CreateFile(db, file)
+			repos.Files.Create(ctx, file)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
 			rr := httptest.NewRecorder()
@@ -407,7 +450,12 @@ func TestClaimHandler_ContentDisposition(t *testing.T) {
 func TestClaimHandler_MimeType(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	tests := []struct {
 		filename            string
@@ -438,7 +486,7 @@ func TestClaimHandler_MimeType(t *testing.T) {
 				UploaderIP:       "127.0.0.1",
 			}
 
-			database.CreateFile(db, file)
+			repos.Files.Create(ctx, file)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
 			rr := httptest.NewRecorder()
@@ -458,7 +506,12 @@ func TestClaimHandler_MimeType(t *testing.T) {
 func TestClaimHandler_UnlimitedDownloads(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("unlimited content")
@@ -479,7 +532,7 @@ func TestClaimHandler_UnlimitedDownloads(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Download 100 times - should all succeed
 	for i := 0; i < 100; i++ {
@@ -492,7 +545,7 @@ func TestClaimHandler_UnlimitedDownloads(t *testing.T) {
 	}
 
 	// Verify count
-	updatedFile, _ := database.GetFileByClaimCode(db, "unlimited123")
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, "unlimited123")
 	if updatedFile.DownloadCount != 100 {
 		t.Errorf("download_count = %d, want 100", updatedFile.DownloadCount)
 	}
@@ -501,7 +554,12 @@ func TestClaimHandler_UnlimitedDownloads(t *testing.T) {
 func TestClaimHandler_ClientIPLogging(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("test")
@@ -519,7 +577,7 @@ func TestClaimHandler_ClientIPLogging(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Test with X-Forwarded-For
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/iptest123", nil)
@@ -536,7 +594,12 @@ func TestClaimHandler_ClientIPLogging(t *testing.T) {
 func TestClaimInfoHandler_FileInfo(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
+	ctx := context.Background()
 
 	maxDownloads := 5
 	file := &models.File{
@@ -551,9 +614,9 @@ func TestClaimInfoHandler_FileInfo(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
-	// Set download count to 2 (CreateFile doesn't preserve DownloadCount, it defaults to 0)
+	// Set download count to 2 (Create doesn't preserve DownloadCount, it defaults to 0)
 	db.Exec("UPDATE files SET download_count = 2 WHERE claim_code = ?", "info123")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/info123/info", nil)
@@ -576,7 +639,7 @@ func TestClaimInfoHandler_FileInfo(t *testing.T) {
 	}
 
 	// Download count should NOT increment for info endpoint
-	updatedFile, _ := database.GetFileByClaimCode(db, "info123")
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, "info123")
 	if updatedFile.DownloadCount != 2 {
 		t.Errorf("download_count changed to %d, should remain 2", updatedFile.DownloadCount)
 	}
@@ -586,7 +649,11 @@ func TestClaimInfoHandler_FileInfo(t *testing.T) {
 func TestClaimInfoHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 
@@ -606,7 +673,11 @@ func TestClaimInfoHandler_MethodNotAllowed(t *testing.T) {
 func TestClaimInfoHandler_InvalidURL(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
 
 	tests := []struct {
 		name string
@@ -633,7 +704,11 @@ func TestClaimInfoHandler_InvalidURL(t *testing.T) {
 func TestClaimInfoHandler_FileNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/nonexistent/info", nil)
 	rr := httptest.NewRecorder()
@@ -647,7 +722,12 @@ func TestClaimInfoHandler_FileNotFound(t *testing.T) {
 func TestClaimInfoHandler_DownloadLimitReached(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
+	ctx := context.Background()
 
 	maxDownloads := 3
 	file := &models.File{
@@ -662,7 +742,7 @@ func TestClaimInfoHandler_DownloadLimitReached(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Set download count to 3 (limit reached)
 	db.Exec("UPDATE files SET download_count = 3 WHERE claim_code = ?", "limited123")
@@ -686,7 +766,12 @@ func TestClaimInfoHandler_DownloadLimitReached(t *testing.T) {
 func TestClaimInfoHandler_PasswordProtected(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimInfoHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimInfoHandler(repos, cfg)
+	ctx := context.Background()
 
 	file := &models.File{
 		ClaimCode:        "protected123",
@@ -699,7 +784,7 @@ func TestClaimInfoHandler_PasswordProtected(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/protected123/info", nil)
 	rr := httptest.NewRecorder()
@@ -718,9 +803,15 @@ func TestClaimInfoHandler_PasswordProtected(t *testing.T) {
 
 // Benchmark claim handler
 func BenchmarkClaimHandler(b *testing.B) {
-	db := testutil.SetupTestDB(&testing.T{})
-	cfg := testutil.SetupTestConfig(&testing.T{})
-	handler := ClaimHandler(db, cfg)
+	t := &testing.T{}
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		b.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("benchmark content")
@@ -738,7 +829,7 @@ func BenchmarkClaimHandler(b *testing.B) {
 		UploaderIP:       "127.0.0.1",
 	}
 
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -14,10 +14,9 @@ import (
 
 // TestUploadZeroByteFile tests uploading an empty file
 func TestUploadZeroByteFile(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Empty file
 	fileContent := []byte{}
@@ -38,13 +37,12 @@ func TestUploadZeroByteFile(t *testing.T) {
 
 // TestUploadExactlyMaxSize tests uploading file at exact max size limit
 func TestUploadExactlyMaxSize(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	maxSize := int64(1024 * 1024) // 1MB
 	cfg.SetMaxFileSize(maxSize)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Exactly max size
 	fileContent := bytes.Repeat([]byte("M"), int(maxSize))
@@ -65,13 +63,12 @@ func TestUploadExactlyMaxSize(t *testing.T) {
 
 // TestUploadOneByteTooLarge tests uploading file 1 byte over max size
 func TestUploadOneByteTooLarge(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	maxSize := int64(1024 * 1024) // 1MB
 	cfg.SetMaxFileSize(maxSize)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// 1 byte over max size
 	fileContent := bytes.Repeat([]byte("L"), int(maxSize)+1)
@@ -92,10 +89,9 @@ func TestUploadOneByteTooLarge(t *testing.T) {
 
 // TestFilenameMaxLength tests extremely long filename
 func TestFilenameMaxLength(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// 255 character filename (typical filesystem limit)
 	longFilename := strings.Repeat("a", 255) + ".txt"
@@ -117,10 +113,9 @@ func TestFilenameMaxLength(t *testing.T) {
 
 // TestFilenameExtremelyLong tests filename longer than typical limits
 func TestFilenameExtremelyLong(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// 1000 character filename (well over typical limits)
 	extremelyLongFilename := strings.Repeat("x", 1000) + ".txt"
@@ -170,13 +165,12 @@ func TestPasswordMaxLength(t *testing.T) {
 
 // TestExpirationBoundaries tests expiration at boundaries
 func TestExpirationBoundaries(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	cfg.SetDefaultExpirationHours(24)
 	cfg.SetMaxExpirationHours(168)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := []byte("test")
 
 	tests := []struct {
@@ -212,10 +206,9 @@ func TestExpirationBoundaries(t *testing.T) {
 
 // TestMaxDownloadsBoundaries tests max_downloads at boundaries
 func TestMaxDownloadsBoundaries(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := []byte("test")
 
 	tests := []struct {
@@ -250,10 +243,9 @@ func TestMaxDownloadsBoundaries(t *testing.T) {
 
 // TestClaimCodeEdgeCases tests various claim code edge cases
 func TestClaimCodeEdgeCases(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.ClaimHandler(db, cfg)
+	handler := handlers.ClaimHandler(repos, cfg)
 
 	tests := []struct {
 		name      string
@@ -287,10 +279,9 @@ func TestClaimCodeEdgeCases(t *testing.T) {
 
 // TestUnicodeFilenames tests filenames with unicode characters
 func TestUnicodeFilenames(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := []byte("test")
 
 	unicodeFilenames := []string{
@@ -322,13 +313,12 @@ func TestUnicodeFilenames(t *testing.T) {
 
 // TestChunkedUploadBoundaries tests chunked upload boundaries
 func TestChunkedUploadBoundaries(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 	cfg.ChunkedUploadEnabled = true
 
 	// Test with very small total size
 	t.Run("1 byte file", func(t *testing.T) {
-		initHandler := handlers.UploadInitHandler(db, cfg)
+		initHandler := handlers.UploadInitHandler(repos, cfg)
 
 		body, _ := testutil.CreateMultipartForm(t, []byte{}, "init", map[string]string{
 			"filename":   "tiny.bin",

@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"crypto/subtle"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,20 +13,22 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // AdminLoginHandler handles admin login
-func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Parse request (supports both JSON and form-encoded)
 		var username, password string
@@ -70,12 +72,12 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		isAdminCredentials := false
 
 		// Try validating against admin_credentials table first
-		valid, err := database.ValidateAdminCredentials(db, username, password)
+		valid, err := repos.Admin.ValidateCredentials(ctx, username, password)
 		if err == nil && valid {
 			isAdminCredentials = true
 		} else {
 			// Try to get user from users table with admin role
-			user, userErr := database.GetUserByUsername(db, username)
+			user, userErr := repos.Users.GetByUsername(ctx, username)
 
 			// Check if user exists, password matches, has admin role, and is active
 			if userErr == nil && user != nil &&
@@ -123,7 +125,7 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Create appropriate session type based on authentication method
 		if isAdminCredentials {
 			// Legacy admin_credentials path: create admin_session
-			err = database.CreateSession(db, sessionToken, expiresAt, clientIP, userAgent)
+			err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, clientIP, userAgent)
 			if err != nil {
 				slog.Error("failed to create admin session", "error", err)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -161,7 +163,7 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			})
 		} else {
 			// Users table path: create user_session for better compatibility
-			err = database.CreateUserSession(db, authenticatedUser.ID, sessionToken, expiresAt, clientIP, userAgent)
+			err = repos.Users.CreateSession(ctx, authenticatedUser.ID, sessionToken, expiresAt, clientIP, userAgent)
 			if err != nil {
 				slog.Error("failed to create user session", "error", err)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -169,7 +171,7 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			}
 
 			// Update last login timestamp
-			if err := database.UpdateUserLastLogin(db, authenticatedUser.ID); err != nil {
+			if err := repos.Users.UpdateLastLogin(ctx, authenticatedUser.ID); err != nil {
 				slog.Error("failed to update last login", "error", err)
 				// Don't fail the request, just log
 			}
@@ -207,18 +209,22 @@ func AdminLoginHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminLogoutHandler handles admin logout
-func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
+		ctx := r.Context()
+
 		// Check for admin_session cookie (legacy admin_credentials login)
 		adminCookie, adminErr := r.Cookie("admin_session")
 		if adminErr == nil {
 			// Delete admin session from database
-			database.DeleteSession(db, adminCookie.Value)
+			if err := repos.Admin.DeleteSession(ctx, adminCookie.Value); err != nil {
+				slog.Error("failed to delete admin session", "error", err)
+			}
 
 			slog.Info("admin logout via admin_session",
 				"ip", getClientIP(r),
@@ -229,7 +235,9 @@ func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		userCookie, userErr := r.Cookie("user_session")
 		if userErr == nil {
 			// Delete user session from database
-			database.DeleteUserSession(db, userCookie.Value)
+			if err := repos.Users.DeleteSession(ctx, userCookie.Value); err != nil {
+				slog.Error("failed to delete user session", "error", err)
+			}
 
 			slog.Info("admin logout via user_session",
 				"ip", getClientIP(r),
@@ -282,12 +290,14 @@ func AdminLogoutHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminDashboardDataHandler returns dashboard data (files, stats)
-func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Parse pagination parameters
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -320,9 +330,9 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		var err error
 
 		if searchTerm != "" {
-			files, total, err = database.SearchFilesForAdmin(db, searchTerm, pageSize, offset)
+			files, total, err = repos.Files.SearchForAdmin(ctx, searchTerm, pageSize, offset)
 		} else {
-			files, total, err = database.GetAllFilesForAdmin(db, pageSize, offset)
+			files, total, err = repos.Files.GetAllForAdmin(ctx, pageSize, offset)
 		}
 
 		if err != nil {
@@ -332,17 +342,22 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		}
 
 		// Get storage stats
-		totalFiles, storageUsed, err := database.GetStats(db, cfg.UploadDir)
+		stats, err := repos.Files.GetStats(ctx, cfg.UploadDir)
+		var totalFiles int
+		var storageUsed int64
 		if err != nil {
 			slog.Error("failed to get storage stats", "error", err)
 			// Continue with partial data
+		} else {
+			totalFiles = stats.TotalFiles
+			storageUsed = stats.StorageUsed
 		}
 
 		// Get blocked IPs
-		blockedIPs, err := database.GetBlockedIPs(db)
+		blockedIPs, err := repos.Admin.GetBlockedIPs(ctx)
 		if err != nil {
 			slog.Error("failed to get blocked IPs", "error", err)
-			blockedIPs = []database.BlockedIP{}
+			blockedIPs = []repository.BlockedIP{}
 		}
 
 		// Get partial uploads metrics
@@ -363,7 +378,7 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			}
 		}
 
-		partialUploadsCount, err := database.GetIncompletePartialUploadsCount(db)
+		partialUploadsCount, err := repos.PartialUploads.GetIncompleteCount(ctx)
 		if err != nil {
 			slog.Error("failed to get partial uploads count", "error", err)
 			partialUploadsCount = 0
@@ -435,12 +450,14 @@ func AdminDashboardDataHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 }
 
 // AdminDeleteFileHandler deletes a file
-func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get claim code from URL or form
 		claimCode := r.URL.Query().Get("claim_code")
@@ -454,14 +471,15 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Delete file from database and get file info
-		file, err := database.DeleteFileByClaimCode(db, claimCode)
+		file, err := repos.Files.DeleteByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("admin file deletion failed",
 				"claim_code", redactClaimCode(claimCode),
 				"error", err,
 				"admin_ip", getClientIP(r),
 			)
-			http.Error(w, err.Error(), http.StatusNotFound)
+			// Security fix: Use generic error message to avoid leaking internal details
+			http.Error(w, "File not found or already deleted", http.StatusNotFound)
 			return
 		}
 
@@ -520,12 +538,14 @@ func AdminDeleteFileHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminBulkDeleteFilesHandler deletes multiple files
-func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -547,7 +567,7 @@ func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFun
 		}
 
 		// Delete files from database and get file info
-		files, err := database.DeleteFilesByClaimCodes(db, claimCodes)
+		files, err := repos.Files.DeleteByClaimCodes(ctx, claimCodes)
 		if err != nil {
 			slog.Error("admin bulk file deletion failed",
 				"count", len(claimCodes),
@@ -617,12 +637,14 @@ func AdminBulkDeleteFilesHandler(db *sql.DB, cfg *config.Config) http.HandlerFun
 }
 
 // AdminBlockIPHandler blocks an IP address
-func AdminBlockIPHandler(db *sql.DB) http.HandlerFunc {
+func AdminBlockIPHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -637,11 +659,17 @@ func AdminBlockIPHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// Security fix: Validate IP format at handler level (defense in depth)
+		if net.ParseIP(ipAddress) == nil {
+			http.Error(w, "Invalid IP address format", http.StatusBadRequest)
+			return
+		}
+
 		if reason == "" {
 			reason = "Blocked by admin"
 		}
 
-		err := database.BlockIP(db, ipAddress, reason, "admin")
+		err := repos.Admin.BlockIP(ctx, ipAddress, reason, "admin")
 		if err != nil {
 			slog.Error("failed to block IP",
 				"ip_address", ipAddress,
@@ -666,12 +694,14 @@ func AdminBlockIPHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminUnblockIPHandler unblocks an IP address
-func AdminUnblockIPHandler(db *sql.DB) http.HandlerFunc {
+func AdminUnblockIPHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		ipAddress := r.URL.Query().Get("ip_address")
 		if ipAddress == "" {
@@ -685,13 +715,14 @@ func AdminUnblockIPHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		err := database.UnblockIP(db, ipAddress)
+		err := repos.Admin.UnblockIP(ctx, ipAddress)
 		if err != nil {
 			slog.Error("failed to unblock IP",
 				"ip_address", ipAddress,
 				"error", err,
 			)
-			http.Error(w, err.Error(), http.StatusNotFound)
+			// Security fix: Use generic error message to avoid leaking internal details
+			http.Error(w, "IP not found in blocked list", http.StatusNotFound)
 			return
 		}
 
@@ -709,12 +740,14 @@ func AdminUnblockIPHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminUpdateQuotaHandler updates the storage quota dynamically
-func AdminUpdateQuotaHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminUpdateQuotaHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -742,7 +775,7 @@ func AdminUpdateQuotaHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Persist to database for restart persistence
-		if err := database.UpdateQuotaSetting(db, newQuota); err != nil {
+		if err := repos.Settings.UpdateQuota(ctx, newQuota); err != nil {
 			slog.Error("failed to persist quota setting to database",
 				"error", err,
 				"quota_gb", newQuota,
@@ -767,12 +800,14 @@ func AdminUpdateQuotaHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminUpdateStorageSettingsHandler updates storage-related settings dynamically
-func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -800,7 +835,7 @@ func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.Hand
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateQuotaSetting(db, quota); err != nil {
+			if err := repos.Settings.UpdateQuota(ctx, quota); err != nil {
 				slog.Error("failed to persist quota setting to database",
 					"error", err,
 					"quota_gb", quota,
@@ -828,7 +863,7 @@ func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.Hand
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateMaxFileSizeSetting(db, sizeBytes); err != nil {
+			if err := repos.Settings.UpdateMaxFileSize(ctx, sizeBytes); err != nil {
 				slog.Error("failed to persist max file size setting to database",
 					"error", err,
 					"max_file_size_bytes", sizeBytes,
@@ -855,7 +890,7 @@ func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.Hand
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateDefaultExpirationSetting(db, hours); err != nil {
+			if err := repos.Settings.UpdateDefaultExpiration(ctx, hours); err != nil {
 				slog.Error("failed to persist default expiration setting to database",
 					"error", err,
 					"default_expiration_hours", hours,
@@ -882,7 +917,7 @@ func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.Hand
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateMaxExpirationSetting(db, hours); err != nil {
+			if err := repos.Settings.UpdateMaxExpiration(ctx, hours); err != nil {
 				slog.Error("failed to persist max expiration setting to database",
 					"error", err,
 					"max_expiration_hours", hours,
@@ -916,12 +951,14 @@ func AdminUpdateStorageSettingsHandler(db *sql.DB, cfg *config.Config) http.Hand
 }
 
 // AdminUpdateSecuritySettingsHandler updates security-related settings dynamically
-func AdminUpdateSecuritySettingsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminUpdateSecuritySettingsHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -948,7 +985,7 @@ func AdminUpdateSecuritySettingsHandler(db *sql.DB, cfg *config.Config) http.Han
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateRateLimitUploadSetting(db, limit); err != nil {
+			if err := repos.Settings.UpdateRateLimitUpload(ctx, limit); err != nil {
 				slog.Error("failed to persist rate limit upload setting to database",
 					"error", err,
 					"rate_limit_upload", limit,
@@ -975,7 +1012,7 @@ func AdminUpdateSecuritySettingsHandler(db *sql.DB, cfg *config.Config) http.Han
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateRateLimitDownloadSetting(db, limit); err != nil {
+			if err := repos.Settings.UpdateRateLimitDownload(ctx, limit); err != nil {
 				slog.Error("failed to persist rate limit download setting to database",
 					"error", err,
 					"rate_limit_download", limit,
@@ -1004,7 +1041,7 @@ func AdminUpdateSecuritySettingsHandler(db *sql.DB, cfg *config.Config) http.Han
 			}
 
 			// Persist to database for restart persistence
-			if err := database.UpdateBlockedExtensionsSetting(db, cfg.GetBlockedExtensions()); err != nil {
+			if err := repos.Settings.UpdateBlockedExtensions(ctx, cfg.GetBlockedExtensions()); err != nil {
 				slog.Error("failed to persist blocked extensions setting to database",
 					"error", err,
 					"blocked_extensions", cfg.GetBlockedExtensions(),
@@ -1157,7 +1194,7 @@ func AdminGetConfigHandler(cfg *config.Config) http.HandlerFunc {
 }
 
 // AdminCleanupPartialUploadsHandler cleans up abandoned partial uploads
-func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminCleanupPartialUploadsHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1176,7 +1213,7 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 		)
 
 		// Clean up abandoned uploads
-		result, err := utils.CleanupAbandonedUploads(db, cfg.UploadDir, expiryHours)
+		result, err := utils.CleanupAbandonedUploads(repos, cfg.UploadDir, expiryHours)
 		if err != nil {
 			slog.Error("failed to cleanup partial uploads",
 				"error", err,
@@ -1216,15 +1253,15 @@ func AdminCleanupPartialUploadsHandler(db *sql.DB, cfg *config.Config) http.Hand
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":              true,
-			"deleted_count":        result.DeletedCount,
-			"abandoned_count":      result.AbandonedCount,
+			"success":               true,
+			"deleted_count":         result.DeletedCount,
+			"abandoned_count":       result.AbandonedCount,
 			"orphaned_chunks_count": result.OrphanedCount,
 			"orphaned_files_count":  result.OrphanedFilesCount,
-			"bytes_reclaimed":      result.BytesReclaimed,
-			"orphaned_chunk_bytes": result.OrphanedBytes,
-			"orphaned_file_bytes":  result.OrphanedFilesBytes,
-			"message":              message,
+			"bytes_reclaimed":       result.BytesReclaimed,
+			"orphaned_chunk_bytes":  result.OrphanedBytes,
+			"orphaned_file_bytes":   result.OrphanedFilesBytes,
+			"message":               message,
 		})
 	}
 }

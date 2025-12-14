@@ -160,6 +160,127 @@
             border-color: #2563eb;
             color: #93c5fd;
         }
+
+        /* SSO Section Styles */
+        .sso-section {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .sso-divider {
+            display: flex;
+            align-items: center;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .sso-divider::before,
+        .sso-divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .sso-divider span {
+            padding: 0 12px;
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .sso-providers {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .sso-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .sso-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .sso-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .sso-btn img {
+            width: 20px;
+            height: 20px;
+            object-fit: contain;
+        }
+
+        .sso-btn .sso-icon-placeholder {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sso-loading {
+            text-align: center;
+            padding: 12px;
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        .sso-error {
+            padding: 12px;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 4px;
+            color: #dc2626;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        /* Dark mode SSO styles */
+        [data-theme="dark"] .sso-section {
+            border-top-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-divider::before,
+        [data-theme="dark"] .sso-divider::after {
+            border-bottom-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-divider span {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-btn {
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .sso-btn:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        [data-theme="dark"] .sso-error {
+            background: #450a0a;
+            border-color: #7f1d1d;
+            color: #fca5a5;
+        }
     </style>
 </head>
 <body>
@@ -214,6 +335,16 @@
 
             <button type="submit" class="btn-login" id="loginBtn">Sign In</button>
         </form>
+
+        <!-- SSO Section (loaded dynamically) -->
+        <div id="ssoSection" class="sso-section" style="display: none;">
+            <div class="sso-divider">
+                <span>or continue with</span>
+            </div>
+            <div id="ssoProviders" class="sso-providers">
+                <!-- SSO provider buttons will be loaded here -->
+            </div>
+        </div>
 
         <div class="back-link">
             <a href="/">← Back to Home</a>
@@ -365,6 +496,147 @@
         }
 
         checkAuth();
+
+        // SSO Login Support
+        const ssoSection = document.getElementById('ssoSection');
+        const ssoProviders = document.getElementById('ssoProviders');
+
+        // Check for SSO error in URL parameters
+        function handleSSOError() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const errorCode = urlParams.get('error');
+            const errorMessage = urlParams.get('message');
+
+            if (errorCode) {
+                // Map error codes to user-friendly messages
+                const errorMessages = {
+                    'sso_failed': 'SSO authentication failed',
+                    'missing_code': 'Authorization code missing',
+                    'missing_state': 'Security validation failed',
+                    'invalid_provider': 'Invalid SSO provider',
+                    'provider_error': 'SSO provider error',
+                    'token_exchange_failed': 'Failed to complete authentication',
+                    'userinfo_failed': 'Failed to retrieve user information',
+                    'domain_not_allowed': 'Your email domain is not allowed',
+                    'auth_failed': 'Authentication failed',
+                    'account_disabled': 'Your account has been disabled'
+                };
+
+                const displayMessage = errorMessages[errorCode] || errorMessage || 'SSO login failed';
+                showToast(displayMessage, 'error');
+
+                // Clear URL parameters to prevent showing error on refresh
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        // Load SSO providers
+        async function loadSSOProviders() {
+            try {
+                const response = await fetch('/api/auth/sso/providers');
+                if (!response.ok) {
+                    console.log('SSO providers endpoint not available');
+                    return;
+                }
+
+                const data = await response.json();
+
+                // Only show SSO section if SSO is enabled and there are providers
+                if (!data.enabled || !data.providers || data.providers.length === 0) {
+                    return;
+                }
+
+                // Show SSO section
+                ssoSection.style.display = 'block';
+
+                // Create buttons for each provider
+                data.providers.forEach(provider => {
+                    const button = createSSOButton(provider);
+                    ssoProviders.appendChild(button);
+                });
+
+            } catch (error) {
+                console.log('Failed to load SSO providers:', error);
+                // Silently fail - SSO is optional
+            }
+        }
+
+        // Create SSO button element
+        function createSSOButton(provider) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'sso-btn';
+            button.setAttribute('data-provider', provider.slug);
+
+            // Apply custom colors if provided
+            if (provider.button_color) {
+                button.style.backgroundColor = provider.button_color;
+                button.style.borderColor = provider.button_color;
+            }
+            if (provider.button_text_color) {
+                button.style.color = provider.button_text_color;
+            }
+
+            // Create icon element
+            let iconHTML = '';
+            if (provider.icon_url) {
+                iconHTML = `<img src="${escapeHTML(provider.icon_url)}" alt="" aria-hidden="true" onerror="this.style.display='none'">`;
+            } else {
+                // Default SSO icon
+                iconHTML = `
+                    <span class="sso-icon-placeholder">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <circle cx="12" cy="16" r="1"></circle>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                    </span>
+                `;
+            }
+
+            button.innerHTML = `${iconHTML}<span>Continue with ${escapeHTML(provider.name)}</span>`;
+
+            // Handle click
+            button.addEventListener('click', () => handleSSOLogin(provider.slug, button));
+
+            return button;
+        }
+
+        // Handle SSO login button click
+        async function handleSSOLogin(providerSlug, button) {
+            // Disable button and show loading state
+            const originalContent = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = `<span>Redirecting...</span>`;
+
+            try {
+                // Build login URL with return path
+                const returnUrl = encodeURIComponent('/dashboard');
+                const loginUrl = `/api/auth/sso/${providerSlug}/login?return_url=${returnUrl}`;
+
+                // Redirect to SSO login endpoint
+                window.location.href = loginUrl;
+            } catch (error) {
+                console.error('SSO login error:', error);
+                showToast('Failed to initiate SSO login', 'error');
+
+                // Re-enable button
+                button.disabled = false;
+                button.innerHTML = originalContent;
+            }
+        }
+
+        // HTML escape helper to prevent XSS
+        function escapeHTML(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Initialize SSO
+        handleSSOError();
+        loadSSOProviders();
     </script>
 
     <!-- Toast Notification Container -->

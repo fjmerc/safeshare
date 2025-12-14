@@ -670,3 +670,286 @@ func TestDeleteFileByIDAndUserID(t *testing.T) {
 		t.Error("File should be deleted")
 	}
 }
+
+// TestDeleteUserSessionsByUserID tests deleting all sessions for a user
+func TestDeleteUserSessionsByUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "sessionuser", "sessionuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	// Create multiple sessions
+	expiresAt := time.Now().Add(24 * time.Hour)
+	err = CreateUserSession(db, user.ID, "session1", expiresAt, "127.0.0.1", "test-agent")
+	if err != nil {
+		t.Fatalf("CreateUserSession() error: %v", err)
+	}
+	err = CreateUserSession(db, user.ID, "session2", expiresAt, "127.0.0.1", "test-agent")
+	if err != nil {
+		t.Fatalf("CreateUserSession() error: %v", err)
+	}
+
+	// Delete all sessions
+	err = DeleteUserSessionsByUserID(db, user.ID)
+	if err != nil {
+		t.Fatalf("DeleteUserSessionsByUserID() error: %v", err)
+	}
+
+	// Verify sessions are gone
+	session1, _ := GetUserSession(db, "session1")
+	session2, _ := GetUserSession(db, "session2")
+
+	if session1 != nil || session2 != nil {
+		t.Error("All sessions should be deleted")
+	}
+}
+
+// TestUpdateFileNameByIDAndUserID tests updating file name by ID
+func TestUpdateFileNameByIDAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "nameuser", "nameuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "NAME_UPDATE",
+		OriginalFilename: "original.txt",
+		StoredFilename:   "stored.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Update name
+	err = UpdateFileNameByIDAndUserID(db, file.ID, user.ID, "newname.txt")
+	if err != nil {
+		t.Fatalf("UpdateFileNameByIDAndUserID() error: %v", err)
+	}
+
+	// Verify update
+	updated, err := GetFileByClaimCode(db, "NAME_UPDATE")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	if updated.OriginalFilename != "newname.txt" {
+		t.Errorf("OriginalFilename = %q, want %q", updated.OriginalFilename, "newname.txt")
+	}
+}
+
+// TestUpdateFileExpirationByIDAndUserID tests updating file expiration
+func TestUpdateFileExpirationByIDAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "expireuser", "expireuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "EXPIRE_UPDATE",
+		OriginalFilename: "expire.txt",
+		StoredFilename:   "stored-expire.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	newExpiry := time.Now().Add(48 * time.Hour)
+	err = UpdateFileExpirationByIDAndUserID(db, file.ID, user.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("UpdateFileExpirationByIDAndUserID() error: %v", err)
+	}
+
+	updated, err := GetFileByClaimCode(db, "EXPIRE_UPDATE")
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode() error: %v", err)
+	}
+
+	// Check expiry is updated (within 1 second tolerance)
+	diff := updated.ExpiresAt.Sub(newExpiry)
+	if diff < -time.Second || diff > time.Second {
+		t.Errorf("ExpiresAt not updated correctly")
+	}
+}
+
+// TestGetFileByClaimCodeAndUserID tests retrieving file by claim code and user
+func TestGetFileByClaimCodeAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user1, err := CreateUser(db, "claimuser1", "claimuser1@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+	user2, err := CreateUser(db, "claimuser2", "claimuser2@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "CLAIM_USER",
+		OriginalFilename: "claim.txt",
+		StoredFilename:   "stored-claim.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user1.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Get as owner
+	result, err := GetFileByClaimCodeAndUserID(db, "CLAIM_USER", user1.ID)
+	if err != nil {
+		t.Fatalf("GetFileByClaimCodeAndUserID() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("GetFileByClaimCodeAndUserID() returned nil for owner")
+	}
+
+	// Get as non-owner
+	result, err = GetFileByClaimCodeAndUserID(db, "CLAIM_USER", user2.ID)
+	if err != nil {
+		t.Fatalf("GetFileByClaimCodeAndUserID() error: %v", err)
+	}
+	if result != nil {
+		t.Error("GetFileByClaimCodeAndUserID() should return nil for non-owner")
+	}
+}
+
+// TestDeleteFileByClaimCodeAndUserID tests deleting file by claim code and user
+func TestDeleteFileByClaimCodeAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "deleteclaimuser", "deleteclaimuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "DELETE_CLAIM",
+		OriginalFilename: "delete.txt",
+		StoredFilename:   "stored-delete.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	deleted, err := DeleteFileByClaimCodeAndUserID(db, "DELETE_CLAIM", user.ID)
+	if err != nil {
+		t.Fatalf("DeleteFileByClaimCodeAndUserID() error: %v", err)
+	}
+
+	if deleted == nil {
+		t.Fatal("DeleteFileByClaimCodeAndUserID() returned nil")
+	}
+
+	// Verify file is gone
+	result, _ := GetFileByClaimCode(db, "DELETE_CLAIM")
+	if result != nil {
+		t.Error("File should be deleted")
+	}
+}
+
+// TestUpdateFileNameByClaimCodeAndUserID tests updating file name by claim code
+func TestUpdateFileNameByClaimCodeAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "nameclaimuser", "nameclaimuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "NAME_CLAIM",
+		OriginalFilename: "original.txt",
+		StoredFilename:   "stored.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	err = UpdateFileNameByClaimCodeAndUserID(db, "NAME_CLAIM", user.ID, "renamed.txt")
+	if err != nil {
+		t.Fatalf("UpdateFileNameByClaimCodeAndUserID() error: %v", err)
+	}
+
+	updated, _ := GetFileByClaimCode(db, "NAME_CLAIM")
+	if updated.OriginalFilename != "renamed.txt" {
+		t.Errorf("OriginalFilename = %q, want %q", updated.OriginalFilename, "renamed.txt")
+	}
+}
+
+// TestUpdateFileExpirationByClaimCodeAndUserID tests updating file expiration by claim code
+func TestUpdateFileExpirationByClaimCodeAndUserID(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "expclaimuser", "expclaimuser@example.com", "hashed_password", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	file := &models.File{
+		ClaimCode:        "EXP_CLAIM",
+		OriginalFilename: "exp.txt",
+		StoredFilename:   "stored-exp.txt",
+		FileSize:         100,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+		UserID:           &user.ID,
+	}
+
+	err = CreateFile(db, file)
+	if err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	newExpiry := time.Now().Add(72 * time.Hour)
+	err = UpdateFileExpirationByClaimCodeAndUserID(db, "EXP_CLAIM", user.ID, newExpiry)
+	if err != nil {
+		t.Fatalf("UpdateFileExpirationByClaimCodeAndUserID() error: %v", err)
+	}
+
+	updated, _ := GetFileByClaimCode(db, "EXP_CLAIM")
+	diff := updated.ExpiresAt.Sub(newExpiry)
+	if diff < -time.Second || diff > time.Second {
+		t.Errorf("ExpiresAt not updated correctly")
+	}
+}

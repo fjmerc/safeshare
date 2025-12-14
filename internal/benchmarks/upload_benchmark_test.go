@@ -12,10 +12,9 @@ import (
 // BenchmarkUploadSmallFile benchmarks uploading a small file (10KB)
 func BenchmarkUploadSmallFile(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := bytes.Repeat([]byte("A"), 10*1024) // 10KB
 
 	b.ResetTimer()
@@ -39,10 +38,9 @@ func BenchmarkUploadSmallFile(b *testing.B) {
 // BenchmarkUploadMediumFile benchmarks uploading a medium file (1MB)
 func BenchmarkUploadMediumFile(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := bytes.Repeat([]byte("B"), 1024*1024) // 1MB
 
 	b.ResetTimer()
@@ -66,10 +64,9 @@ func BenchmarkUploadMediumFile(b *testing.B) {
 // BenchmarkUploadWithPassword benchmarks uploading with password hashing
 func BenchmarkUploadWithPassword(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := bytes.Repeat([]byte("C"), 10*1024) // 10KB
 
 	b.ResetTimer()
@@ -95,10 +92,9 @@ func BenchmarkUploadWithPassword(b *testing.B) {
 // BenchmarkConcurrentUploads benchmarks concurrent file uploads
 func BenchmarkConcurrentUploads(b *testing.B) {
 	t := &testing.T{}
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 	fileContent := bytes.Repeat([]byte("D"), 10*1024) // 10KB
 
 	b.ResetTimer()
