@@ -446,5 +446,5 @@ For API questions or concerns about compatibility:
 
 ---
 
-**Last Updated:** November 2025
-**SafeShare Version:** 2.8.3+
+**Last Updated:** December 2025
+**SafeShare Version:** 1.5.0
