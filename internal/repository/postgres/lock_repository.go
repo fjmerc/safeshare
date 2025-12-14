@@ -89,10 +89,10 @@ func (r *LockRepository) TryAcquire(ctx context.Context, lockType repository.Loc
 	tx, err := r.pool.BeginTx(ctx, TxOptions())
 	if err != nil {
 		// Release advisory lock on error
-		r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+		_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2) //nolint:errcheck // Best-effort cleanup
 		return false, nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Clean up any expired entries for this key
 	_, err = tx.Exec(ctx, `
@@ -100,7 +100,7 @@ func (r *LockRepository) TryAcquire(ctx context.Context, lockType repository.Loc
 		WHERE lock_type = $1 AND lock_key = $2 AND expires_at <= NOW()
 	`, string(lockType), lockKey)
 	if err != nil {
-		r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+		_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 		return false, nil, fmt.Errorf("failed to cleanup expired lock: %w", err)
 	}
 
@@ -123,12 +123,12 @@ func (r *LockRepository) TryAcquire(ctx context.Context, lockType repository.Loc
 				WHERE lock_type = $2 AND lock_key = $3 AND owner_id = $4
 			`, expiresAt, string(lockType), lockKey, ownerID)
 			if err != nil {
-				r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+				_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 				return false, nil, fmt.Errorf("failed to refresh lock: %w", err)
 			}
 
 			if err := tx.Commit(ctx); err != nil {
-				r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+				_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 				return false, nil, fmt.Errorf("failed to commit transaction: %w", err)
 			}
 
@@ -143,7 +143,7 @@ func (r *LockRepository) TryAcquire(ctx context.Context, lockType repository.Loc
 		// Different owner in table but we have advisory lock - stale record
 		// This shouldn't happen normally, but handle it by taking ownership
 	} else if err != pgx.ErrNoRows {
-		r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+		_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 		return false, nil, fmt.Errorf("failed to check existing lock: %w", err)
 	}
 
@@ -158,12 +158,12 @@ func (r *LockRepository) TryAcquire(ctx context.Context, lockType repository.Loc
 		    updated_at = NOW()
 	`, string(lockType), lockKey, ownerID, now, expiresAt)
 	if err != nil {
-		r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+		_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 		return false, nil, fmt.Errorf("failed to insert lock: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
+		_, _ = r.pool.Exec(ctx, "SELECT pg_advisory_unlock($1, $2)", advisoryLockID1, advisoryLockID2)
 		return false, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 

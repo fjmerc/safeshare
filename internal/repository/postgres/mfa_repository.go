@@ -301,11 +301,11 @@ func (r *MFARepository) CreateRecoveryCodes(ctx context.Context, userID int64, c
 	results := tx.SendBatch(ctx, batch)
 	for range codeHashes {
 		if _, err := results.Exec(); err != nil {
-			results.Close()
+			_ = results.Close() // Best-effort cleanup
 			return fmt.Errorf("failed to insert recovery code: %w", err)
 		}
 	}
-	results.Close()
+	_ = results.Close() // Error not actionable at this point
 
 	return tx.Commit(ctx)
 }

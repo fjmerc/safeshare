@@ -297,7 +297,7 @@ func (r *MFARepository) CreateRecoveryCodes(ctx context.Context, userID int64, c
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }() // Error not actionable in defer
 
 	for _, hash := range codeHashes {
 		if _, err := stmt.ExecContext(ctx, userID, hash); err != nil {
@@ -770,8 +770,8 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 
 	// Check if expired
 	if time.Now().After(ch.ExpiresAt) {
-		// Clean up expired challenge
-		r.db.ExecContext(ctx, "DELETE FROM mfa_challenges WHERE id = ?", ch.ID)
+		// Clean up expired challenge (best-effort, error not actionable)
+		_, _ = r.db.ExecContext(ctx, "DELETE FROM mfa_challenges WHERE id = ?", ch.ID)
 		return nil, repository.ErrChallengeExpired
 	}
 

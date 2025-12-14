@@ -191,11 +191,17 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Update in-memory config
 		cfg.SetMFAEnabled(currentCfg.Enabled)
 		cfg.SetMFARequired(currentCfg.Required)
-		cfg.SetMFAIssuer(currentCfg.Issuer)
+		if err := cfg.SetMFAIssuer(currentCfg.Issuer); err != nil {
+			slog.Error("failed to set MFA issuer in config", "error", err)
+		}
 		cfg.SetMFATOTPEnabled(currentCfg.TOTPEnabled)
 		cfg.SetMFAWebAuthnEnabled(currentCfg.WebAuthnEnabled)
-		cfg.SetMFARecoveryCodesCount(currentCfg.RecoveryCodesCount)
-		cfg.SetMFAChallengeExpiryMinutes(currentCfg.ChallengeExpiryMinutes)
+		if err := cfg.SetMFARecoveryCodesCount(currentCfg.RecoveryCodesCount); err != nil {
+			slog.Error("failed to set MFA recovery codes count in config", "error", err)
+		}
+		if err := cfg.SetMFAChallengeExpiryMinutes(currentCfg.ChallengeExpiryMinutes); err != nil {
+			slog.Error("failed to set MFA challenge expiry in config", "error", err)
+		}
 
 		// Sync feature flag with enabled state
 		cfg.Features.SetMFAEnabled(currentCfg.Enabled)
@@ -304,9 +310,15 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Update in-memory config
 		cfg.SetSSOEnabled(currentCfg.Enabled)
 		cfg.SetSSOAutoProvision(currentCfg.AutoProvision)
-		cfg.SetSSODefaultRole(currentCfg.DefaultRole)
-		cfg.SetSSOSessionLifetime(currentCfg.SessionLifetime)
-		cfg.SetSSOStateExpiryMinutes(currentCfg.StateExpiryMinutes)
+		if err := cfg.SetSSODefaultRole(currentCfg.DefaultRole); err != nil {
+			slog.Error("failed to set SSO default role in config", "error", err)
+		}
+		if err := cfg.SetSSOSessionLifetime(currentCfg.SessionLifetime); err != nil {
+			slog.Error("failed to set SSO session lifetime in config", "error", err)
+		}
+		if err := cfg.SetSSOStateExpiryMinutes(currentCfg.StateExpiryMinutes); err != nil {
+			slog.Error("failed to set SSO state expiry in config", "error", err)
+		}
 
 		// Sync feature flag with enabled state
 		cfg.Features.SetSSOEnabled(currentCfg.Enabled)

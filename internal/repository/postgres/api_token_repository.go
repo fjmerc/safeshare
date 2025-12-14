@@ -121,7 +121,7 @@ func (r *APITokenRepository) CreateWithLimit(ctx context.Context, userID int64, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Count existing active tokens for user within the transaction
 	// Use FOR UPDATE to lock the rows and prevent concurrent inserts

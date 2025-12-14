@@ -222,7 +222,9 @@ func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http
 		adminCookie, adminErr := r.Cookie("admin_session")
 		if adminErr == nil {
 			// Delete admin session from database
-			repos.Admin.DeleteSession(ctx, adminCookie.Value)
+			if err := repos.Admin.DeleteSession(ctx, adminCookie.Value); err != nil {
+				slog.Error("failed to delete admin session", "error", err)
+			}
 
 			slog.Info("admin logout via admin_session",
 				"ip", getClientIP(r),
@@ -233,7 +235,9 @@ func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http
 		userCookie, userErr := r.Cookie("user_session")
 		if userErr == nil {
 			// Delete user session from database
-			repos.Users.DeleteSession(ctx, userCookie.Value)
+			if err := repos.Users.DeleteSession(ctx, userCookie.Value); err != nil {
+				slog.Error("failed to delete user session", "error", err)
+			}
 
 			slog.Info("admin logout via user_session",
 				"ip", getClientIP(r),

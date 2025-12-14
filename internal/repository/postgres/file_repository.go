@@ -79,7 +79,7 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Check quota within transaction
 		var currentUsage int64
@@ -388,7 +388,7 @@ func (r *FileRepository) DeleteByClaimCode(ctx context.Context, claimCode string
 		if err != nil {
 			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Get the file info within transaction
 		query := `
@@ -658,7 +658,7 @@ func (r *FileRepository) batchDeleteFiles(ctx context.Context, fileIDs []int64) 
 		slog.Error("failed to begin transaction for batch delete", "error", err)
 		return 0
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Process in chunks
 	for i := 0; i < len(fileIDs); i += batchSize {

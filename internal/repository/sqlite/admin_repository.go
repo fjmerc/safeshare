@@ -42,7 +42,7 @@ func (r *AdminRepository) ValidateCredentials(ctx context.Context, username, pas
 		// User not found - perform a dummy bcrypt comparison to prevent timing attacks
 		// that could reveal whether the username exists.
 		// Uses a valid pre-generated hash to ensure full bcrypt comparison runs.
-		bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password)) //nolint:errcheck // Intentional: timing attack mitigation
 		return false, nil
 	}
 	if err != nil {

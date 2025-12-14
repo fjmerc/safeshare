@@ -325,20 +325,20 @@ func (es *S3EncryptedStorage) AssembleChunks(ctx context.Context, uploadID strin
 	// Get the assembled plaintext
 	plaintextReader, err := es.backend.Retrieve(ctx, tempFilename)
 	if err != nil {
-		es.backend.Delete(ctx, tempFilename) // Cleanup on error
+		_ = es.backend.Delete(ctx, tempFilename) // Best-effort cleanup
 		return "", err
 	}
 
 	// Read plaintext (we need it all for encryption)
 	plaintextData, err := io.ReadAll(plaintextReader)
-	plaintextReader.Close()
+	_ = plaintextReader.Close() // Error not actionable
 	if err != nil {
-		es.backend.Delete(ctx, tempFilename)
+		_ = es.backend.Delete(ctx, tempFilename) // Best-effort cleanup
 		return "", storage.NewStorageError("AssembleChunks", tempFilename, err)
 	}
 
 	// Delete the temporary unencrypted file
-	es.backend.Delete(ctx, tempFilename)
+	_ = es.backend.Delete(ctx, tempFilename) // Error not actionable - file is temporary
 
 	// Encrypt and store to final destination
 	_, _, err = es.Store(ctx, destFilename, bytes.NewReader(plaintextData), int64(len(plaintextData)))

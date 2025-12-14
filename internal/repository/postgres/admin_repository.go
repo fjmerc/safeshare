@@ -42,7 +42,7 @@ func (r *AdminRepository) ValidateCredentials(ctx context.Context, username, pas
 
 	if err == pgx.ErrNoRows {
 		// User not found - perform a dummy bcrypt comparison to prevent timing attacks
-		bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password)) //nolint:errcheck // Intentional: timing attack mitigation
 		return false, nil
 	}
 	if err != nil {

@@ -33,7 +33,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				"upload_id", uploadID,
 				"panic", r,
 			)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembly panicked: %v", r))
+			if err := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembly panicked: %v", r)); err != nil {
+				slog.Error("failed to mark assembly as failed after panic", "error", err, "upload_id", uploadID)
+			}
 		}
 	}()
 
@@ -52,7 +54,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		claimCode, err = utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err, "upload_id", uploadID)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate claim code: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate claim code: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
@@ -60,7 +64,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		existing, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to check claim code", "error", err, "upload_id", uploadID)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to check claim code: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to check claim code: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
