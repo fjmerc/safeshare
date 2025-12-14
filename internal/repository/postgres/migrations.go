@@ -654,13 +654,13 @@ func RunMigrations(ctx context.Context, pool *Pool) error {
 
 		// Execute migration SQL
 		if _, err := tx.Exec(ctx, m.SQL); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx) // Error not actionable; already returning error
 			return fmt.Errorf("failed to execute migration %s: %w", m.Name, err)
 		}
 
 		// Record migration as applied
 		if _, err := tx.Exec(ctx, "INSERT INTO migrations (name) VALUES ($1)", m.Name); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx) // Error not actionable; already returning error
 			return fmt.Errorf("failed to record migration %s: %w", m.Name, err)
 		}
 

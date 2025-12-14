@@ -190,7 +190,7 @@ func (r *UserRepository) UpdatePasswordWithSessionInvalidation(ctx context.Conte
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		requireChange := !clearPasswordChangeFlag
 
@@ -269,7 +269,7 @@ func (r *UserRepository) Delete(ctx context.Context, userID int64, uploadDir str
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Get all files owned by this user within the transaction
 		var fileRecords []struct {
@@ -616,7 +616,7 @@ func (r *UserRepository) DeleteFile(ctx context.Context, fileID, userID int64) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Get the file to ensure it belongs to the user
 		query := `
@@ -694,7 +694,7 @@ func (r *UserRepository) DeleteFileByClaimCode(ctx context.Context, claimCode st
 		if err != nil {
 			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Get the file
 		query := `
@@ -891,7 +891,7 @@ func (r *UserRepository) RegenerateClaimCode(ctx context.Context, fileID, userID
 		if err != nil {
 			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Verify file exists and belongs to user
 		var currentClaimCode string
@@ -957,7 +957,7 @@ func (r *UserRepository) RegenerateClaimCodeByClaimCode(ctx context.Context, old
 		if err != nil {
 			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Verify file exists and belongs to user
 		var fileID int64

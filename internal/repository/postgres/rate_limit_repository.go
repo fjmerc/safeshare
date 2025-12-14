@@ -95,7 +95,7 @@ func (r *RateLimitRepository) IncrementAndCheck(ctx context.Context, ipAddress, 
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// First, check if entry exists and if window has expired
 		var existingCount int

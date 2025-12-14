@@ -335,7 +335,7 @@ func (r *SSORepository) DeleteProvider(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Delete states
 	if _, err := tx.Exec(ctx, "DELETE FROM sso_states WHERE provider_id = $1", id); err != nil {

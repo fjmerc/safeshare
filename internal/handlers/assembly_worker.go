@@ -135,7 +135,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			slog.Error("failed to encrypt file", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
 			os.Remove(tempEncryptedPath)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
@@ -147,13 +149,17 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		if err := os.Remove(finalPath); err != nil {
 			slog.Error("failed to remove original file", "error", err, "upload_id", uploadID)
 			os.Remove(tempEncryptedPath)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 		if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
 			slog.Error("failed to rename encrypted file", "error", err, "upload_id", uploadID)
 			os.Remove(tempEncryptedPath)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
@@ -170,7 +176,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		if err != nil {
 			slog.Error("failed to open file for MIME detection", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
@@ -182,7 +190,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		if err != nil && err != io.EOF {
 			slog.Error("failed to read file for MIME detection", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err))
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 
@@ -222,7 +232,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 	if err := repos.Files.Create(ctx, fileRecord); err != nil {
 		os.Remove(finalPath) // Clean up on error
 		slog.Error("failed to create file record", "error", err, "upload_id", uploadID)
-		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to create file record: %v", err))
+		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to create file record: %v", err)); setErr != nil {
+			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+		}
 		return
 	}
 

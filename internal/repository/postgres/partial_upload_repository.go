@@ -98,7 +98,7 @@ func (r *PartialUploadRepository) CreateWithQuotaCheck(ctx context.Context, uplo
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 		// Check quota within transaction
 		var currentUsage int64

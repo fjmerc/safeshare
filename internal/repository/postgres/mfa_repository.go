@@ -788,7 +788,7 @@ func (r *MFARepository) AdminDisableMFA(ctx context.Context, userID int64) error
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Delete recovery codes
 	if _, err := tx.Exec(ctx, "DELETE FROM user_mfa_recovery_codes WHERE user_id = $1", userID); err != nil {
