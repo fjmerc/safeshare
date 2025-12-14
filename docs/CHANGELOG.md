@@ -33,7 +33,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
-## [Unreleased]
+## [1.5.0] - 2025-12-14
 
 ### Added
 
@@ -1341,7 +1341,7 @@ Initial production release.
 
 <!-- Note: Historical version links below reference old v2.x tags that have been deleted.
      They are preserved for documentation purposes. The current release is v1.0.0. -->
-[Unreleased]: https://github.com/fjmerc/safeshare/compare/v1.4.1...HEAD
+[1.5.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.5.0
 [1.4.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.1
 [1.4.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.0
 [1.3.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.3.1
