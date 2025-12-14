@@ -1400,3 +1400,458 @@ func TestAdminRevokeUserTokensHandler_MethodNotAllowed(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+// Tests for AdminListAPITokensHandler
+
+func TestAdminListAPITokensHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	// Create test user and token
+	user, _ := setupTestUserWithSession(t, db)
+
+	// Create a token for the user
+	expiresAt := time.Now().Add(24 * time.Hour)
+	_, err := database.CreateAPIToken(db, user.ID, "Test Token", "hash123", "ss_test", "files:read", "127.0.0.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminListAPITokensHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	tokens := resp["tokens"].([]interface{})
+	if len(tokens) != 1 {
+		t.Errorf("tokens count = %d, want 1", len(tokens))
+	}
+}
+
+func TestAdminListAPITokensHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminListAPITokensHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAdminListAPITokensHandler_WithPagination(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens?limit=10&offset=0", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminListAPITokensHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if int(resp["limit"].(float64)) != 10 {
+		t.Errorf("limit = %v, want 10", resp["limit"])
+	}
+	if int(resp["offset"].(float64)) != 0 {
+		t.Errorf("offset = %v, want 0", resp["offset"])
+	}
+}
+
+func TestAdminListAPITokensHandler_EmptyResult(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminListAPITokensHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	tokens := resp["tokens"].([]interface{})
+	if tokens == nil || len(tokens) != 0 {
+		t.Errorf("expected empty tokens array, got %v", tokens)
+	}
+}
+
+// Tests for AdminRevokeAPITokenHandler
+
+func TestAdminRevokeAPITokenHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	user, _ := setupTestUserWithSession(t, db)
+
+	// Create a token
+	expiresAt := time.Now().Add(24 * time.Hour)
+	token, err := database.CreateAPIToken(db, user.ID, "Test Token", "hash123", "ss_test", "files:read", "127.0.0.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/tokens/revoke?id=%d", token.ID), nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminRevokeAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["message"] != "Token revoked successfully" {
+		t.Errorf("message = %q, want 'Token revoked successfully'", resp["message"])
+	}
+}
+
+func TestAdminRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens/revoke?id=1", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminRevokeAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAdminRevokeAPITokenHandler_InvalidTokenID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/revoke?id=invalid", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminRevokeAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminRevokeAPITokenHandler_TokenNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/revoke?id=99999", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminRevokeAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestAdminRevokeAPITokenHandler_PostMethod(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	user, _ := setupTestUserWithSession(t, db)
+
+	// Create a token
+	expiresAt := time.Now().Add(24 * time.Hour)
+	token, err := database.CreateAPIToken(db, user.ID, "Test Token", "hash123", "ss_test", "files:read", "127.0.0.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	// POST should also work
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/tokens/revoke?id=%d", token.ID), nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminRevokeAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+// Tests for AdminDeleteAPITokenHandler
+
+func TestAdminDeleteAPITokenHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	user, _ := setupTestUserWithSession(t, db)
+
+	// Create a token
+	expiresAt := time.Now().Add(24 * time.Hour)
+	token, err := database.CreateAPIToken(db, user.ID, "Test Token", "hash123", "ss_test", "files:read", "127.0.0.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/tokens/delete?id=%d", token.ID), nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminDeleteAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["message"] != "Token deleted permanently" {
+		t.Errorf("message = %q, want 'Token deleted permanently'", resp["message"])
+	}
+
+	// Verify token is actually deleted
+	deletedToken, _ := database.GetAPITokenByID(db, token.ID)
+	if deletedToken != nil {
+		t.Error("token should have been deleted")
+	}
+}
+
+func TestAdminDeleteAPITokenHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/delete?id=1", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminDeleteAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAdminDeleteAPITokenHandler_InvalidTokenID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/delete?id=invalid", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminDeleteAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminDeleteAPITokenHandler_TokenNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/delete?id=99999", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminDeleteAPITokenHandler(db)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// Tests for AdminBulkExtendTokensHandler
+
+func TestAdminBulkExtendTokensHandler_Success(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	user, _ := setupTestUserWithSession(t, db)
+
+	// Create a token with short expiry
+	expiresAt := time.Now().Add(24 * time.Hour)
+	token, err := database.CreateAPIToken(db, user.ID, "Test Token", "hash123", "ss_test", "files:read", "127.0.0.1", &expiresAt)
+	if err != nil {
+		t.Fatalf("failed to create token: %v", err)
+	}
+
+	// Include confirm: true as required by the handler
+	reqBody := fmt.Sprintf(`{"token_ids": [%d], "days": 30, "confirm": true}`, token.ID)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d. Body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Handler returns BulkExtendResponse with message and extended_count fields
+	if resp["message"] != "Token expiration extended successfully" {
+		t.Errorf("message = %v, want 'Token expiration extended successfully'", resp["message"])
+	}
+	if int(resp["extended_count"].(float64)) != 1 {
+		t.Errorf("extended_count = %v, want 1", resp["extended_count"])
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_RequiresConfirmation(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	// Request without confirm: true should fail
+	reqBody := `{"token_ids": [1], "days": 30}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp["code"] != "CONFIRMATION_REQUIRED" {
+		t.Errorf("error code = %v, want CONFIRMATION_REQUIRED", resp["code"])
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_MethodNotAllowed(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens/bulk-extend", nil)
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_InvalidJSON(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString("invalid json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_EmptyTokenIDs(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	reqBody := `{"token_ids": [], "days": 30, "confirm": true}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_InvalidDays(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	reqBody := `{"token_ids": [1], "days": 0, "confirm": true}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_ExceedMaxDays(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	// Request more than max allowed days (365)
+	reqBody := `{"token_ids": [1], "days": 400, "confirm": true}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminBulkExtendTokensHandler_TooManyTokens(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	repos, cfg := setupTestReposAndConfig(t, db)
+
+	// Create an array with 101 token IDs (max is 100)
+	tokenIDs := make([]int64, 101)
+	for i := range tokenIDs {
+		tokenIDs[i] = int64(i + 1)
+	}
+	tokenIDsJSON, _ := json.Marshal(tokenIDs)
+	reqBody := fmt.Sprintf(`{"token_ids": %s, "days": 30, "confirm": true}`, string(tokenIDsJSON))
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/bulk-extend", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler := AdminBulkExtendTokensHandler(repos, cfg)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}

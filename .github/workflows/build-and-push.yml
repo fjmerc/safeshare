@@ -34,10 +34,13 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Test internal packages only (excludes cmd/* CLI tools)
-          # Rationale: main() functions and CLI entry points are hard to unit test
-          # and are better tested via integration/E2E tests
-          go test ./internal/... -cover -coverprofile=coverage.out -covermode=atomic
+          # Test internal packages, excluding infrastructure packages requiring external services:
+          # - cmd/*: CLI tools and main() functions (better tested via integration/E2E)
+          # - internal/repository/postgres: Requires PostgreSQL database connection
+          # - internal/storage/s3: Requires AWS S3 or MinIO service
+          # These enterprise packages are integration-tested separately.
+          go test $(go list ./internal/... | grep -v -E '(repository/postgres|storage/s3)') \
+            -cover -coverprofile=coverage.out -covermode=atomic
 
       - name: Check coverage threshold
         run: |

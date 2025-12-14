@@ -856,6 +856,340 @@ func TestAddTokenExpirationHeaders_Unit(t *testing.T) {
 	}
 }
 
+// TestRequireScope_SessionAuth tests that session auth bypasses scope checks
+func TestRequireScope_SessionAuth(t *testing.T) {
+	handler := RequireScope("files:write")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("success"))
+	}))
+
+	// Create request with session auth type
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeSession)
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (session auth should bypass scope)", rr.Code, http.StatusOK)
+	}
+}
+
+// TestRequireScope_APIToken_HasScope tests API token with required scope
+func TestRequireScope_APIToken_HasScope(t *testing.T) {
+	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("success"))
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
+	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
+	ctx = context.WithValue(ctx, ContextKeyTokenScopes, "files:read,files:write")
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (token has required scope)", rr.Code, http.StatusOK)
+	}
+}
+
+// TestRequireScope_APIToken_MissingScope tests API token without required scope
+func TestRequireScope_APIToken_MissingScope(t *testing.T) {
+	handler := RequireScope("files:write")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
+	ctx = context.WithValue(ctx, ContextKeyTokenScopes, "files:read") // Only has read, not write
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (token missing required scope)", rr.Code, http.StatusForbidden)
+	}
+}
+
+// TestRequireScope_NoAuthType tests when no auth type is set
+func TestRequireScope_NoAuthType(t *testing.T) {
+	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d (no auth type)", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestRequireScope_APIToken_NoScopes tests API token auth with no scopes in context
+func TestRequireScope_APIToken_NoScopes(t *testing.T) {
+	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
+	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
+	// Note: No scopes set in context
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d (no scopes in context)", rr.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestGetUserFromContext tests the context helper function
+func TestGetUserFromContext(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	// Create user
+	passwordHash, err := utils.HashPassword("password123")
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		setup    func(r *http.Request) *http.Request
+		wantNil  bool
+		wantUser string
+	}{
+		{
+			name: "user in context",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyUser, user)
+				return r.WithContext(ctx)
+			},
+			wantNil:  false,
+			wantUser: "testuser",
+		},
+		{
+			name: "no user in context",
+			setup: func(r *http.Request) *http.Request {
+				return r
+			},
+			wantNil: true,
+		},
+		{
+			name: "wrong type in context",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyUser, "not-a-user")
+				return r.WithContext(ctx)
+			},
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = tt.setup(req)
+
+			result := GetUserFromContext(req)
+			if tt.wantNil {
+				if result != nil {
+					t.Errorf("expected nil, got %v", result)
+				}
+			} else {
+				if result == nil {
+					t.Error("expected non-nil result")
+				} else if result.Username != tt.wantUser {
+					t.Errorf("username = %s, want %s", result.Username, tt.wantUser)
+				}
+			}
+		})
+	}
+}
+
+// TestGetAuthTypeFromContext tests the auth type context helper
+func TestGetAuthTypeFromContext(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(r *http.Request) *http.Request
+		want     string
+	}{
+		{
+			name: "session auth type",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyAuthType, AuthTypeSession)
+				return r.WithContext(ctx)
+			},
+			want: AuthTypeSession,
+		},
+		{
+			name: "api token auth type",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyAuthType, AuthTypeAPIToken)
+				return r.WithContext(ctx)
+			},
+			want: AuthTypeAPIToken,
+		},
+		{
+			name: "no auth type in context",
+			setup: func(r *http.Request) *http.Request {
+				return r
+			},
+			want: "",
+		},
+		{
+			name: "wrong type in context",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyAuthType, 12345)
+				return r.WithContext(ctx)
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = tt.setup(req)
+
+			result := GetAuthTypeFromContext(req)
+			if result != tt.want {
+				t.Errorf("GetAuthTypeFromContext() = %q, want %q", result, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetTokenScopesFromContext tests the token scopes context helper
+func TestGetTokenScopesFromContext(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(r *http.Request) *http.Request
+		want  string
+	}{
+		{
+			name: "scopes in context",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyTokenScopes, "files:read,files:write")
+				return r.WithContext(ctx)
+			},
+			want: "files:read,files:write",
+		},
+		{
+			name: "no scopes in context",
+			setup: func(r *http.Request) *http.Request {
+				return r
+			},
+			want: "",
+		},
+		{
+			name: "wrong type in context",
+			setup: func(r *http.Request) *http.Request {
+				ctx := context.WithValue(r.Context(), ContextKeyTokenScopes, 12345)
+				return r.WithContext(ctx)
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = tt.setup(req)
+
+			result := GetTokenScopesFromContext(req)
+			if result != tt.want {
+				t.Errorf("GetTokenScopesFromContext() = %q, want %q", result, tt.want)
+			}
+		})
+	}
+}
+
+// TestAuthError tests the authError type
+func TestAuthError(t *testing.T) {
+	err := &authError{
+		message:    "Test error message",
+		statusCode: http.StatusUnauthorized,
+	}
+
+	if err.Error() != "Test error message" {
+		t.Errorf("Error() = %q, want %q", err.Error(), "Test error message")
+	}
+}
+
+// TestHandleAuthError tests the auth error handler
+func TestHandleAuthError(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		isHTML     bool
+		wantStatus int
+	}{
+		{
+			name:       "forbidden error",
+			err:        &authError{message: "Account disabled", statusCode: http.StatusForbidden},
+			isHTML:     false,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "unauthorized API request",
+			err:        &authError{message: "Invalid token", statusCode: http.StatusUnauthorized},
+			isHTML:     false,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "unauthorized HTML request redirects",
+			err:        &authError{message: "Invalid token", statusCode: http.StatusUnauthorized},
+			isHTML:     true,
+			wantStatus: http.StatusFound,
+		},
+		{
+			name:       "internal server error",
+			err:        &authError{message: "Database error", statusCode: http.StatusInternalServerError},
+			isHTML:     false,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "generic error",
+			err:        context.DeadlineExceeded,
+			isHTML:     false,
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+			if tt.isHTML {
+				req.Header.Set("Accept", "text/html")
+			}
+			rr := httptest.NewRecorder()
+
+			handleAuthError(rr, req, tt.err)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rr.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
 // TestGetTokenExpiresAtFromContext tests the context helper function
 func TestGetTokenExpiresAtFromContext(t *testing.T) {
 	tests := []struct {

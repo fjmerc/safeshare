@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"crypto/tls"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 func TestBuildDownloadURL(t *testing.T) {
@@ -605,4 +609,345 @@ func TestHelpers_EdgeCases(t *testing.T) {
 			t.Errorf("redactClaimCode() middle should be '...': %q", got)
 		}
 	})
+}
+
+func TestSendError(t *testing.T) {
+	tests := []struct {
+		name       string
+		message    string
+		code       string
+		statusCode int
+	}{
+		{
+			name:       "bad request",
+			message:    "Invalid input",
+			code:       "INVALID_INPUT",
+			statusCode: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			message:    "File not found",
+			code:       "NOT_FOUND",
+			statusCode: http.StatusNotFound,
+		},
+		{
+			name:       "internal error",
+			message:    "Something went wrong",
+			code:       "INTERNAL_ERROR",
+			statusCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			sendError(rr, tt.message, tt.code, tt.statusCode)
+
+			if rr.Code != tt.statusCode {
+				t.Errorf("status = %d, want %d", rr.Code, tt.statusCode)
+			}
+
+			contentType := rr.Header().Get("Content-Type")
+			if contentType != "application/json" {
+				t.Errorf("Content-Type = %q, want application/json", contentType)
+			}
+
+			var response models.ErrorResponse
+			if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+
+			if response.Error != tt.message {
+				t.Errorf("error = %q, want %q", response.Error, tt.message)
+			}
+
+			if response.Code != tt.code {
+				t.Errorf("code = %q, want %q", response.Code, tt.code)
+			}
+		})
+	}
+}
+
+func TestSendErrorWithRetry(t *testing.T) {
+	t.Run("with retry recommended", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		retryRecommended := true
+		retryAfter := 30
+
+		sendErrorWithRetry(rr, "Retry later", "RATE_LIMITED", http.StatusTooManyRequests, &retryRecommended, &retryAfter)
+
+		var response models.ErrorResponse
+		json.NewDecoder(rr.Body).Decode(&response)
+
+		if response.RetryRecommended == nil || !*response.RetryRecommended {
+			t.Error("expected retry_recommended to be true")
+		}
+
+		if response.RetryAfter == nil || *response.RetryAfter != 30 {
+			t.Error("expected retry_after to be 30")
+		}
+	})
+
+	t.Run("without retry", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		retryRecommended := false
+
+		sendErrorWithRetry(rr, "Bad request", "INVALID_INPUT", http.StatusBadRequest, &retryRecommended, nil)
+
+		var response models.ErrorResponse
+		json.NewDecoder(rr.Body).Decode(&response)
+
+		if response.RetryRecommended == nil || *response.RetryRecommended {
+			t.Error("expected retry_recommended to be false")
+		}
+
+		if response.RetryAfter != nil {
+			t.Error("expected retry_after to be nil")
+		}
+	})
+
+	t.Run("nil retry params", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+
+		sendErrorWithRetry(rr, "Error", "ERROR", http.StatusInternalServerError, nil, nil)
+
+		var response models.ErrorResponse
+		json.NewDecoder(rr.Body).Decode(&response)
+
+		if response.RetryRecommended != nil {
+			t.Error("expected retry_recommended to be nil")
+		}
+	})
+}
+
+func TestSendHTMLError(t *testing.T) {
+	tests := []struct {
+		name       string
+		title      string
+		message    string
+		code       string
+		statusCode int
+	}{
+		{
+			name:       "not found page",
+			title:      "File Not Found",
+			message:    "The requested file could not be found.",
+			code:       "NOT_FOUND",
+			statusCode: http.StatusNotFound,
+		},
+		{
+			name:       "error page",
+			title:      "Server Error",
+			message:    "An internal error occurred.",
+			code:       "INTERNAL_ERROR",
+			statusCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			sendHTMLError(rr, tt.title, tt.message, tt.code, tt.statusCode)
+
+			if rr.Code != tt.statusCode {
+				t.Errorf("status = %d, want %d", rr.Code, tt.statusCode)
+			}
+
+			contentType := rr.Header().Get("Content-Type")
+			// Should be either text/html or text/plain (fallback)
+			if !strings.HasPrefix(contentType, "text/html") && !strings.HasPrefix(contentType, "text/plain") {
+				t.Errorf("Content-Type = %q, want text/html or text/plain", contentType)
+			}
+
+			// Response body should contain the message
+			body := rr.Body.String()
+			if !strings.Contains(body, tt.message) {
+				t.Errorf("body should contain message %q", tt.message)
+			}
+		})
+	}
+}
+
+func TestSendErrorResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		accept     string
+		wantHTML   bool
+	}{
+		{
+			name:     "browser request",
+			accept:   "text/html,application/xhtml+xml",
+			wantHTML: true,
+		},
+		{
+			name:     "API request",
+			accept:   "application/json",
+			wantHTML: false,
+		},
+		{
+			name:     "curl request",
+			accept:   "*/*",
+			wantHTML: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("Accept", tt.accept)
+
+			sendErrorResponse(rr, req, "Error Title", "Error message", "ERROR_CODE", http.StatusBadRequest)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+			}
+
+			contentType := rr.Header().Get("Content-Type")
+			if tt.wantHTML {
+				if !strings.HasPrefix(contentType, "text/html") && !strings.HasPrefix(contentType, "text/plain") {
+					t.Errorf("expected HTML content type, got %q", contentType)
+				}
+			} else {
+				if contentType != "application/json" {
+					t.Errorf("expected JSON content type, got %q", contentType)
+				}
+			}
+		})
+	}
+}
+
+func TestSendSmartError(t *testing.T) {
+	tests := []struct {
+		name           string
+		errorCode      string
+		wantRetry      bool
+		wantRetryAfter int
+	}{
+		{
+			name:           "retryable error",
+			errorCode:      "INTERNAL_ERROR",
+			wantRetry:      true,
+			wantRetryAfter: 5,
+		},
+		{
+			name:           "non-retryable error",
+			errorCode:      "INVALID_JSON",
+			wantRetry:      false,
+			wantRetryAfter: 0,
+		},
+		{
+			name:           "rate limited",
+			errorCode:      "RATE_LIMITED",
+			wantRetry:      true,
+			wantRetryAfter: 60,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			sendSmartError(rr, "Error message", tt.errorCode, http.StatusBadRequest)
+
+			var response models.ErrorResponse
+			json.NewDecoder(rr.Body).Decode(&response)
+
+			if response.RetryRecommended == nil {
+				t.Fatal("expected retry_recommended to be set")
+			}
+
+			if *response.RetryRecommended != tt.wantRetry {
+				t.Errorf("retry_recommended = %v, want %v", *response.RetryRecommended, tt.wantRetry)
+			}
+
+			if tt.wantRetry && tt.wantRetryAfter > 0 {
+				if response.RetryAfter == nil {
+					t.Error("expected retry_after to be set")
+				} else if *response.RetryAfter != tt.wantRetryAfter {
+					t.Errorf("retry_after = %d, want %d", *response.RetryAfter, tt.wantRetryAfter)
+				}
+			}
+		})
+	}
+}
+
+func TestGetClientIPWithConfig(t *testing.T) {
+	tests := []struct {
+		name              string
+		headers           map[string]string
+		remoteAddr        string
+		trustProxyHeaders string
+		trustedProxyIPs   string
+		want              string
+	}{
+		{
+			name: "trusted proxy with X-Forwarded-For",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+			},
+			remoteAddr:        "10.0.0.1:12345",
+			trustProxyHeaders: "auto",
+			trustedProxyIPs:   "10.0.0.0/8",
+			want:              "203.0.113.1",
+		},
+		{
+			name: "untrusted proxy ignores headers",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+			},
+			remoteAddr:        "8.8.8.8:12345",
+			trustProxyHeaders: "auto",
+			trustedProxyIPs:   "10.0.0.0/8",
+			want:              "8.8.8.8",
+		},
+		{
+			name:              "no headers, use remote addr",
+			headers:           map[string]string{},
+			remoteAddr:        "192.168.1.1:12345",
+			trustProxyHeaders: "auto",
+			trustedProxyIPs:   "10.0.0.0/8",
+			want:              "192.168.1.1",
+		},
+		{
+			name: "trust all with true",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+			},
+			remoteAddr:        "8.8.8.8:12345",
+			trustProxyHeaders: "true",
+			trustedProxyIPs:   "",
+			want:              "203.0.113.1",
+		},
+		{
+			name: "never trust headers with false",
+			headers: map[string]string{
+				"X-Forwarded-For": "203.0.113.1",
+			},
+			remoteAddr:        "10.0.0.1:12345",
+			trustProxyHeaders: "false",
+			trustedProxyIPs:   "10.0.0.0/8",
+			want:              "10.0.0.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
+			req.RemoteAddr = tt.remoteAddr
+
+			for key, val := range tt.headers {
+				req.Header.Set(key, val)
+			}
+
+			cfg := &config.Config{
+				TrustProxyHeaders: tt.trustProxyHeaders,
+				TrustedProxyIPs:   tt.trustedProxyIPs,
+			}
+
+			got := getClientIPWithConfig(req, cfg)
+			if got != tt.want {
+				t.Errorf("getClientIPWithConfig() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

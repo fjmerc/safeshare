@@ -141,8 +141,11 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 go test -v ./internal/handler
 **Coverage Requirements:**
 - Minimum coverage threshold: **60%** (for `internal/*` packages only)
 - **Coverage scope**: Only `internal/*` packages are measured
-- **Excluded**: `cmd/*` packages (CLI tools and main() functions)
-- **Rationale**: CLI entry points and main() functions are difficult to unit test and are better tested via integration/E2E tests. This follows Go community best practices.
+- **Excluded from coverage**:
+  - `cmd/*` packages (CLI tools and main() functions)
+  - `internal/repository/postgres` (requires PostgreSQL database)
+  - `internal/storage/s3` (requires AWS S3 or MinIO service)
+- **Rationale**: CLI entry points, main() functions, and enterprise infrastructure packages that require external services are difficult to unit test and are better tested via integration/E2E tests. This follows Go community best practices.
 
 **Test-Driven Development Workflow:**
 1. Make code changes

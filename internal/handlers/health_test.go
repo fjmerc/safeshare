@@ -9,6 +9,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/testutil"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 func TestHealthHandler_BasicRequest(t *testing.T) {
@@ -447,5 +448,114 @@ func TestHealthHandler_StatusDetails(t *testing.T) {
 	// StatusDetails field should be omitted from JSON when nil/empty
 	if response.Status == "healthy" && response.StatusDetails != nil && len(response.StatusDetails) == 0 {
 		t.Log("status_details is empty slice (will be omitted in JSON)")
+	}
+}
+
+// TestDetermineHealthStatus tests the health status determination logic
+func TestDetermineHealthStatus(t *testing.T) {
+	tests := []struct {
+		name            string
+		diskInfo        *utils.DiskSpaceInfo
+		quotaUsed       float64
+		wantStatus      string
+		wantHasDetails  bool
+	}{
+		{
+			name: "healthy with plenty of space",
+			diskInfo: &utils.DiskSpaceInfo{
+				TotalBytes:     100 * 1024 * 1024 * 1024,
+				FreeBytes:      50 * 1024 * 1024 * 1024,
+				AvailableBytes: 50 * 1024 * 1024 * 1024,
+				UsedPercent:    50.0,
+			},
+			quotaUsed:      50.0,
+			wantStatus:     "healthy",
+			wantHasDetails: false,
+		},
+		{
+			name: "degraded with low free space",
+			diskInfo: &utils.DiskSpaceInfo{
+				TotalBytes:     100 * 1024 * 1024 * 1024,
+				FreeBytes:      1 * 1024 * 1024 * 1024, // 1GB < 2GB warning
+				AvailableBytes: 1 * 1024 * 1024 * 1024,
+				UsedPercent:    99.0,
+			},
+			quotaUsed:      50.0,
+			wantStatus:     "unhealthy", // > 98% used is critical
+			wantHasDetails: true,
+		},
+		{
+			name: "degraded with high disk usage",
+			diskInfo: &utils.DiskSpaceInfo{
+				TotalBytes:     100 * 1024 * 1024 * 1024,
+				FreeBytes:      5 * 1024 * 1024 * 1024, // 5GB > 2GB warning
+				AvailableBytes: 5 * 1024 * 1024 * 1024,
+				UsedPercent:    95.0, // > 90% warning
+			},
+			quotaUsed:      50.0,
+			wantStatus:     "degraded",
+			wantHasDetails: true,
+		},
+		{
+			name: "degraded with high quota usage",
+			diskInfo: &utils.DiskSpaceInfo{
+				TotalBytes:     100 * 1024 * 1024 * 1024,
+				FreeBytes:      50 * 1024 * 1024 * 1024,
+				AvailableBytes: 50 * 1024 * 1024 * 1024,
+				UsedPercent:    50.0,
+			},
+			quotaUsed:      96.0, // > 95% warning
+			wantStatus:     "degraded",
+			wantHasDetails: true,
+		},
+		{
+			name: "unhealthy with critical disk space",
+			diskInfo: &utils.DiskSpaceInfo{
+				TotalBytes:     100 * 1024 * 1024 * 1024,
+				FreeBytes:      100 * 1024 * 1024,  // 100MB < 500MB critical
+				AvailableBytes: 100 * 1024 * 1024,
+				UsedPercent:    99.9,
+			},
+			quotaUsed:      50.0,
+			wantStatus:     "unhealthy",
+			wantHasDetails: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			details := []string{}
+			status := determineHealthStatus(tt.diskInfo, tt.quotaUsed, &details)
+
+			if status != tt.wantStatus {
+				t.Errorf("status = %q, want %q", status, tt.wantStatus)
+			}
+
+			hasDetails := len(details) > 0
+			if hasDetails != tt.wantHasDetails {
+				t.Errorf("hasDetails = %v, want %v (details: %v)", hasDetails, tt.wantHasDetails, details)
+			}
+		})
+	}
+}
+
+// TestSetHealthCacheHeaders tests that cache headers are set correctly
+func TestSetHealthCacheHeaders(t *testing.T) {
+	rr := httptest.NewRecorder()
+	setHealthCacheHeaders(rr)
+
+	cacheControl := rr.Header().Get("Cache-Control")
+	if cacheControl != "no-store, no-cache, must-revalidate, max-age=0" {
+		t.Errorf("Cache-Control = %q, want no-store, no-cache, must-revalidate, max-age=0", cacheControl)
+	}
+
+	pragma := rr.Header().Get("Pragma")
+	if pragma != "no-cache" {
+		t.Errorf("Pragma = %q, want no-cache", pragma)
+	}
+
+	expires := rr.Header().Get("Expires")
+	if expires != "0" {
+		t.Errorf("Expires = %q, want 0", expires)
 	}
 }
