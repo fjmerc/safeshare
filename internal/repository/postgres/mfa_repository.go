@@ -136,7 +136,7 @@ func (r *MFARepository) DisableTOTP(ctx context.Context, userID int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Delete recovery codes
 	if _, err := tx.Exec(ctx, "DELETE FROM user_mfa_recovery_codes WHERE user_id = $1", userID); err != nil {
@@ -281,7 +281,7 @@ func (r *MFARepository) CreateRecoveryCodes(ctx context.Context, userID int64, c
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Delete existing codes
 	if _, err := tx.Exec(ctx, "DELETE FROM user_mfa_recovery_codes WHERE user_id = $1", userID); err != nil {
@@ -672,7 +672,7 @@ func (r *MFARepository) CreateChallenge(ctx context.Context, userID int64, chall
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
 
 	// Delete any existing challenge of the same type for this user
 	if _, err := tx.Exec(ctx,
@@ -738,7 +738,7 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 	// Check if expired
 	if time.Now().After(ch.ExpiresAt) {
 		// Clean up expired challenge
-		r.pool.Exec(ctx, "DELETE FROM mfa_challenges WHERE id = $1", ch.ID)
+		_, _ = r.pool.Exec(ctx, "DELETE FROM mfa_challenges WHERE id = $1", ch.ID) //nolint:errcheck // Best-effort cleanup
 		return nil, repository.ErrChallengeExpired
 	}
 

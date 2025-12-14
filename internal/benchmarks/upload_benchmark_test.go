@@ -9,11 +9,6 @@ import (
 	"github.com/fjmerc/safeshare/internal/testutil"
 )
 
-// benchmarkTestT is a minimal testing.T implementation for benchmark setup
-type benchmarkTestT struct {
-	testing.TB
-}
-
 // BenchmarkUploadSmallFile benchmarks uploading a small file (10KB)
 func BenchmarkUploadSmallFile(b *testing.B) {
 	t := &testing.T{}

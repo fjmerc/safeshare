@@ -573,7 +573,7 @@ func (s *S3Storage) AssembleChunks(ctx context.Context, uploadID string, totalCh
 		chunkReader, err := s.GetChunk(ctx, uploadID, i)
 		if err != nil {
 			// Abort multipart upload on failure
-			s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			_, _ = s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{ //nolint:errcheck // Best-effort cleanup
 				Bucket:   aws.String(s.bucket),
 				Key:      aws.String(destFilename),
 				UploadId: uploadID2,
@@ -591,7 +591,7 @@ func (s *S3Storage) AssembleChunks(ctx context.Context, uploadID string, totalCh
 		chunkData, readErr := io.ReadAll(chunkReader)
 		chunkReader.Close()
 		if readErr != nil {
-			s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			_, _ = s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{ //nolint:errcheck // Best-effort cleanup
 				Bucket:   aws.String(s.bucket),
 				Key:      aws.String(destFilename),
 				UploadId: uploadID2,
@@ -611,7 +611,7 @@ func (s *S3Storage) AssembleChunks(ctx context.Context, uploadID string, totalCh
 			Body:       bytes.NewReader(chunkData),
 		})
 		if err != nil {
-			s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			_, _ = s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{ //nolint:errcheck // Best-effort cleanup
 				Bucket:   aws.String(s.bucket),
 				Key:      aws.String(destFilename),
 				UploadId: uploadID2,
@@ -645,7 +645,7 @@ func (s *S3Storage) AssembleChunks(ctx context.Context, uploadID string, totalCh
 		},
 	})
 	if err != nil {
-		s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		_, _ = s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{ //nolint:errcheck // Best-effort cleanup
 			Bucket:   aws.String(s.bucket),
 			Key:      aws.String(destFilename),
 			UploadId: uploadID2,

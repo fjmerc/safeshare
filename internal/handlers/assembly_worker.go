@@ -76,7 +76,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 
 		if i == maxRetries-1 {
 			slog.Error("failed to generate unique claim code after retries", "upload_id", uploadID)
-			repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Failed to generate unique claim code")
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Failed to generate unique claim code"); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
 			return
 		}
 	}
@@ -96,7 +98,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 	if err != nil {
 		slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
 		os.Remove(finalPath) // Clean up partial final file if it exists
-		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err))
+		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err)); setErr != nil {
+			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+		}
 		return
 	}
 
@@ -108,7 +112,9 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			"actual", totalBytesWritten,
 		)
 		os.Remove(finalPath)
-		repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten))
+		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten)); setErr != nil {
+			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+		}
 		return
 	}
 

@@ -2183,7 +2183,7 @@ func TestSSORepository_FindUserByExternalEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindUserByExternalEmail failed: %v", err)
 	}
-	if userIDs != nil && len(userIDs) != 0 {
+	if len(userIDs) != 0 {
 		t.Errorf("expected nil or empty slice, got %v", userIDs)
 	}
 }

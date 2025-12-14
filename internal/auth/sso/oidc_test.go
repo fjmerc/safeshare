@@ -140,7 +140,8 @@ func (m *mockSSORepository) FindUserByExternalEmail(ctx context.Context, email s
 }
 
 // setupMockOIDCServer creates a mock OIDC discovery server
-func setupMockOIDCServer() *httptest.Server {
+// Used in integration tests that require actual OIDC server interaction
+func setupMockOIDCServer() *httptest.Server { //nolint:unused // Reserved for integration tests
 	mux := http.NewServeMux()
 
 	// OIDC discovery endpoint
