@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -25,7 +25,11 @@ func TestUploadInitHandler_ValidRequest(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Create init request
 	initReq := models.UploadInitRequest{
@@ -63,7 +67,8 @@ func TestUploadInitHandler_ValidRequest(t *testing.T) {
 	}
 
 	// Verify partial upload created in database
-	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	ctx := context.Background()
+	partialUpload, _ := repos.PartialUploads.GetByUploadID(ctx, response.UploadID)
 	if partialUpload == nil {
 		t.Error("partial upload should be created in database")
 	}
@@ -74,7 +79,11 @@ func TestUploadInitHandler_ChunkedUploadDisabled(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = false // Disable chunked uploads
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	initReq := models.UploadInitRequest{
 		Filename:  "test.txt",
@@ -99,7 +108,11 @@ func TestUploadInitHandler_BlockedExtension(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Try to upload blocked extension
 	initReq := models.UploadInitRequest{
@@ -135,7 +148,11 @@ func TestUploadInitHandler_FileTooLarge(t *testing.T) {
 	// Set max file size to 1 MB
 	cfg.SetMaxFileSize(1024 * 1024)
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Try to upload 10 MB file
 	initReq := models.UploadInitRequest{
@@ -161,7 +178,11 @@ func TestUploadInitHandler_InvalidTotalSize(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Zero total size
 	initReq := models.UploadInitRequest{
@@ -187,7 +208,11 @@ func TestUploadInitHandler_MissingFilename(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	initReq := models.UploadInitRequest{
 		Filename:  "", // Missing filename
@@ -212,7 +237,11 @@ func TestUploadInitHandler_WithPassword(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	initReq := models.UploadInitRequest{
 		Filename:  "secret.txt",
@@ -235,7 +264,8 @@ func TestUploadInitHandler_WithPassword(t *testing.T) {
 	json.NewDecoder(rr.Body).Decode(&response)
 
 	// Verify password is hashed in database
-	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	ctx := context.Background()
+	partialUpload, _ := repos.PartialUploads.GetByUploadID(ctx, response.UploadID)
 	if partialUpload.PasswordHash == "" {
 		t.Error("password_hash should not be empty")
 	}
@@ -251,6 +281,11 @@ func TestUploadChunkHandler_ValidChunk(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload first (use valid UUID)
 	uploadID := "550e8400-e29b-41d4-a716-446655440001"
 	partialUpload := &models.PartialUpload{
@@ -262,9 +297,10 @@ func TestUploadChunkHandler_ValidChunk(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Create chunk data
 	chunkData := bytes.Repeat([]byte("A"), 1024)
@@ -309,7 +345,11 @@ func TestUploadChunkHandler_InvalidUploadID(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadChunkHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadChunkHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/chunk/invalid-id/0", nil)
 	rr := httptest.NewRecorder()
@@ -327,7 +367,11 @@ func TestUploadChunkHandler_UploadNotFound(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadChunkHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Valid UUID but doesn't exist
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/chunk/550e8400-e29b-41d4-a716-446655440000/0", nil)
@@ -346,6 +390,11 @@ func TestUploadChunkHandler_ChunkNumberOutOfRange(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload with 2 chunks
 	partialUpload := &models.PartialUpload{
 		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
@@ -356,9 +405,10 @@ func TestUploadChunkHandler_ChunkNumberOutOfRange(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Try to upload chunk 5 (out of range)
 	chunkData := bytes.Repeat([]byte("A"), 1024)
@@ -385,6 +435,11 @@ func TestUploadChunkHandler_ChunkSizeMismatch(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload with 1024 byte chunks
 	partialUpload := &models.PartialUpload{
 		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
@@ -395,9 +450,10 @@ func TestUploadChunkHandler_ChunkSizeMismatch(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Upload chunk 0 with wrong size (512 instead of 1024)
 	chunkData := bytes.Repeat([]byte("A"), 512)
@@ -424,6 +480,11 @@ func TestUploadChunkHandler_Idempotency(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	partialUpload := &models.PartialUpload{
 		UploadID:     "550e8400-e29b-41d4-a716-446655440002",
@@ -434,9 +495,10 @@ func TestUploadChunkHandler_Idempotency(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	chunkData := bytes.Repeat([]byte("A"), 1024)
 
@@ -481,6 +543,11 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440003"
 	partialUpload := &models.PartialUpload{
@@ -494,7 +561,8 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 		CreatedAt:      time.Now(),
 		LastActivity:   time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create all chunks on disk using the actual upload directory from config
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -508,7 +576,7 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 		os.WriteFile(chunkPath, chunkData, 0644)
 	}
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -533,6 +601,11 @@ func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440004"
 	partialUpload := &models.PartialUpload{
@@ -544,7 +617,8 @@ func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create only 2 out of 3 chunks
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -557,7 +631,7 @@ func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
 	}
 	// Chunk 2 is missing
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -586,7 +660,11 @@ func TestUploadCompleteHandler_UploadNotFound(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadCompleteHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/550e8400-e29b-41d4-a716-446655440000", nil)
 	rr := httptest.NewRecorder()
@@ -604,7 +682,11 @@ func TestUploadCompleteHandler_InvalidUploadID(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadCompleteHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/invalid-id", nil)
 	rr := httptest.NewRecorder()
@@ -622,6 +704,11 @@ func TestUploadStatusHandler_InProgress(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440005"
 	partialUpload := &models.PartialUpload{
@@ -634,7 +721,8 @@ func TestUploadStatusHandler_InProgress(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create 1 out of 3 chunks
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -642,7 +730,7 @@ func TestUploadStatusHandler_InProgress(t *testing.T) {
 	chunkPath := filepath.Join(partialDir, "chunk_0")
 	os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644)
 
-	handler := UploadStatusHandler(db, cfg)
+	handler := UploadStatusHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/upload/status/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -678,6 +766,11 @@ func TestUploadStatusHandler_Completed(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize completed upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440006"
 	claimCode := "testclaimcode123"
@@ -693,9 +786,10 @@ func TestUploadStatusHandler_Completed(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadStatusHandler(db, cfg)
+	handler := UploadStatusHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/upload/status/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -732,7 +826,11 @@ func TestUploadStatusHandler_NotFound(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadStatusHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadStatusHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/upload/status/550e8400-e29b-41d4-a716-446655440000", nil)
 	rr := httptest.NewRecorder()
@@ -750,7 +848,11 @@ func TestUploadStatusHandler_InvalidUploadID(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadStatusHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadStatusHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/upload/status/invalid-id", nil)
 	rr := httptest.NewRecorder()
@@ -768,6 +870,11 @@ func TestUploadChunkHandler_AlreadyCompleted(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Create completed upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440007"
 	partialUpload := &models.PartialUpload{
@@ -781,9 +888,10 @@ func TestUploadChunkHandler_AlreadyCompleted(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Try to upload chunk to completed upload
 	chunkData := bytes.Repeat([]byte("A"), 1024)
@@ -811,7 +919,11 @@ func TestUploadInitHandler_ExpirationValidation(t *testing.T) {
 	cfg.ChunkedUploadEnabled = true
 	cfg.SetMaxExpirationHours(168) // 1 week max
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Try to set expiration beyond max
 	initReq := models.UploadInitRequest{
@@ -846,7 +958,11 @@ func TestUploadInitHandler_DefaultExpiration(t *testing.T) {
 	cfg.ChunkedUploadEnabled = true
 	cfg.SetDefaultExpirationHours(48)
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// Negative value should use default
 	initReq := models.UploadInitRequest{
@@ -870,7 +986,8 @@ func TestUploadInitHandler_DefaultExpiration(t *testing.T) {
 	json.NewDecoder(rr.Body).Decode(&response)
 
 	// Verify default expiration was used
-	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	ctx := context.Background()
+	partialUpload, _ := repos.PartialUploads.GetByUploadID(ctx, response.UploadID)
 	if partialUpload.ExpiresInHours != 48 {
 		t.Errorf("expires_in_hours = %d, want 48 (default)", partialUpload.ExpiresInHours)
 	}
@@ -881,7 +998,11 @@ func TestUploadInitHandler_NeverExpire(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	// ExpiresInHours: 0 means "never expire"
 	initReq := models.UploadInitRequest{
@@ -905,7 +1026,8 @@ func TestUploadInitHandler_NeverExpire(t *testing.T) {
 	json.NewDecoder(rr.Body).Decode(&response)
 
 	// Verify never-expire was set
-	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	ctx := context.Background()
+	partialUpload, _ := repos.PartialUploads.GetByUploadID(ctx, response.UploadID)
 	if partialUpload.ExpiresInHours != 0 {
 		t.Errorf("expires_in_hours = %d, want 0 (never expire)", partialUpload.ExpiresInHours)
 	}
@@ -915,6 +1037,11 @@ func TestUploadChunkHandler_LastChunkValidation(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
 	// Initialize upload: 2500 bytes total, 1024 byte chunks = 3 chunks (1024, 1024, 452)
 	uploadID := "550e8400-e29b-41d4-a716-446655440008"
@@ -927,9 +1054,10 @@ func TestUploadChunkHandler_LastChunkValidation(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Upload last chunk (should be 452 bytes)
 	lastChunkSize := 2500 - (2 * 1024) // 452 bytes
@@ -957,6 +1085,11 @@ func TestUploadCompleteHandler_ChunkIntegrityFailure(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440009"
 	partialUpload := &models.PartialUpload{
@@ -970,7 +1103,8 @@ func TestUploadCompleteHandler_ChunkIntegrityFailure(t *testing.T) {
 		CreatedAt:      time.Now(),
 		LastActivity:   time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create chunks with WRONG sizes (integrity check should fail)
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -984,7 +1118,7 @@ func TestUploadCompleteHandler_ChunkIntegrityFailure(t *testing.T) {
 	chunk1Path := filepath.Join(partialDir, "chunk_1")
 	os.WriteFile(chunk1Path, bytes.Repeat([]byte("B"), 512), 0644)
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -1005,6 +1139,11 @@ func TestUploadCompleteHandler_WithEncryption(t *testing.T) {
 	// Enable encryption (64 hex characters = 32 bytes for AES-256)
 	cfg.EncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440010"
 	partialUpload := &models.PartialUpload{
@@ -1018,7 +1157,8 @@ func TestUploadCompleteHandler_WithEncryption(t *testing.T) {
 		CreatedAt:      time.Now(),
 		LastActivity:   time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create all chunks
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -1030,7 +1170,7 @@ func TestUploadCompleteHandler_WithEncryption(t *testing.T) {
 		os.WriteFile(chunkPath, chunkData, 0644)
 	}
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -1046,14 +1186,14 @@ func TestUploadCompleteHandler_WithEncryption(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Check that file was created and encrypted
-	partialUpload, _ = database.GetPartialUpload(db, uploadID)
+	partialUpload, _ = repos.PartialUploads.GetByUploadID(ctx, uploadID)
 	if partialUpload.Status != "completed" {
 		t.Errorf("status = %s, want completed", partialUpload.Status)
 	}
 
 	// Verify encrypted file exists on disk
 	if partialUpload.ClaimCode != nil {
-		file, _ := database.GetFileByClaimCode(db, *partialUpload.ClaimCode)
+		file, _ := repos.Files.GetByClaimCode(ctx, *partialUpload.ClaimCode)
 		if file != nil {
 			storedPath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 			encryptedData, err := os.ReadFile(storedPath)
@@ -1075,6 +1215,11 @@ func TestUploadCompleteHandler_Expired(t *testing.T) {
 	cfg.ChunkedUploadEnabled = true
 	cfg.PartialUploadExpiryHours = 1 // 1 hour expiry
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload with old last_activity (expired)
 	uploadID := "550e8400-e29b-41d4-a716-446655440011"
 	partialUpload := &models.PartialUpload{
@@ -1087,7 +1232,8 @@ func TestUploadCompleteHandler_Expired(t *testing.T) {
 		CreatedAt:      time.Now().Add(-25 * time.Hour), // Created 25 hours ago
 		LastActivity:   time.Now().Add(-25 * time.Hour), // Last activity 25 hours ago (expired!)
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Create chunk
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -1095,7 +1241,7 @@ func TestUploadCompleteHandler_Expired(t *testing.T) {
 	chunkPath := filepath.Join(partialDir, "chunk_0")
 	os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644)
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -1113,6 +1259,11 @@ func TestUploadCompleteHandler_AlreadyProcessing(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440012"
 	partialUpload := &models.PartialUpload{
@@ -1125,10 +1276,11 @@ func TestUploadCompleteHandler_AlreadyProcessing(t *testing.T) {
 		CreatedAt:      time.Now(),
 		LastActivity:   time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
 	// Update status to "processing" (Status field not saved by CreatePartialUpload)
-	database.UpdatePartialUploadStatus(db, uploadID, "processing", nil)
+	repos.PartialUploads.UpdateStatus(ctx, uploadID, "processing", nil)
 
 	// Create chunk
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -1136,7 +1288,7 @@ func TestUploadCompleteHandler_AlreadyProcessing(t *testing.T) {
 	chunkPath := filepath.Join(partialDir, "chunk_0")
 	os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644)
 
-	handler := UploadCompleteHandler(db, cfg)
+	handler := UploadCompleteHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
 	rr := httptest.NewRecorder()
@@ -1161,6 +1313,11 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Create test user
 	testUser := &models.User{
 		ID:       456,
@@ -1169,7 +1326,7 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 		Role:     "user",
 	}
 
-	handler := UploadInitHandler(db, cfg)
+	handler := UploadInitHandler(repos, cfg)
 
 	initReq := models.UploadInitRequest{
 		Filename:       "user_chunked.txt",
@@ -1197,7 +1354,8 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 	json.NewDecoder(rr.Body).Decode(&response)
 
 	// Verify user_id was set in partial upload
-	partialUpload, _ := database.GetPartialUpload(db, response.UploadID)
+	bgCtx := context.Background()
+	partialUpload, _ := repos.PartialUploads.GetByUploadID(bgCtx, response.UploadID)
 	if partialUpload.UserID == nil {
 		t.Fatal("user_id should be set for authenticated upload")
 	}
@@ -1218,6 +1376,11 @@ func TestUploadInitHandler_QuotaExceeded(t *testing.T) {
 	// Increase max file size to allow 200MB uploads
 	cfg.SetMaxFileSize(300 * 1024 * 1024) // 300MB
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Create actual file in upload directory (900MB)
 	existingFileData := bytes.Repeat([]byte("Y"), 900*1024*1024)
 	existingStoredFilename := "existing-chunked-quota-test.dat"
@@ -1227,6 +1390,7 @@ func TestUploadInitHandler_QuotaExceeded(t *testing.T) {
 	}
 
 	// Upload a file that uses most of the quota (900MB)
+	ctx := context.Background()
 	existingFile := &models.File{
 		ClaimCode:        "chunkedquota1",
 		OriginalFilename: "existing.dat",
@@ -1235,9 +1399,9 @@ func TestUploadInitHandler_QuotaExceeded(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, existingFile)
+	repos.Files.Create(ctx, existingFile)
 
-	handler := UploadInitHandler(db, cfg)
+	handler := UploadInitHandler(repos, cfg)
 
 	// Try to initialize upload for 200MB file (would exceed quota)
 	initReq := models.UploadInitRequest{
@@ -1265,7 +1429,11 @@ func TestUploadInitHandler_MethodNotAllowed(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -1285,7 +1453,11 @@ func TestUploadChunkHandler_MethodNotAllowed(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadChunkHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadChunkHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -1305,7 +1477,11 @@ func TestUploadCompleteHandler_MethodNotAllowed(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadCompleteHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadCompleteHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -1325,7 +1501,11 @@ func TestUploadStatusHandler_MethodNotAllowed(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadStatusHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadStatusHandler(repos, cfg)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -1345,7 +1525,11 @@ func TestUploadInitHandler_InvalidJSON(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
-	handler := UploadInitHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadInitHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload/init", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -1363,6 +1547,11 @@ func TestUploadChunkHandler_MissingChunkFile(t *testing.T) {
 	cfg := testutil.SetupTestConfig(t)
 	cfg.ChunkedUploadEnabled = true
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Initialize upload
 	uploadID := "550e8400-e29b-41d4-a716-446655440013"
 	partialUpload := &models.PartialUpload{
@@ -1374,9 +1563,10 @@ func TestUploadChunkHandler_MissingChunkFile(t *testing.T) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 	}
-	database.CreatePartialUpload(db, partialUpload)
+	ctx := context.Background()
+	repos.PartialUploads.Create(ctx, partialUpload)
 
-	handler := UploadChunkHandler(db, cfg)
+	handler := UploadChunkHandler(repos, cfg)
 
 	// Send request without chunk file in multipart form
 	var buf bytes.Buffer

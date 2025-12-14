@@ -1181,9 +1181,36 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (btn.dataset.tab === 'webhooks') {
                 loadWebhooks();
                 loadDeliveries();
+            } else if (btn.dataset.tab === 'backups') {
+                loadBackups();
+            } else if (btn.dataset.tab === 'apiTokens') {
+                loadAdminTokens();
             }
         });
     });
+
+    // API Tokens event listeners
+    document.getElementById('refreshTokensAdminBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadAdminTokens();
+    });
+    document.getElementById('tokenSearchInput')?.addEventListener('input', debounce((e) => {
+        currentTokenFilters.search = e.target.value;
+        loadAdminTokens();
+    }, 300));
+    document.getElementById('tokenUserFilter')?.addEventListener('change', (e) => {
+        currentTokenFilters.userId = e.target.value;
+        loadAdminTokens();
+    });
+    document.getElementById('selectAllTokensCheckbox')?.addEventListener('change', (e) => {
+        const checkboxes = document.querySelectorAll('.token-checkbox');
+        checkboxes.forEach(cb => cb.checked = e.target.checked);
+        updateBulkTokenButtons();
+    });
+    document.getElementById('bulkRevokeBtn')?.addEventListener('click', bulkRevokeTokens);
+    document.getElementById('bulkExtendBtn')?.addEventListener('click', showBulkExtendModal);
 
     // Webhook event listeners
     document.getElementById('createWebhookBtn')?.addEventListener('click', showCreateWebhookModal);
@@ -1223,6 +1250,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Clear delivery history button
     document.getElementById('clearDeliveryHistoryBtn')?.addEventListener('click', clearDeliveryHistory);
+
+    // Backup event listeners
+    document.getElementById('createBackupBtn')?.addEventListener('click', createBackup);
+    document.getElementById('refreshBackupsBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadBackups();
+    });
+    document.getElementById('confirmRestoreBtn')?.addEventListener('click', restoreBackup);
+
+    // Backup table event delegation (for action buttons)
+    document.getElementById('backupsTableBody')?.addEventListener('click', (e) => {
+        const verifyBtn = e.target.closest('.backup-verify-btn');
+        const downloadBtn = e.target.closest('.backup-download-btn');
+        const restoreBtn = e.target.closest('.backup-restore-btn');
+        const deleteBtn = e.target.closest('.backup-delete-btn');
+
+        if (verifyBtn) verifyBackup(verifyBtn.dataset.filename);
+        if (downloadBtn) downloadBackup(downloadBtn.dataset.filename);
+        if (restoreBtn) showRestoreBackupModal(restoreBtn.dataset.filename);
+        if (deleteBtn) deleteBackup(deleteBtn.dataset.filename);
+    });
 
     // Add input event listeners for Settings tab fields to detect changes
     const settingsFields = [
@@ -2559,5 +2609,1606 @@ async function clearDeliveryHistory() {
     } catch (error) {
         console.error('Error clearing delivery history:', error);
         showError('Failed to clear delivery history');
+    }
+}
+
+// ============ BACKUP MANAGEMENT FUNCTIONS ============
+
+let currentRestoreBackup = null;
+
+// Load backup list
+async function loadBackups() {
+    try {
+        const response = await fetch('/admin/api/backups');
+
+        if (!response.ok) {
+            throw new Error('Failed to load backups');
+        }
+
+        const data = await response.json();
+        updateBackupsTable(data.backups || []);
+    } catch (error) {
+        console.error('Error loading backups:', error);
+        showError('Failed to load backups');
+    }
+}
+
+// Update backups table
+function updateBackupsTable(backups) {
+    const tbody = document.getElementById('backupsTableBody');
+
+    if (backups.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No backups found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = backups.map(backup => {
+        const modeBadge = getModeBadge(backup.mode);
+        const statusBadge = backup.verified 
+            ? '<span class="badge badge-yes">Verified</span>' 
+            : '<span class="badge badge-secondary">Unverified</span>';
+
+        return `
+            <tr>
+                <td><code style="font-size: 12px;">${escapeHtml(backup.filename)}</code></td>
+                <td>${modeBadge}</td>
+                <td>${formatBytes(backup.size)}</td>
+                <td>${formatDate(backup.created_at)}</td>
+                <td>${escapeHtml(backup.version || 'Unknown')}</td>
+                <td>${statusBadge}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-info backup-verify-btn" data-filename="${escapeHtml(backup.filename)}" title="Verify backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-success backup-download-btn" data-filename="${escapeHtml(backup.filename)}" title="Download backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-warning backup-restore-btn" data-filename="${escapeHtml(backup.filename)}" title="Restore backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"></polyline>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger backup-delete-btn" data-filename="${escapeHtml(backup.filename)}" title="Delete backup">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Get mode badge HTML
+function getModeBadge(mode) {
+    switch (mode) {
+        case 'config':
+            return '<span class="badge badge-secondary">Config</span>';
+        case 'database':
+            return '<span class="badge badge-info">Database</span>';
+        case 'full':
+            return '<span class="badge badge-primary">Full</span>';
+        default:
+            return '<span class="badge badge-secondary">Unknown</span>';
+    }
+}
+
+// Create backup
+async function createBackup() {
+    const mode = document.getElementById('backupMode').value;
+
+    // Show progress modal
+    document.getElementById('backupProgressTitle').textContent = 'Creating Backup...';
+    document.getElementById('backupProgressMessage').textContent = `Creating ${mode} backup. Please wait...`;
+    document.getElementById('backupProgressModal').style.display = 'flex';
+
+    try {
+        const response = await fetch('/admin/api/backups', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ mode })
+        });
+
+        const data = await response.json();
+
+        // Hide progress modal
+        document.getElementById('backupProgressModal').style.display = 'none';
+
+        if (response.ok && data.success) {
+            showBackupResult('Backup Created Successfully', data);
+            loadBackups();
+        } else {
+            showError(data.error || 'Failed to create backup');
+        }
+    } catch (error) {
+        document.getElementById('backupProgressModal').style.display = 'none';
+        console.error('Error creating backup:', error);
+        showError('Failed to create backup');
+    }
+}
+
+// Download backup as zip file
+async function downloadBackup(filename) {
+    try {
+        showSuccess('Preparing download...');
+
+        const response = await fetch('/admin/api/backups/download', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ filename })
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            showError(data.error || 'Failed to download backup');
+            return;
+        }
+
+        // Get the blob and trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showSuccess('Download started!');
+    } catch (error) {
+        console.error('Error downloading backup:', error);
+        showError('Failed to download backup');
+    }
+}
+
+// Verify backup
+async function verifyBackup(filename) {
+    try {
+        const response = await fetch('/admin/api/backups/verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ filename })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.valid) {
+            showSuccess(`Backup verified successfully! Mode: ${data.mode}, Version: ${data.version}`);
+            loadBackups();
+        } else {
+            const errors = data.errors ? data.errors.join(', ') : 'Unknown verification error';
+            showError(`Backup verification failed: ${errors}`);
+        }
+    } catch (error) {
+        console.error('Error verifying backup:', error);
+        showError('Failed to verify backup');
+    }
+}
+
+// Show restore backup modal
+function showRestoreBackupModal(filename) {
+    currentRestoreBackup = filename;
+    document.getElementById('restoreBackupInfo').innerHTML = `
+        <strong>Backup:</strong> <code>${escapeHtml(filename)}</code>
+    `;
+    document.getElementById('restoreDryRun').checked = true;
+    document.getElementById('restoreOrphanHandling').value = 'keep';
+    document.getElementById('restoreBackupModal').style.display = 'flex';
+}
+
+// Hide restore backup modal
+function hideRestoreBackupModal() {
+    document.getElementById('restoreBackupModal').style.display = 'none';
+    currentRestoreBackup = null;
+}
+
+// Restore backup
+async function restoreBackup() {
+    if (!currentRestoreBackup) {
+        showError('No backup selected');
+        return;
+    }
+
+    const dryRun = document.getElementById('restoreDryRun').checked;
+    const orphanHandling = document.getElementById('restoreOrphanHandling').value;
+
+    // Hide restore modal
+    hideRestoreBackupModal();
+
+    // Show progress modal
+    const actionText = dryRun ? 'Simulating restore' : 'Restoring';
+    document.getElementById('backupProgressTitle').textContent = dryRun ? 'Dry Run...' : 'Restoring Backup...';
+    document.getElementById('backupProgressMessage').textContent = `${actionText} from backup. Please wait...`;
+    document.getElementById('backupProgressModal').style.display = 'flex';
+
+    try {
+        const response = await fetch('/admin/api/backups/restore', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({
+                filename: currentRestoreBackup,
+                dry_run: dryRun,
+                orphan_handling: orphanHandling
+            })
+        });
+
+        const data = await response.json();
+
+        // Hide progress modal
+        document.getElementById('backupProgressModal').style.display = 'none';
+
+        if (response.ok && data.success) {
+            showRestoreResult(dryRun, data);
+        } else {
+            showError(data.error || 'Failed to restore backup');
+        }
+    } catch (error) {
+        document.getElementById('backupProgressModal').style.display = 'none';
+        console.error('Error restoring backup:', error);
+        showError('Failed to restore backup');
+    }
+}
+
+// Show backup result
+function showBackupResult(title, data) {
+    document.getElementById('backupResultTitle').textContent = title;
+    
+    let content = `
+        <div style="display: grid; gap: 12px;">
+            <div><strong>Backup File:</strong> <code>${escapeHtml(data.filename || 'N/A')}</code></div>
+            <div><strong>Mode:</strong> ${getModeBadge(data.mode)}</div>
+            <div><strong>Size:</strong> ${formatBytes(data.size || 0)}</div>
+    `;
+
+    if (data.files_count !== undefined) {
+        content += `<div><strong>Files Backed Up:</strong> ${data.files_count}</div>`;
+    }
+
+    content += `</div>`;
+
+    document.getElementById('backupResultContent').innerHTML = content;
+    document.getElementById('backupResultModal').style.display = 'flex';
+}
+
+// Show restore result
+function showRestoreResult(dryRun, data) {
+    const title = dryRun ? 'Dry Run Complete' : 'Restore Complete';
+    document.getElementById('backupResultTitle').textContent = title;
+
+    let content = `
+        <div style="display: grid; gap: 12px;">
+            <div class="alert-${dryRun ? 'info' : 'success'}" style="margin-bottom: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${dryRun 
+                        ? '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>'
+                        : '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>'
+                    }
+                </svg>
+                <span>${dryRun ? 'This was a dry run - no changes were made.' : 'Backup restored successfully!'}</span>
+            </div>
+    `;
+
+    if (data.settings_restored !== undefined) {
+        content += `<div><strong>Settings Restored:</strong> ${data.settings_restored}</div>`;
+    }
+    if (data.files_restored !== undefined) {
+        content += `<div><strong>Files Restored:</strong> ${data.files_restored}</div>`;
+    }
+    if (data.orphans_found !== undefined && data.orphans_found > 0) {
+        content += `<div><strong>Orphan Files Found:</strong> ${data.orphans_found}</div>`;
+    }
+    if (data.orphans_removed !== undefined && data.orphans_removed > 0) {
+        content += `<div><strong>Orphan Files Removed:</strong> ${data.orphans_removed}</div>`;
+    }
+
+    if (!dryRun) {
+        content += `
+            <div class="alert-warning" style="margin-top: 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>You may need to restart SafeShare for all changes to take effect.</span>
+            </div>
+        `;
+    }
+
+    content += `</div>`;
+
+    document.getElementById('backupResultContent').innerHTML = content;
+    document.getElementById('backupResultModal').style.display = 'flex';
+}
+
+// Hide backup result modal
+function hideBackupResultModal() {
+    document.getElementById('backupResultModal').style.display = 'none';
+}
+
+// Delete backup
+async function deleteBackup(filename) {
+    if (!await confirm(`Delete backup "${filename}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/backups?filename=' + encodeURIComponent(filename), {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showSuccess('Backup deleted successfully');
+            loadBackups();
+        } else {
+            showError(data.error || 'Failed to delete backup');
+        }
+    } catch (error) {
+        console.error('Error deleting backup:', error);
+        showError('Failed to delete backup');
+    }
+}
+
+// ==================== API TOKENS ADMIN FUNCTIONS ====================
+
+// Token filters state
+let currentTokenFilters = {
+    search: '',
+    userId: ''
+};
+
+// Debounce helper
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Load admin tokens with stats
+async function loadAdminTokens() {
+    try {
+        // Build query params
+        const params = new URLSearchParams();
+        if (currentTokenFilters.search) {
+            params.append('search', currentTokenFilters.search);
+        }
+        if (currentTokenFilters.userId) {
+            params.append('user_id', currentTokenFilters.userId);
+        }
+
+        const response = await fetch(`/admin/api/tokens?${params.toString()}`, {
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load tokens');
+        }
+
+        const data = await response.json();
+        displayAdminTokens(data.tokens || []);
+        updateTokenStats(data.tokens || []);
+        loadTokenUserFilter();
+
+    } catch (error) {
+        console.error('Error loading tokens:', error);
+        showError('Failed to load API tokens');
+    }
+}
+
+// Load user filter dropdown
+async function loadTokenUserFilter() {
+    try {
+        const response = await fetch('/admin/api/users', {
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const select = document.getElementById('tokenUserFilter');
+            if (select && data.users) {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">All Users</option>';
+                data.users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = user.username;
+                    select.appendChild(option);
+                });
+                select.value = currentValue;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading user filter:', error);
+    }
+}
+
+// Update token statistics
+function updateTokenStats(tokens) {
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    let totalRequests = 0;
+    let activeCount = 0;
+    let expiringCount = 0;
+
+    tokens.forEach(token => {
+        // Count requests
+        if (token.usage_stats && token.usage_stats.total_requests) {
+            totalRequests += token.usage_stats.total_requests;
+        }
+
+        // Check if active (not expired)
+        if (token.expires_at) {
+            const expiresDate = new Date(token.expires_at);
+            if (expiresDate.getFullYear() !== 9999 && expiresDate > now) {
+                activeCount++;
+                // Check if expiring soon
+                if (expiresDate <= sevenDaysFromNow) {
+                    expiringCount++;
+                }
+            } else if (expiresDate.getFullYear() === 9999) {
+                activeCount++; // Never expires = active
+            }
+        } else {
+            activeCount++; // No expiration = active
+        }
+    });
+
+    document.getElementById('statTotalTokens').textContent = tokens.length;
+    document.getElementById('statActiveTokens').textContent = activeCount;
+    document.getElementById('statExpiringTokens').textContent = expiringCount;
+    document.getElementById('statTotalRequests').textContent = totalRequests.toLocaleString();
+}
+
+// Display admin tokens in table
+function displayAdminTokens(tokens) {
+    const tbody = document.getElementById('tokensTableBody');
+    if (!tbody) return;
+
+    if (!tokens || tokens.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="11" class="empty">No API tokens found</td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = tokens.map(token => {
+        const createdDate = formatDate(token.created_at);
+        const expiresDisplay = formatTokenExpiry(token.expires_at);
+        const lastUsed = token.last_used_at ? formatDate(token.last_used_at) : '<span class="text-muted">Never</span>';
+        const isActive = token.is_active !== false; // Default to active if not specified
+
+        // Scopes - styled like Webhooks Events column for consistency
+        let scopesBadges = '';
+        if (token.scopes && token.scopes.length > 0) {
+            scopesBadges = token.scopes.map(scope => 
+                `<span class="badge badge-info" style="margin: 2px; font-size: 11px;">${escapeHtml(scope)}</span>`
+            ).join('');
+        } else {
+            scopesBadges = '<span class="text-muted">None</span>';
+        }
+
+        // Usage stats
+        const requests = token.usage_stats?.total_requests || 0;
+        const bytesTransferred = token.usage_stats?.total_bytes_transferred || 0;
+
+        // Status badge
+        const statusBadge = isActive 
+            ? '<span class="badge badge-success">Active</span>'
+            : '<span class="badge badge-danger">Revoked</span>';
+
+        // Row styling for revoked tokens
+        const rowClass = isActive ? '' : 'token-revoked';
+
+        // Action buttons - show revoke only for active tokens, delete for all
+        const revokeButton = isActive ? `
+            <button class="btn-icon btn-warning" onclick="adminRevokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+                </svg>
+            </button>` : '';
+
+        const deleteButton = `
+            <button class="btn-icon btn-danger" onclick="adminDeleteToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Delete Token Permanently">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+            </button>`;
+
+        return `
+            <tr class="${rowClass}">
+                <td>
+                    <input type="checkbox" class="token-checkbox" value="${token.id}" onchange="updateBulkTokenButtons()">
+                </td>
+                <td><strong>${escapeHtml(token.name)}</strong></td>
+                <td>${escapeHtml(token.username || 'Unknown')}</td>
+                <td>${statusBadge}</td>
+                <td>${scopesBadges}</td>
+                <td>${requests.toLocaleString()}</td>
+                <td>${formatBytes(bytesTransferred)}</td>
+                <td>${createdDate}</td>
+                <td>${expiresDisplay}</td>
+                <td>${lastUsed}</td>
+                <td class="actions">
+                    ${revokeButton}
+                    ${deleteButton}
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Format token expiry with warning
+function formatTokenExpiry(expiresAt) {
+    if (!expiresAt) {
+        return '<span class="badge badge-success">Never</span>';
+    }
+
+    const expirationDate = new Date(expiresAt);
+    if (expirationDate.getFullYear() === 9999) {
+        return '<span class="badge badge-success">Never</span>';
+    }
+
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+    const dateStr = formatDate(expiresAt);
+
+    if (daysUntilExpiry < 0) {
+        return `<span class="badge badge-danger">Expired</span>`;
+    } else if (daysUntilExpiry <= 3) {
+        return `<span title="${dateStr}" class="badge badge-danger">${daysUntilExpiry}d left</span>`;
+    } else if (daysUntilExpiry <= 7) {
+        return `<span title="${dateStr}" class="badge badge-warning">${daysUntilExpiry}d left</span>`;
+    }
+
+    return `<span>${dateStr}</span>`;
+}
+
+// Update bulk action buttons visibility
+function updateBulkTokenButtons() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const bulkRevokeBtn = document.getElementById('bulkRevokeBtn');
+    const bulkExtendBtn = document.getElementById('bulkExtendBtn');
+
+    if (checkboxes.length > 0) {
+        bulkRevokeBtn.style.display = 'inline-flex';
+        bulkExtendBtn.style.display = 'inline-flex';
+    } else {
+        bulkRevokeBtn.style.display = 'none';
+        bulkExtendBtn.style.display = 'none';
+    }
+}
+
+// Admin revoke token
+async function adminRevokeToken(tokenId, tokenName) {
+    if (!await confirm(`Revoke token "${tokenName}"? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/api/tokens/revoke?id=${tokenId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            showSuccess('Token revoked successfully');
+            loadAdminTokens();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Failed to revoke token');
+        }
+    } catch (error) {
+        console.error('Error revoking token:', error);
+        showError('Failed to revoke token');
+    }
+}
+
+// Admin delete token permanently
+async function adminDeleteToken(tokenId, tokenName) {
+    if (!await confirm(`Permanently delete token "${tokenName}"? This will remove all associated data and cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/api/tokens/delete?id=${tokenId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        if (response.ok) {
+            showSuccess('Token deleted permanently');
+            loadAdminTokens();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Failed to delete token');
+        }
+    } catch (error) {
+        console.error('Error deleting token:', error);
+        showError('Failed to delete token');
+    }
+}
+
+// Bulk revoke tokens
+async function bulkRevokeTokens() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+    if (tokenIds.length === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    if (!await confirm(`Revoke ${tokenIds.length} token(s)? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/tokens/bulk-revoke', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ token_ids: tokenIds, confirm: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess(`${data.revoked_count || tokenIds.length} token(s) revoked successfully`);
+            loadAdminTokens();
+        } else {
+            showError(data.error || 'Failed to revoke tokens');
+        }
+    } catch (error) {
+        console.error('Error bulk revoking tokens:', error);
+        showError('Failed to revoke tokens');
+    }
+}
+
+// Show bulk extend modal
+function showBulkExtendModal() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenCount = checkboxes.length;
+
+    if (tokenCount === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    // Update modal text with selected count
+    const modalText = document.getElementById('extendTokensCount');
+    if (modalText) {
+        modalText.textContent = tokenCount === 1 ? '1 token' : `${tokenCount} tokens`;
+    }
+
+    // Reset select to default
+    const daysSelect = document.getElementById('extendDaysSelect');
+    if (daysSelect) {
+        daysSelect.value = '30';
+    }
+
+    // Show modal
+    document.getElementById('extendTokensModal').style.display = 'flex';
+}
+
+// Hide bulk extend modal
+function hideExtendTokensModal() {
+    document.getElementById('extendTokensModal').style.display = 'none';
+}
+
+// Confirm and execute bulk extend
+async function confirmExtendTokens() {
+    const checkboxes = document.querySelectorAll('.token-checkbox:checked');
+    const tokenIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    const daysSelect = document.getElementById('extendDaysSelect');
+    const days = parseInt(daysSelect.value);
+
+    if (tokenIds.length === 0) {
+        showError('No tokens selected');
+        return;
+    }
+
+    if (!days || days <= 0) {
+        showError('Please select extension duration');
+        return;
+    }
+
+    // Hide modal immediately
+    hideExtendTokensModal();
+
+    try {
+        const response = await fetch('/admin/api/tokens/bulk-extend', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify({ token_ids: tokenIds, days: days, confirm: true })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess(`${data.extended_count || tokenIds.length} token(s) extended by ${days} days`);
+            loadAdminTokens();
+        } else {
+            showError(data.error || 'Failed to extend tokens');
+        }
+    } catch (error) {
+        console.error('Error extending tokens:', error);
+        showError('Failed to extend tokens');
+    }
+}
+
+// ============ ENTERPRISE FEATURES MANAGEMENT ============
+
+// Global state for enterprise features
+let enterpriseConfigLoaded = false;
+
+// Load enterprise configuration (feature flags + MFA/SSO config)
+async function loadEnterpriseConfig() {
+    try {
+        // Load feature flags
+        const flagsResponse = await fetch('/admin/api/features');
+        if (!flagsResponse.ok) {
+            throw new Error('Failed to load feature flags');
+        }
+        const response = await flagsResponse.json();
+        if (!response || typeof response !== 'object') {
+            throw new Error('Invalid API response format');
+        }
+        const flags = response.feature_flags || {};
+
+        // Helper function for safe checkbox setting
+        const setCheckbox = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!value;
+        };
+
+        // Populate feature flag checkboxes
+        setCheckbox('featureMFA', flags.enable_mfa);
+        setCheckbox('featureSSO', flags.enable_sso);
+        setCheckbox('featureWebhooks', flags.enable_webhooks);
+        setCheckbox('featureAPITokens', flags.enable_api_tokens);
+        setCheckbox('featureBackups', flags.enable_backups);
+        setCheckbox('featureMalwareScan', flags.enable_malware_scan);
+
+        // Update status display
+        updateEnterpriseStatusDisplay(flags);
+
+        // Update enterprise feature tabs visibility
+        updateEnterpriseTabs(flags);
+
+        // Show/hide config sections based on enabled features
+        toggleMFAConfigSection(flags.enable_mfa);
+        toggleSSOConfigSection(flags.enable_sso);
+
+        // Load detailed config if MFA or SSO is enabled
+        if (flags.enable_mfa || flags.enable_sso) {
+            await loadEnterpriseDetailedConfig();
+        }
+
+        enterpriseConfigLoaded = true;
+    } catch (error) {
+        console.error('Error loading enterprise config:', error);
+        showError('Failed to load enterprise configuration');
+    }
+}
+
+// Load detailed MFA/SSO config
+async function loadEnterpriseDetailedConfig() {
+    try {
+        const response = await fetch('/admin/api/config/enterprise');
+        if (!response.ok) {
+            throw new Error('Failed to load enterprise config');
+        }
+        const config = await response.json();
+
+        // Populate MFA config form
+        if (config.mfa) {
+            document.getElementById('mfaRequired').checked = config.mfa.required || false;
+            document.getElementById('mfaIssuer').value = config.mfa.issuer || 'SafeShare';
+            document.getElementById('mfaTOTPEnabled').checked = config.mfa.totp_enabled !== false;
+            document.getElementById('mfaWebAuthnEnabled').checked = config.mfa.webauthn_enabled !== false;
+            document.getElementById('mfaRecoveryCodesCount').value = config.mfa.recovery_codes_count || 10;
+            document.getElementById('mfaChallengeExpiry').value = config.mfa.challenge_expiry_minutes || 5;
+        }
+
+        // Populate SSO config form
+        if (config.sso) {
+            document.getElementById('ssoAutoProvision').checked = config.sso.auto_provision || false;
+            document.getElementById('ssoDefaultRole').value = config.sso.default_role || 'user';
+            document.getElementById('ssoSessionLifetime').value = config.sso.session_lifetime || 480;
+            document.getElementById('ssoStateExpiry').value = config.sso.state_expiry_minutes || 10;
+        }
+    } catch (error) {
+        console.error('Error loading detailed enterprise config:', error);
+        // Don't show error - this is optional
+    }
+}
+
+// Update enterprise status display
+function updateEnterpriseStatusDisplay(flags) {
+    const statusElements = {
+        mfaStatusText: flags.enable_mfa,
+        ssoStatusText: flags.enable_sso,
+        webhooksStatusText: flags.enable_webhooks,
+        apiTokensStatusText: flags.enable_api_tokens,
+        backupsStatusText: flags.enable_backups
+    };
+
+    for (const [elementId, enabled] of Object.entries(statusElements)) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = enabled ? 'Enabled' : 'Disabled';
+            element.style.color = enabled ? 'var(--success-color)' : 'var(--text-secondary)';
+        }
+    }
+}
+
+// Update enterprise feature tabs visibility based on feature flags
+function updateEnterpriseTabs(flags) {
+    // Map feature flags to tab data-tab attributes
+    const tabMapping = {
+        'webhooks': flags.enable_webhooks,
+        'ssoProviders': flags.enable_sso,
+        'apiTokens': flags.enable_api_tokens,
+        'backups': flags.enable_backups
+    };
+
+    // Get the currently active tab
+    const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+    let needsTabSwitch = false;
+
+    // Show/hide tabs based on feature flags
+    for (const [tabName, enabled] of Object.entries(tabMapping)) {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+        const tabContent = document.getElementById(`${tabName}Tab`);
+        
+        if (tabBtn) {
+            tabBtn.style.display = enabled ? '' : 'none';
+        }
+        if (tabContent && !enabled) {
+            tabContent.classList.remove('active');
+        }
+        
+        // Check if we need to switch away from a hidden tab
+        if (activeTab === tabName && !enabled) {
+            needsTabSwitch = true;
+        }
+    }
+
+    // If current tab was hidden, switch to Files tab
+    if (needsTabSwitch) {
+        const filesTabBtn = document.querySelector('.tab-btn[data-tab="files"]');
+        const filesTabContent = document.getElementById('filesTab');
+        
+        // Remove active from all tabs
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        
+        // Activate Files tab
+        if (filesTabBtn) filesTabBtn.classList.add('active');
+        if (filesTabContent) filesTabContent.classList.add('active');
+    }
+}
+
+// Toggle MFA config section visibility
+function toggleMFAConfigSection(show) {
+    const section = document.getElementById('mfaConfigSection');
+    if (section) {
+        section.style.display = show ? 'block' : 'none';
+    }
+}
+
+// Toggle SSO config section visibility
+function toggleSSOConfigSection(show) {
+    const section = document.getElementById('ssoConfigSection');
+    if (section) {
+        section.style.display = show ? 'block' : 'none';
+    }
+}
+
+// Save feature flags
+async function saveFeatureFlags() {
+    const flags = {
+        enable_mfa: document.getElementById('featureMFA')?.checked || false,
+        enable_sso: document.getElementById('featureSSO')?.checked || false,
+        enable_webhooks: document.getElementById('featureWebhooks')?.checked || false,
+        enable_api_tokens: document.getElementById('featureAPITokens')?.checked || false,
+        enable_backups: document.getElementById('featureBackups')?.checked || false
+        // Malware scan is coming soon - disabled in UI
+    };
+
+    try {
+        const response = await fetch('/admin/api/features', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(flags)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save feature flags');
+        }
+
+        showSuccess('Feature flags saved successfully');
+        
+        // Update UI based on new flags
+        updateEnterpriseStatusDisplay(flags);
+        updateEnterpriseTabs(flags);
+        toggleMFAConfigSection(flags.enable_mfa);
+        toggleSSOConfigSection(flags.enable_sso);
+
+        // Load detailed config if features were enabled
+        if (flags.enable_mfa || flags.enable_sso) {
+            await loadEnterpriseDetailedConfig();
+        }
+    } catch (error) {
+        console.error('Error saving feature flags:', error);
+        showError(error.message);
+    }
+}
+
+// Save MFA configuration
+async function saveMFAConfig() {
+    const config = {
+        required: document.getElementById('mfaRequired').checked,
+        issuer: document.getElementById('mfaIssuer').value || 'SafeShare',
+        totp_enabled: document.getElementById('mfaTOTPEnabled').checked,
+        webauthn_enabled: document.getElementById('mfaWebAuthnEnabled').checked,
+        recovery_codes_count: parseInt(document.getElementById('mfaRecoveryCodesCount').value) || 10,
+        challenge_expiry_minutes: parseInt(document.getElementById('mfaChallengeExpiry').value) || 5
+    };
+
+    // Validation
+    if (!config.totp_enabled && !config.webauthn_enabled) {
+        showError('At least one MFA method (TOTP or WebAuthn) must be enabled');
+        return;
+    }
+
+    if (config.recovery_codes_count < 5 || config.recovery_codes_count > 20) {
+        showError('Recovery codes count must be between 5 and 20');
+        return;
+    }
+
+    if (config.challenge_expiry_minutes < 1 || config.challenge_expiry_minutes > 30) {
+        showError('Challenge expiry must be between 1 and 30 minutes');
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/config/mfa', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(config)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save MFA configuration');
+        }
+
+        showSuccess('MFA configuration saved successfully');
+    } catch (error) {
+        console.error('Error saving MFA config:', error);
+        showError(error.message);
+    }
+}
+
+// Save SSO configuration
+async function saveSSOConfig() {
+    const config = {
+        auto_provision: document.getElementById('ssoAutoProvision').checked,
+        default_role: document.getElementById('ssoDefaultRole').value || 'user',
+        session_lifetime: parseInt(document.getElementById('ssoSessionLifetime').value) || 480,
+        state_expiry_minutes: parseInt(document.getElementById('ssoStateExpiry').value) || 10
+    };
+
+    // Validation
+    if (config.session_lifetime < 30 || config.session_lifetime > 43200) {
+        showError('Session lifetime must be between 30 minutes and 30 days (43200 minutes)');
+        return;
+    }
+
+    if (config.state_expiry_minutes < 1 || config.state_expiry_minutes > 30) {
+        showError('State expiry must be between 1 and 30 minutes');
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/api/config/sso', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken()
+            },
+            body: JSON.stringify(config)
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save SSO configuration');
+        }
+
+        showSuccess('SSO configuration saved successfully');
+    } catch (error) {
+        console.error('Error saving SSO config:', error);
+        showError(error.message);
+    }
+}
+
+// Initialize enterprise features event listeners
+function initEnterpriseFeatures() {
+    // Feature flags form submission
+    document.getElementById('featureFlagsForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveFeatureFlags();
+    });
+
+    // MFA config form submission
+    document.getElementById('mfaConfigForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveMFAConfig();
+    });
+
+    // SSO config form submission
+    document.getElementById('ssoConfigForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveSSOConfig();
+    });
+
+    // Load enterprise config when tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'enterpriseFeatures') {
+                loadEnterpriseConfig();
+            }
+        });
+    });
+
+    // Listen for feature flag checkbox changes to show/hide config sections
+    document.getElementById('featureMFA')?.addEventListener('change', (e) => {
+        // Don't toggle until saved - just visual feedback
+    });
+
+    document.getElementById('featureSSO')?.addEventListener('change', (e) => {
+        // Don't toggle until saved - just visual feedback
+    });
+
+    // Load feature flags on page load to set initial tab visibility
+    // This ensures enterprise tabs are hidden/shown correctly from the start
+    loadEnterpriseConfig();
+}
+
+// Call initEnterpriseFeatures on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+    // Only initialize if we're on the dashboard page
+    if (document.querySelector('.dashboard-page')) {
+        initEnterpriseFeatures();
+        initSSOProviderManagement();
+    }
+});
+
+// ============ SSO PROVIDER MANAGEMENT FUNCTIONS ============
+
+let ssoProvidersData = [];
+let ssoLinksData = [];
+
+// Initialize SSO Provider Management
+function initSSOProviderManagement() {
+    // Create provider button
+    document.getElementById('createSSOProviderBtn')?.addEventListener('click', showCreateSSOProviderModal);
+    
+    // Refresh button
+    document.getElementById('refreshSSOProvidersBtn')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('btn-refreshing');
+        setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
+        loadSSOProviders();
+        loadSSOLinks();
+    });
+    
+    // Provider form submission
+    document.getElementById('ssoProviderForm')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        saveSSOProvider();
+    });
+    
+    // Load SSO providers when tab is opened
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.tab === 'ssoProviders') {
+                loadSSOProviders();
+                loadSSOLinks();
+                checkSSOEnabled();
+            }
+        });
+    });
+    
+    // Set up redirect URL when modal opens
+    const redirectURLInput = document.getElementById('ssoRedirectURL');
+    if (redirectURLInput) {
+        redirectURLInput.value = window.location.origin + '/api/auth/sso/callback';
+    }
+}
+
+// Check if SSO is enabled and show warning if not
+async function checkSSOEnabled() {
+    try {
+        const response = await fetch('/admin/api/features');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const flags = data.feature_flags || {};
+        const ssoEnabled = flags.enable_sso || false;
+        
+        const alert = document.getElementById('ssoDisabledAlert');
+        if (alert) {
+            alert.style.display = ssoEnabled ? 'none' : 'flex';
+        }
+    } catch (error) {
+        console.error('Error checking SSO status:', error);
+    }
+}
+
+// Switch to a different tab programmatically
+function switchToTab(tabName) {
+    const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+    if (tabBtn) {
+        tabBtn.click();
+    }
+}
+
+// Load SSO providers
+async function loadSSOProviders() {
+    try {
+        const response = await fetch('/admin/api/sso/providers');
+        
+        if (!response.ok) {
+            throw new Error('Failed to load SSO providers');
+        }
+        
+        const data = await response.json();
+        ssoProvidersData = data.providers || [];
+        
+        // Update stats
+        const totalProviders = ssoProvidersData.length;
+        const activeProviders = ssoProvidersData.filter(p => p.enabled).length;
+        
+        document.getElementById('statTotalProviders').textContent = totalProviders;
+        document.getElementById('statActiveProviders').textContent = activeProviders;
+        
+        // Update providers table
+        updateSSOProvidersTable(ssoProvidersData);
+    } catch (error) {
+        console.error('Error loading SSO providers:', error);
+        showError('Failed to load SSO providers');
+        document.getElementById('ssoProvidersTableBody').innerHTML = 
+            '<tr><td colspan="7" class="loading">Failed to load providers</td></tr>';
+    }
+}
+
+// Load SSO links (user-provider associations)
+async function loadSSOLinks() {
+    try {
+        const response = await fetch('/admin/api/sso/links');
+        
+        if (!response.ok) {
+            throw new Error('Failed to load SSO links');
+        }
+        
+        const data = await response.json();
+        ssoLinksData = data.links || [];
+        
+        // Update linked accounts stat
+        document.getElementById('statLinkedAccounts').textContent = ssoLinksData.length;
+        
+        // Update links table
+        updateSSOLinksTable(ssoLinksData);
+    } catch (error) {
+        console.error('Error loading SSO links:', error);
+        showError('Failed to load SSO links');
+        document.getElementById('ssoLinksTableBody').innerHTML = 
+            '<tr><td colspan="6" class="loading">Failed to load links</td></tr>';
+    }
+}
+
+// Update SSO providers table
+function updateSSOProvidersTable(providers) {
+    const tbody = document.getElementById('ssoProvidersTableBody');
+    
+    if (!providers || providers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No SSO providers configured</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = providers.map(provider => {
+        const issuerUrl = provider.issuer_url || '';
+        const truncatedIssuer = issuerUrl.length > 40 
+            ? issuerUrl.substring(0, 40) + '...' 
+            : issuerUrl;
+        
+        // Count linked users for this provider
+        const linkedCount = ssoLinksData.filter(l => l.provider_id === provider.id).length;
+        
+        return `
+            <tr>
+                <td><strong>${escapeHtml(provider.name)}</strong></td>
+                <td><span class="badge badge-info">${escapeHtml((provider.type || 'oidc').toUpperCase())}</span></td>
+                <td title="${escapeHtml(provider.issuer_url)}">${escapeHtml(truncatedIssuer)}</td>
+                <td><span class="badge ${provider.enabled ? 'badge-yes' : 'badge-no'}">${provider.enabled ? 'Active' : 'Disabled'}</span></td>
+                <td>${linkedCount}</td>
+                <td>${formatDate(provider.created_at)}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-primary" onclick="editSSOProvider(${provider.id})" title="Edit provider">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-warning" onclick="testSSOProvider(${provider.id})" title="Test connection">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger" onclick="deleteSSOProvider(${provider.id})" title="Delete provider">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Update SSO links table
+function updateSSOLinksTable(links) {
+    const tbody = document.getElementById('ssoLinksTableBody');
+    
+    if (!links || links.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No user SSO links found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = links.map(link => {
+        // Find provider name
+        const provider = ssoProvidersData.find(p => p.id === link.provider_id);
+        const providerName = provider ? provider.name : `Provider #${link.provider_id}`;
+        
+        return `
+            <tr>
+                <td><strong>${escapeHtml(link.username || 'Unknown')}</strong></td>
+                <td>${escapeHtml(providerName)}</td>
+                <td><code>${escapeHtml((link.external_id || '').substring(0, 20))}${(link.external_id || '').length > 20 ? '...' : ''}</code></td>
+                <td>${formatDate(link.linked_at)}</td>
+                <td>${link.last_login ? formatDate(link.last_login) : 'Never'}</td>
+                <td class="actions">
+                    <button class="btn-icon btn-danger" onclick="unlinkSSOAccount(${link.id}, '${escapeHtml(link.username)}')" title="Unlink account">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Show create SSO provider modal
+function showCreateSSOProviderModal() {
+    document.getElementById('ssoProviderModalTitle').textContent = 'Add SSO Provider';
+    document.getElementById('ssoProviderId').value = '';
+    document.getElementById('ssoProviderForm').reset();
+    document.getElementById('ssoProviderEnabled').checked = true;
+    document.getElementById('ssoScopes').value = 'openid profile email';
+    document.getElementById('ssoRedirectURL').value = window.location.origin + '/api/auth/sso/callback';
+    // Reset client secret field for new provider
+    const secretField = document.getElementById('ssoClientSecret');
+    secretField.placeholder = 'Enter client secret';
+    secretField.required = true; // Required for new providers
+    document.getElementById('ssoProviderModal').style.display = 'flex';
+    
+    // Re-initialize password toggle for the modal
+    initModalPasswordToggle();
+}
+
+// Initialize password toggle within the modal
+function initModalPasswordToggle() {
+    const toggleBtn = document.querySelector('#ssoProviderModal [data-password-toggle="ssoClientSecret"]');
+    if (toggleBtn && !toggleBtn.dataset.initialized) {
+        toggleBtn.dataset.initialized = 'true';
+        toggleBtn.addEventListener('click', () => {
+            const input = document.getElementById('ssoClientSecret');
+            const eyeIcon = toggleBtn.querySelector('.eye-icon');
+            const eyeOffIcon = toggleBtn.querySelector('.eye-off-icon');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                eyeIcon.style.display = 'none';
+                eyeOffIcon.style.display = 'block';
+            } else {
+                input.type = 'password';
+                eyeIcon.style.display = 'block';
+                eyeOffIcon.style.display = 'none';
+            }
+        });
+    }
+}
+
+// Hide SSO provider modal
+function hideSSOProviderModal() {
+    document.getElementById('ssoProviderModal').style.display = 'none';
+}
+
+// Edit SSO provider
+function editSSOProvider(providerId) {
+    const provider = ssoProvidersData.find(p => p.id === providerId);
+    if (!provider) {
+        showError('Provider not found');
+        return;
+    }
+    
+    document.getElementById('ssoProviderModalTitle').textContent = 'Edit SSO Provider';
+    document.getElementById('ssoProviderId').value = provider.id;
+    document.getElementById('ssoProviderName').value = provider.name;
+    document.getElementById('ssoProviderType').value = provider.type || 'oidc';
+    document.getElementById('ssoIssuerURL').value = provider.issuer_url;
+    document.getElementById('ssoClientID').value = provider.client_id;
+    // For edits, never populate the client secret - it should not come from the API
+    // The server never returns client_secret, and the field should indicate to leave blank
+    document.getElementById('ssoClientSecret').value = '';
+    document.getElementById('ssoClientSecret').placeholder = 'Leave blank to keep existing secret';
+    document.getElementById('ssoClientSecret').required = false; // Not required for edits
+    document.getElementById('ssoScopes').value = provider.scopes || 'openid profile email';
+    document.getElementById('ssoProviderEnabled').checked = provider.enabled;
+    document.getElementById('ssoRedirectURL').value = window.location.origin + '/api/auth/sso/callback';
+    
+    document.getElementById('ssoProviderModal').style.display = 'flex';
+    initModalPasswordToggle();
+}
+
+// Save SSO provider (create or update)
+async function saveSSOProvider() {
+    const providerId = document.getElementById('ssoProviderId').value;
+    const isEdit = !!providerId;
+    
+    const payload = {
+        name: document.getElementById('ssoProviderName').value.trim(),
+        provider_type: document.getElementById('ssoProviderType').value,
+        issuer_url: document.getElementById('ssoIssuerURL').value.trim(),
+        client_id: document.getElementById('ssoClientID').value.trim(),
+        client_secret: document.getElementById('ssoClientSecret').value,
+        scopes: document.getElementById('ssoScopes').value.trim() || 'openid profile email',
+        enabled: document.getElementById('ssoProviderEnabled').checked
+    };
+    
+    // Validation
+    if (!payload.name) {
+        showError('Provider name is required');
+        return;
+    }
+    if (!payload.issuer_url) {
+        showError('Issuer URL is required');
+        return;
+    }
+    if (!payload.client_id) {
+        showError('Client ID is required');
+        return;
+    }
+    if (!payload.client_secret && !isEdit) {
+        showError('Client secret is required');
+        return;
+    }
+    
+    try {
+        let response;
+        if (isEdit) {
+            response = await fetch(`/admin/api/sso/providers/${providerId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            response = await fetch('/admin/api/sso/providers', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCSRFToken()
+                },
+                body: JSON.stringify(payload)
+            });
+        }
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save SSO provider');
+        }
+        
+        hideSSOProviderModal();
+        loadSSOProviders();
+        showSuccess(isEdit ? 'SSO provider updated successfully' : 'SSO provider created successfully');
+    } catch (error) {
+        console.error('Error saving SSO provider:', error);
+        showError(error.message);
+    }
+}
+
+// Test SSO provider connection
+async function testSSOProvider(providerId) {
+    try {
+        showSuccess('Testing SSO provider connection...');
+        
+        const response = await fetch(`/admin/api/sso/providers/${providerId}/test`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        const data = await response.json();
+        
+        // Show result in modal
+        const content = document.getElementById('ssoTestResultContent');
+        if (data.success) {
+            content.innerHTML = `
+                <div class="alert-success" style="padding: 16px; border-radius: 8px; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success-color);">
+                    <h4 style="color: var(--success-color); margin-bottom: 8px;">Connection Successful</h4>
+                    <p>Successfully connected to the OIDC discovery endpoint.</p>
+                    ${data.issuer ? `<p><strong>Issuer:</strong> ${escapeHtml(data.issuer)}</p>` : ''}
+                    ${data.endpoints ? `
+                        <div style="margin-top: 12px;">
+                            <strong>Discovered Endpoints:</strong>
+                            <ul style="margin-top: 8px; padding-left: 20px;">
+                                ${data.endpoints.authorization ? `<li>Authorization: ✓</li>` : ''}
+                                ${data.endpoints.token ? `<li>Token: ✓</li>` : ''}
+                                ${data.endpoints.userinfo ? `<li>UserInfo: ✓</li>` : ''}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } else {
+            content.innerHTML = `
+                <div class="alert-error" style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger-color);">
+                    <h4 style="color: var(--danger-color); margin-bottom: 8px;">Connection Failed</h4>
+                    <p>${escapeHtml(data.error || 'Unknown error occurred')}</p>
+                </div>
+            `;
+        }
+        
+        document.getElementById('ssoTestResultModal').style.display = 'flex';
+    } catch (error) {
+        console.error('Error testing SSO provider:', error);
+        showError('Failed to test SSO provider: ' + error.message);
+    }
+}
+
+// Hide SSO test result modal
+function hideSSOTestResultModal() {
+    document.getElementById('ssoTestResultModal').style.display = 'none';
+}
+
+// Delete SSO provider
+async function deleteSSOProvider(providerId) {
+    const provider = ssoProvidersData.find(p => p.id === providerId);
+    const providerName = provider ? provider.name : `Provider #${providerId}`;
+    
+    // Check if there are linked users
+    const linkedCount = ssoLinksData.filter(l => l.provider_id === providerId).length;
+    let message = `Delete SSO provider "${providerName}"?`;
+    if (linkedCount > 0) {
+        message += `\n\nWarning: ${linkedCount} user(s) are linked to this provider. They will no longer be able to log in using SSO until they link to another provider.`;
+    }
+    
+    if (!await confirm(message)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/sso/providers/${providerId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to delete SSO provider');
+        }
+        
+        loadSSOProviders();
+        loadSSOLinks();
+        showSuccess('SSO provider deleted successfully');
+    } catch (error) {
+        console.error('Error deleting SSO provider:', error);
+        showError(error.message);
+    }
+}
+
+// Unlink SSO account
+async function unlinkSSOAccount(linkId, username) {
+    if (!await confirm(`Unlink SSO account for user "${username}"?\n\nThe user will need to log in with their password or re-link their SSO account.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/sso/links/${linkId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+        
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to unlink SSO account');
+        }
+        
+        loadSSOLinks();
+        loadSSOProviders(); // Refresh to update linked count
+        showSuccess('SSO account unlinked successfully');
+    } catch (error) {
+        console.error('Error unlinking SSO account:', error);
+        showError(error.message);
     }
 }

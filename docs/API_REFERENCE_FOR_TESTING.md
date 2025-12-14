@@ -204,6 +204,77 @@
 
 ---
 
+### Admin Backup Download Handler
+
+**Handler**: `handlers.AdminDownloadBackupHandler(db, cfg)`
+
+**Endpoint**: `POST /admin/api/backups/download`
+
+**Authentication**: Requires admin session cookie and CSRF token
+
+**Request Body** (JSON):
+```json
+{
+  "filename": "safeshare-backup-20240101-120000"
+}
+```
+
+**Response Status Codes**:
+- `200 OK` - Backup downloaded successfully as zip file
+- `400 Bad Request` - Invalid filename or missing parameter
+- `401 Unauthorized` - Not authenticated as admin
+- `403 Forbidden` - Invalid CSRF token
+- `404 Not Found` - Backup not found in backup directory
+- `500 Internal Server Error` - Failed to create zip or read backup files
+
+**Response Headers** (200):
+- `Content-Type: application/zip`
+- `Content-Disposition: attachment; filename="safeshare-backup-YYYYMMDD-HHMMSS.zip"`
+
+**Important Notes**:
+- Requires both admin authentication AND valid CSRF token
+- Streams zip file as response (no intermediate file created)
+- Works for all backup types (config, database, full)
+- Filename must be valid backup directory name without path traversal
+- Backup directory location read from `BACKUP_DIR` environment variable or default
+
+**Example Test**:
+```go
+// Login as admin first to get session and CSRF token
+loginReq := httptest.NewRequest("POST", "/admin/api/login", 
+    strings.NewReader(`{"username":"admin","password":"admin123"}`))
+loginReq.Header.Set("Content-Type", "application/json")
+loginRR := httptest.NewRecorder()
+loginHandler.ServeHTTP(loginRR, loginReq)
+
+// Extract session cookie and CSRF token
+sessionCookie := loginRR.Result().Cookies()[0]
+var loginResp struct {
+    CSRFToken string `json:"csrf_token"`
+}
+json.NewDecoder(loginRR.Body).Decode(&loginResp)
+
+// Download backup
+downloadReq := httptest.NewRequest("POST", "/admin/api/backups/download",
+    strings.NewReader(`{"filename":"safeshare-backup-20240101-120000"}`))
+downloadReq.Header.Set("Content-Type", "application/json")
+downloadReq.Header.Set("X-CSRF-Token", loginResp.CSRFToken)
+downloadReq.AddCookie(sessionCookie)
+downloadRR := httptest.NewRecorder()
+
+handler.ServeHTTP(downloadRR, downloadReq)
+
+if downloadRR.Code != http.StatusOK {
+    t.Errorf("status = %d, want %d", downloadRR.Code, http.StatusOK)
+}
+
+if contentType := downloadRR.Header().Get("Content-Type"); contentType != "application/zip" {
+    t.Errorf("Content-Type = %s, want application/zip", contentType)
+}
+```
+
+---
+
 ## Database APIs
 
 ### File Operations

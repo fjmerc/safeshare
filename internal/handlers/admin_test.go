@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -21,11 +22,16 @@ import (
 func TestAdminLoginHandler_ValidAdminCredentials(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	// Create admin credentials (InitializeAdminCredentials hashes internally)
-	database.InitializeAdminCredentials(db, "admin", "adminpassword123")
+	// Create admin credentials (InitializeCredentials hashes internally)
+	repos.Admin.InitializeCredentials(ctx, "admin", "adminpassword123")
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	// Create login request (JSON format)
 	loginReq := map[string]string{
@@ -75,12 +81,17 @@ func TestAdminLoginHandler_ValidAdminCredentials(t *testing.T) {
 func TestAdminLoginHandler_ValidUserWithAdminRole(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user with admin role
 	hashedPassword, _ := utils.HashPassword("adminpassword123")
-	database.CreateUser(db, "adminuser", "admin@example.com", hashedPassword, "admin", true)
+	repos.Users.Create(ctx, "adminuser", "admin@example.com", hashedPassword, "admin", true)
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	// Create login request
 	loginReq := map[string]string{
@@ -115,8 +126,12 @@ func TestAdminLoginHandler_ValidUserWithAdminRole(t *testing.T) {
 func TestAdminLoginHandler_InvalidCredentials(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	loginReq := map[string]string{
 		"username": "admin",
@@ -146,13 +161,18 @@ func TestAdminLoginHandler_InvalidCredentials(t *testing.T) {
 func TestAdminLoginHandler_DisabledUser(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create disabled admin user
 	hashedPassword, _ := utils.HashPassword("adminpassword123")
-	user, _ := database.CreateUser(db, "disabledadmin", "disabled@example.com", hashedPassword, "admin", false)
-	database.SetUserActive(db, user.ID, false)
+	user, _ := repos.Users.Create(ctx, "disabledadmin", "disabled@example.com", hashedPassword, "admin", false)
+	repos.Users.SetActive(ctx, user.ID, false)
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	loginReq := map[string]string{
 		"username": "disabledadmin",
@@ -175,11 +195,16 @@ func TestAdminLoginHandler_DisabledUser(t *testing.T) {
 func TestAdminLoginHandler_FormData(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	// Create admin credentials (InitializeAdminCredentials hashes internally)
-	database.InitializeAdminCredentials(db, "admin", "adminpassword123")
+	// Create admin credentials (InitializeCredentials hashes internally)
+	repos.Admin.InitializeCredentials(ctx, "admin", "adminpassword123")
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	// Create form data request
 	formData := url.Values{}
@@ -200,8 +225,12 @@ func TestAdminLoginHandler_FormData(t *testing.T) {
 func TestAdminLoginHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 	for _, method := range methods {
@@ -219,8 +248,12 @@ func TestAdminLoginHandler_MethodNotAllowed(t *testing.T) {
 func TestAdminLoginHandler_MissingCredentials(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminLoginHandler(db, cfg)
+	handler := AdminLoginHandler(repos, cfg)
 
 	// Empty JSON body
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/login", bytes.NewReader([]byte("{}")))
@@ -237,13 +270,18 @@ func TestAdminLoginHandler_MissingCredentials(t *testing.T) {
 func TestAdminLogoutHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create session
 	sessionToken := "test-session-token"
 	expiresAt := time.Now().Add(24 * time.Hour)
-	database.CreateSession(db, sessionToken, expiresAt, "127.0.0.1", "test-agent")
+	repos.Admin.CreateSession(ctx, sessionToken, expiresAt, "127.0.0.1", "test-agent")
 
-	handler := AdminLogoutHandler(db, cfg)
+	handler := AdminLogoutHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/logout", nil)
 	req.AddCookie(&http.Cookie{
@@ -259,7 +297,7 @@ func TestAdminLogoutHandler(t *testing.T) {
 	}
 
 	// Verify session is deleted from database
-	session, _ := database.GetSession(db, sessionToken)
+	session, _ := repos.Admin.GetSession(ctx, sessionToken)
 	if session != nil {
 		t.Error("session should be deleted after logout")
 	}
@@ -276,11 +314,16 @@ func TestAdminLogoutHandler(t *testing.T) {
 func TestAdminDashboardDataHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create some test files in database
 	for i := 1; i <= 5; i++ {
 		claimCode, _ := utils.GenerateClaimCode()
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   fmt.Sprintf("stored_%d.dat", i),
 			OriginalFilename: fmt.Sprintf("file_%d.txt", i),
@@ -291,7 +334,7 @@ func TestAdminDashboardDataHandler(t *testing.T) {
 		})
 	}
 
-	handler := AdminDashboardDataHandler(db, cfg)
+	handler := AdminDashboardDataHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/dashboard?page=1&page_size=10", nil)
 	rr := httptest.NewRecorder()
@@ -326,11 +369,16 @@ func TestAdminDashboardDataHandler(t *testing.T) {
 func TestAdminDashboardDataHandler_Pagination(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create 25 test files
 	for i := 1; i <= 25; i++ {
 		claimCode, _ := utils.GenerateClaimCode()
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   fmt.Sprintf("stored_%d.dat", i),
 			OriginalFilename: fmt.Sprintf("file_%d.txt", i),
@@ -341,7 +389,7 @@ func TestAdminDashboardDataHandler_Pagination(t *testing.T) {
 		})
 	}
 
-	handler := AdminDashboardDataHandler(db, cfg)
+	handler := AdminDashboardDataHandler(repos, cfg)
 
 	// Request page 1 with page_size=10
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/dashboard?page=1&page_size=10", nil)
@@ -367,11 +415,16 @@ func TestAdminDashboardDataHandler_Pagination(t *testing.T) {
 func TestAdminDeleteFileHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create a test file in database
 	claimCode, _ := utils.GenerateClaimCode()
 	storedFilename := "stored_test.dat"
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode,
 		StoredFilename:   storedFilename,
 		OriginalFilename: "test.txt",
@@ -385,7 +438,7 @@ func TestAdminDeleteFileHandler(t *testing.T) {
 	filePath := filepath.Join(cfg.UploadDir, storedFilename)
 	os.WriteFile(filePath, []byte("test content"), 0644)
 
-	handler := AdminDeleteFileHandler(db, cfg)
+	handler := AdminDeleteFileHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/files?claim_code="+claimCode, nil)
 	rr := httptest.NewRecorder()
@@ -396,8 +449,8 @@ func TestAdminDeleteFileHandler(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	// Verify file is deleted from database (GetFileByClaimCode returns nil, nil when not found)
-	file, err := database.GetFileByClaimCode(db, claimCode)
+	// Verify file is deleted from database (GetByClaimCode returns nil, nil when not found)
+	file, err := repos.Files.GetByClaimCode(ctx, claimCode)
 	if err != nil {
 		t.Fatalf("unexpected error querying deleted file: %v", err)
 	}
@@ -414,8 +467,12 @@ func TestAdminDeleteFileHandler(t *testing.T) {
 func TestAdminDeleteFileHandler_MissingClaimCode(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminDeleteFileHandler(db, cfg)
+	handler := AdminDeleteFileHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/files", nil)
 	rr := httptest.NewRecorder()
@@ -430,8 +487,12 @@ func TestAdminDeleteFileHandler_MissingClaimCode(t *testing.T) {
 func TestAdminDeleteFileHandler_NotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminDeleteFileHandler(db, cfg)
+	handler := AdminDeleteFileHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/files?claim_code=nonexistent", nil)
 	rr := httptest.NewRecorder()
@@ -447,6 +508,11 @@ func TestAdminDeleteFileHandler_NotFound(t *testing.T) {
 func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create 3 test files
 	claimCodes := make([]string, 3)
@@ -455,7 +521,7 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 		claimCodes[i] = claimCode
 		storedFilename := fmt.Sprintf("stored_%d.dat", i)
 
-		database.CreateFile(db, &models.File{
+		repos.Files.Create(ctx, &models.File{
 			ClaimCode:        claimCode,
 			StoredFilename:   storedFilename,
 			OriginalFilename: fmt.Sprintf("file_%d.txt", i),
@@ -470,7 +536,7 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 		os.WriteFile(filePath, []byte("test"), 0644)
 	}
 
-	handler := AdminBulkDeleteFilesHandler(db, cfg)
+	handler := AdminBulkDeleteFilesHandler(repos, cfg)
 
 	// Create form data with comma-separated claim codes
 	formData := url.Values{}
@@ -494,9 +560,9 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 		t.Errorf("deleted_count = %d, want 3", deletedCount)
 	}
 
-	// Verify files are deleted from database (GetFileByClaimCode returns nil, nil when not found)
+	// Verify files are deleted from database (GetByClaimCode returns nil, nil when not found)
 	for _, code := range claimCodes {
-		file, err := database.GetFileByClaimCode(db, code)
+		file, err := repos.Files.GetByClaimCode(ctx, code)
 		if err != nil {
 			t.Fatalf("unexpected error querying deleted file %s: %v", code, err)
 		}
@@ -509,8 +575,12 @@ func TestAdminBulkDeleteFilesHandler(t *testing.T) {
 func TestAdminBulkDeleteFilesHandler_EmptyRequest(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminBulkDeleteFilesHandler(db, cfg)
+	handler := AdminBulkDeleteFilesHandler(repos, cfg)
 
 	// Send empty claim_codes
 	formData := url.Values{}
@@ -530,8 +600,12 @@ func TestAdminBulkDeleteFilesHandler_EmptyRequest(t *testing.T) {
 func TestAdminBulkDeleteFilesHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminBulkDeleteFilesHandler(db, cfg)
+	handler := AdminBulkDeleteFilesHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 	for _, method := range methods {
@@ -549,13 +623,18 @@ func TestAdminBulkDeleteFilesHandler_MethodNotAllowed(t *testing.T) {
 func TestAdminBulkDeleteFilesHandler_PartialSuccess(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create only 2 out of 3 files
 	validCode1, _ := utils.GenerateClaimCode()
 	validCode2, _ := utils.GenerateClaimCode()
 	invalidCode := "INVALIDCODE123"
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        validCode1,
 		StoredFilename:   "stored_1.dat",
 		OriginalFilename: "file_1.txt",
@@ -565,7 +644,7 @@ func TestAdminBulkDeleteFilesHandler_PartialSuccess(t *testing.T) {
 		UploaderIP:       "127.0.0.1",
 	})
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        validCode2,
 		StoredFilename:   "stored_2.dat",
 		OriginalFilename: "file_2.txt",
@@ -579,7 +658,7 @@ func TestAdminBulkDeleteFilesHandler_PartialSuccess(t *testing.T) {
 	os.WriteFile(filepath.Join(cfg.UploadDir, "stored_1.dat"), []byte("test"), 0644)
 	os.WriteFile(filepath.Join(cfg.UploadDir, "stored_2.dat"), []byte("test"), 0644)
 
-	handler := AdminBulkDeleteFilesHandler(db, cfg)
+	handler := AdminBulkDeleteFilesHandler(repos, cfg)
 
 	// Send 2 valid + 1 invalid claim code
 	formData := url.Values{}
@@ -605,7 +684,6 @@ func TestAdminBulkDeleteFilesHandler_PartialSuccess(t *testing.T) {
 }
 
 func TestAdminGetConfigHandler_Success(t *testing.T) {
-	_ = testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 
 	// Set some config values
@@ -656,8 +734,14 @@ func TestAdminGetConfigHandler_MethodNotAllowed(t *testing.T) {
 
 func TestAdminBlockIPHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	handler := AdminBlockIPHandler(db)
+	handler := AdminBlockIPHandler(repos)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "192.168.1.100")
@@ -674,7 +758,7 @@ func TestAdminBlockIPHandler(t *testing.T) {
 	}
 
 	// Verify IP is blocked
-	blocked, _ := database.IsIPBlocked(db, "192.168.1.100")
+	blocked, _ := repos.Admin.IsIPBlocked(ctx, "192.168.1.100")
 	if !blocked {
 		t.Error("IP should be blocked")
 	}
@@ -682,8 +766,13 @@ func TestAdminBlockIPHandler(t *testing.T) {
 
 func TestAdminBlockIPHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminBlockIPHandler(db)
+	handler := AdminBlockIPHandler(repos)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 	for _, method := range methods {
@@ -700,8 +789,13 @@ func TestAdminBlockIPHandler_MethodNotAllowed(t *testing.T) {
 
 func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminBlockIPHandler(db)
+	handler := AdminBlockIPHandler(repos)
 
 	// Empty IP address
 	formData := url.Values{}
@@ -721,11 +815,17 @@ func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
 
 func TestAdminUnblockIPHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Block an IP first
-	database.BlockIP(db, "192.168.1.100", "Test", "admin")
+	repos.Admin.BlockIP(ctx, "192.168.1.100", "Test", "admin")
 
-	handler := AdminUnblockIPHandler(db)
+	handler := AdminUnblockIPHandler(repos)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "192.168.1.100")
@@ -741,7 +841,7 @@ func TestAdminUnblockIPHandler(t *testing.T) {
 	}
 
 	// Verify IP is unblocked
-	blocked, _ := database.IsIPBlocked(db, "192.168.1.100")
+	blocked, _ := repos.Admin.IsIPBlocked(ctx, "192.168.1.100")
 	if blocked {
 		t.Error("IP should be unblocked")
 	}
@@ -750,8 +850,12 @@ func TestAdminUnblockIPHandler(t *testing.T) {
 func TestAdminUpdateQuotaHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateQuotaHandler(db, cfg)
+	handler := AdminUpdateQuotaHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("quota_gb", "100")
@@ -775,8 +879,12 @@ func TestAdminUpdateQuotaHandler(t *testing.T) {
 func TestAdminUpdateQuotaHandler_InvalidValue(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateQuotaHandler(db, cfg)
+	handler := AdminUpdateQuotaHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("quota_gb", "-10") // Negative quota
@@ -832,8 +940,14 @@ func TestAdminGetConfigHandler(t *testing.T) {
 
 func TestAdminCreateUserHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	handler := AdminCreateUserHandler(db)
+	handler := AdminCreateUserHandler(repos)
 
 	createReq := models.CreateUserRequest{
 		Username: "newuser",
@@ -864,7 +978,7 @@ func TestAdminCreateUserHandler(t *testing.T) {
 	}
 
 	// Verify user exists in database
-	user, _ := database.GetUserByUsername(db, "newuser")
+	user, _ := repos.Users.GetByUsername(ctx, "newuser")
 	if user == nil {
 		t.Error("user should be created in database")
 	}
@@ -872,12 +986,18 @@ func TestAdminCreateUserHandler(t *testing.T) {
 
 func TestAdminCreateUserHandler_DuplicateUsername(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create existing user
 	hashedPassword, _ := utils.HashPassword("password123")
-	database.CreateUser(db, "existing", "existing@example.com", hashedPassword, "user", true)
+	repos.Users.Create(ctx, "existing", "existing@example.com", hashedPassword, "user", true)
 
-	handler := AdminCreateUserHandler(db)
+	handler := AdminCreateUserHandler(repos)
 
 	createReq := models.CreateUserRequest{
 		Username: "existing",
@@ -899,8 +1019,13 @@ func TestAdminCreateUserHandler_DuplicateUsername(t *testing.T) {
 
 func TestAdminCreateUserHandler_InvalidUsername(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminCreateUserHandler(db)
+	handler := AdminCreateUserHandler(repos)
 
 	createReq := models.CreateUserRequest{
 		Username: "user@invalid!", // Invalid characters
@@ -922,14 +1047,20 @@ func TestAdminCreateUserHandler_InvalidUsername(t *testing.T) {
 
 func TestAdminListUsersHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create test users
 	for i := 1; i <= 5; i++ {
 		hashedPassword, _ := utils.HashPassword("password")
-		database.CreateUser(db, fmt.Sprintf("user%d", i), fmt.Sprintf("user%d@example.com", i), hashedPassword, "user", true)
+		repos.Users.Create(ctx, fmt.Sprintf("user%d", i), fmt.Sprintf("user%d@example.com", i), hashedPassword, "user", true)
 	}
 
-	handler := AdminListUsersHandler(db)
+	handler := AdminListUsersHandler(repos)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/users?limit=10&offset=0", nil)
 	rr := httptest.NewRecorder()
@@ -956,12 +1087,18 @@ func TestAdminListUsersHandler(t *testing.T) {
 
 func TestAdminToggleUserActiveHandler_Disable(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create active user
 	hashedPassword, _ := utils.HashPassword("password")
-	user, _ := database.CreateUser(db, "activeuser", "active@example.com", hashedPassword, "user", true)
+	user, _ := repos.Users.Create(ctx, "activeuser", "active@example.com", hashedPassword, "user", true)
 
-	handler := AdminToggleUserActiveHandler(db)
+	handler := AdminToggleUserActiveHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/disable", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -973,7 +1110,7 @@ func TestAdminToggleUserActiveHandler_Disable(t *testing.T) {
 	}
 
 	// Verify user is disabled
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if updatedUser.IsActive {
 		t.Error("user should be disabled")
 	}
@@ -981,12 +1118,18 @@ func TestAdminToggleUserActiveHandler_Disable(t *testing.T) {
 
 func TestAdminToggleUserActiveHandler_Enable(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create disabled user
 	hashedPassword, _ := utils.HashPassword("password")
-	user, _ := database.CreateUser(db, "disableduser", "disabled@example.com", hashedPassword, "user", false)
+	user, _ := repos.Users.Create(ctx, "disableduser", "disabled@example.com", hashedPassword, "user", false)
 
-	handler := AdminToggleUserActiveHandler(db)
+	handler := AdminToggleUserActiveHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/enable", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -998,7 +1141,7 @@ func TestAdminToggleUserActiveHandler_Enable(t *testing.T) {
 	}
 
 	// Verify user is enabled
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if !updatedUser.IsActive {
 		t.Error("user should be enabled")
 	}
@@ -1006,12 +1149,18 @@ func TestAdminToggleUserActiveHandler_Enable(t *testing.T) {
 
 func TestAdminResetUserPasswordHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
 	hashedPassword, _ := utils.HashPassword("oldpassword")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", hashedPassword, "user", true)
+	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", hashedPassword, "user", true)
 
-	handler := AdminResetUserPasswordHandler(db)
+	handler := AdminResetUserPasswordHandler(repos)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/reset-password", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1030,7 +1179,7 @@ func TestAdminResetUserPasswordHandler(t *testing.T) {
 	}
 
 	// Verify old password no longer works
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if utils.VerifyPassword(updatedUser.PasswordHash, "oldpassword") {
 		t.Error("old password should not work after reset")
 	}
@@ -1044,12 +1193,17 @@ func TestAdminResetUserPasswordHandler(t *testing.T) {
 func TestAdminDeleteUserHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
 	hashedPassword, _ := utils.HashPassword("password")
-	user, _ := database.CreateUser(db, "deleteuser", "delete@example.com", hashedPassword, "user", true)
+	user, _ := repos.Users.Create(ctx, "deleteuser", "delete@example.com", hashedPassword, "user", true)
 
-	handler := AdminDeleteUserHandler(db, cfg)
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/users/%d", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1061,7 +1215,7 @@ func TestAdminDeleteUserHandler(t *testing.T) {
 	}
 
 	// Verify user is deleted
-	deletedUser, _ := database.GetUserByID(db, user.ID)
+	deletedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if deletedUser != nil {
 		t.Error("user should be deleted from database")
 	}
@@ -1070,8 +1224,12 @@ func TestAdminDeleteUserHandler(t *testing.T) {
 func TestAdminDeleteUserHandler_NotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminDeleteUserHandler(db, cfg)
+	handler := AdminDeleteUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/users/99999", nil)
 	rr := httptest.NewRecorder()
@@ -1086,12 +1244,18 @@ func TestAdminDeleteUserHandler_NotFound(t *testing.T) {
 
 func TestAdminUpdateUserHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
 	hashedPassword, _ := utils.HashPassword("password")
-	user, _ := database.CreateUser(db, "oldusername", "old@example.com", hashedPassword, "user", true)
+	user, _ := repos.Users.Create(ctx, "oldusername", "old@example.com", hashedPassword, "user", true)
 
-	handler := AdminUpdateUserHandler(db)
+	handler := AdminUpdateUserHandler(repos)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "newusername",
@@ -1111,7 +1275,7 @@ func TestAdminUpdateUserHandler(t *testing.T) {
 	}
 
 	// Verify user is updated
-	updatedUser, _ := database.GetUserByID(db, user.ID)
+	updatedUser, _ := repos.Users.GetByID(ctx, user.ID)
 	if updatedUser.Username != "newusername" {
 		t.Errorf("username = %s, want newusername", updatedUser.Username)
 	}
@@ -1127,12 +1291,18 @@ func TestAdminUpdateUserHandler(t *testing.T) {
 
 func TestAdminUpdateUserHandler_InvalidRole(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create user
 	hashedPassword, _ := utils.HashPassword("password")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", hashedPassword, "user", true)
+	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", hashedPassword, "user", true)
 
-	handler := AdminUpdateUserHandler(db)
+	handler := AdminUpdateUserHandler(repos)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "testuser",
@@ -1291,8 +1461,13 @@ func TestAdminChangePasswordHandler_MissingFields(t *testing.T) {
 func TestAdminUpdateStorageSettingsHandler_QuotaOnly(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+	handler := AdminUpdateStorageSettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("quota_gb", "50")
@@ -1313,7 +1488,7 @@ func TestAdminUpdateStorageSettingsHandler_QuotaOnly(t *testing.T) {
 	}
 
 	// Verify database persistence
-	settings, _ := database.GetSettings(db)
+	settings, _ := repos.Settings.Get(ctx)
 	if settings != nil && settings.QuotaLimitGB != 50 {
 		t.Errorf("database quota = %d GB, want 50 GB", settings.QuotaLimitGB)
 	}
@@ -1322,8 +1497,12 @@ func TestAdminUpdateStorageSettingsHandler_QuotaOnly(t *testing.T) {
 func TestAdminUpdateStorageSettingsHandler_AllSettings(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+	handler := AdminUpdateStorageSettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("quota_gb", "100")
@@ -1363,8 +1542,12 @@ func TestAdminUpdateStorageSettingsHandler_AllSettings(t *testing.T) {
 func TestAdminUpdateStorageSettingsHandler_InvalidQuota(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+	handler := AdminUpdateStorageSettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("quota_gb", "-50")
@@ -1384,8 +1567,12 @@ func TestAdminUpdateStorageSettingsHandler_InvalidQuota(t *testing.T) {
 func TestAdminUpdateStorageSettingsHandler_InvalidMaxFileSize(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+	handler := AdminUpdateStorageSettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("max_file_size_mb", "0")
@@ -1405,8 +1592,12 @@ func TestAdminUpdateStorageSettingsHandler_InvalidMaxFileSize(t *testing.T) {
 func TestAdminUpdateStorageSettingsHandler_NoSettings(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateStorageSettingsHandler(db, cfg)
+	handler := AdminUpdateStorageSettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	// No settings provided
@@ -1428,8 +1619,13 @@ func TestAdminUpdateStorageSettingsHandler_NoSettings(t *testing.T) {
 func TestAdminUpdateSecuritySettingsHandler_RateLimitsOnly(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+	handler := AdminUpdateSecuritySettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("rate_limit_upload", "20")
@@ -1455,7 +1651,7 @@ func TestAdminUpdateSecuritySettingsHandler_RateLimitsOnly(t *testing.T) {
 	}
 
 	// Verify database persistence
-	settings, _ := database.GetSettings(db)
+	settings, _ := repos.Settings.Get(ctx)
 	if settings != nil && settings.RateLimitUpload != 20 {
 		t.Errorf("database upload_rate_limit = %d, want 20", settings.RateLimitUpload)
 	}
@@ -1467,8 +1663,12 @@ func TestAdminUpdateSecuritySettingsHandler_RateLimitsOnly(t *testing.T) {
 func TestAdminUpdateSecuritySettingsHandler_BlockedExtensions(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+	handler := AdminUpdateSecuritySettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("blocked_extensions", ".exe,.bat,.sh,.dll")
@@ -1501,8 +1701,12 @@ func TestAdminUpdateSecuritySettingsHandler_BlockedExtensions(t *testing.T) {
 func TestAdminUpdateSecuritySettingsHandler_AllSettings(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+	handler := AdminUpdateSecuritySettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("rate_limit_upload", "15")
@@ -1537,8 +1741,12 @@ func TestAdminUpdateSecuritySettingsHandler_AllSettings(t *testing.T) {
 func TestAdminUpdateSecuritySettingsHandler_InvalidRateLimit(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+	handler := AdminUpdateSecuritySettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("rate_limit_upload", "0")
@@ -1558,8 +1766,12 @@ func TestAdminUpdateSecuritySettingsHandler_InvalidRateLimit(t *testing.T) {
 func TestAdminUpdateSecuritySettingsHandler_NoSettings(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUpdateSecuritySettingsHandler(db, cfg)
+	handler := AdminUpdateSecuritySettingsHandler(repos, cfg)
 
 	formData := url.Values{}
 	// No settings provided
@@ -1580,8 +1792,14 @@ func TestAdminUpdateSecuritySettingsHandler_NoSettings(t *testing.T) {
 
 func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
-	handler := AdminBlockIPHandler(db)
+	handler := AdminBlockIPHandler(repos)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "10.0.0.1")
@@ -1598,7 +1816,7 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	}
 
 	// Verify IP is blocked with default reason
-	blocked, _ := database.IsIPBlocked(db, "10.0.0.1")
+	blocked, _ := repos.Admin.IsIPBlocked(ctx, "10.0.0.1")
 	if !blocked {
 		t.Error("IP should be blocked with default reason")
 	}
@@ -1606,8 +1824,13 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 
 func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
 
-	handler := AdminUnblockIPHandler(db)
+	handler := AdminUnblockIPHandler(repos)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "10.0.0.99")
@@ -1628,10 +1851,15 @@ func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 func TestAdminDashboardDataHandler_Search(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Create test files with searchable terms
 	claimCode1, _ := utils.GenerateClaimCode()
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode1,
 		StoredFilename:   "stored1.dat",
 		OriginalFilename: "searchable.txt",
@@ -1642,7 +1870,7 @@ func TestAdminDashboardDataHandler_Search(t *testing.T) {
 	})
 
 	claimCode2, _ := utils.GenerateClaimCode()
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode2,
 		StoredFilename:   "stored2.dat",
 		OriginalFilename: "other.txt",
@@ -1652,7 +1880,7 @@ func TestAdminDashboardDataHandler_Search(t *testing.T) {
 		UploaderIP:       "192.168.1.2",
 	})
 
-	handler := AdminDashboardDataHandler(db, cfg)
+	handler := AdminDashboardDataHandler(repos, cfg)
 
 	// Search by filename
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/dashboard?search=searchable", nil)
@@ -1676,7 +1904,11 @@ func TestAdminDashboardDataHandler_Search(t *testing.T) {
 func TestAdminDashboardDataHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminDashboardDataHandler(repos, cfg)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 
@@ -1696,7 +1928,11 @@ func TestAdminDashboardDataHandler_MethodNotAllowed(t *testing.T) {
 func TestAdminUpdateQuotaHandler_MissingParameter(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminUpdateQuotaHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminUpdateQuotaHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/quota/update", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1711,7 +1947,11 @@ func TestAdminUpdateQuotaHandler_MissingParameter(t *testing.T) {
 func TestAdminUpdateQuotaHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := AdminUpdateQuotaHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := AdminUpdateQuotaHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 

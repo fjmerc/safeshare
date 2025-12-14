@@ -1,11 +1,10 @@
 package middleware
 
 import (
-	"database/sql"
 	"log/slog"
 	"net/http"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -16,13 +15,14 @@ type ProxyConfigProvider interface {
 }
 
 // IPBlockCheck middleware checks if the client IP is blocked
-func IPBlockCheck(db *sql.DB, cfg ProxyConfigProvider) func(http.Handler) http.Handler {
+func IPBlockCheck(repos *repository.Repositories, cfg ProxyConfigProvider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
 			clientIP := utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
 
 			// Check if IP is blocked
-			blocked, err := database.IsIPBlocked(db, clientIP)
+			blocked, err := repos.Admin.IsIPBlocked(ctx, clientIP)
 			if err != nil {
 				slog.Error("failed to check IP block status",
 					"ip", clientIP,

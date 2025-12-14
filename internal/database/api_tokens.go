@@ -191,6 +191,22 @@ func RevokeAPITokenAdmin(db *sql.DB, tokenID int64) error {
 	return nil
 }
 
+// DeleteAPITokenAdmin permanently deletes any token (admin only, no user check)
+// This performs a hard delete, removing the token from the database entirely
+func DeleteAPITokenAdmin(db *sql.DB, tokenID int64) error {
+	query := `DELETE FROM api_tokens WHERE id = ?`
+	result, err := db.Exec(query, tokenID)
+	if err != nil {
+		return fmt.Errorf("failed to delete token: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("token not found")
+	}
+	return nil
+}
+
 // DeleteAPITokensByUserID removes all tokens for a user (used when user is deleted)
 // This is a hard delete since user is being deleted
 func DeleteAPITokensByUserID(db *sql.DB, userID int64) error {

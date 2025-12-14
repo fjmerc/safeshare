@@ -14,16 +14,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 )
 
 func TestUploadHandler_ValidUpload(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Create test file
 	fileContent := []byte("This is a test file content")
@@ -78,7 +82,8 @@ func TestUploadHandler_ValidUpload(t *testing.T) {
 	}
 
 	// Verify database record
-	file, err := database.GetFileByClaimCode(db, resp.ClaimCode)
+	ctx := context.Background()
+	file, err := repos.Files.GetByClaimCode(ctx, resp.ClaimCode)
 	if err != nil {
 		t.Fatalf("failed to get file from db: %v", err)
 	}
@@ -95,7 +100,11 @@ func TestUploadHandler_ValidUpload(t *testing.T) {
 func TestUploadHandler_WithOptions(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	tests := []struct {
 		name       string
@@ -179,7 +188,11 @@ func TestUploadHandler_FileTooLarge(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 	cfg.SetMaxFileSize(1024) // 1KB limit
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Create file larger than limit
 	fileContent := bytes.Repeat([]byte("a"), 2048) // 2KB
@@ -204,7 +217,11 @@ func TestUploadHandler_FileTooLarge(t *testing.T) {
 func TestUploadHandler_BlockedExtension(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	blockedFiles := []string{
 		"virus.exe",
@@ -241,7 +258,11 @@ func TestUploadHandler_InvalidExpiration(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 	cfg.SetMaxExpirationHours(168) // 7 days max
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	tests := []struct {
 		name            string
@@ -298,7 +319,11 @@ func TestUploadHandler_InvalidExpiration(t *testing.T) {
 func TestUploadHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	methods := []string{
 		http.MethodGet,
@@ -330,7 +355,11 @@ func TestUploadHandler_MethodNotAllowed(t *testing.T) {
 func TestUploadHandler_NoFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Create multipart form without file
 	body := &bytes.Buffer{}
@@ -357,7 +386,11 @@ func TestUploadHandler_NoFile(t *testing.T) {
 func TestUploadHandler_FilenameSanitization(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	tests := []struct {
 		name              string
@@ -420,7 +453,11 @@ func TestUploadHandler_FilenameSanitization(t *testing.T) {
 func TestUploadHandler_ClaimCodeUniqueness(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Upload multiple files
 	codes := make(map[string]bool)
@@ -458,7 +495,11 @@ func TestUploadHandler_ClaimCodeUniqueness(t *testing.T) {
 func TestUploadHandler_ClientIPTracking(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	tests := []struct {
 		name       string
@@ -489,6 +530,7 @@ func TestUploadHandler_ClientIPTracking(t *testing.T) {
 		},
 	}
 
+	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fileContent := []byte("test")
@@ -513,7 +555,7 @@ func TestUploadHandler_ClientIPTracking(t *testing.T) {
 			json.Unmarshal(rr.Body.Bytes(), &resp)
 
 			// Verify IP was tracked in database
-			file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+			file, _ := repos.Files.GetByClaimCode(ctx, resp.ClaimCode)
 			if file.UploaderIP != tt.wantIP {
 				t.Errorf("uploader_ip = %q, want %q", file.UploaderIP, tt.wantIP)
 			}
@@ -524,7 +566,11 @@ func TestUploadHandler_ClientIPTracking(t *testing.T) {
 func TestUploadHandler_FractionalExpiration(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Test 0.5 hours (30 minutes)
 	fileContent := []byte("test")
@@ -556,7 +602,11 @@ func TestUploadHandler_FractionalExpiration(t *testing.T) {
 func TestUploadHandler_InvalidMaxDownloads(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	invalidValues := []string{
 		"abc",
@@ -594,7 +644,11 @@ func TestUploadHandler_InvalidMaxDownloads(t *testing.T) {
 func TestUploadHandler_EmptyFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Upload empty file
 	fileContent := []byte{}
@@ -620,7 +674,11 @@ func TestUploadHandler_EmptyFile(t *testing.T) {
 func TestUploadHandler_FileExtensions(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	safeExtensions := []string{
 		"document.pdf",
@@ -655,7 +713,11 @@ func TestUploadHandler_FileExtensions(t *testing.T) {
 func TestUploadHandler_CaseInsensitiveExtensionBlocking(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	variants := []string{
 		"virus.exe",
@@ -690,7 +752,11 @@ func TestUploadHandler_CaseInsensitiveExtensionBlocking(t *testing.T) {
 func TestUploadHandler_DoubleExtensionAttack(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	attackFiles := []string{
 		"document.pdf.exe",
@@ -725,7 +791,11 @@ func TestUploadHandler_DoubleExtensionAttack(t *testing.T) {
 func TestUploadHandler_UnicodeFilenames(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	unicodeFilenames := []string{
 		"文档.pdf",
@@ -767,7 +837,11 @@ func TestUploadHandler_WithEncryption(t *testing.T) {
 	// Set encryption key (64 hex characters = 32 bytes for AES-256)
 	cfg.EncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	fileContent := []byte("Secret content that should be encrypted")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "secret.txt", nil)
@@ -819,6 +893,11 @@ func TestUploadHandler_QuotaExceeded(t *testing.T) {
 	// Increase max file size to allow 200MB uploads
 	cfg.SetMaxFileSize(300 * 1024 * 1024) // 300MB
 
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
 	// Create actual file in upload directory (900MB)
 	existingFileData := bytes.Repeat([]byte("X"), 900*1024*1024)
 	existingStoredFilename := "existing-quota-test.dat"
@@ -828,6 +907,7 @@ func TestUploadHandler_QuotaExceeded(t *testing.T) {
 	}
 
 	// Upload a file that uses most of the quota (900MB)
+	ctx := context.Background()
 	existingFile := &models.File{
 		ClaimCode:        "existingfile1",
 		OriginalFilename: "existing.dat",
@@ -836,9 +916,9 @@ func TestUploadHandler_QuotaExceeded(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, existingFile)
+	repos.Files.Create(ctx, existingFile)
 
-	handler := UploadHandler(db, cfg)
+	handler := UploadHandler(repos, cfg)
 
 	// Try to upload another 200MB file (total would be 1.1GB, exceeds 1GB quota)
 	fileContent := bytes.Repeat([]byte("a"), 200*1024*1024)
@@ -864,7 +944,11 @@ func TestUploadHandler_QuotaExceeded(t *testing.T) {
 func TestUploadHandler_WithUserAuthentication(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Create test user
 	testUser := &models.User{
@@ -895,7 +979,8 @@ func TestUploadHandler_WithUserAuthentication(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &resp)
 
 	// Verify file record has user_id set
-	file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+	bgCtx := context.Background()
+	file, _ := repos.Files.GetByClaimCode(bgCtx, resp.ClaimCode)
 	if file.UserID == nil {
 		t.Fatal("user_id should be set for authenticated upload")
 	}
@@ -908,7 +993,11 @@ func TestUploadHandler_WithUserAuthentication(t *testing.T) {
 func TestUploadHandler_AnonymousUser(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	fileContent := []byte("Anonymous upload")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "anon.txt", nil)
@@ -928,7 +1017,8 @@ func TestUploadHandler_AnonymousUser(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &resp)
 
 	// Verify file record has NULL user_id
-	file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+	ctx := context.Background()
+	file, _ := repos.Files.GetByClaimCode(ctx, resp.ClaimCode)
 	if file.UserID != nil {
 		t.Error("user_id should be NULL for anonymous upload")
 	}
@@ -937,7 +1027,11 @@ func TestUploadHandler_AnonymousUser(t *testing.T) {
 func TestUploadHandler_MIMETypeDetection(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	tests := []struct {
 		name         string
@@ -971,6 +1065,7 @@ func TestUploadHandler_MIMETypeDetection(t *testing.T) {
 		},
 	}
 
+	ctx := context.Background()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body, contentType := testutil.CreateMultipartForm(t, tt.fileContent, tt.filename, nil)
@@ -989,7 +1084,7 @@ func TestUploadHandler_MIMETypeDetection(t *testing.T) {
 			json.Unmarshal(rr.Body.Bytes(), &resp)
 
 			// Verify MIME type in database
-			file, _ := database.GetFileByClaimCode(db, resp.ClaimCode)
+			file, _ := repos.Files.GetByClaimCode(ctx, resp.ClaimCode)
 			if !strings.HasPrefix(file.MimeType, tt.expectedMime) {
 				t.Errorf("mime_type = %q, want prefix %q", file.MimeType, tt.expectedMime)
 			}
@@ -1007,7 +1102,11 @@ func TestUploadHandler_InsufficientDiskSpace(t *testing.T) {
 func TestUploadHandler_ClaimCodeCollision(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Pre-populate database with many claim codes to increase collision probability
 	// Note: This test may be flaky due to random code generation
@@ -1052,7 +1151,11 @@ func TestUploadHandler_ClaimCodeCollision(t *testing.T) {
 func TestUploadHandler_SmallFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	// Test with very small file (less than 512 bytes for MIME detection)
 	fileContent := []byte("Small")
@@ -1077,7 +1180,11 @@ func TestUploadHandler_SmallFile(t *testing.T) {
 func TestUploadHandler_NeverExpire(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	fileContent := []byte("test content for never-expire")
 	formValues := map[string]string{
@@ -1108,7 +1215,8 @@ func TestUploadHandler_NeverExpire(t *testing.T) {
 	}
 
 	// Verify file record in database
-	file, err := database.GetFileByClaimCode(db, resp.ClaimCode)
+	ctx := context.Background()
+	file, err := repos.Files.GetByClaimCode(ctx, resp.ClaimCode)
 	if err != nil {
 		t.Fatalf("failed to get file: %v", err)
 	}
@@ -1124,7 +1232,11 @@ func TestUploadHandler_NeverExpire(t *testing.T) {
 func BenchmarkUploadHandler(b *testing.B) {
 	db := testutil.SetupTestDB(&testing.T{})
 	cfg := testutil.SetupTestConfig(&testing.T{})
-	handler := UploadHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		b.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
 
 	fileContent := bytes.Repeat([]byte("a"), 1024) // 1KB file
 

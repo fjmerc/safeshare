@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -9,18 +8,20 @@ import (
 	"strings"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminCreateUserHandler handles admin user creation (invite-only registration)
-func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
+func AdminCreateUserHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Parse request
 		var req models.CreateUserRequest
@@ -43,6 +44,16 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
 				"error": "Username and email are required",
+			})
+			return
+		}
+
+		// Validate username length (defense in depth - repository also validates)
+		if len(req.Username) < 1 || len(req.Username) > 64 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Username must be 1-64 characters",
 			})
 			return
 		}
@@ -71,7 +82,7 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Check if username already exists
-		existingUser, err := database.GetUserByUsername(db, req.Username)
+		existingUser, err := repos.Users.GetByUsername(ctx, req.Username)
 		if err != nil {
 			slog.Error("failed to check existing username", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -106,7 +117,7 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Create user in database
-		user, err := database.CreateUser(db, req.Username, req.Email, hashedPassword, "user", true)
+		user, err := repos.Users.Create(ctx, req.Username, req.Email, hashedPassword, "user", true)
 		if err != nil {
 			slog.Error("failed to create user", "error", err)
 
@@ -139,18 +150,23 @@ func AdminCreateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		// Security fix: Prevent caching of response containing sensitive data (P2 finding)
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
 // AdminListUsersHandler returns paginated list of users
-func AdminListUsersHandler(db *sql.DB) http.HandlerFunc {
+func AdminListUsersHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Parse pagination parameters
 		limitStr := r.URL.Query().Get("limit")
@@ -171,8 +187,13 @@ func AdminListUsersHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
+		// Security fix: Add upper bound to prevent expensive offset scans (P2 finding)
+		if offset > 1000000 {
+			offset = 1000000
+		}
+
 		// Get users from database
-		users, total, err := database.GetAllUsers(db, limit, offset)
+		users, total, err := repos.Users.GetAll(ctx, limit, offset)
 		if err != nil {
 			slog.Error("failed to get users", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -192,12 +213,14 @@ func AdminListUsersHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminUpdateUserHandler handles updating user details
-func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
+func AdminUpdateUserHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user ID from URL path
 		path := strings.TrimPrefix(r.URL.Path, "/admin/api/users/")
@@ -227,7 +250,7 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Get existing user
-		user, err := database.GetUserByID(db, userID)
+		user, err := repos.Users.GetByID(ctx, userID)
 		if err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -266,7 +289,7 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Update user in database
-		if err := database.UpdateUser(db, userID, username, email, role); err != nil {
+		if err := repos.Users.Update(ctx, userID, username, email, role); err != nil {
 			slog.Error("failed to update user", "error", err)
 
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -296,12 +319,14 @@ func AdminUpdateUserHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminToggleUserActiveHandler enables or disables a user account
-func AdminToggleUserActiveHandler(db *sql.DB) http.HandlerFunc {
+func AdminToggleUserActiveHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user ID from URL path
 		path := strings.TrimPrefix(r.URL.Path, "/admin/api/users/")
@@ -336,7 +361,7 @@ func AdminToggleUserActiveHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Check if user exists
-		user, err := database.GetUserByID(db, userID)
+		user, err := repos.Users.GetByID(ctx, userID)
 		if err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -352,7 +377,7 @@ func AdminToggleUserActiveHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Update user active status
-		if err := database.SetUserActive(db, userID, isActive); err != nil {
+		if err := repos.Users.SetActive(ctx, userID, isActive); err != nil {
 			slog.Error("failed to toggle user active status", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -378,12 +403,14 @@ func AdminToggleUserActiveHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // AdminResetUserPasswordHandler generates a new temporary password for a user
-func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
+func AdminResetUserPasswordHandler(repos *repository.Repositories) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user ID from URL path
 		path := strings.TrimPrefix(r.URL.Path, "/admin/api/users/")
@@ -405,7 +432,7 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Check if user exists
-		user, err := database.GetUserByID(db, userID)
+		user, err := repos.Users.GetByID(ctx, userID)
 		if err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -436,20 +463,11 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Update password in database (set require_password_change flag)
-		if err := database.UpdateUserPassword(db, userID, hashedPassword, false); err != nil {
+		// Update password and invalidate all sessions atomically (security fix: prevents session fixation)
+		if err := repos.Users.UpdatePasswordWithSessionInvalidation(ctx, userID, hashedPassword, false); err != nil {
 			slog.Error("failed to reset password", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
-		}
-
-		// Invalidate all existing sessions for this user (security best practice)
-		if err := database.DeleteUserSessionsByUserID(db, userID); err != nil {
-			slog.Error("failed to delete user sessions after password reset",
-				"error", err,
-				"user_id", userID,
-			)
-			// Don't fail the request - password was updated, just log the error
 		}
 
 		slog.Info("admin reset user password",
@@ -464,17 +482,22 @@ func AdminResetUserPasswordHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		// Security fix: Prevent caching of response containing sensitive data (P2 finding)
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
 		json.NewEncoder(w).Encode(response)
 	}
 }
 
 // AdminDeleteUserHandler deletes a user account
-func AdminDeleteUserHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminDeleteUserHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		ctx := r.Context()
 
 		// Get user ID from URL path
 		path := strings.TrimPrefix(r.URL.Path, "/admin/api/users/")
@@ -490,7 +513,7 @@ func AdminDeleteUserHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Check if user exists
-		user, err := database.GetUserByID(db, userID)
+		user, err := repos.Users.GetByID(ctx, userID)
 		if err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -506,7 +529,7 @@ func AdminDeleteUserHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Delete user from database and cleanup physical files (P2 fix)
-		if err := database.DeleteUser(db, userID, cfg.UploadDir); err != nil {
+		if err := repos.Users.Delete(ctx, userID, cfg.UploadDir); err != nil {
 			slog.Error("failed to delete user", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return

@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,15 +11,16 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/metrics"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // ClaimHandler handles file download requests using claim codes
-func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept GET requests
 		if r.Method != http.MethodGet {
 			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -42,7 +43,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get file record from database
-		file, err := database.GetFileByClaimCode(db, claimCode)
+		file, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to get file by claim code", "claim_code", redactClaimCode(claimCode), "error", err)
 			sendErrorResponse(w, r, "Server Error", "An internal error occurred while retrieving the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
@@ -101,10 +102,10 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Atomically increment download count with limit check (P1 fix)
 		// This prevents race conditions where multiple downloads could exceed max_downloads
-		success, err := database.TryIncrementDownloadWithLimit(db, file.ID, originalClaimCode)
+		success, err := repos.Files.TryIncrementDownloadWithLimit(ctx, file.ID, originalClaimCode)
 		if err != nil {
 			// Check if claim code changed during download
-			if strings.Contains(err.Error(), "claim code changed during download") {
+			if errors.Is(err, repository.ErrClaimCodeChanged) {
 				slog.Warn("claim code changed during download",
 					"file_id", file.ID,
 					"original_code", redactClaimCode(originalClaimCode),
@@ -133,7 +134,7 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Serve file with Range support (handles both full and partial downloads)
-		serveFileWithRangeSupport(w, r, file, filePath, cfg, db)
+		serveFileWithRangeSupport(w, r, file, filePath, cfg, repos)
 
 		// Calculate remaining downloads for logging
 		var remainingDownloads string
@@ -177,8 +178,9 @@ func ClaimHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // ClaimInfoHandler returns file information without downloading
-func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		// Only accept GET requests
 		if r.Method != http.MethodGet {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -206,7 +208,7 @@ func ClaimInfoHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		// Get file record from database
-		file, err := database.GetFileByClaimCode(db, claimCode)
+		file, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to get file by claim code", "claim_code", redactClaimCode(claimCode), "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)

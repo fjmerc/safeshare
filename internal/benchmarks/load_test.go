@@ -19,10 +19,9 @@ func TestLoadUploadBurst(t *testing.T) {
 		t.Skip("skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Simulate burst of 100 concurrent uploads
 	numUploads := 100
@@ -85,10 +84,9 @@ func TestLoadSustainedTraffic(t *testing.T) {
 		t.Skip("skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	handler := handlers.UploadHandler(db, cfg)
+	handler := handlers.UploadHandler(repos, cfg)
 
 	// Simulate sustained traffic: 10 uploads/sec for 5 seconds
 	duration := 5 * time.Second
@@ -164,11 +162,10 @@ func TestLoadMixedOperations(t *testing.T) {
 		t.Skip("skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
-	uploadHandler := handlers.UploadHandler(db, cfg)
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	uploadHandler := handlers.UploadHandler(repos, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	numOperations := 50
 	fileContent := bytes.Repeat([]byte("M"), 10*1024) // 10KB
@@ -257,11 +254,10 @@ func TestLoadChunkedUploadConcurrency(t *testing.T) {
 		t.Skip("skipping load test in short mode")
 	}
 
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 	cfg.ChunkedUploadEnabled = true
 
-	chunkHandler := handlers.UploadChunkHandler(db, cfg)
+	chunkHandler := handlers.UploadChunkHandler(repos, cfg)
 
 	// Create multiple partial uploads
 	numUploads := 10
@@ -325,7 +321,7 @@ func TestLoadDatabaseStress(t *testing.T) {
 		t.Skip("skipping load test in short mode")
 	}
 
-	_ = testutil.SetupTestDB(t) // Database for future use
+	_, _ = testutil.SetupTestRepos(t) // Repos for future use
 
 	numOperations := 200
 	var wg sync.WaitGroup

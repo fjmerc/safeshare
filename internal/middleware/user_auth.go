@@ -2,15 +2,14 @@ package middleware
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -29,12 +28,27 @@ const (
 
 	// ContextKeyTokenScopes stores the API token scopes if token auth was used
 	ContextKeyTokenScopes contextKey = "api_token_scopes"
+
+	// ContextKeyTokenExpiresAt stores the API token expiration time if token auth was used
+	ContextKeyTokenExpiresAt contextKey = "api_token_expires_at"
 )
 
 // Authentication type constants
 const (
 	AuthTypeSession  = "session"
 	AuthTypeAPIToken = "api_token"
+)
+
+// Token expiration warning constants
+const (
+	// TokenExpiringSoonThreshold is the duration before expiration to warn clients (7 days)
+	TokenExpiringSoonThreshold = 7 * 24 * time.Hour
+
+	// HeaderTokenExpiresAt is the header name for token expiration timestamp
+	HeaderTokenExpiresAt = "X-Token-Expires-At"
+
+	// HeaderTokenExpiresSoon is the header name indicating token expires soon
+	HeaderTokenExpiresSoon = "X-Token-Expires-Soon"
 )
 
 // extractBearerToken extracts the token from Authorization: Bearer header
@@ -53,18 +67,20 @@ func extractBearerToken(r *http.Request) string {
 
 // UserAuth middleware checks for valid user session OR API token
 // It tries Bearer token first, then falls back to session cookie
-func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
+func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try Bearer token first
 			bearerToken := extractBearerToken(r)
 			if bearerToken != "" {
-				user, ctx, err := authenticateWithAPIToken(db, r, bearerToken)
+				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken)
 				if err != nil {
 					handleAuthError(w, r, err)
 					return
 				}
 				if user != nil {
+					// Add token expiration warning headers before serving
+					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -73,7 +89,7 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Fall back to session-based auth
-			user, ctx, err := authenticateWithSession(db, r)
+			user, ctx, err := authenticateWithSession(repos, r)
 			if err != nil {
 				handleAuthError(w, r, err)
 				return
@@ -100,14 +116,16 @@ func UserAuth(db *sql.DB) func(http.Handler) http.Handler {
 // OptionalUserAuth middleware checks for a user session or API token but doesn't require it
 // If valid auth exists, it adds the user to the context
 // If no auth or invalid auth, it continues without error
-func OptionalUserAuth(db *sql.DB) func(http.Handler) http.Handler {
+func OptionalUserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try Bearer token first
 			bearerToken := extractBearerToken(r)
 			if bearerToken != "" {
-				user, ctx, err := authenticateWithAPIToken(db, r, bearerToken)
+				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken)
 				if err == nil && user != nil {
+					// Add token expiration warning headers before serving
+					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -116,7 +134,7 @@ func OptionalUserAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Try session-based auth
-			user, ctx, _ := authenticateWithSession(db, r)
+			user, ctx, _ := authenticateWithSession(repos, r)
 			if user != nil {
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -133,8 +151,9 @@ func OptionalUserAuth(db *sql.DB) func(http.Handler) http.Handler {
 const tokenAuthBaseDelay = 5 * time.Millisecond
 
 // authenticateWithAPIToken validates a Bearer token and returns the user
-func authenticateWithAPIToken(db *sql.DB, r *http.Request, token string) (*models.User, context.Context, error) {
+func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, token string) (*models.User, context.Context, error) {
 	authStart := time.Now()
+	ctx := r.Context()
 
 	// Helper to ensure consistent response times (prevents timing attacks)
 	normalizeResponseTime := func() {
@@ -159,7 +178,7 @@ func authenticateWithAPIToken(db *sql.DB, r *http.Request, token string) (*model
 
 	// Hash the token and look it up
 	tokenHash := utils.HashAPIToken(token)
-	apiToken, err := database.GetAPITokenByHash(db, tokenHash)
+	apiToken, err := repos.APITokens.GetByHash(ctx, tokenHash)
 	if err != nil {
 		normalizeResponseTime()
 		slog.Error("failed to validate API token",
@@ -200,7 +219,7 @@ func authenticateWithAPIToken(db *sql.DB, r *http.Request, token string) (*model
 	}
 
 	// Get associated user
-	user, err := database.GetUserByID(db, apiToken.UserID)
+	user, err := repos.Users.GetByID(ctx, apiToken.UserID)
 	if err != nil {
 		slog.Error("failed to get user for API token",
 			"error", err,
@@ -238,7 +257,8 @@ func authenticateWithAPIToken(db *sql.DB, r *http.Request, token string) (*model
 	// Update last used (async, don't block request)
 	clientIP := getClientIP(r)
 	go func() {
-		if err := database.UpdateAPITokenLastUsed(db, apiToken.ID, clientIP); err != nil {
+		// Use a background context since this runs asynchronously
+		if err := repos.APITokens.UpdateLastUsed(context.Background(), apiToken.ID, clientIP); err != nil {
 			slog.Error("failed to update token last used", "error", err)
 		}
 	}()
@@ -251,16 +271,39 @@ func authenticateWithAPIToken(db *sql.DB, r *http.Request, token string) (*model
 	)
 
 	// Set context values
-	ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-	ctx = context.WithValue(ctx, ContextKeyAuthType, AuthTypeAPIToken)
-	ctx = context.WithValue(ctx, ContextKeyTokenID, apiToken.ID)
-	ctx = context.WithValue(ctx, ContextKeyTokenScopes, apiToken.Scopes)
+	newCtx := context.WithValue(r.Context(), ContextKeyUser, user)
+	newCtx = context.WithValue(newCtx, ContextKeyAuthType, AuthTypeAPIToken)
+	newCtx = context.WithValue(newCtx, ContextKeyTokenID, apiToken.ID)
+	newCtx = context.WithValue(newCtx, ContextKeyTokenScopes, apiToken.Scopes)
+	if apiToken.ExpiresAt != nil {
+		newCtx = context.WithValue(newCtx, ContextKeyTokenExpiresAt, apiToken.ExpiresAt)
+	}
 
-	return user, ctx, nil
+	return user, newCtx, nil
+}
+
+// addTokenExpirationHeaders adds X-Token-Expires-At and X-Token-Expires-Soon headers
+// if the request was authenticated via API token with an expiration date.
+// This allows API clients to proactively refresh tokens before they expire.
+func addTokenExpirationHeaders(w http.ResponseWriter, ctx context.Context) {
+	expiresAt, ok := ctx.Value(ContextKeyTokenExpiresAt).(*time.Time)
+	if !ok || expiresAt == nil {
+		return
+	}
+
+	// Always add X-Token-Expires-At header for tokens with expiration
+	w.Header().Set(HeaderTokenExpiresAt, expiresAt.Format(time.RFC3339))
+
+	// Add X-Token-Expires-Soon if within threshold (7 days)
+	if time.Until(*expiresAt) < TokenExpiringSoonThreshold {
+		w.Header().Set(HeaderTokenExpiresSoon, "true")
+	}
 }
 
 // authenticateWithSession validates a session cookie and returns the user
-func authenticateWithSession(db *sql.DB, r *http.Request) (*models.User, context.Context, error) {
+func authenticateWithSession(repos *repository.Repositories, r *http.Request) (*models.User, context.Context, error) {
+	ctx := r.Context()
+
 	// Get session token from cookie
 	cookie, err := r.Cookie("user_session")
 	if err != nil {
@@ -269,7 +312,7 @@ func authenticateWithSession(db *sql.DB, r *http.Request) (*models.User, context
 	}
 
 	// Validate session
-	session, err := database.GetUserSession(db, cookie.Value)
+	session, err := repos.Users.GetSession(ctx, cookie.Value)
 	if err != nil {
 		slog.Error("failed to validate user session",
 			"error", err,
@@ -286,7 +329,7 @@ func authenticateWithSession(db *sql.DB, r *http.Request) (*models.User, context
 	}
 
 	// Get user info
-	user, err := database.GetUserByID(db, session.UserID)
+	user, err := repos.Users.GetByID(ctx, session.UserID)
 	if err != nil {
 		slog.Error("failed to get user",
 			"error", err,
@@ -315,16 +358,16 @@ func authenticateWithSession(db *sql.DB, r *http.Request) (*models.User, context
 	}
 
 	// Update session activity
-	if err := database.UpdateUserSessionActivity(db, cookie.Value); err != nil {
+	if err := repos.Users.UpdateSessionActivity(ctx, cookie.Value); err != nil {
 		slog.Error("failed to update user session activity", "error", err)
 		// Don't fail the request, just log the error
 	}
 
 	// Set context values
-	ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-	ctx = context.WithValue(ctx, ContextKeyAuthType, AuthTypeSession)
+	newCtx := context.WithValue(r.Context(), ContextKeyUser, user)
+	newCtx = context.WithValue(newCtx, ContextKeyAuthType, AuthTypeSession)
 
-	return user, ctx, nil
+	return user, newCtx, nil
 }
 
 // RequireScope middleware ensures the API token has the required scope
@@ -397,6 +440,16 @@ func GetTokenScopesFromContext(r *http.Request) string {
 		return ""
 	}
 	return scopes
+}
+
+// GetTokenExpiresAtFromContext retrieves the API token expiration time from request context
+// Returns nil if not using token auth or token doesn't expire
+func GetTokenExpiresAtFromContext(r *http.Request) *time.Time {
+	expiresAt, ok := r.Context().Value(ContextKeyTokenExpiresAt).(*time.Time)
+	if !ok {
+		return nil
+	}
+	return expiresAt
 }
 
 // authError represents an authentication error with HTTP status code

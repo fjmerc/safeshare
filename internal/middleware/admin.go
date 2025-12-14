@@ -2,26 +2,27 @@ package middleware
 
 import (
 	"crypto/subtle"
-	"database/sql"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminAuth middleware checks for valid admin session
-func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
+func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
 			// Try admin_session first
 			adminCookie, adminErr := r.Cookie("admin_session")
 			if adminErr == nil {
 				// Validate admin session
-				session, err := database.GetSession(db, adminCookie.Value)
+				session, err := repos.Admin.GetSession(ctx, adminCookie.Value)
 				if err != nil {
 					slog.Error("failed to validate admin session",
 						"error", err,
@@ -33,7 +34,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 
 				if session != nil {
 					// Update session activity
-					if err := database.UpdateSessionActivity(db, adminCookie.Value); err != nil {
+					if err := repos.Admin.UpdateSessionActivity(ctx, adminCookie.Value); err != nil {
 						slog.Error("failed to update admin session activity", "error", err)
 					}
 					// Session is valid, proceed
@@ -59,7 +60,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Validate user session
-			userSession, err := database.GetUserSession(db, userCookie.Value)
+			userSession, err := repos.Users.GetSession(ctx, userCookie.Value)
 			if err != nil {
 				slog.Error("failed to validate user session",
 					"error", err,
@@ -84,7 +85,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Get user and check role
-			user, err := database.GetUserByID(db, userSession.UserID)
+			user, err := repos.Users.GetByID(ctx, userSession.UserID)
 			if err != nil || user == nil {
 				slog.Error("failed to get user for admin check",
 					"error", err,
@@ -111,7 +112,7 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 			}
 
 			// Update session activity
-			if err := database.UpdateUserSessionActivity(db, userCookie.Value); err != nil {
+			if err := repos.Users.UpdateSessionActivity(ctx, userCookie.Value); err != nil {
 				slog.Error("failed to update user session activity", "error", err)
 			}
 
@@ -122,11 +123,13 @@ func AdminAuth(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 // CSRFProtection middleware validates CSRF tokens for state-changing requests
-func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
+func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only check CSRF for state-changing methods
 			if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" || r.Method == "PATCH" {
+				ctx := r.Context()
+
 				// Get CSRF token from header or form
 				csrfToken := r.Header.Get("X-CSRF-Token")
 				if csrfToken == "" {
@@ -139,7 +142,7 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 				// Check admin_session first
 				adminCookie, adminErr := r.Cookie("admin_session")
 				if adminErr == nil {
-					session, err := database.GetSession(db, adminCookie.Value)
+					session, err := repos.Admin.GetSession(ctx, adminCookie.Value)
 					if err == nil && session != nil {
 						hasValidSession = true
 					}
@@ -149,10 +152,10 @@ func CSRFProtection(db *sql.DB) func(http.Handler) http.Handler {
 				if !hasValidSession {
 					userCookie, userErr := r.Cookie("user_session")
 					if userErr == nil {
-						userSession, err := database.GetUserSession(db, userCookie.Value)
+						userSession, err := repos.Users.GetSession(ctx, userCookie.Value)
 						if err == nil && userSession != nil {
 							// Verify user has admin role
-							user, err := database.GetUserByID(db, userSession.UserID)
+							user, err := repos.Users.GetByID(ctx, userSession.UserID)
 							if err == nil && user != nil && user.Role == "admin" {
 								hasValidSession = true
 							}
@@ -217,6 +220,144 @@ func SetCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error) {
 
 	http.SetCookie(w, cookie)
 	return token, nil
+}
+
+// SetUserCSRFCookie sets a CSRF token cookie for user pages (site-wide scope)
+func SetUserCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error) {
+	token, err := utils.GenerateCSRFToken()
+	if err != nil {
+		return "", err
+	}
+
+	cookie := &http.Cookie{
+		Name:     "user_csrf_token",
+		Value:    token,
+		Path:     "/", // Site-wide for user routes
+		HttpOnly: false, // JavaScript needs to read this
+		Secure:   cfg.HTTPSEnabled,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400, // 24 hours
+	}
+
+	http.SetCookie(w, cookie)
+	return token, nil
+}
+
+// UserCSRFProtection middleware validates CSRF tokens for user routes (non-admin)
+// This accepts any valid user session, not just admin sessions
+func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only check CSRF for state-changing methods
+			if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" || r.Method == "PATCH" {
+				ctx := r.Context()
+
+				// Get CSRF token from header or form
+				csrfToken := r.Header.Get("X-CSRF-Token")
+				if csrfToken == "" {
+					csrfToken = r.FormValue("csrf_token")
+				}
+
+				// Check user_session (accepts any authenticated user)
+				hasValidSession := false
+				userCookie, userErr := r.Cookie("user_session")
+				if userErr == nil {
+					userSession, err := repos.Users.GetSession(ctx, userCookie.Value)
+					if err == nil && userSession != nil {
+						hasValidSession = true
+					}
+				}
+
+				if !hasValidSession {
+					slog.Warn("user CSRF validation failed - no valid session",
+						"path", r.URL.Path,
+						"ip", getClientIP(r),
+					)
+					http.Error(w, "Forbidden - No valid session", http.StatusForbidden)
+					return
+				}
+
+				// Get CSRF token from cookie (user-specific cookie)
+				csrfCookie, err := r.Cookie("user_csrf_token")
+				if err != nil || csrfToken == "" || csrfCookie == nil {
+					slog.Warn("user CSRF validation failed - missing token",
+						"path", r.URL.Path,
+						"ip", getClientIP(r),
+						"has_csrf_header", csrfToken != "",
+						"has_csrf_cookie", csrfCookie != nil,
+					)
+					http.Error(w, "Forbidden - Missing CSRF token", http.StatusForbidden)
+					return
+				}
+
+				// Use constant-time comparison to prevent timing attacks
+				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
+					slog.Warn("user CSRF validation failed - token mismatch",
+						"path", r.URL.Path,
+						"ip", getClientIP(r),
+					)
+					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
+					return
+				}
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimitTOTPVerify rate limits TOTP verification attempts per user/IP
+// Prevents brute-force attacks on 6-digit TOTP codes
+func RateLimitTOTPVerify() func(http.Handler) http.Handler {
+	type verifyAttempt struct {
+		count       int
+		lastAttempt time.Time
+	}
+
+	attempts := make(map[string]*verifyAttempt)
+	maxAttempts := 5      // Max attempts before lockout
+	windowMinutes := 15   // Lockout window
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientIP := getClientIP(r)
+
+			// Clean up old entries
+			now := time.Now()
+			for key, attempt := range attempts {
+				if now.Sub(attempt.lastAttempt) > time.Duration(windowMinutes)*time.Minute {
+					delete(attempts, key)
+				}
+			}
+
+			// Check rate limit
+			if attempt, exists := attempts[clientIP]; exists {
+				if attempt.count >= maxAttempts {
+					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
+						slog.Warn("TOTP verification rate limit exceeded",
+							"ip", clientIP,
+							"attempts", attempt.count,
+						)
+						http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
+						return
+					}
+					// Reset if window has passed
+					attempt.count = 0
+				}
+			}
+
+			// Increment attempt counter after the request completes
+			defer func() {
+				if attempts[clientIP] == nil {
+					attempts[clientIP] = &verifyAttempt{}
+				}
+				attempts[clientIP].count++
+				attempts[clientIP].lastAttempt = now
+			}()
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // RateLimitAdminLogin rate limits admin login attempts

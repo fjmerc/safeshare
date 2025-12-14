@@ -2,14 +2,18 @@ package utils
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/webhooks"
+	"github.com/google/uuid"
 )
 
 // WebhookEmitter is a function that emits webhook events
@@ -19,14 +23,14 @@ type WebhookEmitter func(event *webhooks.Event)
 // StartCleanupWorker starts a background goroutine that periodically
 // deletes expired files from the database and filesystem
 // emitWebhook callback is optional - if nil, webhook events will not be emitted
-func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, intervalMinutes int, emitWebhook WebhookEmitter) {
+func StartCleanupWorker(ctx context.Context, repos *repository.Repositories, uploadDir string, intervalMinutes int, emitWebhook WebhookEmitter) {
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
 	slog.Info("cleanup worker started", "interval_minutes", intervalMinutes)
 
 	// Run cleanup immediately on start
-	runCleanup(db, uploadDir, emitWebhook)
+	runCleanup(repos, uploadDir, emitWebhook)
 
 	for {
 		select {
@@ -34,17 +38,18 @@ func StartCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, inter
 			slog.Info("cleanup worker shutting down")
 			return
 		case <-ticker.C:
-			runCleanup(db, uploadDir, emitWebhook)
+			runCleanup(repos, uploadDir, emitWebhook)
 		}
 	}
 }
 
 // runCleanup performs the actual cleanup operation
-func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
+func runCleanup(repos *repository.Repositories, uploadDir string, emitWebhook WebhookEmitter) {
 	start := time.Now()
+	ctx := context.Background()
 
 	// Define webhook callback for expired files (only if webhook emitter provided)
-	var onExpired database.ExpiredFileCallback
+	var onExpired repository.ExpiredFileCallback
 	if emitWebhook != nil {
 		onExpired = func(claimCode, filename string, fileSize int64, mimeType string, expiresAt time.Time) {
 			reason := "automatic expiration"
@@ -63,7 +68,7 @@ func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
 		}
 	}
 
-	deleted, err := database.DeleteExpiredFiles(db, uploadDir, onExpired)
+	deleted, err := repos.Files.DeleteExpired(ctx, uploadDir, onExpired)
 	duration := time.Since(start)
 
 	if err != nil {
@@ -80,7 +85,7 @@ func runCleanup(db *sql.DB, uploadDir string, emitWebhook WebhookEmitter) {
 
 // StartPartialUploadCleanupWorker starts a background goroutine that periodically
 // deletes abandoned partial uploads from the database and filesystem
-func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir string, expiryHours int, interval time.Duration) {
+func StartPartialUploadCleanupWorker(ctx context.Context, repos *repository.Repositories, uploadDir string, expiryHours int, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -90,7 +95,7 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 	)
 
 	// Run cleanup immediately on start
-	runPartialUploadCleanup(db, uploadDir, expiryHours)
+	runPartialUploadCleanup(repos, uploadDir, expiryHours)
 
 	for {
 		select {
@@ -98,30 +103,38 @@ func StartPartialUploadCleanupWorker(ctx context.Context, db *sql.DB, uploadDir 
 			slog.Info("partial upload cleanup worker shutting down")
 			return
 		case <-ticker.C:
-			runPartialUploadCleanup(db, uploadDir, expiryHours)
+			runPartialUploadCleanup(repos, uploadDir, expiryHours)
 		}
 	}
 }
 
 // CleanupResult contains statistics about a cleanup operation
 type CleanupResult struct {
-	DeletedCount   int   // Total uploads deleted (database-tracked + orphaned)
-	BytesReclaimed int64 // Total bytes reclaimed
-	AbandonedCount int   // Database-tracked abandoned uploads
-	OrphanedCount  int   // Orphaned chunks without database records
-	OrphanedBytes  int64 // Bytes reclaimed from orphaned chunks
+	DeletedCount       int   // Total uploads deleted (database-tracked + orphaned)
+	BytesReclaimed     int64 // Total bytes reclaimed
+	AbandonedCount     int   // Database-tracked abandoned uploads
+	OrphanedCount      int   // Orphaned chunks without database records
+	OrphanedBytes      int64 // Bytes reclaimed from orphaned chunks
+	OrphanedFilesCount int   // Orphaned complete files (no DB record)
+	OrphanedFilesBytes int64 // Bytes reclaimed from orphaned complete files
 }
 
 // CleanupAbandonedUploads removes abandoned partial uploads and returns statistics
 // This function is reusable by both the background worker and API endpoints
-func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*CleanupResult, error) {
+func CleanupAbandonedUploads(repos *repository.Repositories, uploadDir string, expiryHours int) (*CleanupResult, error) {
+	// Security: Validate expiryHours to prevent negative values causing unexpected behavior
+	if expiryHours < 0 {
+		return nil, fmt.Errorf("expiryHours must be non-negative, got %d", expiryHours)
+	}
+
+	ctx := context.Background()
 	result := &CleanupResult{
 		DeletedCount:   0,
 		BytesReclaimed: 0,
 	}
 
 	// Get abandoned partial uploads (incomplete uploads that are old)
-	abandoned, err := database.GetAbandonedPartialUploads(db, expiryHours)
+	abandoned, err := repos.PartialUploads.GetAbandoned(ctx, expiryHours)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +163,7 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 		}
 
 		// Delete partial upload record from database
-		if err := database.DeletePartialUpload(db, upload.UploadID); err != nil {
+		if err := repos.PartialUploads.Delete(ctx, upload.UploadID); err != nil {
 			slog.Error("failed to delete partial upload record",
 				"upload_id", upload.UploadID,
 				"error", err,
@@ -179,7 +192,7 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 			slog.Error("failed to read partial uploads directory for orphan cleanup", "error", err)
 		} else {
 			// Fetch all active upload_ids from database (single query)
-			activeUploads, err := database.GetAllPartialUploadIDs(db)
+			activeUploads, err := repos.PartialUploads.GetAllUploadIDs(ctx)
 			if err != nil {
 				slog.Error("failed to fetch active upload IDs for orphan detection", "error", err)
 				// Fall back to per-upload check if batch query fails
@@ -193,6 +206,16 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 
 				uploadID := entry.Name()
 
+				// Security: Validate uploadID is a valid UUID to prevent path traversal
+				// Directory names come from filesystem listing, which is less trusted than API handlers
+				if _, err := uuid.Parse(uploadID); err != nil {
+					slog.Warn("skipping directory with invalid upload_id format",
+						"upload_id", uploadID,
+						"error", err,
+					)
+					continue
+				}
+
 				// Check if this upload_id exists in the database
 				var exists bool
 				if activeUploads != nil {
@@ -200,7 +223,7 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 					exists = activeUploads[uploadID]
 				} else {
 					// Fallback to individual query if batch query failed
-					exists, err = database.PartialUploadExists(db, uploadID)
+					exists, err = repos.PartialUploads.Exists(ctx, uploadID)
 					if err != nil {
 						slog.Error("failed to check if partial upload exists",
 							"upload_id", uploadID,
@@ -256,19 +279,165 @@ func CleanupAbandonedUploads(db *sql.DB, uploadDir string, expiryHours int) (*Cl
 	return result, nil
 }
 
+// CleanupOrphanedFiles removes files from the uploads directory that have no
+// corresponding database records. These can occur from:
+// - Database restore without corresponding uploads
+// - Server crash between file write and DB commit
+// - Manual database manipulation
+//
+// A grace period is applied to avoid race conditions with in-progress uploads.
+// Returns count of deleted files and bytes reclaimed.
+func CleanupOrphanedFiles(repos *repository.Repositories, uploadDir string, graceHours int) (int, int64, error) {
+	ctx := context.Background()
+
+	// Security: Validate graceHours to prevent negative values bypassing protection
+	if graceHours < 0 {
+		return 0, 0, fmt.Errorf("graceHours must be non-negative, got %d", graceHours)
+	}
+
+	// Get all stored filenames from database
+	dbFilenames, err := repos.Files.GetAllStoredFilenames(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Find orphaned files (files on disk with no DB record)
+	orphans, err := backup.FindOrphanedFiles(uploadDir, dbFilenames)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if len(orphans) == 0 {
+		return 0, 0, nil
+	}
+
+	var deleted int
+	var bytesReclaimed int64
+	graceThreshold := time.Now().Add(-time.Duration(graceHours) * time.Hour)
+
+	for _, orphan := range orphans {
+		// Security: Validate filename to prevent path traversal (defense-in-depth)
+		// Although files come from os.ReadDir which returns safe basenames,
+		// we validate anyway as a safety measure
+		if err := validateOrphanFilename(orphan); err != nil {
+			slog.Warn("skipping orphan with suspicious filename",
+				"filename", orphan,
+				"error", err,
+			)
+			continue
+		}
+
+		filePath := filepath.Join(uploadDir, orphan)
+
+		// Get file info for size and modification time
+		info, err := os.Stat(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File already deleted, skip
+				continue
+			}
+			slog.Error("failed to stat orphaned file",
+				"path", filePath,
+				"error", err,
+			)
+			continue
+		}
+
+		// Check grace period - skip files that are too recent
+		// This prevents deleting files that are part of an in-progress upload
+		if info.ModTime().After(graceThreshold) {
+			slog.Debug("skipping orphaned file within grace period",
+				"filename", orphan,
+				"mod_time", info.ModTime(),
+				"grace_threshold", graceThreshold,
+			)
+			continue
+		}
+
+		// Security: Re-verify file is not in database just before deletion
+		// This mitigates TOCTOU race conditions where a file might have been
+		// uploaded and committed to DB between our initial query and now
+		currentDbFilenames, err := repos.Files.GetAllStoredFilenames(ctx)
+		if err != nil {
+			slog.Warn("failed to re-verify database before deletion, skipping",
+				"filename", orphan,
+				"error", err,
+			)
+			continue
+		}
+		if currentDbFilenames[orphan] {
+			slog.Debug("file appeared in database during cleanup, skipping",
+				"filename", orphan,
+			)
+			continue
+		}
+
+		// Delete the orphaned file
+		if err := os.Remove(filePath); err != nil {
+			if os.IsNotExist(err) {
+				// File already deleted between stat and remove, skip
+				continue
+			}
+			slog.Error("failed to delete orphaned file",
+				"path", filePath,
+				"error", err,
+			)
+			continue
+		}
+
+		deleted++
+		bytesReclaimed += info.Size()
+		slog.Info("deleted orphaned file",
+			"filename", orphan,
+			"size", info.Size(),
+			"mod_time", info.ModTime(),
+		)
+	}
+
+	return deleted, bytesReclaimed, nil
+}
+
+// validateOrphanFilename validates a filename before deletion (defense-in-depth)
+func validateOrphanFilename(filename string) error {
+	if filename == "" {
+		return fmt.Errorf("filename cannot be empty")
+	}
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		return fmt.Errorf("filename contains path separator")
+	}
+	if strings.Contains(filename, "..") {
+		return fmt.Errorf("filename contains path traversal sequence")
+	}
+	return nil
+}
+
 // runPartialUploadCleanup performs the actual partial upload cleanup operation
-func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
+func runPartialUploadCleanup(repos *repository.Repositories, uploadDir string, expiryHours int) {
 	start := time.Now()
+	ctx := context.Background()
 
 	// Clean up abandoned uploads using reusable function
-	result, err := CleanupAbandonedUploads(db, uploadDir, expiryHours)
+	result, err := CleanupAbandonedUploads(repos, uploadDir, expiryHours)
 	if err != nil {
 		slog.Error("failed to cleanup abandoned uploads", "error", err)
 		return
 	}
 
+	// Phase 3: Clean up orphaned complete files (files without DB records)
+	// This catches files orphaned from DB restore, server crashes, etc.
+	// Uses same grace period as expiryHours for consistency
+	orphanedFilesCount, orphanedFilesBytes, err := CleanupOrphanedFiles(repos, uploadDir, expiryHours)
+	if err != nil {
+		slog.Error("failed to cleanup orphaned files", "error", err)
+		// Continue with rest of cleanup - don't fail the whole operation
+	} else {
+		result.OrphanedFilesCount = orphanedFilesCount
+		result.OrphanedFilesBytes = orphanedFilesBytes
+		result.BytesReclaimed += orphanedFilesBytes
+	}
+
 	// Get completed uploads older than 1 hour (for idempotency cleanup)
-	completed, err := database.GetOldCompletedUploads(db, 1) // 1 hour retention for idempotency
+	completed, err := repos.PartialUploads.GetOldCompleted(ctx, 1) // 1 hour retention for idempotency
 	if err != nil {
 		slog.Error("failed to get old completed uploads", "error", err)
 		// Continue even if this fails
@@ -285,7 +454,7 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 		}
 
 		// Delete partial upload record from database
-		if err := database.DeletePartialUpload(db, upload.UploadID); err != nil {
+		if err := repos.PartialUploads.Delete(ctx, upload.UploadID); err != nil {
 			slog.Error("failed to delete completed upload record",
 				"upload_id", upload.UploadID,
 				"error", err,
@@ -306,24 +475,27 @@ func runPartialUploadCleanup(db *sql.DB, uploadDir string, expiryHours int) {
 	totalDeleted := result.DeletedCount + completedCount
 
 	// Update query planner statistics after bulk deletes
-	if totalDeleted >= 50 {
+	// Use the deprecated DB field for raw SQL until ANALYZE is added to repository
+	if totalDeleted >= 50 && repos.DB != nil {
 		slog.Info("updating query planner statistics after partial upload cleanup",
 			"deleted_count", totalDeleted)
 
-		if _, err := db.Exec("ANALYZE partial_uploads"); err != nil {
+		if _, err := repos.DB.Exec("ANALYZE partial_uploads"); err != nil {
 			// Log but don't fail - ANALYZE is optimization, not critical
 			slog.Warn("failed to analyze partial_uploads table", "error", err)
 		}
 	}
 
-	if totalDeleted > 0 {
+	if totalDeleted > 0 || result.OrphanedFilesCount > 0 {
 		slog.Info("partial upload cleanup completed",
 			"deleted", totalDeleted,
 			"abandoned", result.AbandonedCount,
-			"orphaned", result.OrphanedCount,
+			"orphaned_chunks", result.OrphanedCount,
+			"orphaned_files", result.OrphanedFilesCount,
 			"completed", completedCount,
 			"bytes_reclaimed", result.BytesReclaimed,
-			"orphaned_bytes", result.OrphanedBytes,
+			"orphaned_chunk_bytes", result.OrphanedBytes,
+			"orphaned_file_bytes", result.OrphanedFilesBytes,
 			"duration", duration,
 		)
 	} else {

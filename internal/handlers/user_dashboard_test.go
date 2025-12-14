@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -21,22 +21,30 @@ import (
 func TestUserDeleteFileHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file owned by user
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-claim-delete"
-	if err := database.CreateFile(db, file); err != nil {
+	if err := repos.Files.Create(ctx, file); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
 	// Get the file back to get its ID
-	createdFile, err := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, err := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 	if err != nil || createdFile == nil {
 		t.Fatalf("failed to retrieve created file: %v", err)
 	}
@@ -56,8 +64,8 @@ func TestUserDeleteFileHandler_Success(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user to context
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -72,7 +80,7 @@ func TestUserDeleteFileHandler_Success(t *testing.T) {
 	}
 
 	// Verify file no longer exists in database
-	deletedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	deletedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if deletedFile != nil {
 		t.Error("file should be deleted from database")
 	}
@@ -87,20 +95,33 @@ func TestUserDeleteFileHandler_Success(t *testing.T) {
 func TestUserDeleteFileHandler_NotOwner(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	// Create two users
 	passwordHash, _ := utils.HashPassword("password123")
-	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
-	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+	user1, err := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user1: %v", err)
+	}
+	user2, err := repos.Users.Create(ctx, "user2", "user2@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user2: %v", err)
+	}
 
 	// Create file owned by user1
 	file := testutil.SampleFile()
 	file.UserID = &user1.ID
 	file.ClaimCode = "user1-file"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Try to delete as user2
 	deleteReq := map[string]int64{
@@ -112,8 +133,8 @@ func TestUserDeleteFileHandler_NotOwner(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Add user2 to context
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -128,7 +149,7 @@ func TestUserDeleteFileHandler_NotOwner(t *testing.T) {
 	}
 
 	// Verify file still exists
-	existingFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	existingFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if existingFile == nil {
 		t.Error("file should not be deleted")
 	}
@@ -138,11 +159,19 @@ func TestUserDeleteFileHandler_NotOwner(t *testing.T) {
 func TestUserDeleteFileHandler_FileNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Try to delete non-existent file
 	deleteReq := map[string]int64{
@@ -153,8 +182,8 @@ func TestUserDeleteFileHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -166,10 +195,18 @@ func TestUserDeleteFileHandler_FileNotFound(t *testing.T) {
 func TestUserDeleteFileHandler_InvalidFileID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	tests := []struct {
 		name   string
@@ -189,8 +226,8 @@ func TestUserDeleteFileHandler_InvalidFileID(t *testing.T) {
 			req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-			req = req.WithContext(ctx)
+			reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+			req = req.WithContext(reqCtx)
 
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
@@ -211,16 +248,24 @@ func TestUserDeleteFileHandler_InvalidFileID(t *testing.T) {
 func TestUserDeleteFileHandler_InvalidJSON(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -232,7 +277,11 @@ func TestUserDeleteFileHandler_InvalidJSON(t *testing.T) {
 func TestUserDeleteFileHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut}
 
@@ -252,18 +301,28 @@ func TestUserDeleteFileHandler_MethodNotAllowed(t *testing.T) {
 func TestUserDeleteFileHandler_PhysicalFileMissing(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDeleteFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDeleteFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file in database but not on disk
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "orphan-file"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Delete file request
 	deleteReq := map[string]int64{
@@ -274,8 +333,8 @@ func TestUserDeleteFileHandler_PhysicalFileMissing(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/user/files/delete", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -284,7 +343,7 @@ func TestUserDeleteFileHandler_PhysicalFileMissing(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusOK)
 
 	// Database record should be deleted
-	deletedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	deletedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if deletedFile != nil {
 		t.Error("file should be deleted from database")
 	}
@@ -294,18 +353,28 @@ func TestUserDeleteFileHandler_PhysicalFileMissing(t *testing.T) {
 func TestUserDashboardDataHandler_Pagination(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDashboardDataHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create 25 test files
 	for i := 0; i < 25; i++ {
 		file := testutil.SampleFile()
 		file.UserID = &user.ID
 		file.ClaimCode = fmt.Sprintf("claim-%d", i)
-		database.CreateFile(db, file)
+		if err := repos.Files.Create(ctx, file); err != nil {
+			t.Fatalf("failed to create file %d: %v", i, err)
+		}
 	}
 
 	tests := []struct {
@@ -340,8 +409,8 @@ func TestUserDashboardDataHandler_Pagination(t *testing.T) {
 			}
 
 			req := httptest.NewRequest(http.MethodGet, url, nil)
-			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-			req = req.WithContext(ctx)
+			reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+			req = req.WithContext(reqCtx)
 
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
@@ -367,15 +436,23 @@ func TestUserDashboardDataHandler_Pagination(t *testing.T) {
 func TestUserDashboardDataHandler_EmptyFileList(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDashboardDataHandler(repos, cfg)
 
 	// Create user with no files
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -399,7 +476,11 @@ func TestUserDashboardDataHandler_EmptyFileList(t *testing.T) {
 func TestUserDashboardDataHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserDashboardDataHandler(repos, cfg)
 
 	methods := []string{http.MethodPost, http.MethodPut, http.MethodDelete}
 
@@ -419,11 +500,19 @@ func TestUserDashboardDataHandler_MethodNotAllowed(t *testing.T) {
 func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserDashboardDataHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserDashboardDataHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file with known values
 	file := testutil.SampleFile()
@@ -432,11 +521,13 @@ func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 	file.OriginalFilename = "test-file.txt"
 	maxDownloads := 5
 	file.MaxDownloads = &maxDownloads
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -490,20 +581,30 @@ func TestUserDashboardDataHandler_FileFields(t *testing.T) {
 func TestUserRenameFileHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file owned by user
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-rename-success"
 	file.OriginalFilename = "oldname.txt"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Rename file request
 	renameReq := map[string]interface{}{
@@ -515,8 +616,8 @@ func TestUserRenameFileHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -535,7 +636,7 @@ func TestUserRenameFileHandler_Success(t *testing.T) {
 	}
 
 	// Verify file was renamed in database
-	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if updatedFile.OriginalFilename != "newname.txt" {
 		t.Errorf("file not renamed in database, got %q", updatedFile.OriginalFilename)
 	}
@@ -545,19 +646,32 @@ func TestUserRenameFileHandler_Success(t *testing.T) {
 func TestUserRenameFileHandler_NotOwner(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
-	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+	user1, err := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user1: %v", err)
+	}
+	user2, err := repos.Users.Create(ctx, "user2", "user2@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user2: %v", err)
+	}
 
 	// Create file owned by user1
 	file := testutil.SampleFile()
 	file.UserID = &user1.ID
 	file.ClaimCode = "user1-file-rename"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Try to rename as user2
 	renameReq := map[string]interface{}{
@@ -569,8 +683,8 @@ func TestUserRenameFileHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -585,7 +699,7 @@ func TestUserRenameFileHandler_NotOwner(t *testing.T) {
 	}
 
 	// Verify file was NOT renamed
-	unchangedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	unchangedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if unchangedFile.OriginalFilename == "hacked.txt" {
 		t.Error("file should not have been renamed")
 	}
@@ -595,10 +709,18 @@ func TestUserRenameFileHandler_NotOwner(t *testing.T) {
 func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	renameReq := map[string]interface{}{
 		"file_id":      int64(99999),
@@ -609,8 +731,8 @@ func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -622,10 +744,18 @@ func TestUserRenameFileHandler_FileNotFound(t *testing.T) {
 func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	tests := []struct {
 		name   string
@@ -646,8 +776,8 @@ func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
-			ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-			req = req.WithContext(ctx)
+			reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+			req = req.WithContext(reqCtx)
 
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
@@ -668,10 +798,18 @@ func TestUserRenameFileHandler_InvalidFileID(t *testing.T) {
 func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	renameReq := map[string]interface{}{
 		"file_id":      int64(1),
@@ -682,8 +820,8 @@ func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -702,16 +840,24 @@ func TestUserRenameFileHandler_EmptyFilename(t *testing.T) {
 func TestUserRenameFileHandler_InvalidJSON(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -723,7 +869,11 @@ func TestUserRenameFileHandler_InvalidJSON(t *testing.T) {
 func TestUserRenameFileHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UserRenameFileHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
 
@@ -743,17 +893,27 @@ func TestUserRenameFileHandler_MethodNotAllowed(t *testing.T) {
 func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRenameFileHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRenameFileHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-sanitize"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Try to rename with dangerous characters
 	renameReq := map[string]interface{}{
@@ -765,8 +925,8 @@ func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/rename", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -782,7 +942,7 @@ func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
 	}
 
 	// Verify in database
-	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if updatedFile.OriginalFilename != "passwd" {
 		t.Errorf("filename in database = %q, want 'passwd'", updatedFile.OriginalFilename)
 	}
@@ -794,19 +954,29 @@ func TestUserRenameFileHandler_SanitizationWorks(t *testing.T) {
 func TestUserEditExpirationHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file owned by user
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-edit-expiration-success"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// New expiration: 24 hours from now (well within MAX_EXPIRATION_HOURS)
 	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
@@ -821,8 +991,8 @@ func TestUserEditExpirationHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -837,7 +1007,7 @@ func TestUserEditExpirationHandler_Success(t *testing.T) {
 	}
 
 	// Verify file expiration was updated in database
-	updatedFile, _ := database.GetFileByClaimCode(db, createdFile.ClaimCode)
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
 	if updatedFile.ExpiresAt.Unix() != newExpiration.Unix() {
 		t.Errorf("expiration not updated in database, got %v, want %v", updatedFile.ExpiresAt, newExpiration)
 	}
@@ -847,19 +1017,32 @@ func TestUserEditExpirationHandler_Success(t *testing.T) {
 func TestUserEditExpirationHandler_NotOwner(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
-	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+	user1, err := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user1: %v", err)
+	}
+	user2, err := repos.Users.Create(ctx, "user2", "user2@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user2: %v", err)
+	}
 
 	// Create file owned by user1
 	file := testutil.SampleFile()
 	file.UserID = &user1.ID
 	file.ClaimCode = "user1-file-edit-expiration"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Try to edit expiration as user2
 	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
@@ -872,8 +1055,8 @@ func TestUserEditExpirationHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -892,10 +1075,18 @@ func TestUserEditExpirationHandler_NotOwner(t *testing.T) {
 func TestUserEditExpirationHandler_FileNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Try to edit non-existent file
 	newExpiration := testutil.TimeNow().Add(24 * testutil.TimeHour)
@@ -908,8 +1099,8 @@ func TestUserEditExpirationHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -928,17 +1119,27 @@ func TestUserEditExpirationHandler_FileNotFound(t *testing.T) {
 func TestUserEditExpirationHandler_InvalidDate(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-invalid-date"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Invalid date format
 	editReq := map[string]interface{}{
@@ -950,8 +1151,8 @@ func TestUserEditExpirationHandler_InvalidDate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -970,17 +1171,27 @@ func TestUserEditExpirationHandler_InvalidDate(t *testing.T) {
 func TestUserEditExpirationHandler_PastDate(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-past-date"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Past date
 	pastDate := testutil.TimeNow().Add(-24 * testutil.TimeHour)
@@ -993,8 +1204,8 @@ func TestUserEditExpirationHandler_PastDate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1014,17 +1225,27 @@ func TestUserEditExpirationHandler_ExceedsMax(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
 	cfg.SetMaxExpirationHours(168) // 7 days
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-exceeds-max"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Date beyond max (8 days from now)
 	tooFarDate := testutil.TimeNow().Add(200 * testutil.TimeHour)
@@ -1037,8 +1258,8 @@ func TestUserEditExpirationHandler_ExceedsMax(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1058,17 +1279,27 @@ func TestUserEditExpirationHandler_ExceedsMax(t *testing.T) {
 func TestUserEditExpirationHandler_EmptyExpiration(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserEditExpirationHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserEditExpirationHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "test-empty-expiration"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Empty expiration
 	editReq := map[string]interface{}{
@@ -1080,8 +1311,8 @@ func TestUserEditExpirationHandler_EmptyExpiration(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/update-expiration", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1100,19 +1331,29 @@ func TestUserEditExpirationHandler_EmptyExpiration(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Create file owned by user
 	file := testutil.SampleFile()
 	file.UserID = &user.ID
 	file.ClaimCode = "original-claim-code"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 	originalClaimCode := createdFile.ClaimCode
 
 	// Regenerate claim code request
@@ -1124,8 +1365,8 @@ func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1154,7 +1395,7 @@ func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 	}
 
 	// Verify claim code was updated in database
-	updatedFile, _ := database.GetFileByClaimCode(db, newClaimCode)
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, newClaimCode)
 	if updatedFile == nil {
 		t.Fatal("should be able to retrieve file with new claim code")
 	}
@@ -1163,7 +1404,7 @@ func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 	}
 
 	// Verify old claim code no longer works
-	oldFile, _ := database.GetFileByClaimCode(db, originalClaimCode)
+	oldFile, _ := repos.Files.GetByClaimCode(ctx, originalClaimCode)
 	if oldFile != nil {
 		t.Error("old claim code should not retrieve file")
 	}
@@ -1173,16 +1414,24 @@ func TestUserRegenerateClaimCodeHandler_Success(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Try GET method (should fail)
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files/regenerate-claim-code", nil)
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1194,18 +1443,26 @@ func TestUserRegenerateClaimCodeHandler_MethodNotAllowed(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_InvalidJSON(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Send invalid JSON
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader([]byte("{invalid json")))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1224,11 +1481,19 @@ func TestUserRegenerateClaimCodeHandler_InvalidJSON(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_InvalidFileID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Test with file_id = 0
 	regenReq := map[string]int64{
@@ -1239,8 +1504,8 @@ func TestUserRegenerateClaimCodeHandler_InvalidFileID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1259,11 +1524,19 @@ func TestUserRegenerateClaimCodeHandler_InvalidFileID(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
-	user, _ := database.CreateUser(db, "testuser", "test@example.com", passwordHash, "user", false)
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 
 	// Try to regenerate claim code for non-existent file
 	regenReq := map[string]int64{
@@ -1274,8 +1547,8 @@ func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1294,19 +1567,32 @@ func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
 func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := UserRegenerateClaimCodeHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+	handler := UserRegenerateClaimCodeHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
-	user1, _ := database.CreateUser(db, "user1", "user1@example.com", passwordHash, "user", false)
-	user2, _ := database.CreateUser(db, "user2", "user2@example.com", passwordHash, "user", false)
+	user1, err := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user1: %v", err)
+	}
+	user2, err := repos.Users.Create(ctx, "user2", "user2@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user2: %v", err)
+	}
 
 	// Create file owned by user1
 	file := testutil.SampleFile()
 	file.UserID = &user1.ID
 	file.ClaimCode = "user1-file-regen"
-	database.CreateFile(db, file)
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
 
-	createdFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 
 	// Try to regenerate claim code as user2
 	regenReq := map[string]int64{
@@ -1317,8 +1603,8 @@ func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/user/files/regenerate-claim-code", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
-	req = req.WithContext(ctx)
+	reqCtx := context.WithValue(req.Context(), middleware.ContextKeyUser, user2)
+	req = req.WithContext(reqCtx)
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -1333,7 +1619,7 @@ func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 	}
 
 	// Verify file's claim code was NOT changed
-	unchangedFile, _ := database.GetFileByClaimCode(db, file.ClaimCode)
+	unchangedFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
 	if unchangedFile == nil {
 		t.Error("file should still exist with original claim code")
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 )
 
@@ -18,7 +19,12 @@ import (
 func TestClaimHandler_RangeRequest_SingleRange(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file (1024 bytes)
 	testContent := bytes.Repeat([]byte("A"), 1024)
@@ -36,7 +42,7 @@ func TestClaimHandler_RangeRequest_SingleRange(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Request first 100 bytes (Range: bytes=0-99)
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/range123", nil)
@@ -79,7 +85,12 @@ func TestClaimHandler_RangeRequest_SingleRange(t *testing.T) {
 func TestClaimHandler_RangeRequest_FromOffset(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file (1024 bytes)
 	testContent := bytes.Repeat([]byte("B"), 1024)
@@ -97,7 +108,7 @@ func TestClaimHandler_RangeRequest_FromOffset(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Request from byte 500 to end (Range: bytes=500-)
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangeoffset", nil)
@@ -132,7 +143,12 @@ func TestClaimHandler_RangeRequest_FromOffset(t *testing.T) {
 func TestClaimHandler_RangeRequest_LastBytes(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file (1024 bytes)
 	testContent := bytes.Repeat([]byte("C"), 1024)
@@ -150,7 +166,7 @@ func TestClaimHandler_RangeRequest_LastBytes(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Request last 100 bytes (Range: bytes=-100)
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangesuffix", nil)
@@ -185,7 +201,12 @@ func TestClaimHandler_RangeRequest_LastBytes(t *testing.T) {
 func TestClaimHandler_RangeRequest_InvalidRange(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := bytes.Repeat([]byte("D"), 1024)
@@ -202,7 +223,7 @@ func TestClaimHandler_RangeRequest_InvalidRange(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	tests := []struct {
 		name        string
@@ -245,7 +266,12 @@ func TestClaimHandler_RangeRequest_InvalidRange(t *testing.T) {
 func TestClaimHandler_RangeRequest_AcceptRangesHeader(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := []byte("test content")
@@ -262,7 +288,7 @@ func TestClaimHandler_RangeRequest_AcceptRangesHeader(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Request without Range header
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/acceptranges", nil)
@@ -281,7 +307,12 @@ func TestClaimHandler_RangeRequest_AcceptRangesHeader(t *testing.T) {
 func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := bytes.Repeat([]byte("E"), 1024)
@@ -299,7 +330,7 @@ func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 		DownloadCount:    0,
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Make range request
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangecount", nil)
@@ -311,7 +342,7 @@ func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 	testutil.AssertStatusCode(t, rr, http.StatusPartialContent)
 
 	// Verify download count incremented
-	updatedFile, _ := database.GetFileByClaimCode(db, "rangecount")
+	updatedFile, _ := repos.Files.GetByClaimCode(ctx, "rangecount")
 	if updatedFile.DownloadCount != 1 {
 		t.Errorf("download_count = %d, want 1 (range requests should count)", updatedFile.DownloadCount)
 	}
@@ -321,7 +352,12 @@ func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 func TestClaimHandler_RangeRequest_ResumableDownload(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file (10KB for realistic scenario)
 	testContent := bytes.Repeat([]byte("RESUME"), 10*1024)
@@ -338,7 +374,7 @@ func TestClaimHandler_RangeRequest_ResumableDownload(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Simulate download interrupted at 5KB, resume from byte 5120
 	downloaded := make([]byte, 0, len(testContent))
@@ -375,7 +411,12 @@ func TestClaimHandler_RangeRequest_ResumableDownload(t *testing.T) {
 func TestClaimHandler_RangeRequest_MultipleRanges(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create test file
 	testContent := bytes.Repeat([]byte("F"), 1024)
@@ -392,7 +433,7 @@ func TestClaimHandler_RangeRequest_MultipleRanges(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Request multiple ranges (not supported in current implementation)
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangemulti", nil)
@@ -418,7 +459,12 @@ func TestClaimHandler_RangeRequest_MultipleRanges(t *testing.T) {
 func TestClaimHandler_RangeRequest_EmptyFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
-	handler := ClaimHandler(db, cfg)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
 
 	// Create empty file
 	testContent := []byte{}
@@ -435,7 +481,7 @@ func TestClaimHandler_RangeRequest_EmptyFile(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Range request on empty file
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangeempty", nil)
@@ -454,6 +500,11 @@ func TestClaimHandler_RangeRequest_EmptyFile(t *testing.T) {
 func TestClaimHandler_RangeRequest_EncryptedFile(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
 
 	// Note: Encryption key must be set at config initialization, not runtime
 	// For this test, we'll skip if no encryption key is configured
@@ -461,7 +512,7 @@ func TestClaimHandler_RangeRequest_EncryptedFile(t *testing.T) {
 		t.Skip("Skipping encrypted file test - no encryption key configured")
 	}
 
-	handler := ClaimHandler(db, cfg)
+	handler := ClaimHandler(repos, cfg)
 
 	// Create and encrypt test file
 	testContent := bytes.Repeat([]byte("ENCRYPTED"), 1024)
@@ -485,7 +536,7 @@ func TestClaimHandler_RangeRequest_EncryptedFile(t *testing.T) {
 		ExpiresAt:        time.Now().Add(24 * time.Hour),
 		UploaderIP:       "127.0.0.1",
 	}
-	database.CreateFile(db, file)
+	repos.Files.Create(ctx, file)
 
 	// Range request on encrypted file
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangeenc", nil)

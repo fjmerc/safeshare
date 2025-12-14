@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -32,14 +32,14 @@ import (
 // and validates end-to-end functionality including database, filesystem,
 // and HTTP handlers.
 func TestUploadDownloadWorkflow(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Step 1: Upload a file
 	fileContent := []byte("This is a test file for integration testing.")
 	filename := "integration_test.txt"
 
-	uploadHandler := handlers.UploadHandler(db, cfg)
+	uploadHandler := handlers.UploadHandler(repos, cfg)
 
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, filename, map[string]string{
 		"expires_in_hours": "24",
@@ -67,7 +67,7 @@ func TestUploadDownloadWorkflow(t *testing.T) {
 	t.Logf("File uploaded successfully, claim_code: %s", claimCode)
 
 	// Step 2: Download the file
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	downloadReq := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
 	downloadRR := httptest.NewRecorder()
@@ -91,7 +91,7 @@ func TestUploadDownloadWorkflow(t *testing.T) {
 	}
 
 	// Step 5: Verify download count increased
-	file, _ := database.GetFileByClaimCode(db, claimCode)
+	file, _ := repos.Files.GetByClaimCode(ctx, claimCode)
 	if file.DownloadCount != 1 {
 		t.Errorf("download_count = %d, want 1", file.DownloadCount)
 	}
@@ -101,14 +101,13 @@ func TestUploadDownloadWorkflow(t *testing.T) {
 
 // TestUploadDownloadWithPassword tests upload/download with password protection
 func TestUploadDownloadWithPassword(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	fileContent := []byte("Secret content")
 	password := "supersecret123"
 
 	// Upload with password
-	uploadHandler := handlers.UploadHandler(db, cfg)
+	uploadHandler := handlers.UploadHandler(repos, cfg)
 
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "secret.txt", map[string]string{
 		"password": password,
@@ -125,7 +124,7 @@ func TestUploadDownloadWithPassword(t *testing.T) {
 	claimCode := uploadResp["claim_code"].(string)
 
 	// Try download without password - should fail
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	downloadReq1 := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
 	downloadRR1 := httptest.NewRecorder()
@@ -167,13 +166,13 @@ func TestUploadDownloadWithPassword(t *testing.T) {
 
 // TestDownloadLimit tests max_downloads enforcement
 func TestDownloadLimit(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	fileContent := []byte("Limited download file")
 
 	// Upload with max_downloads=2
-	uploadHandler := handlers.UploadHandler(db, cfg)
+	uploadHandler := handlers.UploadHandler(repos, cfg)
 
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "limited.txt", map[string]string{
 		"max_downloads": "2",
@@ -189,7 +188,7 @@ func TestDownloadLimit(t *testing.T) {
 	json.NewDecoder(uploadRR.Body).Decode(&uploadResp)
 	claimCode := uploadResp["claim_code"].(string)
 
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	// Download 1 - should succeed
 	download1 := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
@@ -220,7 +219,7 @@ func TestDownloadLimit(t *testing.T) {
 
 	// Verify file still exists in database but access is blocked
 	// (Implementation doesn't auto-delete files when limit reached, just blocks access)
-	file, _ := database.GetFileByClaimCode(db, claimCode)
+	file, _ := repos.Files.GetByClaimCode(ctx, claimCode)
 	if file == nil {
 		t.Error("file record should still exist in database")
 	}
@@ -233,14 +232,14 @@ func TestDownloadLimit(t *testing.T) {
 
 // TestFileExpiration tests that expired files cannot be downloaded
 func TestFileExpiration(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Create an expired file directly in database
 	claimCode, _ := utils.GenerateClaimCode()
 	storedFilename := "expired_file.dat"
 
-	database.CreateFile(db, &models.File{
+	repos.Files.Create(ctx, &models.File{
 		ClaimCode:        claimCode,
 		StoredFilename:   storedFilename,
 		OriginalFilename: "expired.txt",
@@ -255,7 +254,7 @@ func TestFileExpiration(t *testing.T) {
 	os.WriteFile(filePath, []byte("expired content"), 0644)
 
 	// Try to download expired file
-	downloadHandler := handlers.ClaimHandler(db, cfg)
+	downloadHandler := handlers.ClaimHandler(repos, cfg)
 
 	downloadReq := httptest.NewRequest(http.MethodGet, "/api/claim/"+claimCode, nil)
 	downloadRR := httptest.NewRecorder()
@@ -272,8 +271,8 @@ func TestFileExpiration(t *testing.T) {
 
 // TestUserAuthenticationFlow tests complete user authentication workflow
 func TestUserAuthenticationFlow(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Step 1: Create user
 	username := "testuser"
@@ -281,10 +280,10 @@ func TestUserAuthenticationFlow(t *testing.T) {
 	email := "test@example.com"
 
 	hashedPassword, _ := utils.HashPassword(password)
-	database.CreateUser(db, username, email, hashedPassword, "user", true)
+	repos.Users.Create(ctx, username, email, hashedPassword, "user", true)
 
 	// Step 2: Login
-	loginHandler := handlers.UserLoginHandler(db, cfg)
+	loginHandler := handlers.UserLoginHandler(repos, cfg)
 
 	loginReq := map[string]string{
 		"username": username,
@@ -324,13 +323,13 @@ func TestUserAuthenticationFlow(t *testing.T) {
 	}
 
 	// Step 3: Validate session
-	session, _ := database.GetUserSession(db, sessionCookie.Value)
+	session, _ := repos.Users.GetSession(ctx, sessionCookie.Value)
 	if session == nil {
 		t.Error("session should be valid")
 	}
 
 	// Step 4: Logout
-	logoutHandler := handlers.UserLogoutHandler(db, cfg)
+	logoutHandler := handlers.UserLogoutHandler(repos, cfg)
 
 	logoutReq := httptest.NewRequest(http.MethodPost, "/api/user/logout", nil)
 	logoutReq.AddCookie(sessionCookie)
@@ -343,7 +342,7 @@ func TestUserAuthenticationFlow(t *testing.T) {
 	}
 
 	// Step 5: Verify session is invalidated
-	session, _ = database.GetUserSession(db, sessionCookie.Value)
+	session, _ = repos.Users.GetSession(ctx, sessionCookie.Value)
 	if session != nil {
 		t.Error("session should be invalid after logout")
 	}
@@ -353,15 +352,14 @@ func TestUserAuthenticationFlow(t *testing.T) {
 
 // TestRateLimitingIntegration tests rate limiting across multiple requests
 func TestRateLimitingIntegration(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
 
 	// Set low rate limit for testing
 	cfg.SetRateLimitUpload(3)
 
 	rateLimiter := middleware.NewRateLimiter(cfg)
 	defer rateLimiter.Stop()
-	uploadHandler := middleware.RateLimitMiddleware(rateLimiter)(handlers.UploadHandler(db, cfg))
+	uploadHandler := middleware.RateLimitMiddleware(rateLimiter)(handlers.UploadHandler(repos, cfg))
 
 	fileContent := []byte("test")
 
@@ -399,15 +397,15 @@ func TestRateLimitingIntegration(t *testing.T) {
 
 // TestIPBlockingIntegration tests IP blocking across handlers
 func TestIPBlockingIntegration(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
 	// Block an IP
 	blockedIP := "192.168.1.200"
-	database.BlockIP(db, blockedIP, "Testing", "admin")
+	repos.Admin.BlockIP(ctx, blockedIP, "Testing", "admin")
 
 	// Wrap handler with IP blocking middleware
-	uploadHandler := middleware.IPBlockCheck(db, cfg)(handlers.UploadHandler(db, cfg))
+	uploadHandler := middleware.IPBlockCheck(repos, cfg)(handlers.UploadHandler(repos, cfg))
 
 	fileContent := []byte("test")
 	body, contentType := testutil.CreateMultipartForm(t, fileContent, "test.txt", nil)
@@ -425,7 +423,7 @@ func TestIPBlockingIntegration(t *testing.T) {
 	}
 
 	// Unblock and retry
-	database.UnblockIP(db, blockedIP)
+	repos.Admin.UnblockIP(ctx, blockedIP)
 
 	body2, contentType2 := testutil.CreateMultipartForm(t, fileContent, "test.txt", nil)
 	req2 := httptest.NewRequest(http.MethodPost, "/api/upload", body2)
@@ -445,10 +443,10 @@ func TestIPBlockingIntegration(t *testing.T) {
 
 // TestMultipleUploadsAndCleanup tests uploading multiple files and cleanup
 func TestMultipleUploadsAndCleanup(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	cfg := testutil.SetupTestConfig(t)
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
 
-	uploadHandler := handlers.UploadHandler(db, cfg)
+	uploadHandler := handlers.UploadHandler(repos, cfg)
 
 	claimCodes := make([]string, 5)
 
@@ -476,7 +474,7 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 
 	// Verify all files exist in database
 	for i, code := range claimCodes {
-		file, err := database.GetFileByClaimCode(db, code)
+		file, err := repos.Files.GetByClaimCode(ctx, code)
 		if err != nil || file == nil {
 			t.Errorf("file %d not found in database", i)
 		}
@@ -487,12 +485,12 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 	// Raw Go time.Time includes monotonic clock that SQLite cannot parse.
 	expiredAt := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
 	for i := 0; i < 3; i++ {
-		db.Exec("UPDATE files SET expires_at = ? WHERE claim_code = ?",
+		repos.DB.Exec("UPDATE files SET expires_at = ? WHERE claim_code = ?",
 			expiredAt, claimCodes[i])
 	}
 
 	// Run cleanup
-	deleted, _ := database.DeleteExpiredFiles(db, cfg.UploadDir, nil)
+	deleted, _ := repos.Files.DeleteExpired(ctx, cfg.UploadDir, nil)
 
 	if deleted != 3 {
 		t.Errorf("deleted = %d, want 3", deleted)
@@ -500,7 +498,7 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 
 	// Verify expired files are gone
 	for i := 0; i < 3; i++ {
-		file, _ := database.GetFileByClaimCode(db, claimCodes[i])
+		file, _ := repos.Files.GetByClaimCode(ctx, claimCodes[i])
 		if file != nil {
 			t.Errorf("expired file %d should be deleted", i)
 		}
@@ -508,7 +506,7 @@ func TestMultipleUploadsAndCleanup(t *testing.T) {
 
 	// Verify non-expired files still exist
 	for i := 3; i < 5; i++ {
-		file, _ := database.GetFileByClaimCode(db, claimCodes[i])
+		file, _ := repos.Files.GetByClaimCode(ctx, claimCodes[i])
 		if file == nil {
 			t.Errorf("active file %d should still exist", i)
 		}

@@ -1977,6 +1977,1150 @@
                 display: none;
             }
         }
+
+        /* ===== TOKEN ROTATION & USAGE STATS STYLES ===== */
+
+        /* Warning Button Styles (for rotate) */
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            box-shadow: 0 1px 3px rgba(245, 158, 11, 0.2);
+            border: 1px solid transparent;
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            box-shadow: 0 2px 6px rgba(245, 158, 11, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .btn-warning:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-icon.btn-warning {
+            color: #f59e0b;
+            border-color: #e2e8f0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .btn-icon.btn-warning:hover {
+            background: #fffbeb;
+            border-color: #f59e0b;
+            color: #d97706;
+            transform: translateY(-1px);
+        }
+
+        [data-theme="dark"] .btn-warning {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+        }
+
+        [data-theme="dark"] .btn-icon.btn-warning {
+            color: #fbbf24;
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-warning:hover {
+            background: #78350f;
+            border-color: #f59e0b;
+            color: #fcd34d;
+        }
+
+        /* Expiration Warning Styles */
+        .expiration-warning {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .expiration-warning svg {
+            color: #f59e0b;
+            animation: pulse-warning 2s infinite;
+            flex-shrink: 0;
+        }
+
+        .expiration-warning.danger svg {
+            color: #ef4444;
+            animation: pulse-danger 1.5s infinite;
+        }
+
+        @keyframes pulse-warning {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes pulse-danger {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .expiration-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .expiration-badge.badge-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        .expiration-badge.badge-danger {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        [data-theme="dark"] .expiration-badge.badge-warning {
+            background: #78350f;
+            color: #fde68a;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .expiration-badge.badge-danger {
+            background: #7f1d1d;
+            color: #fca5a5;
+            border-color: #991b1b;
+        }
+
+        /* Token Usage Stats Styles */
+        .token-stats-summary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #64748b;
+            padding: 4px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .stat-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stat-item svg {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+        }
+
+        .stat-divider {
+            color: #cbd5e1;
+        }
+
+        [data-theme="dark"] .token-stats-summary {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .stat-divider {
+            color: #4b5563;
+        }
+
+        /* Modal Warning Box */
+        .modal-warning-box {
+            background: #fef3c7;
+            border-left: 3px solid #f59e0b;
+            padding: 12px;
+            border-radius: 4px;
+            color: #92400e;
+        }
+
+        .modal-warning-box ul {
+            color: #7f1d1d;
+            margin: 8px 0 0 20px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .modal-warning-box.danger {
+            background: #fee2e2;
+            border-left-color: #ef4444;
+            color: #991b1b;
+        }
+
+        [data-theme="dark"] .modal-warning-box {
+            background: #78350f;
+            border-left-color: #f59e0b;
+            color: #fde68a;
+        }
+
+        [data-theme="dark"] .modal-warning-box ul {
+            color: #fcd34d;
+        }
+
+        [data-theme="dark"] .modal-warning-box.danger {
+            background: #7f1d1d;
+            border-left-color: #ef4444;
+            color: #fca5a5;
+        }
+
+        /* ===== MFA SECURITY SECTION STYLES ===== */
+
+        /* MFA Status Card */
+        .mfa-status-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .mfa-status-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .mfa-status-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .mfa-status-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mfa-status-icon.enabled {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .mfa-status-icon.disabled {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .mfa-status-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .mfa-status-text h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 4px 0;
+        }
+
+        .mfa-status-text p {
+            font-size: 13px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        .mfa-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .mfa-detail-item {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .mfa-detail-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+
+        .mfa-detail-value {
+            font-size: 14px;
+            font-weight: 500;
+            color: #1e293b;
+        }
+
+        .mfa-detail-value.success {
+            color: #16a34a;
+        }
+
+        .mfa-detail-value.warning {
+            color: #d97706;
+        }
+
+        .mfa-detail-value.danger {
+            color: #dc2626;
+        }
+
+        .mfa-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* MFA Method Header */
+        .mfa-method-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .mfa-method-header svg {
+            flex-shrink: 0;
+            color: #6b7280;
+        }
+
+        .mfa-method-header > div {
+            flex: 1;
+        }
+
+        .mfa-method-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .mfa-method-badge.enabled {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .mfa-method-badge.disabled {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+
+        /* WebAuthn Credentials List */
+        .webauthn-loading {
+            color: #6b7280;
+            font-size: 13px;
+            padding: 12px 0;
+        }
+
+        .webauthn-credential-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .webauthn-credential-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .webauthn-credential-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e5e7eb;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+
+        .webauthn-credential-icon svg {
+            color: #6b7280;
+        }
+
+        .webauthn-credential-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .webauthn-credential-name {
+            font-weight: 500;
+            font-size: 14px;
+            color: #111827;
+            margin: 0 0 2px 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .webauthn-credential-meta {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .webauthn-credential-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .webauthn-credential-actions button {
+            padding: 6px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 4px;
+            color: #6b7280;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .webauthn-credential-actions button:hover {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
+        .webauthn-credential-actions button.delete:hover {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .webauthn-no-credentials {
+            color: #6b7280;
+            font-size: 13px;
+            padding: 16px;
+            text-align: center;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+
+        /* Button size variant */
+        .btn-sm {
+            padding: 8px 14px;
+            font-size: 13px;
+        }
+
+        /* MFA Not Available State */
+        .mfa-not-available {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px dashed #e2e8f0;
+        }
+
+        .mfa-not-available svg {
+            flex-shrink: 0;
+            color: #94a3b8;
+        }
+
+        .mfa-not-available-text {
+            flex: 1;
+        }
+
+        .mfa-not-available-text h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #475569;
+            margin: 0 0 4px 0;
+        }
+
+        .mfa-not-available-text p {
+            font-size: 13px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        /* MFA Wizard Modal */
+        .mfa-wizard-content {
+            max-width: 580px;
+        }
+
+        .mfa-wizard-steps {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .mfa-wizard-step {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            background: #e2e8f0;
+            color: #64748b;
+            transition: all 0.2s;
+        }
+
+        .mfa-wizard-step.active {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .mfa-wizard-step.completed {
+            background: #10b981;
+            color: white;
+        }
+
+        .mfa-wizard-step-connector {
+            width: 24px;
+            height: 2px;
+            background: #e2e8f0;
+            align-self: center;
+        }
+
+        .mfa-wizard-step-connector.completed {
+            background: #10b981;
+        }
+
+        .mfa-step-content {
+            display: none;
+        }
+
+        .mfa-step-content.active {
+            display: block;
+        }
+
+        .mfa-qr-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .mfa-qr-code {
+            display: inline-block;
+            padding: 16px;
+            background: white;
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+        }
+
+        .mfa-qr-code img {
+            display: block;
+            width: 200px;
+            height: 200px;
+        }
+
+        .mfa-manual-key {
+            margin-top: 16px;
+            padding: 16px;
+            background: #f1f5f9;
+            border-radius: 8px;
+        }
+
+        .mfa-manual-key-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+
+        .mfa-manual-key-value {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            letter-spacing: 2px;
+            word-break: break-all;
+        }
+
+        .mfa-verify-input {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin: 24px 0;
+        }
+
+        .mfa-code-input {
+            width: 100%;
+            max-width: 200px;
+            padding: 16px;
+            font-size: 24px;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            letter-spacing: 8px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .mfa-code-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .mfa-code-input.error {
+            border-color: #ef4444;
+            animation: shake 0.4s;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        /* Recovery Codes Display */
+        .mfa-recovery-codes {
+            margin: 20px 0;
+        }
+
+        .mfa-recovery-codes-warning {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #fef3c7;
+            border-radius: 8px;
+            border: 1px solid #fcd34d;
+            margin-bottom: 16px;
+        }
+
+        .mfa-recovery-codes-warning svg {
+            flex-shrink: 0;
+            color: #d97706;
+        }
+
+        .mfa-recovery-codes-warning-text {
+            font-size: 13px;
+            color: #92400e;
+            line-height: 1.5;
+        }
+
+        .mfa-recovery-codes-warning-text strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .mfa-recovery-codes-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            padding: 16px;
+            background: #1e293b;
+            border-radius: 8px;
+        }
+
+        .mfa-recovery-code {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #22c55e;
+            padding: 8px;
+            background: #0f172a;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .mfa-recovery-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .mfa-confirm-checkbox {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            margin-top: 16px;
+            cursor: pointer;
+        }
+
+        .mfa-confirm-checkbox input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-top: 2px;
+            cursor: pointer;
+            accent-color: #3b82f6;
+        }
+
+        .mfa-confirm-checkbox-text {
+            font-size: 14px;
+            color: #374151;
+            line-height: 1.5;
+        }
+
+        /* Dark Mode - MFA Styles */
+        [data-theme="dark"] .mfa-status-card {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-status-icon.enabled {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .mfa-status-icon.disabled {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .mfa-status-text h3 {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-status-text p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-detail-item {
+            background: #111827;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-detail-value {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-not-available {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-not-available-text h4 {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .mfa-method-header {
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .mfa-method-header h4 {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-method-header p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-method-badge.enabled {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .mfa-method-badge.disabled {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-item {
+            background: #111827;
+        }
+
+        [data-theme="dark"] .webauthn-credential-icon {
+            background: #374151;
+        }
+
+        [data-theme="dark"] .webauthn-credential-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .webauthn-credential-meta {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button:hover {
+            background: #374151;
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .webauthn-credential-actions button.delete:hover {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+
+        [data-theme="dark"] .webauthn-no-credentials {
+            background: #111827;
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-wizard-step {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .mfa-wizard-step-connector {
+            background: #374151;
+        }
+
+        [data-theme="dark"] .mfa-qr-code {
+            background: white;
+        }
+
+        [data-theme="dark"] .mfa-manual-key {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .mfa-manual-key-value {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-code-input {
+            background: #1f2937;
+            border-color: #374151;
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .mfa-code-input:focus {
+            border-color: #3b82f6;
+        }
+
+        [data-theme="dark"] .mfa-recovery-codes-warning {
+            background: #78350f;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .mfa-recovery-codes-warning-text {
+            color: #fde68a;
+        }
+
+        [data-theme="dark"] .mfa-confirm-checkbox {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .mfa-confirm-checkbox-text {
+            color: #e5e7eb;
+        }
+
+        /* Responsive - MFA */
+        @media (max-width: 768px) {
+            .mfa-status-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .mfa-actions {
+                width: 100%;
+            }
+
+            .mfa-actions .btn {
+                flex: 1;
+            }
+
+            .mfa-recovery-codes-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .mfa-recovery-actions {
+                flex-direction: column;
+            }
+
+            .mfa-recovery-actions .btn {
+                width: 100%;
+            }
+        }
+
+        /* ===== SSO LINKED ACCOUNTS STYLES ===== */
+
+        .sso-loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        .sso-providers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .sso-provider-card {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+
+        .sso-provider-card:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .sso-provider-card.linked {
+            border-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .sso-provider-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .sso-provider-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e0e7ff;
+            color: #4f46e5;
+            flex-shrink: 0;
+        }
+
+        .sso-provider-icon.google {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .sso-provider-icon.microsoft {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+
+        .sso-provider-icon.okta {
+            background: #f0fdf4;
+            color: #16a34a;
+        }
+
+        .sso-provider-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .sso-provider-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sso-provider-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 4px 0;
+        }
+
+        .sso-provider-type {
+            font-size: 12px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .sso-provider-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .sso-provider-status.linked {
+            background: #dcfce7;
+            border-color: #bbf7d0;
+        }
+
+        .sso-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #94a3b8;
+        }
+
+        .sso-status-dot.linked {
+            background: #10b981;
+        }
+
+        .sso-status-text {
+            font-size: 13px;
+            color: #64748b;
+        }
+
+        .sso-status-text.linked {
+            color: #166534;
+            font-weight: 500;
+        }
+
+        .sso-link-info {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 12px;
+        }
+
+        .sso-link-info div {
+            margin-bottom: 4px;
+        }
+
+        .sso-link-info strong {
+            color: #374151;
+        }
+
+        .sso-provider-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .sso-provider-actions .btn {
+            flex: 1;
+            justify-content: center;
+        }
+
+        .sso-empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #64748b;
+            background: #f8fafc;
+            border: 2px dashed #e2e8f0;
+            border-radius: 12px;
+        }
+
+        .sso-empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        .sso-empty-state h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #475569;
+            margin: 0 0 8px 0;
+        }
+
+        .sso-empty-state p {
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .sso-disabled-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+        }
+
+        .sso-disabled-notice svg {
+            flex-shrink: 0;
+            color: #d97706;
+        }
+
+        .sso-disabled-notice-text {
+            font-size: 14px;
+            color: #92400e;
+        }
+
+        .sso-disabled-notice-text strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* Dark mode - SSO Linked Accounts */
+        [data-theme="dark"] .sso-loading {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-provider-card {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-provider-card:hover {
+            border-color: #4b5563;
+        }
+
+        [data-theme="dark"] .sso-provider-card.linked {
+            background: #064e3b;
+            border-color: #059669;
+        }
+
+        [data-theme="dark"] .sso-provider-name {
+            color: #f9fafb;
+        }
+
+        [data-theme="dark"] .sso-provider-type {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-provider-status {
+            background: #111827;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-provider-status.linked {
+            background: #064e3b;
+            border-color: #065f46;
+        }
+
+        [data-theme="dark"] .sso-status-text {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-status-text.linked {
+            color: #6ee7b7;
+        }
+
+        [data-theme="dark"] .sso-link-info {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-link-info strong {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .sso-empty-state {
+            background: #1f2937;
+            border-color: #374151;
+        }
+
+        [data-theme="dark"] .sso-empty-state h4 {
+            color: #e5e7eb;
+        }
+
+        [data-theme="dark"] .sso-empty-state p {
+            color: #9ca3af;
+        }
+
+        [data-theme="dark"] .sso-disabled-notice {
+            background: #78350f;
+            border-color: #92400e;
+        }
+
+        [data-theme="dark"] .sso-disabled-notice-text {
+            color: #fde68a;
+        }
+
+        /* Responsive - SSO Linked Accounts */
+        @media (max-width: 768px) {
+            .sso-providers-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .sso-provider-actions {
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2087,6 +3231,45 @@
 
             <div id="tokensContainer">
                 <!-- Tokens will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Security Section -->
+        <div class="content-section" id="securitySection">
+            <div class="section-header">
+                <h2>Security</h2>
+                <button id="refreshMFABtn" class="btn btn-secondary" onclick="refreshMFAStatus()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div id="mfaContainer">
+                <!-- MFA status will be loaded here -->
+            </div>
+        </div>
+
+        <!-- SSO Linked Accounts Section -->
+        <div class="content-section" id="ssoLinkedAccountsSection" style="display: none;">
+            <div class="section-header">
+                <h2>SSO Linked Accounts</h2>
+                <button id="refreshSSOBtn" class="btn btn-secondary" onclick="refreshSSOLinkedAccounts()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+
+            <div id="ssoLinkedAccountsContainer">
+                <!-- SSO providers and linked accounts will be loaded here -->
+                <div class="sso-loading">Loading SSO providers...</div>
             </div>
         </div>
     </div>
@@ -2271,6 +3454,30 @@
         });
 
         let currentUser = null;
+
+        // CSRF token helper
+        function getCSRFToken() {
+            const cookies = document.cookie.split(';');
+            // User dashboard uses user_csrf_token, admin uses csrf_token
+            for (let cookie of cookies) {
+                const parts = cookie.trim().split('=');
+                const name = parts[0];
+                const value = parts.slice(1).join('='); // Handle '=' in token value
+                if (name === 'user_csrf_token') {
+                    return value;
+                }
+            }
+            // Fallback to admin csrf_token or sessionStorage
+            for (let cookie of cookies) {
+                const parts = cookie.trim().split('=');
+                const name = parts[0];
+                const value = parts.slice(1).join('=');
+                if (name === 'csrf_token') {
+                    return value;
+                }
+            }
+            return sessionStorage.getItem('csrf_token') || '';
+        }
         let fileToDelete = null;
         let fileToRename = { id: null, currentName: '' };
         let fileToEditExpiration = { id: null, currentExpiration: '' };
@@ -2302,6 +3509,8 @@
                     loadConfig();
                     loadFiles();
                     loadTokens();
+                    loadMFAStatus();
+                    initSSOLinkedAccounts();
                 } else {
                     // Not authenticated, redirect to login
                     window.location.href = '/login';
@@ -3279,6 +4488,7 @@
                             <tr>
                                 <th>Name</th>
                                 <th>Scopes</th>
+                                <th>Usage</th>
                                 <th>Created</th>
                                 <th>Expires</th>
                                 <th>Last Used</th>
@@ -3290,7 +4500,7 @@
 
             tokens.forEach(token => {
                 const createdDate = formatCompactDate(token.created_at);
-                const expiresDate = token.expires_at ? formatCompactDate(token.expires_at) : '<span class="token-never">Never</span>';
+                const expiresDisplay = formatTokenExpiration(token.expires_at);
                 const lastUsed = token.last_used_at ? formatCompactDate(token.last_used_at) : '<span class="token-date">Never</span>';
 
                 // Build scope badges with validation and escaping
@@ -3312,20 +4522,31 @@
                     scopesBadges = '<span class="token-date">None</span>';
                 }
 
+                // Build usage stats display
+                const usageStats = formatTokenUsageStats(token.usage_stats);
+
                 tableHTML += `
                     <tr>
                         <td><span class="token-name">${escapeHtml(token.name)}</span></td>
                         <td><div class="scopes-cell">${scopesBadges}</div></td>
+                        <td style="text-align: center;">${usageStats}</td>
                         <td><span class="token-date">${createdDate}</span></td>
-                        <td>${expiresDate}</td>
+                        <td>${expiresDisplay}</td>
                         <td>${lastUsed}</td>
                         <td style="text-align: center;">
-                            <button class="btn-icon btn-danger" onclick="revokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                </svg>
-                            </button>
+                            <div style="display: flex; gap: 6px; justify-content: center;">
+                                <button class="btn-icon btn-warning" onclick="rotateToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Rotate Token (Generate New)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon btn-danger" onclick="revokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    </svg>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -3541,6 +4762,9 @@
                 const response = await fetch(`/api/tokens/${tokenToRevoke.id}`, {
                     method: 'DELETE',
                     credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': getCSRFToken()
+                    }
                 });
 
                 if (response.ok) {
@@ -3560,7 +4784,1472 @@
             }
         }
 
+        // Format token expiration with warning indicators
+        function formatTokenExpiration(expiresAt) {
+            if (!expiresAt) {
+                return '<span class="token-never">Never</span>';
+            }
+
+            const expirationDate = new Date(expiresAt);
+            
+            // Check for "never expire" (year 9999)
+            if (expirationDate.getFullYear() === 9999) {
+                return '<span class="token-never">Never</span>';
+            }
+
+            const now = new Date();
+            const daysUntilExpiry = Math.ceil((expirationDate - now) / (1000 * 60 * 60 * 24));
+            const dateStr = formatCompactDate(expiresAt);
+
+            // Already expired
+            if (daysUntilExpiry < 0) {
+                return `
+                    <div class="expiration-warning danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        <span class="token-date">${dateStr}</span>
+                        <span class="expiration-badge badge-danger">Expired</span>
+                    </div>
+                `;
+            }
+
+            // Expires in less than 3 days (critical)
+            if (daysUntilExpiry <= 3) {
+                return `
+                    <div class="expiration-warning danger">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        <span class="token-date">${dateStr}</span>
+                        <span class="expiration-badge badge-danger">${daysUntilExpiry}d left</span>
+                    </div>
+                `;
+            }
+
+            // Expires in less than 7 days (warning)
+            if (daysUntilExpiry <= 7) {
+                return `
+                    <div class="expiration-warning">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        <span class="token-date">${dateStr}</span>
+                        <span class="expiration-badge badge-warning">${daysUntilExpiry}d left</span>
+                    </div>
+                `;
+            }
+
+            // Normal expiration (no warning)
+            return `<span class="token-date">${dateStr}</span>`;
+        }
+
+        // Format token usage stats
+        function formatTokenUsageStats(usageStats) {
+            if (!usageStats) {
+                return '<span class="token-date">No data</span>';
+            }
+
+            const requests = usageStats.total_requests || 0;
+            const dataTransferred = usageStats.total_bytes_transferred || 0;
+            
+            // Format data transferred
+            let dataStr = '';
+            if (dataTransferred > 0) {
+                dataStr = formatFileSize(dataTransferred);
+            } else {
+                dataStr = '0 B';
+            }
+
+            return `
+                <div class="token-stats-summary">
+                    <span class="stat-item" title="Total API requests">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                        </svg>
+                        ${requests}
+                    </span>
+                    <span class="stat-divider">|</span>
+                    <span class="stat-item" title="Data transferred">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        ${dataStr}
+                    </span>
+                </div>
+            `;
+        }
+
+        // Token to rotate state
+        let tokenToRotate = null;
+
+        // Show rotate token confirmation modal
+        function rotateToken(tokenId, tokenName) {
+            tokenToRotate = { id: tokenId, name: tokenName };
+            document.getElementById('rotateTokenName').textContent = tokenName;
+            document.getElementById('rotateTokenModal').classList.add('show');
+        }
+
+        // Hide rotate token modal
+        function hideRotateTokenModal() {
+            document.getElementById('rotateTokenModal').classList.remove('show');
+            tokenToRotate = null;
+        }
+
+        // Confirm and execute token rotation
+        async function confirmRotateToken() {
+            if (!tokenToRotate) return;
+
+            const confirmBtn = document.getElementById('confirmRotateBtn');
+            const originalText = confirmBtn.textContent;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Rotating...';
+
+            try {
+                const response = await fetch(`/api/tokens/${tokenToRotate.id}/rotate`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': getCSRFToken()
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    hideRotateTokenModal();
+                    
+                    // Show the new token
+                    document.getElementById('rotatedTokenValue').textContent = data.token;
+                    document.getElementById('rotatedTokenModal').classList.add('show');
+                    
+                    // Refresh the tokens list
+                    loadTokens();
+                } else {
+                    const data = await response.json();
+                    showToast(data.error || 'Failed to rotate token', 'error');
+                }
+            } catch (error) {
+                console.error('Rotate token failed:', error);
+                showToast('Network error rotating token', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = originalText;
+            }
+        }
+
+        // Copy rotated token to clipboard
+        function copyRotatedToken() {
+            const tokenValue = document.getElementById('rotatedTokenValue').textContent;
+            
+            const showCopySuccess = () => {
+                const btn = document.getElementById('copyRotatedTokenBtn');
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Copied!
+                `;
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                }, 2000);
+            };
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(tokenValue).then(() => {
+                    showCopySuccess();
+                }).catch(err => {
+                    console.error('Failed to copy token:', err);
+                    fallbackCopyRotatedToken(tokenValue, showCopySuccess);
+                });
+            } else {
+                fallbackCopyRotatedToken(tokenValue, showCopySuccess);
+            }
+        }
+        
+        // Fallback copy for rotated token (non-secure contexts)
+        function fallbackCopyRotatedToken(text, onSuccess) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    onSuccess();
+                } else {
+                    showToast('Failed to copy token to clipboard', 'error');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                showToast('Failed to copy token to clipboard', 'error');
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        // Hide rotated token modal
+        function hideRotatedTokenModal() {
+            document.getElementById('rotatedTokenModal').classList.remove('show');
+        }
+
         // ========== End API Token Management Functions ==========
+
+        // ========== MFA Management Functions ==========
+
+        // Simple QR Code generator - creates SVG data URL
+        // Based on QRCode.js algorithm, simplified for TOTP URLs
+        const QRCodeGenerator = (function() {
+            // QR Code encoding for alphanumeric data
+            const PAD0 = 0xEC, PAD1 = 0x11;
+            
+            // Error correction level L (7%)
+            const ECL = { ordinal: 1 };
+            
+            // Reed-Solomon error correction
+            const EXP = [], LOG = [];
+            (function() {
+                let x = 1;
+                for (let i = 0; i < 255; i++) {
+                    EXP[i] = x;
+                    LOG[x] = i;
+                    x <<= 1;
+                    if (x >= 256) x ^= 0x11D;
+                }
+            })();
+            
+            function rsGenPoly(n) {
+                let result = [1];
+                for (let i = 0; i < n; i++) {
+                    const newResult = new Array(result.length + 1).fill(0);
+                    for (let j = 0; j < result.length; j++) {
+                        newResult[j] ^= result[j];
+                        newResult[j + 1] ^= (result[j] * EXP[i]) % 255 === 0 ? 0 : EXP[(LOG[result[j]] + i) % 255];
+                    }
+                    result = newResult.map(v => v & 255 ? EXP[LOG[v] % 255] : 0);
+                }
+                return result;
+            }
+            
+            function rsEncode(data, poly) {
+                const result = new Array(poly.length - 1).fill(0);
+                for (const b of data) {
+                    const factor = b ^ result[0];
+                    result.shift();
+                    result.push(0);
+                    if (factor) {
+                        for (let i = 0; i < result.length; i++) {
+                            result[i] ^= EXP[(LOG[poly[i + 1]] + LOG[factor]) % 255] || 0;
+                        }
+                    }
+                }
+                return result;
+            }
+            
+            function encodeBytes(text) {
+                // Byte mode encoding
+                const bytes = new TextEncoder().encode(text);
+                const bits = [];
+                // Mode indicator (0100 = byte)
+                bits.push(0, 1, 0, 0);
+                // Character count (8 bits for version 1-9)
+                for (let i = 7; i >= 0; i--) bits.push((bytes.length >> i) & 1);
+                // Data
+                for (const b of bytes) {
+                    for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
+                }
+                // Terminator
+                while (bits.length < 8) bits.push(0);
+                return bits;
+            }
+            
+            function getVersion(dataLen) {
+                // Version capacities for byte mode, ECL L
+                const caps = [0, 17, 32, 53, 78, 106, 134, 154, 192, 230, 271, 321, 367, 425, 458, 520, 586, 644, 718, 792, 858];
+                for (let v = 1; v <= 20; v++) {
+                    if (dataLen <= caps[v]) return v;
+                }
+                return 20;
+            }
+            
+            function getDataCodewords(version) {
+                // Total data codewords for ECL L
+                const total = [0, 19, 34, 55, 80, 108, 136, 156, 194, 232, 274, 324, 370, 428, 461, 523, 589, 647, 721, 795, 861];
+                return total[version];
+            }
+            
+            function getECCodewords(version) {
+                // EC codewords for ECL L
+                const ec = [0, 7, 10, 15, 20, 26, 36, 40, 48, 60, 72, 80, 96, 104, 120, 132, 144, 168, 180, 196, 224];
+                return ec[version];
+            }
+            
+            function createMatrix(version) {
+                const size = version * 4 + 17;
+                const matrix = Array(size).fill(null).map(() => Array(size).fill(null));
+                
+                // Finder patterns
+                function setFinder(row, col) {
+                    for (let r = -1; r <= 7; r++) {
+                        for (let c = -1; c <= 7; c++) {
+                            const rr = row + r, cc = col + c;
+                            if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+                            const isBlack = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
+                                           (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
+                                           (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+                            matrix[rr][cc] = isBlack ? 1 : 0;
+                        }
+                    }
+                }
+                setFinder(0, 0);
+                setFinder(0, size - 7);
+                setFinder(size - 7, 0);
+                
+                // Timing patterns
+                for (let i = 8; i < size - 8; i++) {
+                    if (matrix[6][i] === null) matrix[6][i] = i % 2 === 0 ? 1 : 0;
+                    if (matrix[i][6] === null) matrix[i][6] = i % 2 === 0 ? 1 : 0;
+                }
+                
+                // Dark module
+                matrix[size - 8][8] = 1;
+                
+                // Alignment patterns for version >= 2
+                if (version >= 2) {
+                    const positions = [6, Math.floor((size - 13) / 2) + 6, size - 7];
+                    for (const r of positions) {
+                        for (const c of positions) {
+                            if (matrix[r][c] !== null) continue;
+                            for (let dr = -2; dr <= 2; dr++) {
+                                for (let dc = -2; dc <= 2; dc++) {
+                                    const isBlack = dr === -2 || dr === 2 || dc === -2 || dc === 2 || (dr === 0 && dc === 0);
+                                    matrix[r + dr][c + dc] = isBlack ? 1 : 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                return { matrix, size };
+            }
+            
+            function placeData(matrix, size, bits) {
+                let bitIdx = 0;
+                let upward = true;
+                
+                for (let col = size - 1; col >= 0; col -= 2) {
+                    if (col === 6) col = 5;
+                    
+                    for (let i = 0; i < size; i++) {
+                        const row = upward ? size - 1 - i : i;
+                        
+                        for (let c = 0; c <= 1; c++) {
+                            const cc = col - c;
+                            if (matrix[row][cc] === null) {
+                                matrix[row][cc] = bitIdx < bits.length ? bits[bitIdx] : 0;
+                                bitIdx++;
+                            }
+                        }
+                    }
+                    upward = !upward;
+                }
+            }
+            
+            function applyMask(matrix, size) {
+                // Apply mask pattern 0 (simple checkerboard)
+                for (let r = 0; r < size; r++) {
+                    for (let c = 0; c < size; c++) {
+                        if (matrix[r][c] !== null && (r + c) % 2 === 0) {
+                            matrix[r][c] ^= 1;
+                        }
+                    }
+                }
+            }
+            
+            function addFormatInfo(matrix, size) {
+                // Format info for ECL L, mask 0
+                const formatBits = [1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0];
+                let bitIdx = 0;
+                
+                // Horizontal and vertical
+                for (let i = 0; i <= 5; i++) matrix[8][i] = formatBits[bitIdx++];
+                matrix[8][7] = formatBits[bitIdx++];
+                matrix[8][8] = formatBits[bitIdx++];
+                matrix[7][8] = formatBits[bitIdx++];
+                for (let i = 5; i >= 0; i--) matrix[i][8] = formatBits[bitIdx++];
+                
+                bitIdx = 0;
+                for (let i = size - 1; i >= size - 8; i--) matrix[8][i] = formatBits[bitIdx++];
+                for (let i = size - 7; i < size; i++) matrix[i][8] = formatBits[bitIdx++];
+            }
+            
+            function toSvgDataUrl(matrix, size) {
+                const scale = 4;
+                const margin = 4;
+                const fullSize = (size + margin * 2) * scale;
+                
+                let paths = '';
+                for (let r = 0; r < size; r++) {
+                    for (let c = 0; c < size; c++) {
+                        if (matrix[r][c] === 1) {
+                            const x = (c + margin) * scale;
+                            const y = (r + margin) * scale;
+                            paths += `M${x},${y}h${scale}v${scale}h-${scale}z`;
+                        }
+                    }
+                }
+                
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${fullSize} ${fullSize}" width="200" height="200"><rect width="100%" height="100%" fill="white"/><path d="${paths}" fill="black"/></svg>`;
+                return 'data:image/svg+xml;base64,' + btoa(svg);
+            }
+            
+            return function generate(text) {
+                const version = getVersion(text.length);
+                const { matrix, size } = createMatrix(version);
+                
+                // Encode data
+                const bits = encodeBytes(text);
+                const dataCodewords = getDataCodewords(version);
+                const ecCodewords = getECCodewords(version);
+                
+                // Pad to capacity
+                while (bits.length < dataCodewords * 8) {
+                    const pad = bits.length % 16 < 8 ? PAD0 : PAD1;
+                    for (let i = 7; i >= 0; i--) bits.push((pad >> i) & 1);
+                }
+                
+                // Convert to bytes and add error correction
+                const dataBytes = [];
+                for (let i = 0; i < bits.length; i += 8) {
+                    let byte = 0;
+                    for (let j = 0; j < 8; j++) byte = (byte << 1) | (bits[i + j] || 0);
+                    dataBytes.push(byte);
+                }
+                
+                const poly = rsGenPoly(ecCodewords);
+                const ecBytes = rsEncode(dataBytes, poly);
+                
+                // Interleave and convert to bits
+                const allBytes = [...dataBytes, ...ecBytes];
+                const allBits = [];
+                for (const b of allBytes) {
+                    for (let i = 7; i >= 0; i--) allBits.push((b >> i) & 1);
+                }
+                
+                // Place data and apply mask
+                placeData(matrix, size, allBits);
+                applyMask(matrix, size);
+                addFormatInfo(matrix, size);
+                
+                return toSvgDataUrl(matrix, size);
+            };
+        })();
+
+        // MFA state
+        let mfaStatus = null;
+        let mfaSetupData = null;
+        let mfaRecoveryCodes = [];
+        let mfaWizardStep = 1;
+
+        // WebAuthn state
+        let webauthnCredentials = [];
+        let webauthnRegistrationInProgress = false;
+        let webauthnCredentialToDelete = null;
+        let webauthnCredentialToRename = null;
+
+        // Load MFA status
+        async function loadMFAStatus() {
+            try {
+                const response = await fetch('/api/user/mfa/status', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    mfaStatus = await response.json();
+                    displayMFAStatus(mfaStatus);
+                } else {
+                    // MFA might not be enabled on server
+                    const data = await response.json();
+                    displayMFANotAvailable(data.error || 'MFA is not available');
+                }
+            } catch (error) {
+                console.error('Failed to load MFA status:', error);
+                displayMFANotAvailable('Failed to load MFA status');
+            }
+        }
+
+        // Refresh MFA status
+        function refreshMFAStatus() {
+            const btn = document.getElementById('refreshMFABtn');
+            btn.classList.add('btn-refreshing');
+            loadMFAStatus().finally(() => {
+                btn.classList.remove('btn-refreshing');
+            });
+        }
+
+        // Display MFA status in the UI
+        function displayMFAStatus(status) {
+            const container = document.getElementById('mfaContainer');
+
+            if (!status.enabled) {
+                // MFA feature is disabled on the server
+                container.innerHTML = `
+                    <div class="mfa-not-available">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <div class="mfa-not-available-text">
+                            <h4>Two-Factor Authentication Not Available</h4>
+                            <p>MFA is currently disabled on this server. Contact your administrator to enable it.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const isTOTPEnabled = status.totp_enabled;
+            const isTOTPServerEnabled = status.totp_server_enabled;
+            const isWebAuthnServerEnabled = status.webauthn_server_enabled;
+            const webauthnCredCount = status.webauthn_credentials || 0;
+            const recoveryCodesRemaining = status.recovery_codes_remaining || 0;
+            const verifiedAt = status.totp_verified_at ? new Date(status.totp_verified_at).toLocaleDateString() : 'N/A';
+            const hasMFAEnabled = isTOTPEnabled || webauthnCredCount > 0;
+
+            // Determine recovery codes status class
+            let recoveryClass = 'success';
+            if (recoveryCodesRemaining === 0) {
+                recoveryClass = 'danger';
+            } else if (recoveryCodesRemaining < 3) {
+                recoveryClass = 'warning';
+            }
+
+            let html = '';
+
+            // Overall MFA status header
+            if (hasMFAEnabled) {
+                html += `
+                    <div class="mfa-status-card">
+                        <div class="mfa-status-header">
+                            <div class="mfa-status-title">
+                                <div class="mfa-status-icon enabled">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="mfa-status-text">
+                                    <h3>Two-Factor Authentication Enabled</h3>
+                                    <p>Your account is protected with an extra layer of security</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                html += `
+                    <div class="mfa-status-card">
+                        <div class="mfa-status-header">
+                            <div class="mfa-status-title">
+                                <div class="mfa-status-icon disabled">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                        <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                                    </svg>
+                                </div>
+                                <div class="mfa-status-text">
+                                    <h3>Two-Factor Authentication Not Enabled</h3>
+                                    <p>Add an extra layer of security to your account</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                            <h4 style="font-size: 13px; font-weight: 600; color: #166534; margin: 0 0 8px 0;">Why enable two-factor authentication?</h4>
+                            <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
+                                <li>Protects your account even if your password is compromised</li>
+                                <li>Required code from your phone for each login</li>
+                                <li>Works with popular authenticator apps or hardware keys</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // TOTP Section (if TOTP is enabled on server)
+            if (isTOTPServerEnabled) {
+                html += `
+                    <div class="mfa-status-card" style="margin-top: 16px;">
+                        <div class="mfa-method-header">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                                <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                            </svg>
+                            <div>
+                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Authenticator App (TOTP)</h4>
+                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">Use an app like Google Authenticator or Authy</p>
+                            </div>
+                            <span class="mfa-method-badge ${isTOTPEnabled ? 'enabled' : 'disabled'}">
+                                ${isTOTPEnabled ? 'Enabled' : 'Not Set Up'}
+                            </span>
+                        </div>
+                `;
+
+                if (isTOTPEnabled) {
+                    html += `
+                        <div class="mfa-details" style="margin-top: 12px;">
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Enabled Since</div>
+                                <div class="mfa-detail-value">${escapeHtml(verifiedAt)}</div>
+                            </div>
+                            <div class="mfa-detail-item">
+                                <div class="mfa-detail-label">Recovery Codes</div>
+                                <div class="mfa-detail-value ${recoveryClass}">${recoveryCodesRemaining} remaining</div>
+                            </div>
+                        </div>
+                        ${recoveryCodesRemaining < 3 ? `
+                        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-top: 12px; display: flex; align-items: center; gap: 10px;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0;">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <span style="color: #92400e; font-size: 13px;">You have few recovery codes left. Consider regenerating them.</span>
+                        </div>
+                        ` : ''}
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-danger btn-sm" onclick="showDisableMFAModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                                Disable TOTP
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-success btn-sm" onclick="showMFASetupModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Set Up Authenticator App
+                            </button>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            // WebAuthn Section (if WebAuthn is enabled on server)
+            if (isWebAuthnServerEnabled) {
+                html += `
+                    <div class="mfa-status-card" style="margin-top: 16px;">
+                        <div class="mfa-method-header">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                            <div>
+                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Hardware Security Keys</h4>
+                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">YubiKey, Touch ID, Windows Hello, or other FIDO2 devices</p>
+                            </div>
+                            <span class="mfa-method-badge ${webauthnCredCount > 0 ? 'enabled' : 'disabled'}">
+                                ${webauthnCredCount > 0 ? webauthnCredCount + ' key' + (webauthnCredCount > 1 ? 's' : '') : 'Not Set Up'}
+                            </span>
+                        </div>
+                        <div id="webauthnCredentialsList" style="margin-top: 12px;">
+                            <!-- Credentials will be loaded here -->
+                            <div class="webauthn-loading">Loading security keys...</div>
+                        </div>
+                        <div class="mfa-actions" style="margin-top: 16px;">
+                            <button class="btn btn-success btn-sm" onclick="showWebAuthnRegisterModal()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Add Security Key
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                // Load WebAuthn credentials after rendering
+                setTimeout(() => loadWebAuthnCredentials(), 0);
+            }
+
+            container.innerHTML = html;
+        }
+
+        // Display MFA not available state
+        function displayMFANotAvailable(message) {
+            const container = document.getElementById('mfaContainer');
+            container.innerHTML = `
+                <div class="mfa-not-available">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <div class="mfa-not-available-text">
+                        <h4>MFA Status Unavailable</h4>
+                        <p>${escapeHtml(message)}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ========================================
+        // WebAuthn Functions
+        // ========================================
+
+        // Load WebAuthn credentials list
+        async function loadWebAuthnCredentials() {
+            const container = document.getElementById('webauthnCredentialsList');
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/user/mfa/webauthn/credentials', {
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    container.innerHTML = `<div class="webauthn-no-credentials">Failed to load credentials: ${escapeHtml(data.error || 'Unknown error')}</div>`;
+                    return;
+                }
+
+                webauthnCredentials = await response.json();
+                displayWebAuthnCredentials(webauthnCredentials);
+            } catch (error) {
+                console.error('Failed to load WebAuthn credentials:', error);
+                container.innerHTML = '<div class="webauthn-no-credentials">Failed to load security keys</div>';
+            }
+        }
+
+        // Display WebAuthn credentials in the list
+        function displayWebAuthnCredentials(credentials) {
+            const container = document.getElementById('webauthnCredentialsList');
+            if (!container) return;
+
+            if (!credentials || credentials.length === 0) {
+                container.innerHTML = '<div class="webauthn-no-credentials">No security keys registered. Add one to enhance your account security.</div>';
+                return;
+            }
+
+            let html = '';
+            for (const cred of credentials) {
+                const createdDate = new Date(cred.created_at).toLocaleDateString();
+                const lastUsed = cred.last_used_at ? new Date(cred.last_used_at).toLocaleDateString() : 'Never';
+                
+                html += `
+                    <div class="webauthn-credential-item" data-credential-id="${cred.id}">
+                        <div class="webauthn-credential-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                        </div>
+                        <div class="webauthn-credential-info">
+                            <div class="webauthn-credential-name">${escapeHtml(cred.name)}</div>
+                            <div class="webauthn-credential-meta">Added ${createdDate} • Last used: ${lastUsed}</div>
+                        </div>
+                        <div class="webauthn-credential-actions">
+                            <button onclick="showWebAuthnRenameModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                                    title="Rename">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                            </button>
+                            <button class="delete" onclick="showWebAuthnDeleteModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                                    title="Delete">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        // Show WebAuthn registration modal
+        function showWebAuthnRegisterModal() {
+            document.getElementById('webauthnKeyName').value = '';
+            document.getElementById('webauthnRegisterError').style.display = 'none';
+            document.getElementById('webauthnRegisterBtn').disabled = false;
+            document.getElementById('webauthnRegisterBtn').textContent = 'Register Key';
+            document.getElementById('webauthnRegisterModal').classList.add('show');
+        }
+
+        // Hide WebAuthn registration modal
+        function hideWebAuthnRegisterModal() {
+            document.getElementById('webauthnRegisterModal').classList.remove('show');
+            webauthnRegistrationInProgress = false;
+        }
+
+        // Base64URL encoding/decoding utilities for WebAuthn
+        function base64URLEncode(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        function base64URLDecode(str) {
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (str.length % 4) str += '=';
+            const binary = atob(str);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Register a new WebAuthn credential
+        async function registerWebAuthnCredential() {
+            if (webauthnRegistrationInProgress) return;
+
+            const keyName = document.getElementById('webauthnKeyName').value.trim();
+            const errorEl = document.getElementById('webauthnRegisterError');
+            const btn = document.getElementById('webauthnRegisterBtn');
+
+            // Check for secure context (required for WebAuthn)
+            if (!window.isSecureContext || !navigator.credentials) {
+                errorEl.textContent = 'Security keys require HTTPS or localhost. Please access this site via HTTPS or localhost to register a security key.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            if (!keyName) {
+                errorEl.textContent = 'Please enter a name for your security key';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            webauthnRegistrationInProgress = true;
+            errorEl.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Starting registration...';
+
+            try {
+                // Get CSRF token from user_csrf_token cookie
+                const csrfToken = getCSRFToken();
+
+                // Step 1: Begin registration - get challenge from server
+                const beginResponse = await fetch('/api/user/mfa/webauthn/register/begin', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({ name: keyName })
+                });
+
+                if (!beginResponse.ok) {
+                    const data = await beginResponse.json();
+                    throw new Error(data.error || 'Failed to start registration');
+                }
+
+                const response = await beginResponse.json();
+                const options = response.options; // Server wraps options in 'options' field
+                
+                // Convert challenge and user ID from base64url to ArrayBuffer
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+                options.publicKey.user.id = base64URLDecode(options.publicKey.user.id);
+
+                // Convert excludeCredentials if present
+                if (options.publicKey.excludeCredentials) {
+                    options.publicKey.excludeCredentials = options.publicKey.excludeCredentials.map(cred => ({
+                        ...cred,
+                        id: base64URLDecode(cred.id)
+                    }));
+                }
+
+                btn.textContent = 'Touch your security key...';
+
+                // Step 2: Create credential using browser WebAuthn API
+                const credential = await navigator.credentials.create(options);
+
+                btn.textContent = 'Completing registration...';
+
+                // Step 3: Send credential to server to complete registration
+                const attestationResponse = {
+                    id: credential.id,
+                    rawId: base64URLEncode(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        attestationObject: base64URLEncode(credential.response.attestationObject),
+                        clientDataJSON: base64URLEncode(credential.response.clientDataJSON)
+                    }
+                };
+
+                // Include transports if available
+                if (credential.response.getTransports) {
+                    attestationResponse.response.transports = credential.response.getTransports();
+                }
+
+                const finishResponse = await fetch('/api/user/mfa/webauthn/register/finish', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify(attestationResponse)
+                });
+
+                if (!finishResponse.ok) {
+                    const data = await finishResponse.json();
+                    throw new Error(data.error || 'Failed to complete registration');
+                }
+
+                // Success!
+                hideWebAuthnRegisterModal();
+                showToast('Security key registered successfully', 'success');
+                loadMFAStatus(); // Refresh MFA status
+
+            } catch (error) {
+                console.error('WebAuthn registration failed:', error);
+                errorEl.textContent = error.message || 'Registration failed. Please try again.';
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Register Key';
+            } finally {
+                webauthnRegistrationInProgress = false;
+            }
+        }
+
+        // Show delete confirmation modal
+        function showWebAuthnDeleteModal(credentialId, credentialName) {
+            webauthnCredentialToDelete = credentialId;
+            document.getElementById('webauthnDeleteName').textContent = credentialName;
+            document.getElementById('webauthnDeleteModal').classList.add('show');
+        }
+
+        // Hide delete confirmation modal
+        function hideWebAuthnDeleteModal() {
+            document.getElementById('webauthnDeleteModal').classList.remove('show');
+            webauthnCredentialToDelete = null;
+        }
+
+        // Delete WebAuthn credential
+        async function confirmWebAuthnDelete() {
+            if (!webauthnCredentialToDelete) return;
+
+            const btn = document.getElementById('webauthnDeleteConfirmBtn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                const csrfToken = getCSRFToken();
+
+                const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToDelete}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': csrfToken
+                    }
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete security key');
+                }
+
+                hideWebAuthnDeleteModal();
+                showToast('Security key deleted', 'success');
+                loadMFAStatus(); // Refresh MFA status
+
+            } catch (error) {
+                console.error('Failed to delete WebAuthn credential:', error);
+                showToast(error.message || 'Failed to delete security key', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
+
+        // Show rename modal
+        function showWebAuthnRenameModal(credentialId, currentName) {
+            webauthnCredentialToRename = credentialId;
+            document.getElementById('webauthnNewName').value = currentName;
+            document.getElementById('webauthnRenameError').style.display = 'none';
+            document.getElementById('webauthnRenameModal').classList.add('show');
+        }
+
+        // Hide rename modal
+        function hideWebAuthnRenameModal() {
+            document.getElementById('webauthnRenameModal').classList.remove('show');
+            webauthnCredentialToRename = null;
+        }
+
+        // Rename WebAuthn credential
+        async function confirmWebAuthnRename() {
+            if (!webauthnCredentialToRename) return;
+
+            const newName = document.getElementById('webauthnNewName').value.trim();
+            const errorEl = document.getElementById('webauthnRenameError');
+            const btn = document.getElementById('webauthnRenameConfirmBtn');
+
+            if (!newName) {
+                errorEl.textContent = 'Please enter a name';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            errorEl.style.display = 'none';
+
+            try {
+                const csrfToken = getCSRFToken();
+
+                const response = await fetch(`/api/user/mfa/webauthn/credentials/${webauthnCredentialToRename}`, {
+                    method: 'PATCH',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({ name: newName })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to rename security key');
+                }
+
+                hideWebAuthnRenameModal();
+                showToast('Security key renamed', 'success');
+                loadWebAuthnCredentials(); // Just refresh the credentials list
+
+            } catch (error) {
+                console.error('Failed to rename WebAuthn credential:', error);
+                errorEl.textContent = error.message || 'Failed to rename security key';
+                errorEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Rename';
+            }
+        }
+
+        // ========================================
+        // End WebAuthn Functions
+        // ========================================
+
+        // Show MFA setup wizard modal
+        function showMFASetupModal() {
+            mfaWizardStep = 1;
+            mfaSetupData = null;
+            mfaRecoveryCodes = [];
+            updateMFAWizardUI();
+            document.getElementById('mfaSetupModal').classList.add('show');
+        }
+
+        // Hide MFA setup modal
+        function hideMFASetupModal() {
+            document.getElementById('mfaSetupModal').classList.remove('show');
+            // Reset wizard state
+            mfaWizardStep = 1;
+            mfaSetupData = null;
+            mfaRecoveryCodes = [];
+            document.getElementById('mfaVerifyCode').value = '';
+            document.getElementById('mfaVerifyError').style.display = 'none';
+            document.getElementById('mfaRecoveryConfirm').checked = false;
+        }
+
+        // Update MFA wizard UI based on current step
+        function updateMFAWizardUI() {
+            // Update step indicators
+            for (let i = 1; i <= 4; i++) {
+                const stepEl = document.getElementById(`mfaStep${i}Indicator`);
+                const stepContent = document.getElementById(`mfaStep${i}`);
+                const connector = document.getElementById(`mfaConnector${i - 1}`);
+
+                if (i < mfaWizardStep) {
+                    stepEl.classList.add('completed');
+                    stepEl.classList.remove('active');
+                    stepEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    if (connector) connector.classList.add('completed');
+                } else if (i === mfaWizardStep) {
+                    stepEl.classList.add('active');
+                    stepEl.classList.remove('completed');
+                    stepEl.textContent = i;
+                    if (connector) connector.classList.remove('completed');
+                } else {
+                    stepEl.classList.remove('active', 'completed');
+                    stepEl.textContent = i;
+                    if (connector) connector.classList.remove('completed');
+                }
+
+                // Show/hide step content
+                if (i === mfaWizardStep) {
+                    stepContent.classList.add('active');
+                } else {
+                    stepContent.classList.remove('active');
+                }
+            }
+
+            // Update buttons
+            const cancelBtn = document.getElementById('mfaSetupCancelBtn');
+            const backBtn = document.getElementById('mfaSetupBackBtn');
+            const nextBtn = document.getElementById('mfaSetupNextBtn');
+
+            // Show/hide back button
+            if (mfaWizardStep > 1 && mfaWizardStep < 4) {
+                backBtn.style.display = 'inline-flex';
+            } else {
+                backBtn.style.display = 'none';
+            }
+
+            // Update next button text
+            switch (mfaWizardStep) {
+                case 1:
+                    nextBtn.textContent = 'Get Started';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 2:
+                    nextBtn.textContent = 'Continue';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 3:
+                    nextBtn.textContent = 'Verify';
+                    nextBtn.classList.remove('btn-success');
+                    nextBtn.classList.add('btn-primary');
+                    cancelBtn.style.display = 'inline-flex';
+                    break;
+                case 4:
+                    nextBtn.textContent = 'Done';
+                    nextBtn.classList.remove('btn-primary');
+                    nextBtn.classList.add('btn-success');
+                    cancelBtn.style.display = 'none';
+                    backBtn.style.display = 'none';
+                    break;
+            }
+        }
+
+        // Navigate to next step in wizard
+        async function mfaWizardNextStep() {
+            const nextBtn = document.getElementById('mfaSetupNextBtn');
+
+            switch (mfaWizardStep) {
+                case 1:
+                    // Start TOTP setup
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Setting up...';
+                    try {
+                        const response = await fetch('/api/user/mfa/totp/setup', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'X-CSRF-Token': getCSRFToken()
+                            }
+                        });
+
+                        if (response.ok) {
+                            mfaSetupData = await response.json();
+                            // Generate QR code locally using SVG data URL (CSP compliant, no third-party)
+                            const qrUrl = QRCodeGenerator(mfaSetupData.url);
+                            document.getElementById('mfaQRCodeImg').src = qrUrl;
+                            // Format secret key for display (add spaces every 4 chars)
+                            const formattedSecret = mfaSetupData.secret.match(/.{1,4}/g).join(' ');
+                            document.getElementById('mfaSecretKey').textContent = formattedSecret;
+                            mfaWizardStep = 2;
+                            updateMFAWizardUI();
+                        } else {
+                            const data = await response.json();
+                            showToast(data.error || 'Failed to start MFA setup', 'error');
+                        }
+                    } catch (error) {
+                        console.error('MFA setup failed:', error);
+                        showToast('Network error during MFA setup', 'error');
+                    } finally {
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Get Started';
+                    }
+                    break;
+
+                case 2:
+                    // Move to verification step
+                    mfaWizardStep = 3;
+                    updateMFAWizardUI();
+                    // Focus the input
+                    setTimeout(() => document.getElementById('mfaVerifyCode').focus(), 100);
+                    break;
+
+                case 3:
+                    // Verify TOTP code
+                    const code = document.getElementById('mfaVerifyCode').value.trim();
+                    const errorEl = document.getElementById('mfaVerifyError');
+
+                    // Validate code format
+                    if (!/^\d{6}$/.test(code)) {
+                        errorEl.textContent = 'Please enter a 6-digit code';
+                        errorEl.style.display = 'block';
+                        document.getElementById('mfaVerifyCode').classList.add('error');
+                        setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
+                        return;
+                    }
+
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Verifying...';
+                    errorEl.style.display = 'none';
+
+                    try {
+                        const response = await fetch('/api/user/mfa/totp/verify', {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': getCSRFToken()
+                            },
+                            body: JSON.stringify({ code: code })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            mfaRecoveryCodes = data.recovery_codes || [];
+                            // Display recovery codes
+                            displayRecoveryCodes(mfaRecoveryCodes);
+                            mfaWizardStep = 4;
+                            updateMFAWizardUI();
+                        } else {
+                            const data = await response.json();
+                            errorEl.textContent = data.error || 'Invalid code. Please try again.';
+                            errorEl.style.display = 'block';
+                            document.getElementById('mfaVerifyCode').classList.add('error');
+                            setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
+                        }
+                    } catch (error) {
+                        console.error('MFA verification failed:', error);
+                        errorEl.textContent = 'Network error. Please try again.';
+                        errorEl.style.display = 'block';
+                    } finally {
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Verify';
+                    }
+                    break;
+
+                case 4:
+                    // Check if user confirmed they saved codes
+                    if (!document.getElementById('mfaRecoveryConfirm').checked) {
+                        showToast('Please confirm that you have saved your recovery codes', 'error');
+                        return;
+                    }
+                    // Done - close modal and refresh status
+                    hideMFASetupModal();
+                    showToast('Two-factor authentication has been enabled!', 'success');
+                    loadMFAStatus();
+                    break;
+            }
+        }
+
+        // Navigate to previous step in wizard
+        function mfaWizardPrevStep() {
+            if (mfaWizardStep > 1 && mfaWizardStep < 4) {
+                mfaWizardStep--;
+                updateMFAWizardUI();
+            }
+        }
+
+        // Display recovery codes in the grid
+        function displayRecoveryCodes(codes) {
+            const grid = document.getElementById('mfaRecoveryCodesGrid');
+            grid.innerHTML = codes.map(code => `<div class="mfa-recovery-code">${escapeHtml(code)}</div>`).join('');
+        }
+
+        // Copy MFA secret to clipboard
+        function copyMFASecret() {
+            if (!mfaSetupData || !mfaSetupData.secret) return;
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(mfaSetupData.secret).then(() => {
+                    showToast('Secret key copied to clipboard', 'success');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    fallbackCopyToClipboard(mfaSetupData.secret);
+                });
+            } else {
+                fallbackCopyToClipboard(mfaSetupData.secret);
+            }
+        }
+        
+        // Fallback copy method for non-secure contexts (HTTP on LAN)
+        function fallbackCopyToClipboard(text, successMessage = 'Copied to clipboard') {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            textArea.style.top = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showToast(successMessage, 'success');
+                } else {
+                    showToast('Failed to copy. Please select and copy manually.', 'error');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                showToast('Failed to copy. Please select and copy manually.', 'error');
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        // Download recovery codes as text file
+        function downloadRecoveryCodes() {
+            if (!mfaRecoveryCodes || mfaRecoveryCodes.length === 0) return;
+
+            const content = `SafeShare Recovery Codes
+================================
+Generated: ${new Date().toISOString()}
+
+These codes can be used to access your account if you lose
+access to your authenticator app. Each code can only be used once.
+
+KEEP THESE CODES SAFE AND SECURE!
+
+${mfaRecoveryCodes.join('\n')}
+
+================================
+If you lose these codes and your authenticator app,
+you may be locked out of your account.
+`;
+
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'safeshare-recovery-codes.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Recovery codes downloaded', 'success');
+        }
+
+        // Copy all recovery codes to clipboard
+        function copyRecoveryCodes() {
+            if (!mfaRecoveryCodes || mfaRecoveryCodes.length === 0) return;
+            const codesText = mfaRecoveryCodes.join('\n');
+            
+            // Try modern Clipboard API first, fall back to execCommand for non-secure contexts
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(codesText).then(() => {
+                    showToast('Recovery codes copied to clipboard', 'success');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    fallbackCopyToClipboard(codesText);
+                });
+            } else {
+                fallbackCopyToClipboard(codesText);
+            }
+        }
+
+        // Show MFA disable confirmation modal
+        function showDisableMFAModal() {
+            document.getElementById('mfaDisableCode').value = '';
+            document.getElementById('mfaDisableError').style.display = 'none';
+            document.getElementById('mfaDisableModal').classList.add('show');
+            setTimeout(() => document.getElementById('mfaDisableCode').focus(), 100);
+        }
+
+        // Hide MFA disable modal
+        function hideMFADisableModal() {
+            document.getElementById('mfaDisableModal').classList.remove('show');
+            document.getElementById('mfaDisableCode').value = '';
+            document.getElementById('mfaDisableError').style.display = 'none';
+        }
+
+        // Confirm and disable MFA
+        async function confirmDisableMFA() {
+            const code = document.getElementById('mfaDisableCode').value.trim();
+            const errorEl = document.getElementById('mfaDisableError');
+            const confirmBtn = document.getElementById('mfaDisableConfirmBtn');
+
+            // Validate code format
+            if (!/^\d{6}$/.test(code)) {
+                errorEl.textContent = 'Please enter a 6-digit code';
+                errorEl.style.display = 'block';
+                document.getElementById('mfaDisableCode').classList.add('error');
+                setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
+                return;
+            }
+
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Disabling...';
+            errorEl.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/user/mfa/totp', {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCSRFToken()
+                    },
+                    body: JSON.stringify({ code: code })
+                });
+
+                if (response.ok) {
+                    hideMFADisableModal();
+                    showToast('Two-factor authentication has been disabled', 'success');
+                    loadMFAStatus();
+                } else {
+                    const data = await response.json();
+                    errorEl.textContent = data.error || 'Invalid code. Please try again.';
+                    errorEl.style.display = 'block';
+                    document.getElementById('mfaDisableCode').classList.add('error');
+                    setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
+                }
+            } catch (error) {
+                console.error('MFA disable failed:', error);
+                errorEl.textContent = 'Network error. Please try again.';
+                errorEl.style.display = 'block';
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Disable MFA';
+            }
+        }
+
+        // ========== End MFA Management Functions ==========
 
         // Initialize theme icons on load
         document.addEventListener('DOMContentLoaded', () => {
@@ -3620,8 +6309,323 @@
             });
         });
 
+        // ===== SSO LINKED ACCOUNTS MANAGEMENT =====
+
+        // SSO state variables
+        let ssoEnabled = false;
+        let ssoProviders = [];
+        let userSSOLinks = [];
+
+        // Initialize SSO Linked Accounts section
+        async function initSSOLinkedAccounts() {
+            try {
+                // First check if SSO is enabled
+                const configResponse = await fetch('/api/config', {
+                    credentials: 'include'
+                });
+
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    ssoEnabled = config.sso_enabled === true;
+                }
+
+                if (ssoEnabled) {
+                    // Show the SSO section
+                    const ssoSection = document.getElementById('ssoLinkedAccountsSection');
+                    if (ssoSection) {
+                        ssoSection.style.display = 'block';
+                    }
+                    // Load SSO providers and user links
+                    await loadUserSSOData();
+                }
+            } catch (error) {
+                console.error('Failed to initialize SSO linked accounts:', error);
+            }
+        }
+
+        // Load SSO providers and user's linked accounts
+        async function loadUserSSOData() {
+            const container = document.getElementById('ssoLinkedAccountsContainer');
+            if (!container) return;
+
+            container.innerHTML = '<div class="sso-loading">Loading SSO providers...</div>';
+
+            try {
+                // Fetch available SSO providers (only enabled ones)
+                const providersResponse = await fetch('/api/sso/providers', {
+                    credentials: 'include'
+                });
+
+                if (!providersResponse.ok) {
+                    throw new Error('Failed to load SSO providers');
+                }
+
+                ssoProviders = await providersResponse.json();
+
+                // Fetch user's linked SSO accounts
+                const linksResponse = await fetch('/api/sso/links', {
+                    credentials: 'include'
+                });
+
+                if (linksResponse.ok) {
+                    userSSOLinks = await linksResponse.json();
+                } else {
+                    userSSOLinks = [];
+                }
+
+                // Render the UI
+                renderSSOLinkedAccountsUI();
+            } catch (error) {
+                console.error('Failed to load SSO data:', error);
+                container.innerHTML = `
+                    <div class="sso-disabled-notice">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <div class="sso-disabled-notice-text">
+                            <strong>Unable to Load SSO Data</strong>
+                            ${escapeHtml(error.message)}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Render the SSO linked accounts UI
+        function renderSSOLinkedAccountsUI() {
+            const container = document.getElementById('ssoLinkedAccountsContainer');
+            if (!container) return;
+
+            // Filter to only show enabled providers
+            const enabledProviders = ssoProviders.filter(p => p.enabled);
+
+            if (enabledProviders.length === 0) {
+                container.innerHTML = `
+                    <div class="sso-empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="8.5" cy="7" r="4"></circle>
+                            <line x1="20" y1="8" x2="20" y2="14"></line>
+                            <line x1="23" y1="11" x2="17" y2="11"></line>
+                        </svg>
+                        <h4>No SSO Providers Available</h4>
+                        <p>Your administrator has not configured any SSO providers yet.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Create a map of user's linked providers
+            const linkedProvidersMap = new Map();
+            userSSOLinks.forEach(link => {
+                linkedProvidersMap.set(link.provider_id, link);
+            });
+
+            let html = '<div class="sso-providers-grid">';
+
+            for (const provider of enabledProviders) {
+                const link = linkedProvidersMap.get(provider.id);
+                const isLinked = !!link;
+                const providerTypeClass = getProviderTypeClass(provider.provider_type);
+
+                html += `
+                    <div class="sso-provider-card ${isLinked ? 'linked' : ''}">
+                        <div class="sso-provider-header">
+                            <div class="sso-provider-icon ${providerTypeClass}">
+                                ${getProviderIcon(provider.provider_type)}
+                            </div>
+                            <div class="sso-provider-info">
+                                <h4 class="sso-provider-name">${escapeHtml(provider.name)}</h4>
+                                <div class="sso-provider-type">${escapeHtml(provider.provider_type)}</div>
+                            </div>
+                        </div>
+                        <div class="sso-provider-status ${isLinked ? 'linked' : ''}">
+                            <div class="sso-status-dot ${isLinked ? 'linked' : ''}"></div>
+                            <span class="sso-status-text ${isLinked ? 'linked' : ''}">
+                                ${isLinked ? 'Linked' : 'Not Linked'}
+                            </span>
+                        </div>
+                `;
+
+                if (isLinked) {
+                    const linkedAt = new Date(link.linked_at).toLocaleDateString();
+                    const lastLogin = link.last_login_at
+                        ? new Date(link.last_login_at).toLocaleDateString()
+                        : 'Never';
+
+                    html += `
+                        <div class="sso-link-info">
+                            <div><strong>External ID:</strong> ${escapeHtml(link.external_id || 'N/A')}</div>
+                            <div><strong>Linked:</strong> ${linkedAt}</div>
+                            <div><strong>Last Login:</strong> ${lastLogin}</div>
+                        </div>
+                        <div class="sso-provider-actions">
+                            <button class="btn btn-danger btn-sm sso-unlink-btn"
+                                data-link-id="${link.id}"
+                                data-provider-name="${escapeHtml(provider.name)}"
+                                title="Unlink this SSO account">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"></path>
+                                </svg>
+                                Unlink
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="sso-provider-actions">
+                            <button class="btn btn-primary btn-sm sso-link-btn"
+                                data-provider-id="${provider.id}"
+                                data-provider-name="${escapeHtml(provider.name)}"
+                                title="Link your account with ${escapeHtml(provider.name)}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                                </svg>
+                                Link Account
+                            </button>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+
+            // Attach event listeners using event delegation (safer than inline onclick)
+            container.addEventListener('click', handleSSOButtonClick);
+        }
+
+        // Handle SSO button clicks via event delegation (prevents XSS)
+        function handleSSOButtonClick(e) {
+            // Handle unlink button
+            const unlinkBtn = e.target.closest('.sso-unlink-btn');
+            if (unlinkBtn) {
+                const linkId = parseInt(unlinkBtn.dataset.linkId, 10);
+                const providerName = unlinkBtn.dataset.providerName;
+                unlinkSSOProvider(linkId, providerName);
+                return;
+            }
+
+            // Handle link button
+            const linkBtn = e.target.closest('.sso-link-btn');
+            if (linkBtn) {
+                const providerId = parseInt(linkBtn.dataset.providerId, 10);
+                const providerName = linkBtn.dataset.providerName;
+                linkSSOProvider(providerId, providerName);
+                return;
+            }
+        }
+
+        // Get CSS class for provider type
+        function getProviderTypeClass(providerType) {
+            const type = (providerType || '').toLowerCase();
+            if (type.includes('google')) return 'google';
+            if (type.includes('microsoft') || type.includes('azure')) return 'microsoft';
+            if (type.includes('okta')) return 'okta';
+            return '';
+        }
+
+        // Get icon for provider type
+        function getProviderIcon(providerType) {
+            const type = (providerType || '').toLowerCase();
+
+            // Generic SSO/OIDC icon
+            return `
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+            `;
+        }
+
+        // Link SSO provider
+        async function linkSSOProvider(providerId, providerName) {
+            try {
+                // Store return URL for after SSO flow
+                sessionStorage.setItem('sso_link_return', window.location.href);
+
+                // Redirect to SSO link endpoint
+                window.location.href = `/api/sso/link/${providerId}`;
+            } catch (error) {
+                console.error('Failed to initiate SSO link:', error);
+                showToast('Failed to initiate SSO link: ' + error.message, 'error');
+            }
+        }
+
+        // Unlink SSO provider
+        async function unlinkSSOProvider(linkId, providerName) {
+            if (!confirm(`Are you sure you want to unlink your ${providerName} account? You will no longer be able to sign in using this provider.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/sso/links/${linkId}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                    headers: {
+                        'X-CSRF-Token': getCSRFToken()
+                    }
+                });
+
+                if (response.ok) {
+                    showToast(`Successfully unlinked ${providerName} account`, 'success');
+                    await loadUserSSOData();
+                } else {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to unlink account');
+                }
+            } catch (error) {
+                console.error('Failed to unlink SSO account:', error);
+                showToast('Failed to unlink account: ' + error.message, 'error');
+            }
+        }
+
+        // Refresh SSO linked accounts
+        async function refreshSSOLinkedAccounts() {
+            const btn = document.getElementById('refreshSSOBtn');
+            if (btn) {
+                btn.classList.add('btn-refreshing');
+                btn.disabled = true;
+            }
+
+            try {
+                await loadUserSSOData();
+                showToast('SSO accounts refreshed', 'success');
+            } catch (error) {
+                showToast('Failed to refresh SSO accounts', 'error');
+            } finally {
+                if (btn) {
+                    btn.classList.remove('btn-refreshing');
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        // Check for SSO link callback on page load
+        function checkSSOLinkCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const ssoLinked = urlParams.get('sso_linked');
+            const ssoError = urlParams.get('sso_error');
+
+            if (ssoLinked === 'true') {
+                showToast('SSO account linked successfully!', 'success');
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } else if (ssoError) {
+                showToast('SSO link failed: ' + decodeURIComponent(ssoError), 'error');
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
         // Initialize
         checkAuth();
+        checkSSOLinkCallback();
     </script>
 
     <!-- Create Token Modal -->
@@ -3740,6 +6744,77 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideRevokeTokenModal()">Cancel</button>
                 <button class="btn btn-danger" onclick="confirmRevokeToken()" id="confirmRevokeBtn">Revoke Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rotate Token Confirmation Modal -->
+    <div id="rotateTokenModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Rotate API Token</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px;">
+                    You are about to rotate the token: <strong id="rotateTokenName" style="color: #1e293b;"></strong>
+                </p>
+                <div class="modal-warning-box" style="margin-top: 12px;">
+                    <strong style="display: block; margin-bottom: 4px;">Warning: This action cannot be undone</strong>
+                    <ul>
+                        <li>A new token will be generated immediately</li>
+                        <li>The old token will be permanently invalidated</li>
+                        <li>Any applications using the old token will stop working</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideRotateTokenModal()">Cancel</button>
+                <button class="btn btn-warning" onclick="confirmRotateToken()" id="confirmRotateBtn">Rotate Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rotated Token Success Modal -->
+    <div id="rotatedTokenModal" class="modal">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px; color: #10b981;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+                <span>Token Rotated Successfully</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px;">Your new API token has been generated:</p>
+                <div class="token-secret-container">
+                    <div class="token-secret-label">NEW API TOKEN</div>
+                    <div class="token-secret-value" id="rotatedTokenValue"></div>
+                </div>
+                <div class="token-warning">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <span class="token-warning-text">
+                        <strong>Copy this token now!</strong> It will not be shown again. The previous token has been permanently invalidated.
+                    </span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="copyRotatedToken()" id="copyRotatedTokenBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    Copy Token
+                </button>
+                <button class="btn btn-secondary" onclick="hideRotatedTokenModal()">Done</button>
             </div>
         </div>
     </div>
@@ -3874,6 +6949,237 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideRegenerateConfirmation()">Cancel</button>
                 <button class="btn btn-danger" onclick="executeRegenerateClaim()" id="confirmRegenerateBtn">Regenerate Code</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MFA Setup Wizard Modal -->
+    <div id="mfaSetupModal" class="modal">
+        <div class="modal-content mfa-wizard-content">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>Enable Two-Factor Authentication</span>
+            </div>
+            <div class="modal-body">
+                <!-- Step indicators -->
+                <div class="mfa-wizard-steps">
+                    <div class="mfa-wizard-step active" id="mfaStep1Indicator">1</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector1"></div>
+                    <div class="mfa-wizard-step" id="mfaStep2Indicator">2</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector2"></div>
+                    <div class="mfa-wizard-step" id="mfaStep3Indicator">3</div>
+                    <div class="mfa-wizard-step-connector" id="mfaConnector3"></div>
+                    <div class="mfa-wizard-step" id="mfaStep4Indicator">4</div>
+                </div>
+
+                <!-- Step 1: Introduction -->
+                <div class="mfa-step-content active" id="mfaStep1">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Protect Your Account</h3>
+                    <p style="color: #64748b; margin-bottom: 16px; line-height: 1.6;">
+                        Two-factor authentication adds an extra layer of security by requiring a code from your authenticator app in addition to your password.
+                    </p>
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                        <h4 style="font-size: 13px; font-weight: 600; color: #166534; margin: 0 0 8px 0;">Before you begin, make sure you have:</h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
+                            <li>An authenticator app installed (Google Authenticator, Authy, 1Password, etc.)</li>
+                            <li>Access to your phone or device with the authenticator app</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Step 2: QR Code -->
+                <div class="mfa-step-content" id="mfaStep2">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Scan QR Code</h3>
+                    <p style="color: #64748b; margin-bottom: 16px; font-size: 14px;">
+                        Open your authenticator app and scan the QR code below, or manually enter the key.
+                    </p>
+                    <div class="mfa-qr-container">
+                        <div class="mfa-qr-code">
+                            <img id="mfaQRCodeImg" src="" alt="MFA QR Code">
+                        </div>
+                    </div>
+                    <div class="mfa-manual-key">
+                        <div class="mfa-manual-key-label">Manual entry key</div>
+                        <div class="mfa-manual-key-value" id="mfaSecretKey">XXXX XXXX XXXX XXXX</div>
+                        <button class="btn btn-secondary" onclick="copyMFASecret()" style="margin-top: 12px; width: 100%;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            Copy Secret Key
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Verify Code -->
+                <div class="mfa-step-content" id="mfaStep3">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Verify Setup</h3>
+                    <p style="color: #64748b; margin-bottom: 8px; font-size: 14px; text-align: center;">
+                        Enter the 6-digit code from your authenticator app to verify the setup.
+                    </p>
+                    <div class="mfa-verify-input">
+                        <input type="text" id="mfaVerifyCode" class="mfa-code-input" maxlength="6" placeholder="000000" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+                    </div>
+                    <p id="mfaVerifyError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+                </div>
+
+                <!-- Step 4: Recovery Codes -->
+                <div class="mfa-step-content" id="mfaStep4">
+                    <h3 style="font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 12px;">Save Recovery Codes</h3>
+                    <div class="mfa-recovery-codes">
+                        <div class="mfa-recovery-codes-warning">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <div class="mfa-recovery-codes-warning-text">
+                                <strong>Save these recovery codes now!</strong>
+                                These codes can be used to access your account if you lose your authenticator device. Each code can only be used once. You will NOT be able to see these codes again.
+                            </div>
+                        </div>
+                        <div class="mfa-recovery-codes-grid" id="mfaRecoveryCodesGrid">
+                            <!-- Recovery codes will be inserted here -->
+                        </div>
+                        <div class="mfa-recovery-actions">
+                            <button class="btn btn-secondary" onclick="downloadRecoveryCodes()" style="flex: 1;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                Download Codes
+                            </button>
+                            <button class="btn btn-secondary" onclick="copyRecoveryCodes()" style="flex: 1;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                                Copy All
+                            </button>
+                        </div>
+                    </div>
+                    <label class="mfa-confirm-checkbox">
+                        <input type="checkbox" id="mfaRecoveryConfirm">
+                        <span class="mfa-confirm-checkbox-text">
+                            I have saved my recovery codes in a secure location. I understand that if I lose access to my authenticator app and recovery codes, I may be locked out of my account.
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideMFASetupModal()" id="mfaSetupCancelBtn">Cancel</button>
+                <button class="btn btn-secondary" onclick="mfaWizardPrevStep()" id="mfaSetupBackBtn" style="display: none;">Back</button>
+                <button class="btn btn-primary" onclick="mfaWizardNextStep()" id="mfaSetupNextBtn">Get Started</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Register Modal -->
+    <div id="webauthnRegisterModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2">
+                    <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
+                    <line x1="8" y1="12" x2="16" y2="12"></line>
+                </svg>
+                <span>Register Security Key</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: #374151; font-size: 14px;">
+                    Add a hardware security key like YubiKey, Touch ID, Windows Hello, or any FIDO2-compatible device.
+                </p>
+                <div class="form-group">
+                    <label>Security Key Name</label>
+                    <input type="text" id="webauthnKeyName" placeholder="e.g., YubiKey, Touch ID" maxlength="50">
+                    <small style="color: #6b7280; font-size: 12px;">A friendly name to identify this key</small>
+                </div>
+                <p id="webauthnRegisterError" style="color: #ef4444; text-align: center; font-size: 13px; display: none; margin-top: 12px;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnRegisterModal()">Cancel</button>
+                <button class="btn btn-success" onclick="registerWebAuthnCredential()" id="webauthnRegisterBtn">Register Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Delete Confirmation Modal -->
+    <div id="webauthnDeleteModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                <span>Delete Security Key?</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-warning-box danger" style="margin-bottom: 16px;">
+                    <strong style="display: block; margin-bottom: 8px;">Warning</strong>
+                    This will permanently remove the security key "<span id="webauthnDeleteName"></span>" from your account. You will no longer be able to use it for authentication.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmWebAuthnDelete()" id="webauthnDeleteConfirmBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebAuthn Rename Modal -->
+    <div id="webauthnRenameModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>Rename Security Key</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>New Name</label>
+                    <input type="text" id="webauthnNewName" maxlength="50">
+                </div>
+                <p id="webauthnRenameError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideWebAuthnRenameModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmWebAuthnRename()" id="webauthnRenameConfirmBtn">Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MFA Disable Confirmation Modal -->
+    <div id="mfaDisableModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                <span>Disable Two-Factor Authentication?</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-warning-box danger" style="margin-bottom: 16px;">
+                    <strong style="display: block; margin-bottom: 8px;">Warning: This will make your account less secure</strong>
+                    Disabling two-factor authentication removes an important security layer from your account. Anyone with your password will be able to access your account.
+                </div>
+                <p style="margin-bottom: 16px; color: #374151; font-size: 14px;">
+                    To confirm, enter the current 6-digit code from your authenticator app:
+                </p>
+                <div class="mfa-verify-input">
+                    <input type="text" id="mfaDisableCode" class="mfa-code-input" maxlength="6" placeholder="000000" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+                </div>
+                <p id="mfaDisableError" style="color: #ef4444; text-align: center; font-size: 13px; display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideMFADisableModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDisableMFA()" id="mfaDisableConfirmBtn">Disable MFA</button>
             </div>
         </div>
     </div>

@@ -1084,3 +1084,114 @@ func TestTryIncrementDownloadWithLimit_NonExistentFile(t *testing.T) {
 		t.Errorf("Expected 'claim code changed' error, got: %v", err)
 	}
 }
+
+// TestGetAllStoredFilenames_Empty tests with empty database
+func TestGetAllStoredFilenames_Empty(t *testing.T) {
+	db := setupTestDB(t)
+
+	filenames, err := GetAllStoredFilenames(db)
+	if err != nil {
+		t.Fatalf("GetAllStoredFilenames() error: %v", err)
+	}
+
+	if len(filenames) != 0 {
+		t.Errorf("Expected 0 filenames, got %d", len(filenames))
+	}
+}
+
+// TestGetAllStoredFilenames_MultipleFiles tests with multiple files in database
+func TestGetAllStoredFilenames_MultipleFiles(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create multiple files
+	files := []struct {
+		claimCode      string
+		storedFilename string
+	}{
+		{"CODE1", "uuid-111.bin"},
+		{"CODE2", "uuid-222.bin"},
+		{"CODE3", "uuid-333.txt"},
+	}
+
+	for _, f := range files {
+		file := &models.File{
+			ClaimCode:        f.claimCode,
+			OriginalFilename: "test.txt",
+			StoredFilename:   f.storedFilename,
+			FileSize:         1024,
+			MimeType:         "text/plain",
+			ExpiresAt:        time.Now().Add(24 * time.Hour),
+			UploaderIP:       "127.0.0.1",
+		}
+		if err := CreateFile(db, file); err != nil {
+			t.Fatalf("CreateFile() error: %v", err)
+		}
+	}
+
+	filenames, err := GetAllStoredFilenames(db)
+	if err != nil {
+		t.Fatalf("GetAllStoredFilenames() error: %v", err)
+	}
+
+	if len(filenames) != 3 {
+		t.Errorf("Expected 3 filenames, got %d", len(filenames))
+	}
+
+	// Verify all expected filenames are present
+	for _, f := range files {
+		if !filenames[f.storedFilename] {
+			t.Errorf("Expected to find %s in filenames map", f.storedFilename)
+		}
+	}
+}
+
+// TestGetAllStoredFilenames_IncludesExpired tests that expired files are included
+func TestGetAllStoredFilenames_IncludesExpired(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create an active file
+	activeFile := &models.File{
+		ClaimCode:        "ACTIVE",
+		OriginalFilename: "active.txt",
+		StoredFilename:   "active-uuid.bin",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "127.0.0.1",
+	}
+	if err := CreateFile(db, activeFile); err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	// Create an expired file
+	expiredFile := &models.File{
+		ClaimCode:        "EXPIRED",
+		OriginalFilename: "expired.txt",
+		StoredFilename:   "expired-uuid.bin",
+		FileSize:         1024,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(-24 * time.Hour), // Already expired
+		UploaderIP:       "127.0.0.1",
+	}
+	if err := CreateFile(db, expiredFile); err != nil {
+		t.Fatalf("CreateFile() error: %v", err)
+	}
+
+	filenames, err := GetAllStoredFilenames(db)
+	if err != nil {
+		t.Fatalf("GetAllStoredFilenames() error: %v", err)
+	}
+
+	// Should include BOTH active and expired files
+	if len(filenames) != 2 {
+		t.Errorf("Expected 2 filenames (including expired), got %d", len(filenames))
+	}
+
+	if !filenames["active-uuid.bin"] {
+		t.Error("Expected to find active file in filenames map")
+	}
+
+	if !filenames["expired-uuid.bin"] {
+		t.Error("Expected to find expired file in filenames map (orphan detection should include expired files)")
+	}
+}

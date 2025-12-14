@@ -24,12 +24,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a \
     -o import-file ./cmd/import-file
 
 # Runtime stage
-FROM alpine:latest
+# Pin Alpine version for reproducible builds
+FROM alpine:3.21
 
 # Install runtime dependencies
 # tzdata is required for Go to properly handle TZ environment variable
 # Without it, time.Now() falls back to UTC regardless of TZ setting
-RUN apk --no-cache add ca-certificates tzdata
+# Use --no-scripts to avoid QEMU emulation issues with apk triggers on ARM64
+# Then manually update CA certificates
+RUN apk --no-cache --no-scripts add ca-certificates tzdata && \
+    update-ca-certificates 2>/dev/null || true
 
 # Create non-root user
 RUN addgroup -g 1000 safeshare && \
