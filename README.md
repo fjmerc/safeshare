@@ -5,7 +5,7 @@
 
 A self-hosted secure file sharing service for temporary transfers with automatic expiration, cryptographically secure claim codes, and enterprise-grade security features.
 
-**Version**: 1.4.1
+**Version**: 1.5.0
 
 ## Screenshots
 
@@ -473,10 +473,12 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 See [docs/CHANGELOG.md](docs/CHANGELOG.md) for complete version history.
 
-**Latest Release (v1.4.0)**:
-- Code quality improvements: reduced cyclomatic complexity in key functions
-- Applied gofmt -s simplifications across 57 Go files
-- All features from previous versions preserved (see CHANGELOG for version reset notice)
+**Latest Release (v1.5.0)**:
+- Single Sign-On (SSO/OIDC) support for enterprise deployments
+- WebAuthn/FIDO2 hardware key and MFA/TOTP authentication
+- PostgreSQL database backend and S3-compatible storage
+- Automated backup scheduler with retention policies
+- Enterprise feature management UI
 
 ---
 
