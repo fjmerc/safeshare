@@ -36,7 +36,7 @@ jobs:
         run: |
           # Test internal packages, excluding infrastructure packages requiring external services:
           # - cmd/*: CLI tools and main() functions (better tested via integration/E2E)
-          # - internal/repository/postgres: Requires PostgreSQL database connection
+          # - internal/repository/postgres: Requires PostgreSQL database connection (tested separately)
           # - internal/storage/s3: Requires AWS S3 or MinIO service
           # These enterprise packages are integration-tested separately.
           go test $(go list ./internal/... | grep -v -E '(repository/postgres|storage/s3)') \
@@ -61,8 +61,64 @@ jobs:
           go test ./internal/handlers ./internal/middleware ./internal/database ./internal/utils -race -timeout=5m || echo "Race detection completed with warnings"
         continue-on-error: true
 
+  # PostgreSQL integration tests run separately to avoid slowing down the main test suite
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: safeshare_test
+          POSTGRES_USER: safeshare_test
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U safeshare_test -d safeshare_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run PostgreSQL integration tests
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: safeshare_test
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: safeshare_test
+          POSTGRES_SSLMODE: disable
+        run: |
+          echo "Running PostgreSQL integration tests..."
+          go test -tags=integration -v ./internal/repository/postgres/... \
+            -cover -coverprofile=coverage-postgres.out -covermode=atomic
+
+      - name: Show PostgreSQL test coverage
+        run: |
+          echo "PostgreSQL repository coverage:"
+          go tool cover -func=coverage-postgres.out | grep -E 'total:|internal/repository/postgres' || true
+
+      - name: Upload PostgreSQL coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-coverage
+          path: coverage-postgres.out
+          retention-days: 7
+
   build-and-push:
-    needs: test
+    needs: [test, test-postgres]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

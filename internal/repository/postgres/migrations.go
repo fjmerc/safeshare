@@ -153,6 +153,16 @@ CREATE TABLE IF NOT EXISTS settings (
     feature_api_tokens BOOLEAN NOT NULL DEFAULT FALSE,
     feature_malware_scan BOOLEAN NOT NULL DEFAULT FALSE,
     feature_backups BOOLEAN NOT NULL DEFAULT FALSE,
+    mfa_required BOOLEAN NOT NULL DEFAULT FALSE,
+    mfa_issuer TEXT NOT NULL DEFAULT 'SafeShare',
+    mfa_totp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    mfa_webauthn_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    mfa_recovery_codes_count INTEGER NOT NULL DEFAULT 10,
+    mfa_challenge_expiry_minutes INTEGER NOT NULL DEFAULT 5,
+    sso_auto_provision BOOLEAN NOT NULL DEFAULT FALSE,
+    sso_default_role TEXT NOT NULL DEFAULT 'user',
+    sso_session_lifetime INTEGER NOT NULL DEFAULT 480,
+    sso_state_expiry_minutes INTEGER NOT NULL DEFAULT 10,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -141,11 +141,56 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 go test -v ./internal/handler
 **Coverage Requirements:**
 - Minimum coverage threshold: **60%** (for `internal/*` packages only)
 - **Coverage scope**: Only `internal/*` packages are measured
-- **Excluded from coverage**:
+- **Excluded from standard coverage**:
   - `cmd/*` packages (CLI tools and main() functions)
-  - `internal/repository/postgres` (requires PostgreSQL database)
+  - `internal/repository/postgres` (tested separately with PostgreSQL container)
   - `internal/storage/s3` (requires AWS S3 or MinIO service)
 - **Rationale**: CLI entry points, main() functions, and enterprise infrastructure packages that require external services are difficult to unit test and are better tested via integration/E2E tests. This follows Go community best practices.
+
+### PostgreSQL Integration Tests
+
+The `internal/repository/postgres` package has comprehensive integration tests that require a live PostgreSQL database.
+
+**Running PostgreSQL Integration Tests Locally:**
+```bash
+# Use the test script (recommended)
+./scripts/test-postgres.sh
+
+# Options:
+./scripts/test-postgres.sh -v    # Verbose output
+./scripts/test-postgres.sh -k    # Keep containers running
+./scripts/test-postgres.sh -c    # Generate HTML coverage report
+```
+
+**Manual Docker Compose Method:**
+```bash
+# Start PostgreSQL container
+docker-compose -f docker-compose.postgres-test.yml up -d --wait
+
+# Run tests
+docker run --rm --network host -v "$PWD":/app -w /app \
+  -e POSTGRES_HOST=localhost \
+  -e POSTGRES_PORT=5433 \
+  -e POSTGRES_USER=safeshare_test \
+  -e POSTGRES_PASSWORD=test_password \
+  -e POSTGRES_DB=safeshare_test \
+  -e POSTGRES_SSLMODE=disable \
+  golang:1.24 go test -tags=integration -v ./internal/repository/postgres/...
+
+# Cleanup
+docker-compose -f docker-compose.postgres-test.yml down -v
+```
+
+**CI/CD Integration:**
+- PostgreSQL tests run in a separate GitHub Actions job (`test-postgres`)
+- Uses PostgreSQL 16 service container
+- Tests run in parallel with main test suite
+- Coverage artifacts are uploaded for review
+
+**Test Coverage:**
+- All 14 repository implementations are tested
+- Tests cover CRUD operations, edge cases, and error conditions
+- Uses build tag `integration` to separate from unit tests
 
 **Test-Driven Development Workflow:**
 1. Make code changes
