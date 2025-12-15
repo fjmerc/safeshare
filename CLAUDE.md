@@ -75,6 +75,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Plan** - Implementation planning, architecture design
 - **Explore** - Codebase exploration, finding files/patterns
 
+### Subagent Trigger Matrix - WHEN TO USE EACH AGENT
+
+**CRITICAL**: Proactively invoke agents based on the activity type. Don't wait for the user to ask.
+
+| Activity/Trigger | Agent to Invoke | Priority |
+|------------------|-----------------|----------|
+| Writing Go code with goroutines/channels/mutexes | **golang-pro** | HIGH |
+| Writing performance-sensitive Go code | **golang-pro** | HIGH |
+| SDK development (Go, Python, TypeScript) | **golang-pro** | HIGH |
+| Modifying database queries or schema | **database-optimizer** | HIGH |
+| SQLite connection issues, BUSY errors, transactions | **database-optimizer** | HIGH |
+| PostgreSQL queries or migration | **sql-pro** | MEDIUM |
+| After completing significant code changes | **code-reviewer** → **bug-hunter** (in order) | HIGH |
+| Complex debugging with unclear root cause | **debugger** | MEDIUM |
+| Cross-domain problems (DB + API + UI + CDN) | **integration-consultant** | HIGH |
+| API changes or new user-facing features | **documentation-expert** | MEDIUM |
+| Cyclomatic complexity > 10 detected | **refactoring-specialist** | LOW |
+| Docker/CI/CD configuration changes | **platform-engineer** | LOW |
+| Frontend CSS/HTML/JS changes | **ui-ux-designer** | MEDIUM |
+| Security-critical code (auth, encryption, webhooks) | **bug-hunter** | HIGH |
+| Running test suite | **app-testing** | HIGH |
+
+### Development Phase Workflow - MANDATORY ORDER
+
+**Follow this workflow for all significant code changes:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PHASE 1: PLANNING (if needed)                                   │
+│ ├── Plan agent (architecture design, implementation strategy)   │
+│ └── integration-consultant (cross-domain problems only)         │
+├─────────────────────────────────────────────────────────────────┤
+│ PHASE 2: IMPLEMENTATION                                         │
+│ ├── golang-pro (Go code: concurrency, performance, SDK)         │
+│ ├── database-optimizer (DB queries, schema, SQLite issues)      │
+│ ├── sql-pro (complex SQL, PostgreSQL)                           │
+│ ├── platform-engineer (Docker, CI/CD)                           │
+│ └── ui-ux-designer (frontend CSS/HTML/JS)                       │
+├─────────────────────────────────────────────────────────────────┤
+│ PHASE 3: QUALITY REVIEW (MANDATORY - IN THIS ORDER)             │
+│ 1. code-reviewer (quality, patterns, maintainability)           │
+│ 2. bug-hunter (security vulnerabilities) ← AFTER code-reviewer  │
+│ 3. refactoring-specialist (if complexity increased)             │
+├─────────────────────────────────────────────────────────────────┤
+│ PHASE 4: TESTING                                                │
+│ ├── app-testing (run test suite)                                │
+│ └── debugger (complex failure investigation)                    │
+├─────────────────────────────────────────────────────────────────┤
+│ PHASE 5: DOCUMENTATION                                          │
+│ └── documentation-expert (CHANGELOG, API docs, user docs)       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Rules:**
+1. **code-reviewer BEFORE bug-hunter** - Quality review catches design issues; security audit catches vulnerabilities
+2. **golang-pro for ANY Go concurrency** - Prevents race conditions, goroutine leaks
+3. **database-optimizer for ANY SQLite changes** - Prevents BUSY errors, connection issues
+4. **documentation-expert for API changes** - Keeps docs in sync with code
+
 ### Security Audit & Testing Procedures - REQUIRED FOR ALL CODE CHANGES
 
 **CRITICAL**: This project has no local Go installation. All tests MUST run in Docker using the golang:1.24 image.

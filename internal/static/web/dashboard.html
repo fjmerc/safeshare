@@ -598,6 +598,20 @@
             transform: translateY(-1px);
         }
 
+        .btn-icon.btn-secondary {
+            color: #6b7280;
+            border-color: #e2e8f0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .btn-icon.btn-secondary:hover {
+            background: #f9fafb;
+            border-color: #9ca3af;
+            color: #374151;
+            transform: translateY(-1px);
+        }
+
         .btn-icon.btn-danger {
             color: #ef4444;
             border-color: #e2e8f0;
@@ -1577,6 +1591,18 @@
             background: #1e3a5f;
             border-color: #3b82f6;
             color: #93c5fd;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-secondary {
+            color: #9ca3af;
+            border-color: #4b5563;
+            background: transparent;
+        }
+
+        [data-theme="dark"] .btn-icon.btn-secondary:hover {
+            background: #374151;
+            border-color: #6b7280;
+            color: #e5e7eb;
         }
 
         [data-theme="dark"] .btn-icon.btn-danger {
@@ -4535,7 +4561,7 @@
                         <td>${lastUsed}</td>
                         <td style="text-align: center;">
                             <div style="display: flex; gap: 6px; justify-content: center;">
-                                <button class="btn-icon btn-warning" onclick="rotateToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Rotate Token (Generate New)">
+                                <button class="btn-icon btn-secondary" onclick="rotateToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Rotate Token (Generate New)">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
                                     </svg>
