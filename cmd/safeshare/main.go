@@ -204,14 +204,13 @@ func run() error {
 	handlers.SetWebhookDispatcher(webhookDispatcher)
 
 	// Initialize WebAuthn service if MFA + WebAuthn is enabled
-	var webauthnSvc *webauthn.Service
 	if cfg.MFA != nil && cfg.MFA.Enabled && cfg.MFA.WebAuthnEnabled {
-		var err error
-		webauthnSvc, err = webauthn.NewService(cfg)
+		webauthnSvc, err := webauthn.NewService(cfg)
 		if err != nil {
 			slog.Error("failed to initialize WebAuthn service", "error", err)
 			// Don't fail startup - WebAuthn is optional, TOTP can still work
 		} else {
+			handlers.SetWebAuthnService(webauthnSvc)
 			slog.Info("WebAuthn service initialized",
 				"rpid", webauthnSvc.GetRPID(),
 				"origins", webauthnSvc.GetRPOrigins(),
@@ -463,19 +462,19 @@ func run() error {
 
 	// WebAuthn MFA routes (credential management - requires user auth + CSRF)
 	mux.HandleFunc("/api/user/mfa/webauthn/register/begin", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterBeginHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterBeginHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/mfa/webauthn/register/finish", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterFinishHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnRegisterFinishHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/mfa/webauthn/auth/begin", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthBeginHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthBeginHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/mfa/webauthn/auth/finish", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthFinishHandler(repos, cfg, webauthnSvc)))).ServeHTTP(w, r)
+		userAuth(mfaCSRF(http.HandlerFunc(handlers.MFAWebAuthnAuthFinishHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/mfa/webauthn/credentials", func(w http.ResponseWriter, r *http.Request) {
@@ -495,11 +494,11 @@ func run() error {
 
 	// WebAuthn login flow routes (no auth required - uses challenge token)
 	mux.HandleFunc("/api/auth/mfa/webauthn/begin", func(w http.ResponseWriter, r *http.Request) {
-		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg, webauthnSvc))).ServeHTTP(w, r)
+		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/auth/mfa/webauthn/finish", func(w http.ResponseWriter, r *http.Request) {
-		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg, webauthnSvc))).ServeHTTP(w, r)
+		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg))).ServeHTTP(w, r)
 	})
 
 	// SSO authentication routes

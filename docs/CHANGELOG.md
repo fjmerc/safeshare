@@ -33,6 +33,14 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **WebAuthn Runtime Reinitialization**: WebAuthn hardware key registration now works immediately after enabling MFA via the Enterprise Features admin tab, without requiring a server restart
+
+---
+
 ## [1.5.0] - 2025-12-14
 
 ### Added

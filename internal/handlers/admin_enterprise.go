@@ -7,6 +7,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/webauthn"
 )
 
 // EnterpriseConfigResponse represents the combined enterprise configuration.
@@ -205,6 +206,21 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 
 		// Sync feature flag with enabled state
 		cfg.Features.SetMFAEnabled(currentCfg.Enabled)
+
+		// Reinitialize WebAuthn service if MFA + WebAuthn is now enabled
+		if currentCfg.Enabled && currentCfg.WebAuthnEnabled {
+			newSvc, err := webauthn.NewService(cfg)
+			if err != nil {
+				slog.Error("failed to reinitialize WebAuthn service", "error", err, "ip", clientIP)
+				// Continue anyway - log warning but don't fail the MFA config update
+			} else {
+				SetWebAuthnService(newSvc)
+				slog.Info("WebAuthn service reinitialized",
+					"rpid", newSvc.GetRPID(),
+					"origins", newSvc.GetRPOrigins(),
+				)
+			}
+		}
 
 		slog.Info("MFA configuration updated",
 			"ip", clientIP,
