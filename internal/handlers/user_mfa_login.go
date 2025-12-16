@@ -774,7 +774,7 @@ type MFAWebAuthnLoginFinishRequest struct {
 
 // MFAWebAuthnLoginBeginHandler handles POST /api/auth/mfa/webauthn/begin
 // Starts the WebAuthn authentication ceremony during login
-func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -816,8 +816,17 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("WebAuthn service not initialized for login",
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 
@@ -945,7 +954,7 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 
 // MFAWebAuthnLoginFinishHandler handles POST /api/auth/mfa/webauthn/finish
 // Completes the WebAuthn authentication ceremony during login
-func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Apply timing attack protection
 		startTime := time.Now()
@@ -996,8 +1005,17 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("WebAuthn service not initialized for login finish",
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 
