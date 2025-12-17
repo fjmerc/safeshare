@@ -32,6 +32,26 @@ const (
 	maxRecoveryCodes   = 20   // Maximum number of recovery codes per user
 )
 
+// parseTimestampUTC parses a timestamp string trying multiple formats.
+// SQLite may return timestamps in different formats depending on how they were stored
+// and how the Go driver handles them.
+func parseTimestampUTC(s string) (time.Time, error) {
+	// Try common SQLite timestamp formats
+	formats := []string{
+		"2006-01-02 15:04:05",    // Standard SQLite format
+		time.RFC3339,             // ISO 8601 / RFC 3339 (2006-01-02T15:04:05Z)
+		"2006-01-02T15:04:05Z",   // Explicit UTC variant
+		"2006-01-02T15:04:05",    // Without timezone
+	}
+
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, s, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", s)
+}
+
 // ===========================================================================
 // TOTP Operations
 // ===========================================================================
@@ -766,9 +786,14 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 		return nil, fmt.Errorf("failed to get challenge: %w", err)
 	}
 
-	// Parse times as UTC (stored in UTC format)
-	ch.ExpiresAt, _ = time.ParseInLocation("2006-01-02 15:04:05", expiresAt, time.UTC)
-	ch.CreatedAt, _ = time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.UTC)
+	// Parse times as UTC using multi-format parser
+	var parseErr error
+	ch.ExpiresAt, parseErr = parseTimestampUTC(expiresAt)
+	if parseErr != nil {
+		slog.Error("failed to parse challenge expires_at", "raw_value", expiresAt, "error", parseErr)
+		return nil, fmt.Errorf("failed to parse challenge timestamp: %w", parseErr)
+	}
+	ch.CreatedAt, _ = parseTimestampUTC(createdAt)
 
 	// Debug logging to trace timezone issue (temporary - remove after fixing)
 	slog.Info("challenge lookup result",
