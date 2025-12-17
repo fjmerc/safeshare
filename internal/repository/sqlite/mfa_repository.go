@@ -708,11 +708,11 @@ func (r *MFARepository) CreateChallenge(ctx context.Context, userID int64, chall
 		return nil, fmt.Errorf("failed to delete existing challenge: %w", err)
 	}
 
-	// Insert new challenge
+	// Insert new challenge (store times in UTC for consistency with SQLite CURRENT_TIMESTAMP)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO mfa_challenges (user_id, challenge, challenge_type, expires_at, created_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		userID, challenge, challengeType, expiresAt.Format("2006-01-02 15:04:05"),
+		userID, challenge, challengeType, expiresAt.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create challenge: %w", err)
@@ -765,11 +765,12 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 		return nil, fmt.Errorf("failed to get challenge: %w", err)
 	}
 
-	ch.ExpiresAt, _ = time.Parse("2006-01-02 15:04:05", expiresAt)
-	ch.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	// Parse times as UTC (stored in UTC format)
+	ch.ExpiresAt, _ = time.ParseInLocation("2006-01-02 15:04:05", expiresAt, time.UTC)
+	ch.CreatedAt, _ = time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.UTC)
 
-	// Check if expired
-	if time.Now().After(ch.ExpiresAt) {
+	// Check if expired (compare in UTC)
+	if time.Now().UTC().After(ch.ExpiresAt) {
 		// Clean up expired challenge (best-effort, error not actionable)
 		_, _ = r.db.ExecContext(ctx, "DELETE FROM mfa_challenges WHERE id = ?", ch.ID)
 		return nil, repository.ErrChallengeExpired
