@@ -5727,7 +5727,8 @@
                 btn.textContent = 'Completing registration...';
 
                 // Step 3: Send credential to server to complete registration
-                const attestationResponse = {
+                // Build the credential object in the format expected by go-webauthn
+                const credentialData = {
                     id: credential.id,
                     rawId: base64URLEncode(credential.rawId),
                     type: credential.type,
@@ -5739,8 +5740,14 @@
 
                 // Include transports if available
                 if (credential.response.getTransports) {
-                    attestationResponse.response.transports = credential.response.getTransports();
+                    credentialData.response.transports = credential.response.getTransports();
                 }
+
+                // Wrap in the request structure expected by backend
+                const finishRequest = {
+                    name: keyName,
+                    response: credentialData
+                };
 
                 const finishResponse = await fetch('/api/user/mfa/webauthn/register/finish', {
                     method: 'POST',
@@ -5749,7 +5756,7 @@
                         'Content-Type': 'application/json',
                         'X-CSRF-Token': csrfToken
                     },
-                    body: JSON.stringify(attestationResponse)
+                    body: JSON.stringify(finishRequest)
                 });
 
                 if (!finishResponse.ok) {
