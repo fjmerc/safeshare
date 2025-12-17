@@ -38,6 +38,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - **WebAuthn Runtime Reinitialization**: WebAuthn hardware key registration now works immediately after enabling MFA via the Enterprise Features admin tab, without requiring a server restart
+- **MFA Challenge Timezone Handling**: Fixed timezone inconsistency in MFA challenge storage/retrieval. Challenge expiry times are now consistently stored and compared in UTC, preventing potential issues in non-UTC timezone environments
 
 ---
 
