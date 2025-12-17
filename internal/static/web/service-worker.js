@@ -1,7 +1,7 @@
 // SafeShare Service Worker
 // Enables PWA functionality with offline support for static assets
 
-const CACHE_VERSION = 'safeshare-v33';
+const CACHE_VERSION = 'safeshare-v34';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 

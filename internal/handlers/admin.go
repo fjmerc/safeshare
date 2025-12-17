@@ -111,6 +111,76 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 			return
 		}
 
+		// Check MFA for database admin users (not env-based admin credentials)
+		if authenticatedUser != nil {
+			mfaStatus, err := repos.MFA.GetMFAStatus(ctx, authenticatedUser.ID)
+			if err == nil && mfaStatus != nil {
+				var availableMethods []string
+				if mfaStatus.TOTPEnabled {
+					availableMethods = append(availableMethods, "totp")
+				}
+				if mfaStatus.WebAuthnEnabled {
+					availableMethods = append(availableMethods, "webauthn")
+				}
+
+				// If MFA is enabled, require verification before creating session
+				if len(availableMethods) > 0 {
+					availableMethods = append(availableMethods, "recovery")
+
+					// Get MFA challenge expiry from config
+					expiryMinutes := mfaChallengeExpiryMinutes
+					if cfg.MFA.ChallengeExpiryMinutes > 0 {
+						expiryMinutes = cfg.MFA.ChallengeExpiryMinutes
+					}
+
+					// Create MFA login challenge
+					challengeID, err := mfaLoginStore.Create(authenticatedUser.ID, clientIP, userAgent, expiryMinutes)
+					if err != nil {
+						if err == ErrTooManyChallenges {
+							slog.Warn("admin MFA challenge creation rate limited",
+								"user_id", authenticatedUser.ID,
+								"ip", clientIP,
+							)
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusTooManyRequests)
+							json.NewEncoder(w).Encode(map[string]string{
+								"error": "Too many login attempts. Please try again later.",
+							})
+							return
+						}
+						slog.Error("failed to create admin MFA challenge", "error", err, "user_id", authenticatedUser.ID)
+						http.Error(w, "Internal server error", http.StatusInternalServerError)
+						return
+					}
+
+					slog.Info("MFA challenge created for admin login",
+						"username", username,
+						"user_id", authenticatedUser.ID,
+						"available_methods", availableMethods,
+						"ip", clientIP,
+					)
+
+					// Determine primary challenge type
+					challengeType := "totp"
+					if len(availableMethods) > 0 && availableMethods[0] == "webauthn" {
+						challengeType = "webauthn"
+					}
+
+					// Return MFA required response
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"mfa_required":      true,
+						"challenge_id":      challengeID,
+						"challenge_type":    challengeType,
+						"available_methods": availableMethods,
+						"expires_in":        expiryMinutes * 60,
+						"message":           "Please verify your identity to complete login",
+					})
+					return
+				}
+			}
+		}
+
 		// Generate session token
 		sessionToken, err := utils.GenerateSessionToken()
 		if err != nil {
