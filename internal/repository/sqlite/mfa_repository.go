@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -768,6 +769,15 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 	// Parse times as UTC (stored in UTC format)
 	ch.ExpiresAt, _ = time.ParseInLocation("2006-01-02 15:04:05", expiresAt, time.UTC)
 	ch.CreatedAt, _ = time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.UTC)
+
+	// Debug logging to trace timezone issue (temporary - remove after fixing)
+	slog.Info("challenge lookup result",
+		"challenge_id", ch.ID,
+		"raw_expires_at_string", expiresAt,
+		"parsed_expires_at", ch.ExpiresAt.Format(time.RFC3339),
+		"current_utc", time.Now().UTC().Format(time.RFC3339),
+		"is_expired", time.Now().UTC().After(ch.ExpiresAt),
+	)
 
 	// Check if expired (compare in UTC)
 	if time.Now().UTC().After(ch.ExpiresAt) {
