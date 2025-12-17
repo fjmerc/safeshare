@@ -517,6 +517,9 @@
                 </form>
 
                 <div class="mfa-methods" id="mfaMethods">
+                    <button type="button" class="mfa-method-toggle" id="useWebAuthnBtn" style="display: none; margin-bottom: 8px;">
+                        🔑 Use security key instead
+                    </button>
                     <button type="button" class="mfa-method-toggle" id="useRecoveryBtn">
                         Use a recovery code instead
                     </button>
@@ -548,6 +551,9 @@
                 </form>
 
                 <div class="mfa-methods">
+                    <button type="button" class="mfa-method-toggle" id="useWebAuthnFromRecoveryBtn" style="display: none; margin-bottom: 8px;">
+                        🔑 Use security key instead
+                    </button>
                     <button type="button" class="mfa-method-toggle" id="useTotpBtn">
                         Use authenticator app instead
                     </button>
@@ -641,6 +647,29 @@
         });
 
         // ============================================
+        // WebAuthn Helper Functions
+        // ============================================
+        function base64URLEncode(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        function base64URLDecode(str) {
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (str.length % 4) str += '=';
+            const binary = atob(str);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // ============================================
         // MFA Verification Logic
         // ============================================
         let mfaChallengeId = null;
@@ -677,6 +706,17 @@
                 mfaMethods.style.display = 'block';
             } else {
                 mfaMethods.style.display = 'none';
+            }
+
+            // Show/hide WebAuthn option based on available methods
+            const useWebAuthnBtn = document.getElementById('useWebAuthnBtn');
+            const useWebAuthnFromRecoveryBtn = document.getElementById('useWebAuthnFromRecoveryBtn');
+            if (mfaAvailableMethods.includes('webauthn')) {
+                useWebAuthnBtn.style.display = 'block';
+                useWebAuthnFromRecoveryBtn.style.display = 'block';
+            } else {
+                useWebAuthnBtn.style.display = 'none';
+                useWebAuthnFromRecoveryBtn.style.display = 'none';
             }
 
             // Reset forms
@@ -817,6 +857,125 @@
                 verifyBtn.textContent = originalText;
             }
         }
+
+        // WebAuthn authentication function
+        async function authenticateWithWebAuthn() {
+            // Check if WebAuthn is supported
+            if (!window.PublicKeyCredential) {
+                showToast('Your browser does not support security keys', 'error');
+                return;
+            }
+
+            const webauthnBtn = document.getElementById('useWebAuthnBtn');
+            const originalText = webauthnBtn.textContent;
+            webauthnBtn.disabled = true;
+            webauthnBtn.textContent = 'Authenticating...';
+
+            try {
+                // Step 1: Begin WebAuthn authentication
+                const beginResponse = await fetch('/api/auth/mfa/webauthn/begin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        challenge_id: mfaChallengeId
+                    }),
+                    credentials: 'include',
+                });
+
+                if (!beginResponse.ok) {
+                    const errorData = await beginResponse.json();
+                    throw new Error(errorData.error || 'Failed to start authentication');
+                }
+
+                const beginData = await beginResponse.json();
+                const options = beginData.options;
+
+                // Convert challenge and allowCredentials from base64url
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+                if (options.publicKey.allowCredentials) {
+                    options.publicKey.allowCredentials = options.publicKey.allowCredentials.map(cred => ({
+                        ...cred,
+                        id: base64URLDecode(cred.id)
+                    }));
+                }
+
+                // Step 2: Get credential from authenticator
+                webauthnBtn.textContent = 'Touch your security key...';
+                const credential = await navigator.credentials.get(options);
+
+                // Step 3: Finish WebAuthn authentication
+                const credentialData = {
+                    id: credential.id,
+                    rawId: base64URLEncode(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        authenticatorData: base64URLEncode(credential.response.authenticatorData),
+                        clientDataJSON: base64URLEncode(credential.response.clientDataJSON),
+                        signature: base64URLEncode(credential.response.signature)
+                    }
+                };
+
+                // Include userHandle if present
+                if (credential.response.userHandle) {
+                    credentialData.response.userHandle = base64URLEncode(credential.response.userHandle);
+                }
+
+                const finishResponse = await fetch('/api/auth/mfa/webauthn/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        challenge_id: mfaChallengeId,
+                        credential: credentialData
+                    }),
+                    credentials: 'include',
+                });
+
+                const finishData = await finishResponse.json();
+
+                if (finishResponse.ok) {
+                    // Clear timer
+                    if (mfaTimerInterval) {
+                        clearInterval(mfaTimerInterval);
+                    }
+
+                    showToast('Authentication successful! Redirecting...', 'success');
+
+                    // Check if password change is required
+                    if (finishData.require_password_change) {
+                        setTimeout(() => {
+                            window.location.href = '/dashboard?change_password=true';
+                        }, 1000);
+                    } else {
+                        setTimeout(() => {
+                            window.location.href = '/dashboard';
+                        }, 1000);
+                    }
+                } else {
+                    throw new Error(finishData.error || 'Authentication failed');
+                }
+
+            } catch (error) {
+                console.error('WebAuthn authentication error:', error);
+                
+                // Handle user cancellation gracefully
+                if (error.name === 'NotAllowedError') {
+                    showToast('Authentication cancelled or timed out', 'error');
+                } else {
+                    showToast(error.message || 'Authentication failed. Please try again.', 'error');
+                }
+                
+                webauthnBtn.disabled = false;
+                webauthnBtn.textContent = originalText;
+            }
+        }
+
+        // WebAuthn button event handlers
+        document.getElementById('useWebAuthnBtn').addEventListener('click', authenticateWithWebAuthn);
+        document.getElementById('useWebAuthnFromRecoveryBtn').addEventListener('click', authenticateWithWebAuthn);
 
         // TOTP form submission
         document.getElementById('mfaTotpForm').addEventListener('submit', async (e) => {
