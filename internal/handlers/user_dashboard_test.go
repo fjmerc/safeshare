@@ -1563,6 +1563,61 @@ func TestUserRegenerateClaimCodeHandler_FileNotFound(t *testing.T) {
 	}
 }
 
+// ========== Path Extraction Helper Tests ==========
+
+// TestExtractClaimCodeFromPath tests the claim code extraction helper
+func TestExtractClaimCodeFromPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		prefix   string
+		expected string
+	}{
+		{"valid path", "/api/user/files/abc123", "/api/user/files/", "abc123"},
+		{"trailing slash", "/api/user/files/abc123/", "/api/user/files/", "abc123"},
+		{"wrong prefix", "/api/admin/files/abc123", "/api/user/files/", ""},
+		{"empty path", "", "/api/user/files/", ""},
+		{"prefix only", "/api/user/files/", "/api/user/files/", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractClaimCodeFromPath(tt.path, tt.prefix)
+			if result != tt.expected {
+				t.Errorf("extractClaimCodeFromPath(%q, %q) = %q, want %q",
+					tt.path, tt.prefix, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExtractClaimCodeFromPathWithSuffix tests the claim code extraction with suffix helper
+func TestExtractClaimCodeFromPathWithSuffix(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		prefix   string
+		suffix   string
+		expected string
+	}{
+		{"valid path", "/api/user/files/abc123/rename", "/api/user/files/", "/rename", "abc123"},
+		{"wrong prefix", "/api/admin/files/abc123/rename", "/api/user/files/", "/rename", ""},
+		{"wrong suffix", "/api/user/files/abc123/delete", "/api/user/files/", "/rename", ""},
+		{"empty path", "", "/api/user/files/", "/rename", ""},
+		{"no claim code", "/api/user/files//rename", "/api/user/files/", "/rename", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractClaimCodeFromPathWithSuffix(tt.path, tt.prefix, tt.suffix)
+			if result != tt.expected {
+				t.Errorf("extractClaimCodeFromPathWithSuffix(%q, %q, %q) = %q, want %q",
+					tt.path, tt.prefix, tt.suffix, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestUserRegenerateClaimCodeHandler_NotOwner tests users can't regenerate claim codes for files they don't own
 func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 	db := testutil.SetupTestDB(t)

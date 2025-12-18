@@ -7,7 +7,6 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/repository"
-	"github.com/fjmerc/safeshare/internal/webauthn"
 )
 
 // EnterpriseConfigResponse represents the combined enterprise configuration.
@@ -207,19 +206,11 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Sync feature flag with enabled state
 		cfg.Features.SetMFAEnabled(currentCfg.Enabled)
 
-		// Reinitialize WebAuthn service if MFA + WebAuthn is now enabled
-		if currentCfg.Enabled && currentCfg.WebAuthnEnabled {
-			newSvc, err := webauthn.NewService(cfg)
-			if err != nil {
-				slog.Error("failed to reinitialize WebAuthn service", "error", err, "ip", clientIP)
-				// Continue anyway - log warning but don't fail the MFA config update
-			} else {
-				SetWebAuthnService(newSvc)
-				slog.Info("WebAuthn service reinitialized",
-					"rpid", newSvc.GetRPID(),
-					"origins", newSvc.GetRPOrigins(),
-				)
-			}
+		// Initialize or clear WebAuthn service based on current MFA config
+		// Uses atomic config snapshot to avoid TOCTOU race conditions
+		var warnings []string
+		if warning := InitializeOrClearWebAuthn(cfg, clientIP); warning != "" {
+			warnings = append(warnings, warning)
 		}
 
 		slog.Info("MFA configuration updated",
@@ -231,10 +222,10 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 			"webauthn_enabled", currentCfg.WebAuthnEnabled,
 		)
 
-		// Return updated config
+		// Return updated config with any warnings
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		response := map[string]interface{}{
 			"success": true,
 			"mfa": MFAConfigResponse{
 				Enabled:                currentCfg.Enabled,
@@ -245,7 +236,11 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 				RecoveryCodesCount:     currentCfg.RecoveryCodesCount,
 				ChallengeExpiryMinutes: currentCfg.ChallengeExpiryMinutes,
 			},
-		})
+		}
+		if len(warnings) > 0 {
+			response["warnings"] = warnings
+		}
+		json.NewEncoder(w).Encode(response)
 	}
 }
 

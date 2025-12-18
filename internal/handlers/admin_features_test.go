@@ -325,6 +325,168 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+func TestAdminUpdateFeatureFlagsHandler_EnableMFA_InitializesWebAuthn(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	// Set PublicURL for WebAuthn
+	cfg.PublicURL = "https://test.example.com"
+
+	// Ensure WebAuthn service is nil initially
+	SetWebAuthnService(nil)
+
+	handler := AdminUpdateFeatureFlagsHandler(repos, cfg)
+
+	// Enable MFA (which should also initialize WebAuthn)
+	updateReq := map[string]interface{}{
+		"enable_mfa": true,
+	}
+	body, _ := json.Marshal(updateReq)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d, body = %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Verify MFA is enabled in config
+	mfaCfg := cfg.GetMFAConfig()
+	if mfaCfg == nil || !mfaCfg.Enabled {
+		t.Error("MFA should be enabled after update")
+	}
+
+	// Verify WebAuthn service was initialized
+	if GetWebAuthnService() == nil {
+		t.Error("WebAuthn service should be initialized when MFA is enabled")
+	}
+
+	// Parse response and check for success
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if success, ok := response["success"].(bool); !ok || !success {
+		t.Error("response should contain success: true")
+	}
+
+	// Cleanup
+	SetWebAuthnService(nil)
+}
+
+func TestAdminUpdateFeatureFlagsHandler_DisableMFA_ClearsWebAuthn(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	// Set PublicURL for WebAuthn
+	cfg.PublicURL = "https://test.example.com"
+
+	handler := AdminUpdateFeatureFlagsHandler(repos, cfg)
+
+	// First enable MFA
+	enableReq := map[string]interface{}{
+		"enable_mfa": true,
+	}
+	body, _ := json.Marshal(enableReq)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("failed to enable MFA: status = %d", rr.Code)
+	}
+
+	// Verify WebAuthn service is initialized
+	if GetWebAuthnService() == nil {
+		t.Fatal("WebAuthn service should be initialized")
+	}
+
+	// Now disable MFA
+	disableReq := map[string]interface{}{
+		"enable_mfa": false,
+	}
+	body, _ = json.Marshal(disableReq)
+	req = httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify MFA is disabled in config
+	mfaCfg := cfg.GetMFAConfig()
+	if mfaCfg != nil && mfaCfg.Enabled {
+		t.Error("MFA should be disabled after update")
+	}
+
+	// Verify WebAuthn service was cleared
+	if GetWebAuthnService() != nil {
+		t.Error("WebAuthn service should be cleared when MFA is disabled")
+	}
+}
+
+func TestAdminUpdateFeatureFlagsHandler_MFA_ResponseIncludesWarnings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	// Set valid PublicURL so there's no warning
+	cfg.PublicURL = "https://test.example.com"
+
+	// Ensure WebAuthn service is nil initially
+	SetWebAuthnService(nil)
+
+	handler := AdminUpdateFeatureFlagsHandler(repos, cfg)
+
+	// Enable MFA
+	updateReq := map[string]interface{}{
+		"enable_mfa": true,
+	}
+	body, _ := json.Marshal(updateReq)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Parse response
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// With valid config, there should be no warnings
+	if warnings, exists := response["warnings"]; exists {
+		t.Errorf("Expected no warnings with valid config, got: %v", warnings)
+	}
+
+	// Cleanup
+	SetWebAuthnService(nil)
+}
+
 func TestAdminGetFeatureFlagsHandler_DefaultFlags(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)

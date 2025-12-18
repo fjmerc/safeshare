@@ -139,8 +139,15 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 
 		// Sync MFA and SSO enabled state with their config structs
 		// This ensures existing code that checks cfg.MFA.Enabled continues to work
+		var warnings []string
 		if req.EnableMFA != nil {
 			cfg.SetMFAEnabled(currentFlags.EnableMFA)
+
+			// Initialize or clear WebAuthn service based on current MFA config
+			// Uses atomic config snapshot to avoid TOCTOU race conditions
+			if warning := InitializeOrClearWebAuthn(cfg, clientIP); warning != "" {
+				warnings = append(warnings, warning)
+			}
 		}
 		if req.EnableSSO != nil {
 			cfg.SetSSOEnabled(currentFlags.EnableSSO)
@@ -158,12 +165,16 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 			"backups", currentFlags.EnableBackups,
 		)
 
-		// Return updated flags
+		// Return updated flags with any warnings
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		response := map[string]interface{}{
 			"success":       true,
 			"feature_flags": cfg.Features.GetAll(),
-		})
+		}
+		if len(warnings) > 0 {
+			response["warnings"] = warnings
+		}
+		json.NewEncoder(w).Encode(response)
 	}
 }
