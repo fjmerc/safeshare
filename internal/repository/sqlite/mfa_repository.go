@@ -273,11 +273,11 @@ func (r *MFARepository) GetUserMFA(ctx context.Context, userID int64) (*reposito
 
 	mfa.TOTPSecret = secret.String
 	if verifiedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", verifiedAt.String)
+		t, _ := parseTimestampUTC(verifiedAt.String)
 		mfa.TOTPVerifiedAt = &t
 	}
-	mfa.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	mfa.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	mfa.CreatedAt, _ = parseTimestampUTC(createdAt)
+	mfa.UpdatedAt, _ = parseTimestampUTC(updatedAt)
 
 	return &mfa, nil
 }
@@ -508,9 +508,9 @@ func (r *MFARepository) GetWebAuthnCredentials(ctx context.Context, userID int64
 		if transports.Valid && transports.String != "" {
 			cred.Transports = strings.Split(transports.String, ",")
 		}
-		cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 		if lastUsedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+			t, _ := parseTimestampUTC(lastUsedAt.String)
 			cred.LastUsedAt = &t
 		}
 
@@ -559,9 +559,9 @@ func (r *MFARepository) GetWebAuthnCredentialByID(ctx context.Context, credentia
 	if transports.Valid && transports.String != "" {
 		cred.Transports = strings.Split(transports.String, ",")
 	}
-	cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 	if lastUsedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+		t, _ := parseTimestampUTC(lastUsedAt.String)
 		cred.LastUsedAt = &t
 	}
 
@@ -603,9 +603,9 @@ func (r *MFARepository) GetWebAuthnCredentialByCredentialID(ctx context.Context,
 	if transports.Valid && transports.String != "" {
 		cred.Transports = strings.Split(transports.String, ",")
 	}
-	cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 	if lastUsedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+		t, _ := parseTimestampUTC(lastUsedAt.String)
 		cred.LastUsedAt = &t
 	}
 
