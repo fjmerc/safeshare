@@ -492,7 +492,6 @@
             text-overflow: ellipsis;
             white-space: nowrap;
             display: inline-block;
-            cursor: help;
         }
 
         .file-name-expires {
@@ -3617,10 +3616,12 @@
 
             files.forEach(file => {
                 const createdDate = formatCompactDate(file.created_at);
+                const createdDateFull = new Date(file.created_at).toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 
                 // Check if "never expire" (year 9999)
                 const expiresDateObj = new Date(file.expires_at);
                 const expiresDate = expiresDateObj.getFullYear() === 9999 ? 'Never' : formatCompactDate(file.expires_at);
+                const expiresDateFull = expiresDateObj.getFullYear() === 9999 ? 'Never expires' : expiresDateObj.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 
                 const downloads = file.max_downloads ? `${file.completed_downloads}/${file.max_downloads}` : file.completed_downloads;
 
@@ -3647,10 +3648,10 @@
                         </td>
                         <td><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td><span class="claim-code">${file.claim_code}</span></td>
-                        <td><span class="date-truncate" title="${createdDate}">${createdDate}</span></td>
+                        <td><span class="date-truncate" title="${createdDateFull}">${createdDate}</span></td>
                         <td>
                             <div class="file-name-expires">
-                                <span class="file-name-text">${expiresDate}</span>
+                                <span class="file-name-text" title="${expiresDateFull}">${expiresDate}</span>
                                 <svg class="inline-edit-icon" onclick="editExpiration(${file.id}, '${file.expires_at}')" title="Edit expiration" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                                 </svg>
