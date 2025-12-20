@@ -5356,8 +5356,6 @@
             const webauthnCredCount = status.webauthn_credentials || 0;
             const recoveryCodesRemaining = status.recovery_codes_remaining || 0;
             const verifiedAt = status.totp_verified_at ? new Date(status.totp_verified_at).toLocaleDateString() : 'N/A';
-            const hasMFAEnabled = isTOTPEnabled || webauthnCredCount > 0;
-
             // Determine recovery codes status class
             let recoveryClass = 'success';
             if (recoveryCodesRemaining === 0) {
@@ -5368,59 +5366,10 @@
 
             let html = '';
 
-            // Overall MFA status header
-            if (hasMFAEnabled) {
-                html += `
-                    <div class="mfa-status-card">
-                        <div class="mfa-status-header">
-                            <div class="mfa-status-title">
-                                <div class="mfa-status-icon enabled">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                                    </svg>
-                                </div>
-                                <div class="mfa-status-text">
-                                    <h3>Two-Factor Authentication Enabled</h3>
-                                    <p>Your account is protected with an extra layer of security</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            } else {
-                html += `
-                    <div class="mfa-status-card">
-                        <div class="mfa-status-header">
-                            <div class="mfa-status-title">
-                                <div class="mfa-status-icon disabled">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                        <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
-                                    </svg>
-                                </div>
-                                <div class="mfa-status-text">
-                                    <h3>Two-Factor Authentication Not Enabled</h3>
-                                    <p>Add an extra layer of security to your account</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
-                            <h4 style="font-size: 13px; font-weight: 600; color: #166534; margin: 0 0 8px 0;">Why enable two-factor authentication?</h4>
-                            <ul style="margin: 0; padding-left: 20px; color: #15803d; font-size: 13px; line-height: 1.8;">
-                                <li>Protects your account even if your password is compromised</li>
-                                <li>Required code from your phone for each login</li>
-                                <li>Works with popular authenticator apps or hardware keys</li>
-                            </ul>
-                        </div>
-                    </div>
-                `;
-            }
-
             // TOTP Section (if TOTP is enabled on server)
             if (isTOTPServerEnabled) {
                 html += `
-                    <div class="mfa-status-card" style="margin-top: 16px;">
+                    <div class="mfa-status-card">
                         <div class="mfa-method-header">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
