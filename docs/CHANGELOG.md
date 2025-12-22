@@ -35,10 +35,27 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+---
+
+## [1.5.1] - 2025-12-22
+
+### Added
+
+- **MFA Login Verification**: Users with MFA enabled are now prompted for TOTP code or security key during login, completing the MFA authentication flow (#164)
+- **WebAuthn Login Option**: Security keys can now be used as an authentication method during MFA verification, allowing users to authenticate with hardware keys instead of TOTP codes (#165)
+
+### Changed
+
+- **Admin Dashboard UI**: Improved date tooltips and scope badge styling for better readability
+- **User Dashboard UI**: Simplified MFA security section layout for cleaner presentation
+
 ### Fixed
 
-- **WebAuthn Runtime Reinitialization**: WebAuthn hardware key registration now works immediately after enabling MFA via the Enterprise Features admin tab, without requiring a server restart
-- **MFA Challenge Timezone Handling**: Fixed timezone inconsistency in MFA challenge storage/retrieval. Challenge expiry times are now consistently stored and compared in UTC, preventing potential issues in non-UTC timezone environments
+- **WebAuthn Runtime Reinitialization**: WebAuthn hardware key registration now works immediately after enabling MFA via the Enterprise Features admin tab, without requiring a server restart (#162, #166)
+- **MFA Challenge Timezone Handling**: Fixed timezone inconsistency in MFA challenge storage/retrieval. Challenge expiry times are now consistently stored and compared in UTC, preventing potential issues in non-UTC timezone environments (#163)
+- **WebAuthn Credential Timestamps**: Fixed timestamp parsing for WebAuthn credentials to use UTC consistently (#167)
+- **MFA Challenge Expiry Parsing**: Fixed handling of multiple timestamp formats when parsing MFA challenge expiry times
+- **Backup Sorting**: Backups are now sorted by newest first in the admin dashboard
 
 ---
 
