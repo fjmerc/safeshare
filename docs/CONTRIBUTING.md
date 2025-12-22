@@ -476,5 +476,5 @@ Your contributions make SafeShare better for everyone. We appreciate your time a
 
 ---
 
-**Last Updated:** November 2025
-**SafeShare Version:** 2.8.3+
+**Last Updated:** December 2025
+**SafeShare Version:** 1.5.0

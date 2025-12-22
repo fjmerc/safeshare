@@ -7,14 +7,13 @@ Complete API documentation for SafeShare file sharing service.
 
 ⚠️ **Production Warning:** SafeShare MUST be deployed behind HTTPS in production. Set `HTTPS_ENABLED=true` when using a reverse proxy. See [PRODUCTION.md](PRODUCTION.md) for details.
 
-**Version**: 2.8.3
+**Version**: 1.5.0
 
 ## OpenAPI Specification
 
 SafeShare provides a machine-readable OpenAPI 3.0 specification for programmatic API access:
 
-- **OpenAPI Spec File**: [`api/openapi.yaml`](../api/openapi.yaml)
-- **Alternative JSON Format**: [`api/openapi.json`](../api/openapi.json) (generated from YAML)
+- **OpenAPI Spec File**: [`openapi.yaml`](openapi.yaml)
 
 ### Using the OpenAPI Specification
 
@@ -23,13 +22,13 @@ The OpenAPI specification enables:
 1. **SDK Generation**: Use tools like `openapi-generator` to create client libraries:
    ```bash
    # Generate Python SDK
-   openapi-generator generate -i api/openapi.yaml -g python -o sdk/python
+   openapi-generator generate -i docs/openapi.yaml -g python -o sdk/python
    
    # Generate TypeScript SDK  
-   openapi-generator generate -i api/openapi.yaml -g typescript-fetch -o sdk/typescript
+   openapi-generator generate -i docs/openapi.yaml -g typescript-fetch -o sdk/typescript
    
    # Generate Go SDK
-   openapi-generator generate -i api/openapi.yaml -g go -o sdk/go
+   openapi-generator generate -i docs/openapi.yaml -g go -o sdk/go
    ```
 
 2. **API Testing**: Import into Postman, Insomnia, or other API testing tools
@@ -37,8 +36,8 @@ The OpenAPI specification enables:
 3. **Documentation**: Generate interactive API docs with Swagger UI or ReDoc:
    ```bash
    # Using Docker to serve Swagger UI
-   docker run -p 8081:8080 -e SWAGGER_JSON=/api/openapi.yaml \
-     -v $(pwd)/api:/api swaggerapi/swagger-ui
+   docker run -p 8081:8080 -e SWAGGER_JSON=/docs/openapi.yaml \
+     -v $(pwd)/docs:/docs swaggerapi/swagger-ui
    ```
 
 4. **Validation**: Validate request/response schemas during development

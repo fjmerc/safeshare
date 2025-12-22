@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -347,6 +348,11 @@ func ListBackups(backupsDir string) ([]BackupInfo, error) {
 			FilesBackedUp:    manifest.Stats.FilesBackedUp,
 		})
 	}
+
+	// Sort by CreatedAt descending (newest first)
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].CreatedAt.After(backups[j].CreatedAt)
+	})
 
 	return backups, nil
 }

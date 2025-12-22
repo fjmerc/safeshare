@@ -18,6 +18,8 @@ This directory contains comprehensive documentation for SafeShare.
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [REVERSE_PROXY.md](REVERSE_PROXY.md) | Traefik, nginx, Caddy, Apache, Cloudflare config | DevOps, sysadmins |
+| [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) | High availability with PostgreSQL and S3 | DevOps, architects |
+| [BACKUP_RESTORE.md](BACKUP_RESTORE.md) | Backup procedures and disaster recovery | Admins, DevOps |
 | [PROMETHEUS.md](PROMETHEUS.md) | Monitoring, metrics, and alerting | SRE, DevOps |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions | All users |
 | [UPGRADING.md](UPGRADING.md) | Version-specific upgrade guides | Admins, DevOps |
@@ -30,6 +32,13 @@ This directory contains comprehensive documentation for SafeShare.
 | [TESTING.md](TESTING.md) | Test suite and coverage requirements | Developers, QA |
 | [VERSION_STRATEGY.md](VERSION_STRATEGY.md) | Git Flow and semantic versioning | Developers |
 | [API_VERSIONING.md](API_VERSIONING.md) | API backward compatibility policy | API consumers |
+
+### Enterprise Features (v1.5.0+)
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [SSO_SETUP.md](SSO_SETUP.md) | SSO/OIDC configuration (Okta, Azure AD, Google) | Enterprise admins |
+| [MFA_SETUP.md](MFA_SETUP.md) | Multi-factor authentication (TOTP, WebAuthn) | Security teams, admins |
 
 ### Features
 
@@ -60,8 +69,7 @@ Official SDKs are available for common programming languages:
 ### OpenAPI Specification
 
 Machine-readable API specification for SDK generation:
-- **YAML**: [api/openapi.yaml](../api/openapi.yaml)
-- **JSON**: [api/openapi.json](../api/openapi.json)
+- **YAML**: [openapi.yaml](openapi.yaml)
 
 ---
 
@@ -320,5 +328,5 @@ For issues and questions:
 
 ---
 
-**Last Updated:** November 2025  
-**SafeShare Version:** 2.8.3
+**Last Updated:** December 2025  
+**SafeShare Version:** 1.5.0

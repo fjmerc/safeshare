@@ -65,7 +65,7 @@ type WebAuthnCredentialUpdateRequest struct {
 
 // MFAWebAuthnRegisterBeginHandler handles POST /api/user/mfa/webauthn/register/begin
 // Starts the WebAuthn credential registration ceremony
-func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -97,12 +97,19 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			slog.Error("WebAuthn service not initialized",
+			slog.Error("WebAuthn service not initialized - PUBLIC_URL may not be configured",
 				"user_id", user.ID,
 				"ip", clientIP,
+				"public_url", cfg.PublicURL,
 			)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 
@@ -153,7 +160,7 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 		// Store challenge in database (session.Challenge is already base64url encoded)
 		expiresAt := time.Now().Add(time.Duration(cfg.MFA.ChallengeExpiryMinutes) * time.Minute)
 
-		_, err = repos.MFA.CreateChallenge(ctx, user.ID, session.Challenge, "registration", expiresAt)
+		storedChallenge, err := repos.MFA.CreateChallenge(ctx, user.ID, session.Challenge, "registration", expiresAt)
 		if err != nil {
 			slog.Error("failed to store WebAuthn challenge",
 				"error", err,
@@ -167,6 +174,8 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 			"user_id", user.ID,
 			"username", user.Username,
 			"ip", clientIP,
+			"challenge_db_id", storedChallenge.ID,
+			"expires_at_utc", storedChallenge.ExpiresAt.UTC().Format(time.RFC3339),
 		)
 
 		response := WebAuthnRegisterBeginResponse{
@@ -181,7 +190,7 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 
 // MFAWebAuthnRegisterFinishHandler handles POST /api/user/mfa/webauthn/register/finish
 // Completes the WebAuthn credential registration ceremony
-func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Apply timing attack protection
 		startTime := time.Now()
@@ -219,8 +228,18 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("WebAuthn service not initialized",
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 
@@ -253,9 +272,15 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 		challenge, err := repos.MFA.GetChallenge(ctx, user.ID, "registration")
 		if err != nil {
 			if err == repository.ErrChallengeNotFound || err == repository.ErrChallengeExpired {
-				slog.Warn("WebAuthn registration failed - challenge not found or expired",
+				errType := "not_found"
+				if err == repository.ErrChallengeExpired {
+					errType = "expired"
+				}
+				slog.Warn("WebAuthn registration failed - challenge issue",
 					"user_id", user.ID,
 					"ip", clientIP,
+					"error_type", errType,
+					"current_time_utc", time.Now().UTC().Format(time.RFC3339),
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
@@ -389,7 +414,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 
 // MFAWebAuthnAuthBeginHandler handles POST /api/user/mfa/webauthn/auth/begin
 // Starts the WebAuthn authentication ceremony (for MFA verification)
-func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -417,8 +442,18 @@ func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Con
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("WebAuthn service not initialized",
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 
@@ -506,7 +541,7 @@ func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Con
 
 // MFAWebAuthnAuthFinishHandler handles POST /api/user/mfa/webauthn/auth/finish
 // Completes the WebAuthn authentication ceremony
-func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Config, webauthnSvc *webauthn.Service) http.HandlerFunc {
+func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Apply timing attack protection
 		startTime := time.Now()
@@ -543,8 +578,18 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 			return
 		}
 
+		// Get WebAuthn service (supports runtime reinitialization when MFA config changes)
+		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("WebAuthn service not initialized",
+				"user_id", user.ID,
+				"ip", clientIP,
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "WebAuthn is temporarily unavailable. Please contact your administrator.",
+			})
 			return
 		}
 

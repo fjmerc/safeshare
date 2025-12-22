@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -30,6 +31,26 @@ const (
 	maxCodeHashLen     = 256  // Maximum length for bcrypt hash
 	maxRecoveryCodes   = 20   // Maximum number of recovery codes per user
 )
+
+// parseTimestampUTC parses a timestamp string trying multiple formats.
+// SQLite may return timestamps in different formats depending on how they were stored
+// and how the Go driver handles them.
+func parseTimestampUTC(s string) (time.Time, error) {
+	// Try common SQLite timestamp formats
+	formats := []string{
+		"2006-01-02 15:04:05",    // Standard SQLite format
+		time.RFC3339,             // ISO 8601 / RFC 3339 (2006-01-02T15:04:05Z)
+		"2006-01-02T15:04:05Z",   // Explicit UTC variant
+		"2006-01-02T15:04:05",    // Without timezone
+	}
+
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, s, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", s)
+}
 
 // ===========================================================================
 // TOTP Operations
@@ -252,11 +273,11 @@ func (r *MFARepository) GetUserMFA(ctx context.Context, userID int64) (*reposito
 
 	mfa.TOTPSecret = secret.String
 	if verifiedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", verifiedAt.String)
+		t, _ := parseTimestampUTC(verifiedAt.String)
 		mfa.TOTPVerifiedAt = &t
 	}
-	mfa.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	mfa.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	mfa.CreatedAt, _ = parseTimestampUTC(createdAt)
+	mfa.UpdatedAt, _ = parseTimestampUTC(updatedAt)
 
 	return &mfa, nil
 }
@@ -487,9 +508,9 @@ func (r *MFARepository) GetWebAuthnCredentials(ctx context.Context, userID int64
 		if transports.Valid && transports.String != "" {
 			cred.Transports = strings.Split(transports.String, ",")
 		}
-		cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 		if lastUsedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+			t, _ := parseTimestampUTC(lastUsedAt.String)
 			cred.LastUsedAt = &t
 		}
 
@@ -538,9 +559,9 @@ func (r *MFARepository) GetWebAuthnCredentialByID(ctx context.Context, credentia
 	if transports.Valid && transports.String != "" {
 		cred.Transports = strings.Split(transports.String, ",")
 	}
-	cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 	if lastUsedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+		t, _ := parseTimestampUTC(lastUsedAt.String)
 		cred.LastUsedAt = &t
 	}
 
@@ -582,9 +603,9 @@ func (r *MFARepository) GetWebAuthnCredentialByCredentialID(ctx context.Context,
 	if transports.Valid && transports.String != "" {
 		cred.Transports = strings.Split(transports.String, ",")
 	}
-	cred.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	cred.CreatedAt, _ = parseTimestampUTC(createdAt)
 	if lastUsedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastUsedAt.String)
+		t, _ := parseTimestampUTC(lastUsedAt.String)
 		cred.LastUsedAt = &t
 	}
 
@@ -708,11 +729,11 @@ func (r *MFARepository) CreateChallenge(ctx context.Context, userID int64, chall
 		return nil, fmt.Errorf("failed to delete existing challenge: %w", err)
 	}
 
-	// Insert new challenge
+	// Insert new challenge (store times in UTC for consistency with SQLite CURRENT_TIMESTAMP)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO mfa_challenges (user_id, challenge, challenge_type, expires_at, created_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		userID, challenge, challengeType, expiresAt.Format("2006-01-02 15:04:05"),
+		userID, challenge, challengeType, expiresAt.UTC().Format("2006-01-02 15:04:05"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create challenge: %w", err)
@@ -765,11 +786,26 @@ func (r *MFARepository) GetChallenge(ctx context.Context, userID int64, challeng
 		return nil, fmt.Errorf("failed to get challenge: %w", err)
 	}
 
-	ch.ExpiresAt, _ = time.Parse("2006-01-02 15:04:05", expiresAt)
-	ch.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	// Parse times as UTC using multi-format parser
+	var parseErr error
+	ch.ExpiresAt, parseErr = parseTimestampUTC(expiresAt)
+	if parseErr != nil {
+		slog.Error("failed to parse challenge expires_at", "raw_value", expiresAt, "error", parseErr)
+		return nil, fmt.Errorf("failed to parse challenge timestamp: %w", parseErr)
+	}
+	ch.CreatedAt, _ = parseTimestampUTC(createdAt)
 
-	// Check if expired
-	if time.Now().After(ch.ExpiresAt) {
+	// Debug logging to trace timezone issue (temporary - remove after fixing)
+	slog.Info("challenge lookup result",
+		"challenge_id", ch.ID,
+		"raw_expires_at_string", expiresAt,
+		"parsed_expires_at", ch.ExpiresAt.Format(time.RFC3339),
+		"current_utc", time.Now().UTC().Format(time.RFC3339),
+		"is_expired", time.Now().UTC().After(ch.ExpiresAt),
+	)
+
+	// Check if expired (compare in UTC)
+	if time.Now().UTC().After(ch.ExpiresAt) {
 		// Clean up expired challenge (best-effort, error not actionable)
 		_, _ = r.db.ExecContext(ctx, "DELETE FROM mfa_challenges WHERE id = ?", ch.ID)
 		return nil, repository.ErrChallengeExpired

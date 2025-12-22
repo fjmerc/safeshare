@@ -206,6 +206,13 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Sync feature flag with enabled state
 		cfg.Features.SetMFAEnabled(currentCfg.Enabled)
 
+		// Initialize or clear WebAuthn service based on current MFA config
+		// Uses atomic config snapshot to avoid TOCTOU race conditions
+		var warnings []string
+		if warning := InitializeOrClearWebAuthn(cfg, clientIP); warning != "" {
+			warnings = append(warnings, warning)
+		}
+
 		slog.Info("MFA configuration updated",
 			"ip", clientIP,
 			"enabled", currentCfg.Enabled,
@@ -215,10 +222,10 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 			"webauthn_enabled", currentCfg.WebAuthnEnabled,
 		)
 
-		// Return updated config
+		// Return updated config with any warnings
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		response := map[string]interface{}{
 			"success": true,
 			"mfa": MFAConfigResponse{
 				Enabled:                currentCfg.Enabled,
@@ -229,7 +236,11 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 				RecoveryCodesCount:     currentCfg.RecoveryCodesCount,
 				ChallengeExpiryMinutes: currentCfg.ChallengeExpiryMinutes,
 			},
-		})
+		}
+		if len(warnings) > 0 {
+			response["warnings"] = warnings
+		}
+		json.NewEncoder(w).Encode(response)
 	}
 }
 

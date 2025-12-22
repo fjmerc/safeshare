@@ -3115,12 +3115,19 @@ function displayAdminTokens(tokens) {
         const lastUsed = token.last_used_at ? formatDate(token.last_used_at) : '<span class="text-muted">Never</span>';
         const isActive = token.is_active !== false; // Default to active if not specified
 
-        // Scopes - styled like Webhooks Events column for consistency
+        // Scopes - colored badges matching user dashboard style
         let scopesBadges = '';
+        const validScopes = ['upload', 'download', 'manage', 'admin'];
         if (token.scopes && token.scopes.length > 0) {
-            scopesBadges = token.scopes.map(scope => 
-                `<span class="badge badge-info" style="margin: 2px; font-size: 11px;">${escapeHtml(scope)}</span>`
-            ).join('');
+            const badges = token.scopes.map(scope => {
+                const escapedScope = escapeHtml(scope);
+                if (validScopes.includes(scope)) {
+                    return `<span class="scope-badge scope-badge-${escapedScope}">${escapedScope}</span>`;
+                } else {
+                    return `<span class="scope-badge">${escapedScope}</span>`;
+                }
+            }).join('');
+            scopesBadges = `<div class="scopes-cell">${badges}</div>`;
         } else {
             scopesBadges = '<span class="text-muted">None</span>';
         }
