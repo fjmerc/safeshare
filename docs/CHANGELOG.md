@@ -35,6 +35,26 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- **Automated Security Scanning**: Added comprehensive CI/CD security scanning pipeline
+  - `govulncheck` integration for Go vulnerability scanning against vuln.go.dev database
+  - `Trivy` container vulnerability scanning for Docker images (CRITICAL, HIGH, MEDIUM severity)
+  - SARIF format uploads to GitHub Security tab for centralized vulnerability tracking
+  - PR-specific container scanning for early vulnerability detection
+- **Dependabot Configuration**: Automated dependency updates for Go modules, Docker images, and GitHub Actions
+  - Weekly schedule (Mondays) with grouped updates for AWS SDK and golang.org/x packages
+  - Semantic commit prefixes for clear dependency tracking
+- **Scheduled Security Scans**: Weekly security workflow (Sundays) with manual trigger option
+  - Container scanning of latest Docker image
+  - Filesystem scanning for go.mod vulnerabilities
+  - Comprehensive govulncheck analysis
+
+### Changed
+
+- **CI/CD Pipeline**: Added `security-scan` job that runs in parallel with tests before Docker build
+- **Release Process**: Container scanning now runs before GitHub Release creation
+
 ---
 
 ## [1.5.1] - 2025-12-22
