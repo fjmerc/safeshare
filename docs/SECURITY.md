@@ -1065,7 +1065,98 @@ Notable security improvements:
 
 ---
 
-## 📚 Additional Resources
+## CI/CD Security Scanning
+
+SafeShare implements comprehensive automated security scanning in the CI/CD pipeline.
+
+### Vulnerability Scanning Tools
+
+#### 1. govulncheck (Go Vulnerability Scanner)
+
+Scans Go dependencies for known vulnerabilities from the [Go Vulnerability Database](https://vuln.go.dev/).
+
+**When it runs:**
+- On every push to `develop` branch
+- On every pull request
+- Weekly scheduled scan (Sundays at midnight UTC)
+
+**Integration:**
+- Results uploaded to GitHub Security tab (SARIF format)
+- Blocks builds if critical vulnerabilities found in direct dependencies
+- Text output available in CI logs
+
+#### 2. Trivy (Container Scanner)
+
+Scans Docker images for OS and library vulnerabilities.
+
+**When it runs:**
+- After Docker image is built and pushed
+- PR builds get local single-platform scan
+- Weekly scheduled scan of `latest` image
+- Filesystem scan on scheduled runs
+
+**Configuration:**
+- Severity levels: CRITICAL, HIGH, MEDIUM
+- Scans both OS packages and Go libraries
+- Results uploaded to GitHub Security tab
+
+**Integration:**
+- Container scan runs after successful image push
+- Filesystem scan checks go.mod dependencies
+- Non-blocking to allow assessment before action
+
+### Dependency Management
+
+#### Dependabot
+
+Automated dependency update PRs for:
+
+| Ecosystem | Directory | Schedule |
+|-----------|-----------|----------|
+| Go modules | `/` | Weekly (Monday) |
+| Go SDK | `/sdk/go` | Weekly (Monday) |
+| Docker | `/` | Weekly (Monday) |
+| GitHub Actions | `/` | Weekly (Monday) |
+
+**Features:**
+- Grouped updates for AWS SDK (reduces PR noise)
+- Grouped updates for golang.org/x packages
+- Semantic commit prefixes (`deps`, `deps(docker)`, etc.)
+- PR labels for easy filtering
+
+### GitHub Security Tab
+
+All security findings are uploaded to the GitHub Security tab:
+
+1. Navigate to **Security** > **Code scanning alerts**
+2. Filter by tool: `govulncheck`, `trivy-container`, `trivy-filesystem`
+3. View vulnerability details, severity, and affected code
+
+### Manual Security Scan
+
+Run a security scan manually:
+
+1. Go to **Actions** > **Security Scan**
+2. Click **Run workflow**
+3. Select scan type: `all`, `govulncheck`, or `trivy`
+4. View results in workflow logs and Security tab
+
+### Responding to Vulnerabilities
+
+**Critical/High Severity:**
+1. Create hotfix branch from `main`
+2. Update affected dependency
+3. Test thoroughly
+4. Merge via expedited review
+
+**Medium/Low Severity:**
+1. Add to next sprint backlog
+2. Update in regular release cycle
+3. Document in CHANGELOG.md
+
+---
+
+## Additional Resources
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [CIS Docker Benchmark](https://www.cisecurity.org/benchmark/docker)

@@ -1717,15 +1717,17 @@
             vertical-align: middle;
         }
 
-        /* Center Scopes, Created, Expires, Last Used columns */
+        /* Center Scopes, Usage, Created, Expires, Last Used columns */
         .tokens-table th:nth-child(2),
         .tokens-table th:nth-child(3),
         .tokens-table th:nth-child(4),
         .tokens-table th:nth-child(5),
+        .tokens-table th:nth-child(6),
         .tokens-table td:nth-child(2),
         .tokens-table td:nth-child(3),
         .tokens-table td:nth-child(4),
-        .tokens-table td:nth-child(5) {
+        .tokens-table td:nth-child(5),
+        .tokens-table td:nth-child(6) {
             text-align: center;
         }
 
@@ -5336,11 +5338,6 @@
                 // MFA feature is disabled on the server
                 container.innerHTML = `
                     <div class="mfa-not-available">
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="8" x2="12" y2="12"></line>
-                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                        </svg>
                         <div class="mfa-not-available-text">
                             <h4>Two-Factor Authentication Not Available</h4>
                             <p>MFA is currently disabled on this server. Contact your administrator to enable it.</p>
@@ -5479,11 +5476,6 @@
             const container = document.getElementById('mfaContainer');
             container.innerHTML = `
                 <div class="mfa-not-available">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="8" x2="12" y2="12"></line>
-                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                    </svg>
                     <div class="mfa-not-available-text">
                         <h4>MFA Status Unavailable</h4>
                         <p>${escapeHtml(message)}</p>

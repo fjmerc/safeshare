@@ -11,15 +11,21 @@ on:
       - develop
       - main
 
+# Restrict default permissions to read-only
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.24'
           cache: true
@@ -28,7 +34,7 @@ jobs:
         run: go mod download
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6
         with:
           version: v2.1.6
 
@@ -50,10 +56,10 @@ jobs:
           # Use awk for floating-point comparison (no bc dependency)
           PASS=$(awk -v cov="$COVERAGE" -v thresh="$THRESHOLD" 'BEGIN { print (cov >= thresh) ? "1" : "0" }')
           if [ "$PASS" = "0" ]; then
-            echo "❌ Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
           fi
-          echo "✅ Coverage check passed: ${COVERAGE}% >= ${THRESHOLD}%"
+          echo "Coverage check passed: ${COVERAGE}% >= ${THRESHOLD}%"
 
       - name: Run race detection
         run: |
@@ -64,6 +70,8 @@ jobs:
   # PostgreSQL integration tests run separately to avoid slowing down the main test suite
   test-postgres:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -81,10 +89,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.24'
           cache: true
@@ -111,31 +119,70 @@ jobs:
           go tool cover -func=coverage-postgres.out | grep -E 'total:|internal/repository/postgres' || true
 
       - name: Upload PostgreSQL coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: postgres-coverage
           path: coverage-postgres.out
           retention-days: 7
 
-  build-and-push:
-    needs: [test, test-postgres]
+  # Go vulnerability scanning with govulncheck
+  security-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      security-events: write
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+      - name: Run govulncheck (SARIF output)
+        run: govulncheck -format sarif ./... > govulncheck-results.sarif
+        continue-on-error: true
+
+      - name: Upload govulncheck SARIF
+        uses: github/codeql-action/upload-sarif@c37a8b7cd97e31de3fcbd9d84c401870edeb8d34 # v3
+        with:
+          sarif_file: govulncheck-results.sarif
+          category: govulncheck
+        if: always()
+
+      - name: Run govulncheck (text output for logs)
+        run: govulncheck ./...
+
+  build-and-push:
+    needs: [test, test-postgres, security-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/safeshare
           tags: |
@@ -146,7 +193,7 @@ jobs:
             type=semver,pattern={{major}}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -156,8 +203,100 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # PR-specific: Build local image for vulnerability scanning
+      - name: Build local image for PR scanning
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          load: true
+          tags: safeshare:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha
+
+      - name: Run Trivy on PR image
+        if: github.event_name == 'pull_request'
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # 0.28.0
+        with:
+          image-ref: 'safeshare:pr-${{ github.event.pull_request.number }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+          exit-code: '0'
+
+  # Container vulnerability scanning for pushed images
+  container-scan:
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only scan when image is pushed (not on PRs)
+    if: github.event_name != 'pull_request'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Determine image tag
+        id: image-tag
+        env:
+          GH_REF: ${{ github.ref }}
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Use environment variables to prevent command injection
+          if [[ "$GH_REF" == refs/tags/v* ]]; then
+            # Validate semver pattern for tags
+            if [[ "$GH_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+              echo "tag=$GH_REF_NAME" >> $GITHUB_OUTPUT
+            else
+              echo "Invalid tag format: $GH_REF_NAME"
+              exit 1
+            fi
+          else
+            # Sanitize branch name for safety
+            SAFE_REF_NAME="${GH_REF_NAME//[^a-zA-Z0-9._-]/_}"
+            echo "tag=$SAFE_REF_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull image for scanning
+        env:
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: docker pull "${DOCKERHUB_USERNAME}/safeshare:${IMAGE_TAG}"
+
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # 0.28.0
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@c37a8b7cd97e31de3fcbd9d84c401870edeb8d34 # v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy-container'
+        if: always()
+
+      - name: Run Trivy (table output for logs)
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # 0.28.0
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: 'os,library'
+          exit-code: '0'
+
   create-release:
-    needs: build-and-push
+    needs: [build-and-push, container-scan]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -165,14 +304,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           generate_release_notes: true
           body: |
-            ## 🐳 Docker Images
+            ## Docker Images
 
             Pull the image:
             ```bash
@@ -180,7 +319,7 @@ jobs:
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/safeshare:latest
             ```
 
-            ## 🚀 Quick Start
+            ## Quick Start
 
             ```bash
             docker run -d -p 8080:8080 \
