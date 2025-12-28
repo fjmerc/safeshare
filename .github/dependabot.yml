@@ -3,6 +3,7 @@ updates:
   # Go modules - main application
   - package-ecosystem: "gomod"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -27,6 +28,7 @@ updates:
   # Go modules - SDK submodule
   - package-ecosystem: "gomod"
     directory: "/sdk/go"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -43,6 +45,7 @@ updates:
   # Docker base images
   - package-ecosystem: "docker"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -58,6 +61,7 @@ updates:
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
