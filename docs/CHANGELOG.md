@@ -55,6 +55,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **CI/CD Pipeline**: Added `security-scan` job that runs in parallel with tests before Docker build
 - **Release Process**: Container scanning now runs before GitHub Release creation
 
+### Fixed
+
+- **Admin Login MFA Feature Flag**: Fixed admin login bypassing the global MFA feature flag. When MFA was globally disabled via the admin settings, users with MFA enrolled were still prompted for verification. The admin login handler now correctly respects the `feature_mfa` setting, matching the user login behavior. (#174)
+
 ---
 
 ## [1.5.1] - 2025-12-22
