@@ -112,7 +112,10 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 		}
 
 		// Check MFA for database admin users (not env-based admin credentials)
-		if authenticatedUser != nil {
+		// Only check MFA if the global MFA feature is enabled
+		// Use GetMFAConfig() for thread-safe access to avoid race conditions
+		mfaCfg := cfg.GetMFAConfig()
+		if authenticatedUser != nil && mfaCfg != nil && mfaCfg.Enabled {
 			mfaStatus, err := repos.MFA.GetMFAStatus(ctx, authenticatedUser.ID)
 			if err == nil && mfaStatus != nil {
 				var availableMethods []string
@@ -129,8 +132,8 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 					// Get MFA challenge expiry from config
 					expiryMinutes := mfaChallengeExpiryMinutes
-					if cfg.MFA.ChallengeExpiryMinutes > 0 {
-						expiryMinutes = cfg.MFA.ChallengeExpiryMinutes
+					if mfaCfg.ChallengeExpiryMinutes > 0 {
+						expiryMinutes = mfaCfg.ChallengeExpiryMinutes
 					}
 
 					// Create MFA login challenge
