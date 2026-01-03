@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a \
 
 # Runtime stage
 # Pin Alpine version for reproducible builds
-FROM alpine:3.21
+FROM alpine:3.23
 
 # Install runtime dependencies
 # tzdata is required for Go to properly handle TZ environment variable
