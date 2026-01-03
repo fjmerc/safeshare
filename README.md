@@ -5,7 +5,7 @@
 
 A self-hosted secure file sharing service for temporary transfers with automatic expiration, cryptographically secure claim codes, and enterprise-grade security features.
 
-**Version**: 1.5.0
+**Version**: 1.5.1
 
 ## Screenshots
 
@@ -29,7 +29,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 
 ## Key Features
 
-###  Core Capabilities
+### Core Capabilities
 - **Chunked/Resumable Uploads** - Large file support (>100MB) with pause/resume
 - **Resumable Downloads** - Browser-based download resume with progress tracking
 - **HTTP/2 Support** - Optimized performance with 250 concurrent streams
@@ -41,7 +41,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **QR Code Generation** - One-click QR codes for mobile sharing
 - **File Checksums** - SHA256 hashes for integrity verification
 
-### 🔒 Security Features
+### Security Features
 - **Encryption at Rest** - AES-256-GCM authenticated encryption
 - **Multi-Factor Authentication (MFA/TOTP)** - Two-factor authentication with authenticator apps
 - **WebAuthn/FIDO2** - Hardware security key support (YubiKey, Windows Hello, Touch ID)
@@ -58,7 +58,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Storage Quotas** - Configurable per-application limits
 - **Audit Logging** - Comprehensive JSON-structured logs
 
-### 👥 User Management
+### User Management
 - **Invite-Only Registration** - Admin-managed user accounts
 - **User Dashboard** - View uploads, manage files, share with advanced features
 - **File Management** - Rename files, edit expiration, regenerate claim codes
@@ -67,7 +67,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Role-Based Access** - User and admin roles with different permissions
 - **Anonymous Uploads** - Configurable (enabled by default, can require authentication)
 
-### 🎛️ Admin Dashboard
+### Admin Dashboard
 - **File Management** - View all files, search, bulk delete, download statistics
 - **User Administration** - Create, edit, enable/disable, reset passwords
 - **MFA Management** - View and manage user MFA status, disable MFA for emergency recovery
@@ -82,7 +82,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Real-Time Statistics** - Storage usage, file counts, user counts, quota metrics
 - **Partial Upload Management** - Monitor and cleanup abandoned chunked uploads
 
-### 📊 Monitoring & Operations
+### Monitoring & Operations
 - **Health Check Endpoints** - Comprehensive, liveness, and readiness probes
 - **Prometheus Metrics** - Full metrics export for monitoring and alerting
 - **Structured Logging** - JSON logs for aggregation tools (ELK, Splunk, Datadog)
@@ -90,7 +90,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Background Workers** - Auto-cleanup of expired files and abandoned uploads
 - **Database Migrations** - Automatic schema versioning and upgrades
 
-### 🏢 Enterprise Features
+### Enterprise Features
 - **PostgreSQL Backend** - Production-grade database for high-availability deployments
 - **S3-Compatible Storage** - Object storage support (AWS S3, MinIO, DigitalOcean Spaces)
 - **High Availability** - Multi-node deployments with shared storage and distributed locking
@@ -99,7 +99,7 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 - **Advanced API Tokens** - Token rotation, usage tracking, bulk operations, expiration warnings
 - **Feature Flags** - Runtime feature toggles without container restarts
 
-### 🚀 Deployment
+### Deployment
 - **Single Binary** - No external dependencies (pure Go, embedded SQLite)
 - **Docker Container** - Minimal ~26MB Alpine-based image
 - **Reverse Proxy Ready** - Works with Traefik, nginx, Caddy, Apache
@@ -227,7 +227,7 @@ curl "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE/info" | jq .
 }
 ```
 
-**📖 Full API Documentation**: See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for complete endpoint details, authentication, user management, admin operations, health checks, and Prometheus metrics.
+**Full API Documentation**: See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for complete endpoint details, authentication, user management, admin operations, health checks, and Prometheus metrics.
 
 ---
 
@@ -263,7 +263,7 @@ SafeShare is configured via environment variables. Common settings:
 - `DB_PATH`, `UPLOAD_DIR`, `CLEANUP_INTERVAL_MINUTES`, `SESSION_EXPIRY_HOURS`
 - `CHUNKED_UPLOAD_THRESHOLD`, `PARTIAL_UPLOAD_EXPIRY_HOURS`, `HTTPS_ENABLED`
 
-**💡 Configuration Assistant**: The admin dashboard includes an intelligent configuration assistant that analyzes your deployment environment and provides optimized settings recommendations.
+**Configuration Assistant**: The admin dashboard includes an intelligent configuration assistant that analyzes your deployment environment and provides optimized settings recommendations.
 
 ---
 
@@ -387,7 +387,7 @@ docker run -d -p 8080:8080 --name safeshare safeshare:latest
 
 ## Security Best Practices
 
-🔒 **Production Deployments**:
+**Production Deployments**:
 1. **Always use encryption**: Set `ENCRYPTION_KEY` (64 hex chars)
 2. **Enable admin authentication**: Set `ADMIN_USERNAME` and `ADMIN_PASSWORD`
 3. **Use HTTPS**: Configure reverse proxy with TLS certificates
@@ -399,7 +399,7 @@ docker run -d -p 8080:8080 --name safeshare safeshare:latest
 9. **Monitor metrics**: Set up Prometheus + Grafana dashboards
 10. **Regular backups**: Backup database and encryption key securely
 
-**📖 Security Guide**: See [docs/SECURITY.md](docs/SECURITY.md) for complete security documentation, compliance mapping (HIPAA, SOC 2, GDPR, PCI-DSS), and security audit checklist.
+**Security Guide**: See [docs/SECURITY.md](docs/SECURITY.md) for complete security documentation, compliance mapping (HIPAA, SOC 2, GDPR, PCI-DSS), and security audit checklist.
 
 ---
 
@@ -490,4 +490,4 @@ See [docs/CHANGELOG.md](docs/CHANGELOG.md) for complete version history.
 
 ---
 
-**Built with ❤️ using Go**
+**Built with Go**
