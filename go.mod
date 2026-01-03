@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.1
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0
-	github.com/gabriel-vasile/mimetype v1.4.3
+	github.com/gabriel-vasile/mimetype v1.4.12
 	github.com/go-webauthn/webauthn v0.12.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.2
