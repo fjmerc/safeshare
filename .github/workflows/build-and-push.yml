@@ -218,7 +218,7 @@ jobs:
 
       - name: Run Trivy on PR image
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # 0.34.0
         with:
           image-ref: 'safeshare:pr-${{ github.event.pull_request.number }}'
           format: 'table'
@@ -274,7 +274,7 @@ jobs:
         run: docker pull "${DOCKERHUB_USERNAME}/safeshare:${IMAGE_TAG}"
 
       - name: Run Trivy vulnerability scanner (SARIF)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # 0.34.0
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
           format: 'sarif'
@@ -290,7 +290,7 @@ jobs:
         if: always()
 
       - name: Run Trivy (table output for logs)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # 0.34.0
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
           format: 'table'
