@@ -5,7 +5,7 @@ go 1.24.0
 // Local SDK for contract testing - validates SDK can parse real server responses
 replace github.com/fjmerc/safeshare/sdk/go => ./sdk/go
 
-toolchain go1.24.7
+toolchain go1.24.13
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.1
