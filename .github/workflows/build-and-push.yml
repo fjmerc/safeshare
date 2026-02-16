@@ -196,7 +196,7 @@ jobs:
 
       - name: Build and push Docker image
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -209,7 +209,7 @@ jobs:
       # PR-specific: Build local image for vulnerability scanning
       - name: Build local image for PR scanning
         if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           load: true
