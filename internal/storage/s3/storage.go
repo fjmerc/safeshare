@@ -54,7 +54,7 @@ type S3Config struct {
 // S3Storage implements StorageBackend for AWS S3 and S3-compatible storage.
 type S3Storage struct {
 	client   *s3.Client
-	uploader *manager.Uploader
+	uploader *manager.Uploader //nolint:staticcheck // deprecated, migrate to transfermanager in follow-up
 	bucket   string
 	quota    int64 // Storage quota in bytes (0 = unlimited)
 }
@@ -102,7 +102,7 @@ func NewS3Storage(ctx context.Context, cfg S3Config) (*S3Storage, error) {
 	client := s3.NewFromConfig(awsCfg, s3Opts...)
 
 	// Create uploader for streaming uploads
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) { //nolint:staticcheck // deprecated, migrate to transfermanager in follow-up
 		u.PartSize = multipartUploadPartSize
 	})
 
@@ -221,7 +221,7 @@ func (s *S3Storage) Store(ctx context.Context, filename string, reader io.Reader
 	hr := newHashingReader(reader)
 
 	// Use multipart upload manager for streaming upload (no memory exhaustion)
-	_, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err := s.uploader.Upload(ctx, &s3.PutObjectInput{ //nolint:staticcheck // deprecated, migrate to transfermanager in follow-up
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(filename),
 		Body:   hr,
