@@ -143,7 +143,7 @@ if docker run --rm \
     -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
     -e POSTGRES_DB=$POSTGRES_DB \
     -e POSTGRES_SSLMODE=$POSTGRES_SSLMODE \
-    golang:1.24 $TEST_CMD; then
+    golang:1.25 $TEST_CMD; then
     
     echo -e "\n${GREEN}========================================${NC}"
     echo -e "${GREEN}All tests passed!${NC}"
@@ -162,7 +162,7 @@ echo ""
 docker run --rm \
     -v "$PROJECT_ROOT":/app \
     -w /app \
-    golang:1.24 go tool cover -func=/app/coverage-postgres.out | grep -E "^total:|internal/repository/postgres"
+    golang:1.25 go tool cover -func=/app/coverage-postgres.out | grep -E "^total:|internal/repository/postgres"
 
 # Generate HTML report if requested
 if [ "$GENERATE_HTML_REPORT" = true ]; then
@@ -170,7 +170,7 @@ if [ "$GENERATE_HTML_REPORT" = true ]; then
     docker run --rm \
         -v "$PROJECT_ROOT":/app \
         -w /app \
-        golang:1.24 go tool cover -html=/app/coverage-postgres.out -o /app/coverage-postgres.html
+        golang:1.25 go tool cover -html=/app/coverage-postgres.out -o /app/coverage-postgres.html
     echo -e "${GREEN}HTML report generated: coverage-postgres.html${NC}"
 fi
 
