@@ -39,13 +39,13 @@ rm -f "$PROJECT_ROOT/coverage.out" "$PROJECT_ROOT/coverage.html"
 
 # Run tests with coverage inside Docker
 echo -e "${YELLOW}Running tests with coverage analysis...${NC}"
-echo -e "${YELLOW}(Running in golang:1.24 Docker container)${NC}"
+echo -e "${YELLOW}(Running in golang:1.25 Docker container)${NC}"
 echo ""
 
 docker run --rm \
     -v "$PROJECT_ROOT:/workspace" \
     -w /workspace \
-    golang:1.24 \
+    golang:1.25 \
     go test ./... -cover -coverprofile=coverage.out -coverpkg=./... -timeout=10m
 
 # Check if tests passed
@@ -60,14 +60,14 @@ echo -e "${YELLOW}Generating coverage report...${NC}"
 docker run --rm \
     -v "$PROJECT_ROOT:/workspace" \
     -w /workspace \
-    golang:1.24 \
+    golang:1.25 \
     go tool cover -func=coverage.out | tail -20
 
 # Generate HTML coverage report inside Docker
 docker run --rm \
     -v "$PROJECT_ROOT:/workspace" \
     -w /workspace \
-    golang:1.24 \
+    golang:1.25 \
     go tool cover -html=coverage.out -o coverage.html
 
 echo -e "${GREEN}HTML coverage report generated: coverage.html${NC}"
@@ -76,7 +76,7 @@ echo -e "${GREEN}HTML coverage report generated: coverage.html${NC}"
 COVERAGE=$(docker run --rm \
     -v "$PROJECT_ROOT:/workspace" \
     -w /workspace \
-    golang:1.24 \
+    golang:1.25 \
     go tool cover -func=coverage.out | grep total | awk '{print $3}')
 
 echo ""
