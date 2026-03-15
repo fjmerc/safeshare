@@ -35,14 +35,14 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Run tests with race detector inside Docker
 echo -e "${YELLOW}Running tests with race detector...${NC}"
-echo -e "${YELLOW}(Running in golang:1.24 Docker container)${NC}"
+echo -e "${YELLOW}(Running in golang:1.25 Docker container)${NC}"
 echo -e "${YELLOW}This may take longer than normal test runs.${NC}"
 echo ""
 
 docker run --rm \
     -v "$PROJECT_ROOT:/workspace" \
     -w /workspace \
-    golang:1.24 \
+    golang:1.25 \
     go test ./... -race -timeout=15m
 
 # Check if tests passed

@@ -33,6 +33,23 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [1.5.3] - 2026-03-15
+
+### Security
+
+- **Go Runtime Upgrade**: Upgraded Go from 1.24 to 1.25.8 to fix stdlib vulnerabilities
+  - GO-2026-4602: FileInfo escape from Root in `os` package
+  - GO-2026-4601: Incorrect parsing of IPv6 host literals in `net/url`
+- **HTTP/2 Panic Fix**: Bumped `golang.org/x/net` from v0.50.0 to v0.52.0 (GO-2026-4559)
+
+### Changed
+
+- Upgraded `golangci-lint` from v2.1.6 to v2.11.3 for Go 1.25 compatibility
+- Updated all CI workflows and test scripts to use Go 1.25.8
+- Bumped multiple dependencies: aws-sdk, sqlite, webauthn, trivy-action, codeql-action, and others
+
+---
+
 ## [1.5.2] - 2026-01-03
 
 ### Added
