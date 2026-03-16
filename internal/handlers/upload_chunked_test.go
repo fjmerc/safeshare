@@ -594,6 +594,17 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 	if status, ok := response["status"].(string); !ok || status != "processing" {
 		t.Errorf("status = %v, want processing", response["status"])
 	}
+
+	// Wait for the async assembly goroutine to finish before test cleanup.
+	// Without this, t.TempDir() cleanup races with the goroutine and fails
+	// with "directory not empty" on Go 1.25+.
+	for i := 0; i < 50; i++ {
+		pu, _ := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if pu != nil && pu.Status != "processing" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
