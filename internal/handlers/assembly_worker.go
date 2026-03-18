@@ -11,6 +11,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
@@ -123,6 +124,70 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		"total_bytes", totalBytesWritten,
 	)
 
+	// Detect MIME type from assembled plaintext file BEFORE encryption
+	// (must happen before encryption since encrypted data has no recognizable MIME type)
+	mimeType := "application/octet-stream"
+	{
+		file, err := os.Open(finalPath)
+		if err != nil {
+			slog.Error("failed to open file for MIME detection", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath)
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
+			return
+		}
+
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		file.Close()
+
+		if err != nil && err != io.EOF {
+			slog.Error("failed to read file for MIME detection", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath)
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
+			return
+		}
+
+		detected := utils.DetectMimeType(buffer[:n])
+		if detected != "" {
+			mimeType = detected
+		}
+	}
+
+	// Strip metadata from assembled plaintext file (before encryption)
+	if cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(mimeType) {
+		if err := privacy.StripFileMetadata(finalPath, mimeType); err != nil {
+			slog.Warn("failed to strip metadata in chunked upload",
+				"error", err,
+				"upload_id", uploadID,
+				"mime_type", mimeType,
+			)
+			// Non-fatal: continue with original file
+		} else {
+			// Recompute hash and size after stripping
+			newHash, err := computeFileHash(finalPath)
+			if err != nil {
+				slog.Warn("failed to recompute hash after stripping", "error", err, "upload_id", uploadID)
+			} else {
+				sha256Hash = newHash
+			}
+			info, err := os.Stat(finalPath)
+			if err != nil {
+				slog.Warn("failed to stat file after stripping", "error", err, "upload_id", uploadID)
+			} else {
+				totalBytesWritten = info.Size()
+			}
+			slog.Info("metadata stripped from chunked upload",
+				"upload_id", uploadID,
+				"mime_type", mimeType,
+				"file_size", totalBytesWritten,
+			)
+		}
+	}
+
 	// Encrypt if encryption is enabled
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
 		slog.Debug("encrypting assembled file using streaming encryption", "upload_id", uploadID)
@@ -169,39 +234,6 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			"encrypted_size", encryptedInfo.Size())
 	}
 
-	// Detect MIME type from assembled file (only read first 512 bytes for magic number detection)
-	mimeType := "application/octet-stream"
-	if !utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		file, err := os.Open(finalPath)
-		if err != nil {
-			slog.Error("failed to open file for MIME detection", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err)); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
-			return
-		}
-
-		// Only read first 512 bytes for MIME detection (sufficient for magic number detection)
-		buffer := make([]byte, 512)
-		n, err := file.Read(buffer)
-		file.Close()
-
-		if err != nil && err != io.EOF {
-			slog.Error("failed to read file for MIME detection", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err)); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
-			return
-		}
-
-		detected := utils.DetectMimeType(buffer[:n])
-		if detected != "" {
-			mimeType = detected
-		}
-	}
-
 	// Calculate expiration time
 	var expiresAt time.Time
 	if partialUpload.ExpiresInHours == 0 {
@@ -219,7 +251,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		ClaimCode:        claimCode,
 		OriginalFilename: partialUpload.Filename,
 		StoredFilename:   storedFilename,
-		FileSize:         partialUpload.TotalSize,
+		FileSize:         totalBytesWritten,
 		MimeType:         mimeType,
 		ExpiresAt:        expiresAt,
 		MaxDownloads:     maxDownloads,
@@ -258,7 +290,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			ID:        fileRecord.ID,
 			ClaimCode: claimCode,
 			Filename:  partialUpload.Filename,
-			Size:      partialUpload.TotalSize,
+			Size:      totalBytesWritten,
 			MimeType:  mimeType,
 			ExpiresAt: expiresAt,
 		},
@@ -268,7 +300,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		"upload_id", uploadID,
 		"claim_code", redactClaimCode(claimCode),
 		"filename", partialUpload.Filename,
-		"size", partialUpload.TotalSize,
+		"size", totalBytesWritten,
 		"total_chunks", partialUpload.TotalChunks,
 		"password_protected", partialUpload.PasswordHash != "",
 		"client_ip", logIP(clientIP, cfg),

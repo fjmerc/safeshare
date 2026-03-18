@@ -21,6 +21,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
@@ -101,6 +102,18 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			return // Error already sent to client
 		}
 
+		// Strip metadata if enabled and supported
+		if cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(result.detectedMimeType) {
+			if err := stripMetadataFromUpload(result, cfg); err != nil {
+				slog.Warn("failed to strip metadata",
+					"error", err,
+					"filename", header.Filename,
+					"mime_type", result.detectedMimeType,
+				)
+				// Non-fatal: continue with original file
+			}
+		}
+
 		// Create database record and handle response
 		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured)
 	}
@@ -119,6 +132,18 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		sendError(w, "No file provided", "NO_FILE", http.StatusBadRequest)
+		return nil, nil, err
+	}
+
+	// Validate filename for control characters (header injection prevention)
+	if err := utils.ValidateUploadFilename(header.Filename); err != nil {
+		clientIP := getClientIP(r)
+		slog.Warn("rejected filename with control characters",
+			"filename", header.Filename,
+			"error", err,
+			"client_ip", clientIP,
+		)
+		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
 		return nil, nil, err
 	}
 
@@ -516,4 +541,129 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"client_ip", logIP(clientIP, cfg),
 		"user_agent", getUserAgent(r),
 	)
+}
+
+// stripMetadataFromUpload strips metadata from an uploaded file and updates the result.
+// Handles both encrypted and unencrypted files.
+func stripMetadataFromUpload(result *fileProcessingResult, cfg *config.Config) error {
+	encrypted := utils.IsEncryptionEnabled(cfg.EncryptionKey)
+
+	if encrypted {
+		return stripMetadataEncrypted(result, cfg)
+	}
+	return stripMetadataPlaintext(result)
+}
+
+// stripMetadataPlaintext strips metadata from an unencrypted file in-place,
+// then recomputes the file size and SHA256 hash.
+func stripMetadataPlaintext(result *fileProcessingResult) error {
+	if err := privacy.StripFileMetadata(result.filePath, result.detectedMimeType); err != nil {
+		return fmt.Errorf("strip metadata: %w", err)
+	}
+
+	// Recompute file size
+	info, err := os.Stat(result.filePath)
+	if err != nil {
+		return fmt.Errorf("stat after stripping: %w", err)
+	}
+	result.written = info.Size()
+
+	// Recompute SHA256 hash
+	hash, err := computeFileHash(result.filePath)
+	if err != nil {
+		return fmt.Errorf("hash after stripping: %w", err)
+	}
+	result.sha256Hash = hash
+
+	slog.Info("metadata stripped from upload",
+		"mime_type", result.detectedMimeType,
+		"file_size", result.written,
+	)
+	return nil
+}
+
+// stripMetadataEncrypted handles stripping for encrypted files:
+// decrypt to OS temp dir → strip → re-encrypt to temp → atomic rename.
+// The original encrypted file is preserved until re-encryption fully succeeds.
+func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) error {
+	// Decrypt to OS temp directory (not uploads dir) to avoid plaintext exposure
+	tempFile, err := os.CreateTemp("", "safeshare-strip-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	tempFile.Close()
+	defer os.Remove(tempPath)
+
+	if err := utils.DecryptFileStreaming(result.filePath, tempPath, cfg.EncryptionKey); err != nil {
+		return fmt.Errorf("decrypt for stripping: %w", err)
+	}
+
+	// Strip metadata from decrypted temp file
+	if err := privacy.StripFileMetadata(tempPath, result.detectedMimeType); err != nil {
+		return fmt.Errorf("strip metadata (encrypted): %w", err)
+	}
+
+	// Compute hash from stripped plaintext
+	hash, err := computeFileHash(tempPath)
+	if err != nil {
+		return fmt.Errorf("hash stripped plaintext: %w", err)
+	}
+
+	// Get stripped plaintext size (stored in DB as the user-facing file size)
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		return fmt.Errorf("stat stripped plaintext: %w", err)
+	}
+
+	// Re-encrypt to a temp file next to the original, then atomic rename.
+	// This preserves the original encrypted file until re-encryption succeeds.
+	reencryptPath := result.filePath + ".reenc-tmp"
+	srcFile, err := os.Open(tempPath)
+	if err != nil {
+		return fmt.Errorf("open stripped temp: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(reencryptPath)
+	if err != nil {
+		return fmt.Errorf("create re-encrypt temp: %w", err)
+	}
+
+	if err := utils.EncryptFileStreamingFromReader(dstFile, srcFile, cfg.EncryptionKey); err != nil {
+		dstFile.Close()
+		os.Remove(reencryptPath)
+		return fmt.Errorf("re-encrypt after stripping: %w", err)
+	}
+	dstFile.Close()
+
+	// Atomic replace — original file is preserved until this succeeds
+	if err := os.Rename(reencryptPath, result.filePath); err != nil {
+		os.Remove(reencryptPath)
+		return fmt.Errorf("rename re-encrypted file: %w", err)
+	}
+
+	result.sha256Hash = hash
+	result.written = info.Size()
+
+	slog.Info("metadata stripped from encrypted upload",
+		"mime_type", result.detectedMimeType,
+		"file_size", result.written,
+	)
+	return nil
+}
+
+// computeFileHash computes the SHA256 hash of a file.
+func computeFileHash(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
