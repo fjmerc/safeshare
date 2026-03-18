@@ -135,6 +135,18 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 		return nil, nil, err
 	}
 
+	// Validate filename for control characters (header injection prevention)
+	if err := utils.ValidateUploadFilename(header.Filename); err != nil {
+		clientIP := getClientIP(r)
+		slog.Warn("rejected filename with control characters",
+			"filename", header.Filename,
+			"error", err,
+			"client_ip", clientIP,
+		)
+		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
+		return nil, nil, err
+	}
+
 	// Validate file extension
 	allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
 	if err != nil {
