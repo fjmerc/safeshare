@@ -9,6 +9,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -74,6 +75,18 @@ func getClientIPWithConfig(r *http.Request, cfg *config.Config) string {
 func getClientIP(r *http.Request) string {
 	// Use auto mode with standard private IP ranges
 	return utils.GetClientIPWithTrust(r, "auto", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
+}
+
+// logIP returns the IP for logging purposes, respecting anonymous mode.
+// The real IP is still used internally (rate limiting, IP blocking);
+// only log output and database storage are redacted.
+func logIP(ip string, cfg *config.Config) string {
+	return privacy.RedactIP(ip, cfg.IsAnonymousMode())
+}
+
+// storeIP returns the IP for database storage, respecting anonymous mode.
+func storeIP(ip string, cfg *config.Config) string {
+	return privacy.AnonymizeIP(ip, cfg.IsAnonymousMode())
 }
 
 // getUserAgent returns the client User-Agent header

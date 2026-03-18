@@ -93,6 +93,7 @@ type Config struct {
 	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
 	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
+	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -140,6 +141,7 @@ func Load() (*Config, error) {
 		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
 		StripMetadata:            getEnvBool("STRIP_METADATA", false),
+		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
@@ -265,6 +267,11 @@ func (c *Config) GetTrustedProxyIPs() string {
 // IsStripMetadata returns whether metadata stripping is enabled
 func (c *Config) IsStripMetadata() bool {
 	return c.StripMetadata
+}
+
+// IsAnonymousMode returns whether anonymous mode is enabled
+func (c *Config) IsAnonymousMode() bool {
+	return c.anonymousMode
 }
 
 // Setter methods for mutable fields (thread-safe writes with validation)

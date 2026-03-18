@@ -55,7 +55,7 @@ func TestAPITokenAuditLog_LogsUsage(t *testing.T) {
 	})
 
 	// Wrap with audit middleware
-	auditHandler := APITokenAuditLog(repos)(testHandler)
+	auditHandler := APITokenAuditLog(repos, false)(testHandler)
 
 	// Create request with API token ID in context (simulating UserAuth middleware)
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
@@ -137,7 +137,7 @@ func TestAPITokenAuditLog_CapturesErrorStatus(t *testing.T) {
 		w.Write([]byte("error"))
 	})
 
-	auditHandler := APITokenAuditLog(repos)(testHandler)
+	auditHandler := APITokenAuditLog(repos, false)(testHandler)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
 	req = req.WithContext(context.WithValue(req.Context(), ContextKeyTokenID, token.ID))
@@ -178,7 +178,7 @@ func TestAPITokenAuditLog_NoLoggingForSessionAuth(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	auditHandler := APITokenAuditLog(repos)(testHandler)
+	auditHandler := APITokenAuditLog(repos, false)(testHandler)
 
 	// Request without token ID in context (session auth)
 	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
@@ -229,7 +229,7 @@ func TestAPITokenAuditLog_DefaultStatusOK(t *testing.T) {
 		w.Write([]byte("success"))
 	})
 
-	auditHandler := APITokenAuditLog(repos)(testHandler)
+	auditHandler := APITokenAuditLog(repos, false)(testHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	req = req.WithContext(context.WithValue(req.Context(), ContextKeyTokenID, token.ID))
@@ -379,7 +379,7 @@ func TestAPITokenAuditLog_MultipleRequests(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	auditHandler := APITokenAuditLog(repos)(testHandler)
+	auditHandler := APITokenAuditLog(repos, false)(testHandler)
 
 	// Make multiple requests to different endpoints
 	endpoints := []string{"/api/user/files", "/api/upload", "/api/user/tokens"}

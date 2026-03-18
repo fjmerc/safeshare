@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -12,6 +13,7 @@ import (
 type ProxyConfigProvider interface {
 	GetTrustProxyHeaders() string
 	GetTrustedProxyIPs() string
+	IsAnonymousMode() bool
 }
 
 // IPBlockCheck middleware checks if the client IP is blocked
@@ -25,7 +27,7 @@ func IPBlockCheck(repos *repository.Repositories, cfg ProxyConfigProvider) func(
 			blocked, err := repos.Admin.IsIPBlocked(ctx, clientIP)
 			if err != nil {
 				slog.Error("failed to check IP block status",
-					"ip", clientIP,
+					"ip", privacy.RedactIP(clientIP, cfg.IsAnonymousMode()),
 					"error", err,
 				)
 				// On error, allow the request to proceed (fail open)
@@ -36,7 +38,7 @@ func IPBlockCheck(repos *repository.Repositories, cfg ProxyConfigProvider) func(
 
 			if blocked {
 				slog.Warn("blocked IP attempted access",
-					"ip", clientIP,
+					"ip", privacy.RedactIP(clientIP, cfg.IsAnonymousMode()),
 					"path", r.URL.Path,
 					"method", r.Method,
 					"user_agent", r.Header.Get("User-Agent"),

@@ -243,10 +243,11 @@ func run() error {
 
 	// Register public API routes (with IP blocking middleware and conditional user auth)
 	ipBlockMw := middleware.IPBlockCheck(repos, cfg)
-	optionalUserAuth := middleware.OptionalUserAuth(repos)
-	userAuth := middleware.UserAuth(repos)
-	tokenAudit := middleware.APITokenAuditLog(repos)
-	totpRateLimit := middleware.RateLimitTOTPVerify() // Rate limit for TOTP verification
+	anonMode := cfg.IsAnonymousMode()
+	optionalUserAuth := middleware.OptionalUserAuth(repos, anonMode)
+	userAuth := middleware.UserAuth(repos, anonMode)
+	tokenAudit := middleware.APITokenAuditLog(repos, anonMode)
+	totpRateLimit := middleware.RateLimitTOTPVerify(anonMode) // Rate limit for TOTP verification
 
 	// Select authentication middleware for uploads based on configuration
 	var uploadAuthMw func(http.Handler) http.Handler
@@ -325,9 +326,9 @@ func run() error {
 	// Otherwise, falls back to standard login handler
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.MFA != nil && cfg.MFA.Enabled {
-			middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginWithMFAHandler(repos, cfg))).ServeHTTP(w, r)
+			middleware.RateLimitUserLogin(anonMode)(http.HandlerFunc(handlers.UserLoginWithMFAHandler(repos, cfg))).ServeHTTP(w, r)
 		} else {
-			middleware.RateLimitUserLogin()(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
+			middleware.RateLimitUserLogin(anonMode)(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
 		}
 	})
 
@@ -415,7 +416,7 @@ func run() error {
 	})
 
 	// User CSRF protection for sensitive token operations
-	userCSRF := middleware.UserCSRFProtection(repos)
+	userCSRF := middleware.UserCSRFProtection(repos, anonMode)
 
 	mux.HandleFunc("/api/tokens/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -427,7 +428,7 @@ func run() error {
 			userAuth(userCSRF(http.HandlerFunc(handlers.RotateTokenHandler(repos, cfg)))).ServeHTTP(w, r)
 		case r.Method == http.MethodDelete:
 			// Revoke token - requires session auth + CSRF protection
-			userAuth(userCSRF(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+			userAuth(userCSRF(http.HandlerFunc(handlers.RevokeAPITokenHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -435,7 +436,7 @@ func run() error {
 
 	// MFA routes (TOTP enrollment and status)
 	// Note: MFA routes require user authentication and user-specific CSRF protection
-	mfaCSRF := middleware.UserCSRFProtection(repos)
+	mfaCSRF := middleware.UserCSRFProtection(repos, anonMode)
 	// Note: totpRateLimit already defined above with other middleware
 
 	mux.HandleFunc("/api/user/mfa/status", func(w http.ResponseWriter, r *http.Request) {
@@ -505,7 +506,7 @@ func run() error {
 	// Public routes: providers list, login initiation, callback
 	// Protected routes: link/unlink account, get linked providers
 	// Rate limited to prevent state exhaustion and provider enumeration
-	ssoRateLimit := middleware.RateLimitUserLogin() // Reuse user login rate limiting
+	ssoRateLimit := middleware.RateLimitUserLogin(anonMode) // Reuse user login rate limiting
 
 	// GET /api/auth/sso/providers - List enabled SSO providers (public)
 	mux.HandleFunc("/api/auth/sso/providers", handlers.ListSSOProvidersHandler(repos, cfg))
@@ -596,12 +597,12 @@ func run() error {
 			serveAdminPage("admin/login.html")(w, r)
 		})
 		mux.HandleFunc("/admin/api/login", func(w http.ResponseWriter, r *http.Request) {
-			middleware.RateLimitAdminLogin()(http.HandlerFunc(handlers.AdminLoginHandler(repos, cfg))).ServeHTTP(w, r)
+			middleware.RateLimitAdminLogin(anonMode)(http.HandlerFunc(handlers.AdminLoginHandler(repos, cfg))).ServeHTTP(w, r)
 		})
 
 		// Admin dashboard routes (auth required)
-		adminAuth := middleware.AdminAuth(repos)
-		csrfProtection := middleware.CSRFProtection(repos)
+		adminAuth := middleware.AdminAuth(repos, anonMode)
+		csrfProtection := middleware.CSRFProtection(repos, anonMode)
 
 		mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 			// Redirect to dashboard
@@ -630,11 +631,11 @@ func run() error {
 		})
 
 		mux.HandleFunc("/admin/api/ip/block", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBlockIPHandler(repos)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminBlockIPHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/ip/unblock", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUnblockIPHandler(repos)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUnblockIPHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/quota/update", func(w http.ResponseWriter, r *http.Request) {
@@ -703,7 +704,7 @@ func run() error {
 
 		// Admin user management routes
 		mux.HandleFunc("/admin/api/users/create", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(repos)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminCreateUserHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/users", func(w http.ResponseWriter, r *http.Request) {
@@ -720,7 +721,7 @@ func run() error {
 			// POST /admin/api/users/{id}/mfa/reset - Disable MFA for user
 			// Note: Use HasSuffix for strict path matching to prevent path traversal
 			if strings.HasSuffix(path, "/mfa/status") && r.Method == "GET" {
-				adminAuth(http.HandlerFunc(handlers.AdminGetUserMFAStatusHandler(repos))).ServeHTTP(w, r)
+				adminAuth(http.HandlerFunc(handlers.AdminGetUserMFAStatusHandler(repos, cfg))).ServeHTTP(w, r)
 				return
 			} else if strings.HasSuffix(path, "/mfa/reset") && r.Method == "POST" {
 				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserMFAHandler(repos, cfg)))).ServeHTTP(w, r)
@@ -728,15 +729,15 @@ func run() error {
 			}
 
 			if r.Method == "PUT" || r.Method == "PATCH" {
-				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(repos)))).ServeHTTP(w, r)
+				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateUserHandler(repos, cfg)))).ServeHTTP(w, r)
 			} else if r.Method == "DELETE" {
 				adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteUserHandler(repos, cfg)))).ServeHTTP(w, r)
 			} else if r.Method == "POST" {
 				// Check which action: enable, disable, or reset-password
 				if strings.Contains(path, "/enable") || strings.Contains(path, "/disable") {
-					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminToggleUserActiveHandler(repos)))).ServeHTTP(w, r)
+					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminToggleUserActiveHandler(repos, cfg)))).ServeHTTP(w, r)
 				} else if strings.Contains(path, "/reset-password") {
-					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserPasswordHandler(repos)))).ServeHTTP(w, r)
+					adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminResetUserPasswordHandler(repos, cfg)))).ServeHTTP(w, r)
 				} else {
 					http.Error(w, "Not found", http.StatusNotFound)
 				}
@@ -792,12 +793,12 @@ func run() error {
 		})
 
 		mux.HandleFunc("/admin/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminRevokeAPITokenHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		})
 
 		// Permanently delete a token
 		mux.HandleFunc("/admin/api/tokens/delete", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteAPITokenHandler(repos.DB)))).ServeHTTP(w, r)
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteAPITokenHandler(repos.DB, cfg)))).ServeHTTP(w, r)
 		})
 
 		// Bulk token revocation - revoke multiple tokens by IDs
@@ -984,7 +985,7 @@ func run() error {
 
 	// Wrap with middleware (order: Recovery -> Logging -> Metrics -> Security -> RateLimit -> handlers)
 	handler := middleware.RecoveryMiddleware(
-		middleware.LoggingMiddleware(
+		middleware.LoggingMiddleware(cfg.IsAnonymousMode())(
 			metrics.Middleware(
 				middleware.SecurityHeadersMiddleware(
 					middleware.RateLimitMiddleware(rateLimiter)(mux),

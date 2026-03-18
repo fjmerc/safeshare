@@ -87,7 +87,7 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 		if cfg.MFA == nil || !cfg.MFA.Enabled || !cfg.MFA.WebAuthnEnabled {
 			slog.Warn("WebAuthn registration attempted but WebAuthn is disabled",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -102,7 +102,7 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized - PUBLIC_URL may not be configured",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 				"public_url", cfg.PublicURL,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -173,7 +173,7 @@ func MFAWebAuthnRegisterBeginHandler(repos *repository.Repositories, cfg *config
 		slog.Info("WebAuthn registration started",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"challenge_db_id", storedChallenge.ID,
 			"expires_at_utc", storedChallenge.ExpiresAt.UTC().Format(time.RFC3339),
 		)
@@ -233,7 +233,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -278,7 +278,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 				}
 				slog.Warn("WebAuthn registration failed - challenge issue",
 					"user_id", user.ID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 					"error_type", errType,
 					"current_time_utc", time.Now().UTC().Format(time.RFC3339),
 				)
@@ -332,7 +332,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 			slog.Warn("failed to parse WebAuthn credential response",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -354,7 +354,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 			slog.Warn("WebAuthn registration verification failed",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -390,7 +390,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 			"username", user.Username,
 			"credential_id", storedCred.ID,
 			"credential_name", req.Name,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"user_agent", userAgent,
 		)
 
@@ -447,7 +447,7 @@ func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Con
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -526,7 +526,7 @@ func MFAWebAuthnAuthBeginHandler(repos *repository.Repositories, cfg *config.Con
 		slog.Info("WebAuthn authentication started",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		response := WebAuthnAuthBeginResponse{
@@ -583,7 +583,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -602,7 +602,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 			if err == repository.ErrChallengeNotFound || err == repository.ErrChallengeExpired {
 				slog.Warn("WebAuthn authentication failed - challenge not found or expired",
 					"user_id", user.ID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
@@ -656,7 +656,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 			slog.Warn("failed to parse WebAuthn assertion response",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -678,7 +678,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 			slog.Warn("WebAuthn authentication verification failed",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -708,7 +708,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 							"credential_id", dbCredID,
 							"stored_count", cred.SignCount,
 							"new_count", validatedCredential.Authenticator.SignCount,
-							"ip", clientIP,
+							"ip", logIP(clientIP, cfg),
 						)
 						// Allow authentication to continue but log the warning
 						// In a stricter implementation, you might want to reject the login
@@ -728,7 +728,7 @@ func MFAWebAuthnAuthFinishHandler(repos *repository.Repositories, cfg *config.Co
 		slog.Info("WebAuthn authentication successful",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -866,7 +866,7 @@ func MFAWebAuthnCredentialDeleteHandler(repos *repository.Repositories, cfg *con
 			"user_id", user.ID,
 			"username", user.Username,
 			"credential_id", credentialID,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -972,7 +972,7 @@ func MFAWebAuthnCredentialUpdateHandler(repos *repository.Repositories, cfg *con
 			"username", user.Username,
 			"credential_id", credentialID,
 			"new_name", req.Name,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")

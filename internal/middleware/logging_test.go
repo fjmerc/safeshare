@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoggingMiddleware_BasicRequest(t *testing.T) {
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}))
@@ -42,7 +42,7 @@ func TestLoggingMiddleware_CapturesStatusCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			}))
 
@@ -69,7 +69,7 @@ func TestLoggingMiddleware_DifferentMethods(t *testing.T) {
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
-			handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 
@@ -97,7 +97,7 @@ func TestLoggingMiddleware_DifferentPaths(t *testing.T) {
 
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
-			handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 
@@ -114,7 +114,7 @@ func TestLoggingMiddleware_DifferentPaths(t *testing.T) {
 }
 
 func TestLoggingMiddleware_WithUserAgent(t *testing.T) {
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -130,7 +130,7 @@ func TestLoggingMiddleware_WithUserAgent(t *testing.T) {
 }
 
 func TestLoggingMiddleware_WithXForwardedFor(t *testing.T) {
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -147,7 +147,7 @@ func TestLoggingMiddleware_WithXForwardedFor(t *testing.T) {
 }
 
 func TestLoggingMiddleware_WithXRealIP(t *testing.T) {
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -167,7 +167,7 @@ func TestLoggingMiddleware_PreservesHandlerResponse(t *testing.T) {
 	expectedBody := "test response"
 	expectedStatus := http.StatusCreated
 
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Custom-Header", "custom-value")
 		w.WriteHeader(expectedStatus)
 		w.Write([]byte(expectedBody))
@@ -196,7 +196,7 @@ func TestLoggingMiddleware_PreservesHandlerResponse(t *testing.T) {
 
 func TestLoggingMiddleware_DefaultStatusCode(t *testing.T) {
 	// Handler that writes body without explicit WriteHeader call
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	}))
 
@@ -213,7 +213,7 @@ func TestLoggingMiddleware_DefaultStatusCode(t *testing.T) {
 
 func TestLoggingMiddleware_MultipleWriteHeader(t *testing.T) {
 	// Handler that tries to call WriteHeader multiple times
-	handler := LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.WriteHeader(http.StatusBadRequest) // Should be ignored
 	}))

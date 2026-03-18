@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"regexp"
 	"time"
+
+	"github.com/fjmerc/safeshare/internal/privacy"
 )
 
 // responseWriter wraps http.ResponseWriter to capture status code
@@ -56,32 +58,35 @@ func redactPathClaimCodes(path string) string {
 	})
 }
 
-// LoggingMiddleware logs HTTP requests with method, path, status, duration, and IP
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+// LoggingMiddleware logs HTTP requests with method, path, status, duration, and IP.
+// When anonymousMode is true, IP addresses are redacted from log output.
+func LoggingMiddleware(anonymousMode bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
 
-		// Wrap the response writer to capture status code
-		wrapped := &responseWriter{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			written:        false,
-		}
+			// Wrap the response writer to capture status code
+			wrapped := &responseWriter{
+				ResponseWriter: w,
+				statusCode:     http.StatusOK,
+				written:        false,
+			}
 
-		// Call the next handler
-		next.ServeHTTP(wrapped, r)
+			// Call the next handler
+			next.ServeHTTP(wrapped, r)
 
-		// Log request details
-		duration := time.Since(start)
-		ip := getClientIP(r)
+			// Log request details
+			duration := time.Since(start)
+			ip := getClientIP(r)
 
-		slog.Info("http request",
-			"method", r.Method,
-			"path", redactPathClaimCodes(r.URL.Path),
-			"status", wrapped.statusCode,
-			"duration", duration,
-			"ip", ip,
-			"user_agent", r.UserAgent(),
-		)
-	})
+			slog.Info("http request",
+				"method", r.Method,
+				"path", redactPathClaimCodes(r.URL.Path),
+				"status", wrapped.statusCode,
+				"duration", duration,
+				"ip", privacy.RedactIP(ip, anonymousMode),
+				"user_agent", r.UserAgent(),
+			)
+		})
+	}
 }

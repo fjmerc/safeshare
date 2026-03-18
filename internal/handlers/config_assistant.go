@@ -134,7 +134,7 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 		}
 
 		slog.Info("configuration assistant analysis completed",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"deployment_type", req.DeploymentType,
 			"user_load", req.UserLoad,
 		)

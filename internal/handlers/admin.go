@@ -89,7 +89,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 				slog.Info("admin login successful via users table",
 					"username", username,
 					"user_id", user.ID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 			}
 		}
@@ -98,7 +98,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 		if !isAdminCredentials && authenticatedUser == nil {
 			slog.Warn("admin login failed - invalid credentials",
 				"username", username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 
 			// Return error with slight delay to prevent timing attacks
@@ -142,7 +142,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 						if err == ErrTooManyChallenges {
 							slog.Warn("admin MFA challenge creation rate limited",
 								"user_id", authenticatedUser.ID,
-								"ip", clientIP,
+								"ip", logIP(clientIP, cfg),
 							)
 							w.Header().Set("Content-Type", "application/json")
 							w.WriteHeader(http.StatusTooManyRequests)
@@ -160,7 +160,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 						"username", username,
 						"user_id", authenticatedUser.ID,
 						"available_methods", availableMethods,
-						"ip", clientIP,
+						"ip", logIP(clientIP, cfg),
 					)
 
 					// Determine primary challenge type
@@ -198,7 +198,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 		// Create appropriate session type based on authentication method
 		if isAdminCredentials {
 			// Legacy admin_credentials path: create admin_session
-			err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, clientIP, userAgent)
+			err = repos.Admin.CreateSession(ctx, sessionToken, expiresAt, storeIP(clientIP, cfg), userAgent)
 			if err != nil {
 				slog.Error("failed to create admin session", "error", err)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -224,7 +224,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 			slog.Info("admin login successful via admin_credentials",
 				"username", username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 				"user_agent", userAgent,
 			)
 
@@ -236,7 +236,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 			})
 		} else {
 			// Users table path: create user_session for better compatibility
-			err = repos.Users.CreateSession(ctx, authenticatedUser.ID, sessionToken, expiresAt, clientIP, userAgent)
+			err = repos.Users.CreateSession(ctx, authenticatedUser.ID, sessionToken, expiresAt, storeIP(clientIP, cfg), userAgent)
 			if err != nil {
 				slog.Error("failed to create user session", "error", err)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -300,7 +300,7 @@ func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http
 			}
 
 			slog.Info("admin logout via admin_session",
-				"ip", getClientIP(r),
+				"ip", logIP(getClientIP(r), cfg),
 			)
 		}
 
@@ -313,7 +313,7 @@ func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http
 			}
 
 			slog.Info("admin logout via user_session",
-				"ip", getClientIP(r),
+				"ip", logIP(getClientIP(r), cfg),
 			)
 		}
 
@@ -488,7 +488,7 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 				DownloadCount:      file.DownloadCount,
 				CompletedDownloads: file.CompletedDownloads,
 				Username:           file.Username,
-				UploaderIP:         file.UploaderIP,
+				UploaderIP:         logIP(file.UploaderIP, cfg),
 				PasswordProtected:  file.PasswordHash != "",
 			}
 		}
@@ -549,7 +549,7 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 			slog.Error("admin file deletion failed",
 				"claim_code", redactClaimCode(claimCode),
 				"error", err,
-				"admin_ip", getClientIP(r),
+				"admin_ip", logIP(getClientIP(r), cfg),
 			)
 			// Security fix: Use generic error message to avoid leaking internal details
 			http.Error(w, "File not found or already deleted", http.StatusNotFound)
@@ -562,7 +562,7 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 				"filename", file.StoredFilename,
 				"error", err,
 				"claim_code", redactClaimCode(claimCode),
-				"admin_ip", getClientIP(r),
+				"admin_ip", logIP(getClientIP(r), cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -599,7 +599,7 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 			"claim_code", redactClaimCode(claimCode),
 			"filename", file.OriginalFilename,
 			"size", file.FileSize,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -645,7 +645,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 			slog.Error("admin bulk file deletion failed",
 				"count", len(claimCodes),
 				"error", err,
-				"admin_ip", getClientIP(r),
+				"admin_ip", logIP(getClientIP(r), cfg),
 			)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -659,7 +659,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 				slog.Error("stored filename validation failed during bulk deletion",
 					"filename", file.StoredFilename,
 					"error", err,
-					"admin_ip", getClientIP(r),
+					"admin_ip", logIP(getClientIP(r), cfg),
 				)
 				// Skip this file but continue with others
 				continue
@@ -697,7 +697,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 		slog.Info("admin bulk deleted files",
 			"deleted_count", deletedCount,
 			"requested_count", len(claimCodes),
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -710,7 +710,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 }
 
 // AdminBlockIPHandler blocks an IP address
-func AdminBlockIPHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminBlockIPHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -755,7 +755,7 @@ func AdminBlockIPHandler(repos *repository.Repositories) http.HandlerFunc {
 		slog.Info("admin blocked IP",
 			"blocked_ip", ipAddress,
 			"reason", reason,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -767,7 +767,7 @@ func AdminBlockIPHandler(repos *repository.Repositories) http.HandlerFunc {
 }
 
 // AdminUnblockIPHandler unblocks an IP address
-func AdminUnblockIPHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminUnblockIPHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -801,7 +801,7 @@ func AdminUnblockIPHandler(repos *repository.Repositories) http.HandlerFunc {
 
 		slog.Info("admin unblocked IP",
 			"unblocked_ip", ipAddress,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -859,7 +859,7 @@ func AdminUpdateQuotaHandler(repos *repository.Repositories, cfg *config.Config)
 		slog.Info("admin updated storage quota",
 			"old_quota_gb", oldQuota,
 			"new_quota_gb", newQuota,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1011,7 +1011,7 @@ func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *conf
 
 		slog.Info("admin updated storage settings",
 			"updates", updates,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1135,7 +1135,7 @@ func AdminUpdateSecuritySettingsHandler(repos *repository.Repositories, cfg *con
 
 		slog.Info("admin updated security settings",
 			"updates", updates,
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1173,7 +1173,7 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 		// Verify current password using constant-time comparison to prevent timing attacks
 		if subtle.ConstantTimeCompare([]byte(currentPassword), []byte(cfg.GetAdminPassword())) != 1 {
 			slog.Warn("admin password change failed - incorrect current password",
-				"admin_ip", getClientIP(r),
+				"admin_ip", logIP(getClientIP(r), cfg),
 			)
 			time.Sleep(500 * time.Millisecond) // Additional defense against timing attacks
 			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
@@ -1193,7 +1193,7 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 		}
 
 		slog.Info("admin password changed successfully",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1281,7 +1281,7 @@ func AdminCleanupPartialUploadsHandler(repos *repository.Repositories, cfg *conf
 		expiryHours := 0
 
 		slog.Info("admin initiated partial uploads cleanup (immediate)",
-			"admin_ip", clientIP,
+			"admin_ip", logIP(clientIP, cfg),
 			"expiry_hours", expiryHours,
 		)
 
@@ -1290,7 +1290,7 @@ func AdminCleanupPartialUploadsHandler(repos *repository.Repositories, cfg *conf
 		if err != nil {
 			slog.Error("failed to cleanup partial uploads",
 				"error", err,
-				"admin_ip", clientIP,
+				"admin_ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Failed to cleanup partial uploads", http.StatusInternalServerError)
 			return
@@ -1304,7 +1304,7 @@ func AdminCleanupPartialUploadsHandler(repos *repository.Repositories, cfg *conf
 			"bytes_reclaimed", result.BytesReclaimed,
 			"orphaned_chunk_bytes", result.OrphanedBytes,
 			"orphaned_file_bytes", result.OrphanedFilesBytes,
-			"admin_ip", clientIP,
+			"admin_ip", logIP(clientIP, cfg),
 		)
 
 		// Format the success message with breakdown

@@ -14,7 +14,7 @@ import (
 )
 
 // AdminCreateUserHandler handles admin user creation (invite-only registration)
-func AdminCreateUserHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminCreateUserHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -136,7 +136,7 @@ func AdminCreateUserHandler(repos *repository.Repositories) http.HandlerFunc {
 		}
 
 		slog.Info("admin created new user",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"new_user_id", user.ID,
 			"username", user.Username,
 		)
@@ -213,7 +213,7 @@ func AdminListUsersHandler(repos *repository.Repositories) http.HandlerFunc {
 }
 
 // AdminUpdateUserHandler handles updating user details
-func AdminUpdateUserHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminUpdateUserHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -306,7 +306,7 @@ func AdminUpdateUserHandler(repos *repository.Repositories) http.HandlerFunc {
 		}
 
 		slog.Info("admin updated user",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"user_id", userID,
 			"username", username,
 		)
@@ -319,7 +319,7 @@ func AdminUpdateUserHandler(repos *repository.Repositories) http.HandlerFunc {
 }
 
 // AdminToggleUserActiveHandler enables or disables a user account
-func AdminToggleUserActiveHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminToggleUserActiveHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -384,7 +384,7 @@ func AdminToggleUserActiveHandler(repos *repository.Repositories) http.HandlerFu
 		}
 
 		slog.Info("admin toggled user active status",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"user_id", userID,
 			"username", user.Username,
 			"is_active", isActive,
@@ -403,7 +403,7 @@ func AdminToggleUserActiveHandler(repos *repository.Repositories) http.HandlerFu
 }
 
 // AdminResetUserPasswordHandler generates a new temporary password for a user
-func AdminResetUserPasswordHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminResetUserPasswordHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -471,7 +471,7 @@ func AdminResetUserPasswordHandler(repos *repository.Repositories) http.HandlerF
 		}
 
 		slog.Info("admin reset user password",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"user_id", userID,
 			"username", user.Username,
 		)
@@ -536,7 +536,7 @@ func AdminDeleteUserHandler(repos *repository.Repositories, cfg *config.Config) 
 		}
 
 		slog.Info("admin deleted user",
-			"admin_ip", getClientIP(r),
+			"admin_ip", logIP(getClientIP(r), cfg),
 			"user_id", userID,
 			"username", user.Username,
 		)

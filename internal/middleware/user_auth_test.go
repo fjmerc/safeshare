@@ -41,7 +41,7 @@ func TestUserAuth_ValidSession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check that user is in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
@@ -71,7 +71,7 @@ func TestUserAuth_NoSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -110,7 +110,7 @@ func TestUserAuth_InvalidSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -153,7 +153,7 @@ func TestUserAuth_ExpiredSession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -202,7 +202,7 @@ func TestUserAuth_InactiveUser(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -259,7 +259,7 @@ func TestOptionalUserAuth_ValidSession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check that user is in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser == nil {
@@ -289,7 +289,7 @@ func TestOptionalUserAuth_NoSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
@@ -318,7 +318,7 @@ func TestOptionalUserAuth_InvalidSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
@@ -373,7 +373,7 @@ func TestOptionalUserAuth_InactiveUser(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User should not be in context (inactive) using typed key
 		ctxUser := r.Context().Value(ContextKeyUser)
 		if ctxUser != nil {
@@ -536,7 +536,7 @@ func TestUserAuth_APIToken_ExpirationHeaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 
@@ -613,7 +613,7 @@ func TestOptionalUserAuth_APIToken_ExpirationHeaders(t *testing.T) {
 	expiresIn5Days := time.Now().Add(5 * 24 * time.Hour)
 	tokenSoon, _ := createTestAPIToken(t, repos, user.ID, &expiresIn5Days)
 
-	handler := OptionalUserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := OptionalUserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -695,7 +695,7 @@ func TestUserAuth_APIToken_ExpirationThreshold(t *testing.T) {
 			expiresAt := time.Now().Add(tt.expiresIn)
 			token, _ := createTestAPIToken(t, repos, user.ID, &expiresAt)
 
-			handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 
@@ -758,7 +758,7 @@ func TestUserAuth_SessionAuth_NoExpirationHeaders(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

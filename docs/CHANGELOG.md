@@ -36,7 +36,13 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ## [Unreleased]
 
 ### Added
+
 - Automatic metadata stripping for uploaded files (`STRIP_METADATA=true`) — removes EXIF/GPS data from JPEG/PNG images and author/company/timestamp metadata from Office documents (DOCX, XLSX, PPTX) to prevent deanonymization through file forensics
+- **Anonymous Mode**: New `ANONYMOUS_MODE` environment variable that, when enabled, prevents IP addresses from being stored in the database or logged. IPs are replaced with "anonymous" in database records and "redacted" in log output. Rate limiting and IP blocking continue to use real IPs internally for security. Configurable via `ANONYMOUS_MODE=true`.
+
+### Changed
+
+- QR code library is now self-hosted (removed external CDN dependency on jsdelivr)
 
 ---
 

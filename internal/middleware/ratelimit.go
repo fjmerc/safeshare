@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -16,6 +17,7 @@ type ConfigProvider interface {
 	GetRateLimitDownload() int
 	GetTrustProxyHeaders() string
 	GetTrustedProxyIPs() string
+	IsAnonymousMode() bool
 }
 
 // requestRecord tracks requests for an IP
@@ -162,7 +164,7 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			// Check rate limit
 			if !rl.checkLimit(ip, limit) {
 				slog.Warn("rate limit exceeded",
-					"ip", ip,
+					"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 					"limit_type", limitType,
 					"limit", limit,
 					"path", r.URL.Path,
