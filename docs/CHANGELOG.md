@@ -36,7 +36,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ## [Unreleased]
 
 ### Added
-- Automatic metadata stripping for uploaded images (`STRIP_METADATA=true`) — removes EXIF/GPS data from JPEG and PNG files to prevent deanonymization through file forensics
+- Automatic metadata stripping for uploaded files (`STRIP_METADATA=true`) — removes EXIF/GPS data from JPEG/PNG images and author/company/timestamp metadata from Office documents (DOCX, XLSX, PPTX) to prevent deanonymization through file forensics
 
 ---
 

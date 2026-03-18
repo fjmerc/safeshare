@@ -195,8 +195,11 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 | File Type | What's Stripped | Method |
 |-----------|----------------|--------|
-| JPEG | APP1 segments (EXIF, XMP) — GPS, camera info, timestamps | Byte-level segment removal |
-| PNG | tEXt, iTXt, zTXt, eXIf chunks — author, software, comments | Chunk filtering |
+| JPEG | APP1-APP15 (EXIF, XMP, IPTC, ICC), COM — GPS, camera info, author, timestamps | Byte-level segment removal |
+| PNG | tEXt, iTXt, zTXt, eXIf, tIME chunks — author, software, comments, timestamps | Chunk filtering |
+| DOCX | docProps/ — author, company, template, revision history, timestamps | ZIP entry removal + XML filtering |
+| XLSX | docProps/ — same as DOCX | ZIP entry removal + XML filtering |
+| PPTX | docProps/ — same as DOCX | ZIP entry removal + XML filtering |
 
 ### Behavior
 
@@ -208,7 +211,9 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 ### Limitations
 
-- PDF, Office documents, and HEIC files are not currently supported
+- PDF and HEIC files are not currently supported
+- Legacy Office formats (.doc, .xls, .ppt) are not supported — only modern Open XML formats
+- Office document comments and tracked changes (which may contain author names) are not stripped — only file-level metadata in docProps/
 - Already-uploaded files are not retroactively stripped
 - Metadata stripping is irreversible — the original metadata cannot be recovered
 

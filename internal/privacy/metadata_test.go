@@ -1,11 +1,15 @@
 package privacy
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"encoding/xml"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -527,6 +531,399 @@ func TestStripPNGMetadata_PreservesPermissions(t *testing.T) {
 	info, _ := os.Stat(f)
 	if info.Mode().Perm() != 0600 {
 		t.Errorf("expected permissions 0600, got %o", info.Mode().Perm())
+	}
+}
+
+// --- Office document test helpers ---
+
+// buildOfficeDoc creates a minimal Office Open XML file (DOCX/XLSX/PPTX are all ZIP-based).
+// If includeDocProps is true, includes core.xml and app.xml with identifying metadata.
+func buildOfficeDoc(t *testing.T, includeDocProps bool) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	// [Content_Types].xml (required)
+	ct := contentTypes{
+		XMLName: xml.Name{Space: nsContentTypes, Local: "Types"},
+		Defaults: []contentDefault{
+			{Extension: "rels", ContentType: "application/vnd.openxmlformats-package.relationships+xml"},
+			{Extension: "xml", ContentType: "application/xml"},
+		},
+		Overrides: []contentOverride{
+			{PartName: "/word/document.xml", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"},
+		},
+	}
+	if includeDocProps {
+		ct.Overrides = append(ct.Overrides,
+			contentOverride{PartName: "/docProps/core.xml", ContentType: "application/vnd.openxmlformats-package.core-properties+xml"},
+			contentOverride{PartName: "/docProps/app.xml", ContentType: "application/vnd.openxmlformats-officedocument.extended-properties+xml"},
+		)
+	}
+	ctData, _ := xml.MarshalIndent(ct, "", "  ")
+	ctData = append([]byte(xml.Header), ctData...)
+	writeZipEntry(t, w, "[Content_Types].xml", ctData)
+
+	// _rels/.rels (required)
+	rels := relationships{
+		XMLName: xml.Name{Space: nsRelationships, Local: "Relationships"},
+		Rels: []relationship{
+			{ID: "rId1", Type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", Target: "word/document.xml"},
+		},
+	}
+	if includeDocProps {
+		rels.Rels = append(rels.Rels,
+			relationship{ID: "rId2", Type: "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", Target: "docProps/core.xml"},
+			relationship{ID: "rId3", Type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties", Target: "docProps/app.xml"},
+		)
+	}
+	relsData, _ := xml.MarshalIndent(rels, "", "  ")
+	relsData = append([]byte(xml.Header), relsData...)
+	writeZipEntry(t, w, "_rels/.rels", relsData)
+
+	// word/document.xml (minimal document body)
+	docBody := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>Hello World</w:t></w:r></w:p></w:body>
+</w:document>`
+	writeZipEntry(t, w, "word/document.xml", []byte(docBody))
+
+	if includeDocProps {
+		// docProps/core.xml — Dublin Core metadata with identifying info
+		coreXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:dcterms="http://purl.org/dc/terms/">
+  <dc:creator>John Doe Whistleblower</dc:creator>
+  <cp:lastModifiedBy>John Doe</cp:lastModifiedBy>
+  <dcterms:created>2026-03-18T10:00:00Z</dcterms:created>
+  <dcterms:modified>2026-03-18T12:00:00Z</dcterms:modified>
+  <cp:revision>5</cp:revision>
+</cp:coreProperties>`
+		writeZipEntry(t, w, "docProps/core.xml", []byte(coreXML))
+
+		// docProps/app.xml — Application metadata
+		appXML := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+  <Application>Microsoft Office Word</Application>
+  <AppVersion>16.0000</AppVersion>
+  <Company>Secret Organization Inc.</Company>
+  <Template>Normal.dotm</Template>
+  <TotalTime>42</TotalTime>
+</Properties>`
+		writeZipEntry(t, w, "docProps/app.xml", []byte(appXML))
+	}
+
+	w.Close()
+	return buf.Bytes()
+}
+
+func writeZipEntry(t *testing.T, w *zip.Writer, name string, data []byte) {
+	t.Helper()
+	f, err := w.Create(name)
+	if err != nil {
+		t.Fatalf("failed to create ZIP entry %s: %v", name, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatalf("failed to write ZIP entry %s: %v", name, err)
+	}
+}
+
+// zipContainsEntry checks if a ZIP file contains an entry with the given name prefix.
+func zipContainsEntry(data []byte, prefix string) bool {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return false
+	}
+	for _, f := range r.File {
+		if strings.HasPrefix(f.Name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// zipEntryContent reads the content of a ZIP entry.
+func zipEntryContent(t *testing.T, data []byte, name string) []byte {
+	t.Helper()
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("failed to open ZIP: %v", err)
+	}
+	for _, f := range r.File {
+		if f.Name == name {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("failed to open entry %s: %v", name, err)
+			}
+			defer rc.Close()
+			content, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("failed to read entry %s: %v", name, err)
+			}
+			return content
+		}
+	}
+	return nil
+}
+
+// --- Office document tests ---
+
+func TestSupportsMetadataStripping_OfficeFormats(t *testing.T) {
+	tests := []struct {
+		mimeType string
+		expected bool
+	}{
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
+		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true},
+		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", true},
+		{"application/msword", false},           // Legacy .doc not supported
+		{"application/vnd.ms-excel", false},      // Legacy .xls not supported
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.mimeType, func(t *testing.T) {
+			got := SupportsMetadataStripping(tt.mimeType)
+			if got != tt.expected {
+				t.Errorf("SupportsMetadataStripping(%q) = %v, want %v", tt.mimeType, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStripOfficeMetadata_WithDocProps(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "test.docx")
+
+	original := buildOfficeDoc(t, true)
+	os.WriteFile(f, original, 0644)
+
+	// Verify docProps exist before stripping
+	if !zipContainsEntry(original, "docProps/") {
+		t.Fatal("test file should contain docProps before stripping")
+	}
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	stripped, _ := os.ReadFile(f)
+
+	// Verify docProps are gone
+	if zipContainsEntry(stripped, "docProps/") {
+		t.Error("stripped file still contains docProps entries")
+	}
+
+	// Verify document content is preserved
+	docContent := zipEntryContent(t, stripped, "word/document.xml")
+	if docContent == nil {
+		t.Fatal("word/document.xml missing after stripping")
+	}
+	if !strings.Contains(string(docContent), "Hello World") {
+		t.Error("document content was corrupted")
+	}
+
+	// Verify [Content_Types].xml no longer references docProps
+	ctContent := zipEntryContent(t, stripped, "[Content_Types].xml")
+	if strings.Contains(string(ctContent), "docProps") {
+		t.Error("[Content_Types].xml still references docProps")
+	}
+
+	// Verify _rels/.rels no longer references docProps
+	relsContent := zipEntryContent(t, stripped, "_rels/.rels")
+	if strings.Contains(string(relsContent), "docProps") {
+		t.Error("_rels/.rels still references docProps")
+	}
+
+	// Verify the officeDocument relationship is preserved
+	if !strings.Contains(string(relsContent), "word/document.xml") {
+		t.Error("_rels/.rels lost the officeDocument relationship")
+	}
+}
+
+func TestStripOfficeMetadata_WithoutDocProps(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "test.docx")
+
+	original := buildOfficeDoc(t, false)
+	os.WriteFile(f, original, 0644)
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// File should be unchanged (no docProps to strip)
+	after, _ := os.ReadFile(f)
+	if !bytes.Equal(original, after) {
+		t.Error("file should be unchanged when no docProps present")
+	}
+}
+
+func TestStripOfficeMetadata_InvalidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "bad.docx")
+	os.WriteFile(f, []byte("not a zip file"), 0644)
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err == nil {
+		t.Error("expected error for invalid file")
+	}
+}
+
+func TestStripOfficeMetadata_PreservesPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "test.docx")
+
+	original := buildOfficeDoc(t, true)
+	os.WriteFile(f, original, 0600)
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	info, _ := os.Stat(f)
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("expected permissions 0600, got %o", info.Mode().Perm())
+	}
+}
+
+func TestStripOfficeMetadata_AllFormats(t *testing.T) {
+	mimeTypes := []struct {
+		mime string
+		ext  string
+	}{
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"},
+		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"},
+		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"},
+	}
+
+	for _, mt := range mimeTypes {
+		t.Run(mt.ext, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			f := filepath.Join(tmpDir, "test"+mt.ext)
+
+			original := buildOfficeDoc(t, true)
+			os.WriteFile(f, original, 0644)
+
+			err := StripFileMetadata(f, mt.mime)
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", mt.ext, err)
+			}
+
+			stripped, _ := os.ReadFile(f)
+			if zipContainsEntry(stripped, "docProps/") {
+				t.Errorf("%s: docProps still present after stripping", mt.ext)
+			}
+		})
+	}
+}
+
+func TestStripOfficeMetadata_CustomXml(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "test.docx")
+
+	// Build a doc with customXml/ directory
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	// Minimal structural files
+	ct := contentTypes{
+		XMLName:  xml.Name{Space: nsContentTypes, Local: "Types"},
+		Defaults: []contentDefault{{Extension: "xml", ContentType: "application/xml"}},
+		Overrides: []contentOverride{
+			{PartName: "/word/document.xml", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"},
+			{PartName: "/customXml/item1.xml", ContentType: "application/xml"},
+		},
+	}
+	ctData, _ := xml.MarshalIndent(ct, "", "  ")
+	writeZipEntry(t, w, "[Content_Types].xml", ctData)
+
+	rels := relationships{
+		XMLName: xml.Name{Space: nsRelationships, Local: "Relationships"},
+		Rels: []relationship{
+			{ID: "rId1", Type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", Target: "word/document.xml"},
+			{ID: "rId4", Type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml", Target: "customXml/item1.xml"},
+		},
+	}
+	relsData, _ := xml.MarshalIndent(rels, "", "  ")
+	writeZipEntry(t, w, "_rels/.rels", relsData)
+	writeZipEntry(t, w, "word/document.xml", []byte("<doc>content</doc>"))
+	writeZipEntry(t, w, "customXml/item1.xml", []byte("<tracking>secret-id-12345</tracking>"))
+	w.Close()
+
+	os.WriteFile(f, buf.Bytes(), 0644)
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	stripped, _ := os.ReadFile(f)
+	if zipContainsEntry(stripped, "customXml/") {
+		t.Error("customXml/ should be stripped")
+	}
+
+	// Verify structural references are also cleaned
+	ctContent := zipEntryContent(t, stripped, "[Content_Types].xml")
+	if strings.Contains(string(ctContent), "customXml") {
+		t.Error("[Content_Types].xml still references customXml")
+	}
+}
+
+func TestStripOfficeMetadata_LeadingSlashTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+	f := filepath.Join(tmpDir, "test.docx")
+
+	// Build a doc where _rels/.rels uses absolute pack URIs (leading slash)
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+
+	ct := contentTypes{
+		XMLName:  xml.Name{Space: nsContentTypes, Local: "Types"},
+		Defaults: []contentDefault{{Extension: "xml", ContentType: "application/xml"}},
+		Overrides: []contentOverride{
+			{PartName: "/word/document.xml", ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"},
+			{PartName: "/docProps/core.xml", ContentType: "application/vnd.openxmlformats-package.core-properties+xml"},
+		},
+	}
+	ctData, _ := xml.MarshalIndent(ct, "", "  ")
+	writeZipEntry(t, w, "[Content_Types].xml", ctData)
+
+	// Note: Target uses leading slash (absolute pack URI)
+	rels := relationships{
+		XMLName: xml.Name{Space: nsRelationships, Local: "Relationships"},
+		Rels: []relationship{
+			{ID: "rId1", Type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", Target: "word/document.xml"},
+			{ID: "rId2", Type: "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", Target: "/docProps/core.xml"},
+		},
+	}
+	relsData, _ := xml.MarshalIndent(rels, "", "  ")
+	writeZipEntry(t, w, "_rels/.rels", relsData)
+	writeZipEntry(t, w, "word/document.xml", []byte("<doc>content</doc>"))
+	writeZipEntry(t, w, "docProps/core.xml", []byte("<props><author>Secret Agent</author></props>"))
+	w.Close()
+
+	os.WriteFile(f, buf.Bytes(), 0644)
+
+	err := StripFileMetadata(f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	stripped, _ := os.ReadFile(f)
+
+	// Verify docProps removed
+	if zipContainsEntry(stripped, "docProps/") {
+		t.Error("docProps/ should be stripped")
+	}
+
+	// Verify _rels/.rels no longer references docProps (even with leading slash)
+	relsContent := zipEntryContent(t, stripped, "_rels/.rels")
+	if strings.Contains(string(relsContent), "docProps") {
+		t.Error("_rels/.rels still references docProps (leading-slash target not handled)")
 	}
 }
 
