@@ -39,6 +39,8 @@
     let filePreparationState = 'idle'; // 'idle', 'preparing', 'ready'
     let currentUploadXhr = null; // For simple upload cancellation
     let currentChunkedUploader = null; // For chunked upload cancellation
+    let e2eEncryptionKey = null; // Stored CryptoKey after encryption for URL construction
+    let e2eExportedKey = null; // Base64url-encoded key string for URL fragment
 
     // DOM Elements - Dropoff Tab
     const dropZone = document.getElementById('dropZone');
@@ -122,10 +124,17 @@
         await checkAuth(); // Wait for auth check before handling tabs
         updateDropoffTabVisibility(); // Update tab visibility based on config and auth
         fetchMaxFileSize();
+        initE2EEncryption(); // Show/hide E2E toggle based on browser support
         setupEventListeners();
         handleInitialTab();
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
+
+        // Check for encrypted download URL fragment
+        const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
+        if (e2eFragment) {
+            handleEncryptedDownload(e2eFragment);
+        }
     }
 
     // Fetch server configuration
@@ -208,12 +217,43 @@
     // Handle initial tab based on URL hash
     function handleInitialTab() {
         const hash = window.location.hash.substring(1); // Remove the #
+        // Don't treat encrypted download fragments as tab switches
         if (hash === 'dropoff' || hash === 'pickup') {
             const tabButton = document.querySelector(`.tab-button[data-tab="${hash}"]`);
             if (tabButton) {
                 // If trying to access dropoff without auth, will be redirected by handleTabSwitch
                 tabButton.click();
             }
+        }
+    }
+
+    // Initialize E2E encryption UI based on browser support
+    function initE2EEncryption() {
+        const e2eGroup = document.getElementById('e2eEncryptionGroup');
+        const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        if (!e2eGroup || !e2eToggle) return;
+
+        if (window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported()) {
+            e2eGroup.classList.remove('hidden');
+
+            // Show size warning when toggle is enabled and file is large
+            e2eToggle.addEventListener('change', function() {
+                updateE2ESizeWarning();
+            });
+        }
+    }
+
+    // Show/hide E2E size warning based on selected file size
+    function updateE2ESizeWarning() {
+        const warning = document.getElementById('e2eSizeWarning');
+        const toggle = document.getElementById('e2eEncryptionToggle');
+        if (!warning || !toggle) return;
+
+        if (toggle.checked && selectedFile &&
+            window.SafeShareCrypto && SafeShareCrypto.isFileTooLargeForClientEncryption(selectedFile.size)) {
+            warning.classList.remove('hidden');
+        } else {
+            warning.classList.add('hidden');
         }
     }
 
@@ -742,6 +782,7 @@
             // File is ready
             filePreparationState = 'ready';
             updateDropZone();
+            updateE2ESizeWarning();
 
         } catch (error) {
             // File preparation failed
@@ -821,14 +862,55 @@
     async function handleUpload() {
         if (!selectedFile) return;
 
+        const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const useE2E = e2eToggle && e2eToggle.checked && window.SafeShareCrypto;
+
+        let fileToUpload = selectedFile;
+
+        // E2E encryption: encrypt the file in browser before upload
+        if (useE2E) {
+            try {
+                uploadProgress.classList.remove('hidden');
+                uploadButton.disabled = true;
+                progressText.textContent = 'Reading file...';
+                progressFill.style.width = '0%';
+
+                const arrayBuffer = await selectedFile.arrayBuffer();
+
+                progressText.textContent = 'Encrypting...';
+                progressFill.style.width = '10%';
+
+                const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
+                e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
+                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, arrayBuffer);
+
+                progressText.textContent = 'Uploading...';
+                progressFill.style.width = '15%';
+
+                // Create a new File from the encrypted data, preserving original name
+                fileToUpload = new File([encryptedBuffer], selectedFile.name, {
+                    type: 'application/octet-stream'
+                });
+
+                // Reset progress for the actual upload tracking
+                uploadProgress.classList.add('hidden');
+            } catch (error) {
+                showToast('Encryption failed: ' + error.message, 'error', 4000);
+                resetProgress();
+                return;
+            }
+        } else {
+            e2eExportedKey = null;
+        }
+
         // Check if file should use chunked upload
         if (serverConfig.chunked_upload_enabled &&
-            selectedFile.size >= serverConfig.chunked_upload_threshold) {
-            console.log('Using chunked upload for large file:', formatFileSize(selectedFile.size));
-            await handleChunkedUpload();
+            fileToUpload.size >= serverConfig.chunked_upload_threshold) {
+            console.log('Using chunked upload for large file:', formatFileSize(fileToUpload.size));
+            await handleChunkedUpload(fileToUpload);
         } else {
-            console.log('Using simple upload for file:', formatFileSize(selectedFile.size));
-            await handleSimpleUpload();
+            console.log('Using simple upload for file:', formatFileSize(fileToUpload.size));
+            await handleSimpleUpload(fileToUpload);
         }
     }
 
@@ -847,11 +929,12 @@
     }
 
     // Handle simple upload (existing logic for files below threshold)
-    async function handleSimpleUpload() {
-        if (!selectedFile) return;
+    async function handleSimpleUpload(fileToUpload) {
+        const file = fileToUpload || selectedFile;
+        if (!file) return;
 
         const formData = new FormData();
-        formData.append('file', selectedFile);
+        formData.append('file', file);
 
         const expiresIn = parseFloat(expirationHours.value);
         if (expiresIn >= 0) {
@@ -935,8 +1018,9 @@
     }
 
     // Handle chunked upload for large files
-    async function handleChunkedUpload() {
-        if (!selectedFile) return;
+    async function handleChunkedUpload(fileToUpload) {
+        const file = fileToUpload || selectedFile;
+        if (!file) return;
 
         // Get upload parameters
         const expiresIn = parseFloat(expirationHours.value);
@@ -957,7 +1041,7 @@
 
         try {
             // Create uploader instance
-            const uploader = new ChunkedUploader(selectedFile, {
+            const uploader = new ChunkedUploader(file, {
                 expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
                 password: password
@@ -1064,12 +1148,29 @@
             // Send browser notification
             sendUploadCompleteNotification(data);
 
-            // Store data for sharing
-            currentShareData = data;
+            // If E2E encrypted, construct URL with key fragment
+            let displayUrl = data.download_url;
+            const isE2E = !!e2eExportedKey;
+            if (isE2E) {
+                const baseUrl = window.location.origin;
+                displayUrl = SafeShareCrypto.buildEncryptedUrl(baseUrl, data.claim_code, e2eExportedKey);
+            }
+
+            // Store data for sharing (override download_url if E2E)
+            currentShareData = Object.assign({}, data);
+            if (isE2E) {
+                currentShareData.download_url = displayUrl;
+            }
+
+            // Show/hide E2E badge and warning
+            const e2eBadge = document.getElementById('e2eBadge');
+            const e2eWarning = document.getElementById('e2eWarning');
+            if (e2eBadge) e2eBadge.classList.toggle('hidden', !isE2E);
+            if (e2eWarning) e2eWarning.classList.toggle('hidden', !isE2E);
 
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
-            document.getElementById('downloadUrl').value = data.download_url;
+            document.getElementById('downloadUrl').value = displayUrl;
             const fileNameElement = document.getElementById('fileName');
             fileNameElement.textContent = data.original_filename;
             fileNameElement.title = data.original_filename; // Show full name on hover
@@ -1088,7 +1189,7 @@
             if (typeof QRCode !== 'undefined') {
                 try {
                     new QRCode(qrcodeDiv, {
-                        text: data.download_url,
+                        text: displayUrl,
                         width: 200,
                         height: 200,
                         colorDark: '#000000',
@@ -1232,6 +1333,8 @@
         expirationHours.value = 24;
         maxDownloads.value = '';
         document.getElementById('uploadPassword').value = '';
+        const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        if (e2eToggle) e2eToggle.checked = false;
 
         resetProgress();
 
@@ -1252,6 +1355,7 @@
         uploadState = 'idle';
         currentUploadXhr = null;
         currentChunkedUploader = null;
+        e2eExportedKey = null;
         updateRemoveButtonState();
         hideUploadWarning();
     }
@@ -2078,6 +2182,183 @@
         } catch (e) {
             console.warn('Failed to show notification:', e);
         }
+    }
+
+    // ===== E2E ENCRYPTED DOWNLOAD =====
+
+    /**
+     * Handle an encrypted download triggered by URL fragment.
+     * Downloads the file, decrypts in browser, and triggers a save.
+     * @param {{ claimCode: string, encryptionKey: string }} fragment
+     */
+    async function handleEncryptedDownload(fragment) {
+        const overlay = document.getElementById('e2eDecryptOverlay');
+        const title = document.getElementById('e2eDecryptTitle');
+        const status = document.getElementById('e2eDecryptStatus');
+        const progressFillEl = document.getElementById('e2eDecryptProgressFill');
+        const errorEl = document.getElementById('e2eDecryptError');
+        const retryBtn = document.getElementById('e2eDecryptRetry');
+        const closeBtn = document.getElementById('e2eDecryptClose');
+        const iconEl = document.getElementById('e2eDecryptIcon');
+        const passwordSection = document.getElementById('e2eDecryptPasswordSection');
+        const passwordInput = document.getElementById('e2eDecryptPassword');
+        const passwordSubmit = document.getElementById('e2eDecryptPasswordSubmit');
+
+        if (!overlay) return;
+
+        function resetOverlayUI() {
+            errorEl.classList.add('hidden');
+            retryBtn.classList.add('hidden');
+            closeBtn.classList.add('hidden');
+            passwordSection.classList.add('hidden');
+            iconEl.className = 'e2e-decrypt-icon';
+            progressFillEl.style.width = '0%';
+        }
+
+        // Show overlay
+        overlay.classList.remove('hidden');
+        resetOverlayUI();
+
+        /**
+         * Request password from user via the overlay UI.
+         * Returns a Promise that resolves with the password or null if cancelled.
+         */
+        function requestPassword() {
+            return new Promise((resolve) => {
+                title.textContent = 'Password required';
+                status.textContent = 'This file is password-protected';
+                passwordSection.classList.remove('hidden');
+                passwordInput.value = '';
+                passwordInput.focus();
+
+                function onSubmit() {
+                    cleanup();
+                    const pw = passwordInput.value.trim();
+                    resolve(pw || null);
+                }
+
+                function onKeydown(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        onSubmit();
+                    }
+                }
+
+                function cleanup() {
+                    passwordSubmit.removeEventListener('click', onSubmit);
+                    passwordInput.removeEventListener('keydown', onKeydown);
+                    passwordSection.classList.add('hidden');
+                }
+
+                passwordSubmit.addEventListener('click', onSubmit);
+                passwordInput.addEventListener('keydown', onKeydown);
+            });
+        }
+
+        const doDecrypt = async () => {
+            try {
+                // Step 1: Get file info (check password, get filename)
+                title.textContent = 'Checking file...';
+                status.textContent = 'Retrieving file information';
+                progressFillEl.style.width = '10%';
+
+                const infoResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}/info`);
+                if (!infoResponse.ok) {
+                    const err = await infoResponse.json().catch(() => ({}));
+                    throw new Error(err.error || 'File not found or expired');
+                }
+                const fileInfo = await infoResponse.json();
+
+                // Step 2: Handle password if required
+                let passwordParam = '';
+                if (fileInfo.password_required) {
+                    const password = await requestPassword();
+                    if (!password) {
+                        // User cancelled — close overlay and clean URL
+                        overlay.classList.add('hidden');
+                        history.replaceState(null, '', window.location.pathname);
+                        return;
+                    }
+                    passwordParam = `?password=${encodeURIComponent(password)}`;
+                }
+
+                // Step 3: Download encrypted file
+                title.textContent = 'Downloading encrypted file...';
+                status.textContent = formatFileSize(fileInfo.file_size);
+                progressFillEl.style.width = '30%';
+
+                const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}${passwordParam}`);
+                if (!downloadResponse.ok) {
+                    if (downloadResponse.status === 401) {
+                        throw new Error('Incorrect password');
+                    }
+                    const err = await downloadResponse.json().catch(() => ({}));
+                    throw new Error(err.error || 'Download failed');
+                }
+
+                progressFillEl.style.width = '60%';
+                const encryptedData = await downloadResponse.arrayBuffer();
+
+                // Step 4: Decrypt
+                title.textContent = 'Decrypting...';
+                status.textContent = 'Using key from URL';
+                progressFillEl.style.width = '80%';
+
+                const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
+                const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
+
+                progressFillEl.style.width = '100%';
+
+                // Step 5: Trigger download
+                title.textContent = 'Download complete';
+                status.textContent = fileInfo.original_filename;
+                iconEl.className = 'e2e-decrypt-icon success';
+
+                const blob = new Blob([decryptedData]);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileInfo.original_filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                // Auto-hide overlay after a moment
+                setTimeout(() => {
+                    overlay.classList.add('hidden');
+                    // Clean the fragment from URL without reload
+                    history.replaceState(null, '', window.location.pathname);
+                }, 2000);
+
+            } catch (error) {
+                console.error('E2E decrypt error:', error);
+                iconEl.className = 'e2e-decrypt-icon error';
+                title.textContent = 'Decryption failed';
+                status.textContent = '';
+                progressFillEl.style.width = '0%';
+                errorEl.textContent = error.message || 'The link may be incorrect or corrupted.';
+                errorEl.classList.remove('hidden');
+                retryBtn.classList.remove('hidden');
+                closeBtn.classList.remove('hidden');
+            }
+        };
+
+        // Set up retry button
+        retryBtn.addEventListener('click', function onRetry() {
+            retryBtn.removeEventListener('click', onRetry);
+            resetOverlayUI();
+            doDecrypt();
+        });
+
+        // Set up close button
+        closeBtn.addEventListener('click', function onClose() {
+            closeBtn.removeEventListener('click', onClose);
+            overlay.classList.add('hidden');
+            history.replaceState(null, '', window.location.pathname);
+        });
+
+        await doDecrypt();
     }
 
     /**
