@@ -177,6 +177,34 @@ X-CSRF-Token: <token>
 
 ---
 
+## 🕵️ Anonymous Mode
+
+### Overview
+Anonymous mode prevents SafeShare from storing or displaying IP addresses, protecting uploader identity even from server administrators. This is critical for whistleblower scenarios and privacy-sensitive deployments.
+
+### Setup
+
+Enable anonymous mode by setting the environment variable:
+```bash
+docker run -e ANONYMOUS_MODE=true ...
+```
+
+### What It Does
+
+- **Database**: Uploader IP addresses are not stored (NULL instead of IP)
+- **Logs**: IP addresses are redacted in all log output (replaced with `[redacted]`)
+- **Admin dashboard**: IP columns show `[redacted]` instead of real IPs
+- **Rate limiting**: Still functional (uses hashed IPs internally, never stored)
+- **Audit logs**: IP fields redacted in all audit log entries
+
+### Behavior
+
+- **Default**: Disabled (`ANONYMOUS_MODE=false`)
+- **Combines with other features**: Works alongside `STRIP_METADATA`, E2E encryption, and Tor deployment for maximum anonymity
+- **Irreversible per-upload**: IPs are never written to disk, so there is no data to recover later
+
+---
+
 ## 🧹 File Metadata Stripping
 
 ### Overview
