@@ -169,7 +169,7 @@ func CreateAPITokenHandler(repos *repository.Repositories, cfg *config.Config) h
 
 		// Store in database using atomic CreateWithLimit to prevent race conditions
 		// This uses a transaction to ensure count check and insert are atomic
-		apiToken, err := repos.APITokens.CreateWithLimit(ctx, user.ID, req.Name, tokenHash, prefix, scopeStr, clientIP, expiresAt, maxTokensPerUser)
+		apiToken, err := repos.APITokens.CreateWithLimit(ctx, user.ID, req.Name, tokenHash, prefix, scopeStr, storeIP(clientIP, cfg), expiresAt, maxTokensPerUser)
 		if err != nil {
 			if errors.Is(err, repository.ErrTooManyTokens) {
 				w.Header().Set("Content-Type", "application/json")
@@ -193,7 +193,7 @@ func CreateAPITokenHandler(repos *repository.Repositories, cfg *config.Config) h
 			"name", req.Name,
 			"scopes", scopeStr,
 			"expires_at", expiresAt,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Return response with the full token (shown only once!)
@@ -317,7 +317,7 @@ func ListAPITokensWithStatsHandler(repos *repository.Repositories) http.HandlerF
 
 // RevokeAPITokenHandler revokes a token owned by the authenticated user
 // Tokens can only be revoked via session auth (security: compromised tokens can't revoke others)
-func RevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
+func RevokeAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -388,7 +388,7 @@ func RevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 			"token_id", tokenID,
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", getClientIP(r),
+			"ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -493,7 +493,7 @@ func RotateTokenHandler(repos *repository.Repositories, cfg *config.Config) http
 			"user_id", user.ID,
 			"username", user.Username,
 			"new_prefix", newPrefix,
-			"ip", getClientIPWithConfig(r, cfg),
+			"ip", logIP(getClientIPWithConfig(r, cfg), cfg),
 		)
 
 		// Convert scopes string to slice
@@ -640,7 +640,7 @@ func AdminListAPITokensWithStatsHandler(repos *repository.Repositories) http.Han
 }
 
 // AdminRevokeAPITokenHandler revokes any API token (admin only)
-func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
+func AdminRevokeAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -687,7 +687,7 @@ func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 					return 0
 				}
 			}(),
-			"ip", getClientIP(r),
+			"ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -699,7 +699,7 @@ func AdminRevokeAPITokenHandler(db *sql.DB) http.HandlerFunc {
 
 // AdminDeleteAPITokenHandler permanently deletes any API token (admin only)
 // DELETE /admin/api/tokens/delete?id=123
-func AdminDeleteAPITokenHandler(db *sql.DB) http.HandlerFunc {
+func AdminDeleteAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -751,7 +751,7 @@ func AdminDeleteAPITokenHandler(db *sql.DB) http.HandlerFunc {
 					return 0
 				}
 			}(),
-			"ip", getClientIP(r),
+			"ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -858,7 +858,7 @@ func AdminBulkRevokeTokensHandler(repos *repository.Repositories, cfg *config.Co
 				"error", err,
 				"requested_count", len(req.TokenIDs),
 				"admin", adminUsername,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -869,7 +869,7 @@ func AdminBulkRevokeTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"revoked_count", revokedCount,
 			"token_ids", req.TokenIDs,
 			"admin", adminUsername,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1000,7 +1000,7 @@ func AdminBulkExtendTokensHandler(repos *repository.Repositories, cfg *config.Co
 				"requested_count", len(req.TokenIDs),
 				"days", req.Days,
 				"admin", adminUsername,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -1012,7 +1012,7 @@ func AdminBulkExtendTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"days", req.Days,
 			"token_ids", req.TokenIDs,
 			"admin", adminUsername,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1124,7 +1124,7 @@ func AdminRevokeUserTokensHandler(repos *repository.Repositories, cfg *config.Co
 				"user_id", userID,
 				"username", user.Username,
 				"admin", adminUsername,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -1135,7 +1135,7 @@ func AdminRevokeUserTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"username", user.Username,
 			"revoked_count", revokedCount,
 			"admin", adminUsername,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")

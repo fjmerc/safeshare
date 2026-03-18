@@ -134,7 +134,7 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 		slog.Warn("blocked file extension",
 			"filename", header.Filename,
 			"extension", blockedExt,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 		sendError(w,
 			fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
@@ -165,7 +165,7 @@ func checkStorageAvailability(w http.ResponseWriter, r *http.Request, cfg *confi
 	if !hasSpace {
 		slog.Warn("insufficient disk space",
 			"file_size", fileSize,
-			"client_ip", getClientIP(r),
+			"client_ip", logIP(getClientIP(r), cfg),
 			"reason", errMsg,
 		)
 		sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
@@ -424,7 +424,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		MimeType:         result.detectedMimeType,
 		ExpiresAt:        expiresAt,
 		MaxDownloads:     params.maxDownloads,
-		UploaderIP:       clientIP,
+		UploaderIP:       storeIP(clientIP, cfg),
 		PasswordHash:     params.passwordHash,
 		UserID:           userID,
 		SHA256Hash:       result.sha256Hash,
@@ -449,7 +449,7 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 				slog.Warn("quota exceeded (transactional check)",
 					"file_size", fileRecord.FileSize,
 					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", clientIP,
+					"client_ip", logIP(clientIP, cfg),
 				)
 				sendError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
 				return err
@@ -513,7 +513,7 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"expires_at", fileRecord.ExpiresAt,
 		"max_downloads", fileRecord.MaxDownloads,
 		"password_protected", passwordHash != "",
-		"client_ip", clientIP,
+		"client_ip", logIP(clientIP, cfg),
 		"user_agent", getUserAgent(r),
 	)
 }

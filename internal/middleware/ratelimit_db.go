@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -147,8 +148,8 @@ func getClientIPForRateLimit(r *http.Request, config ConfigProvider) string {
 		shouldTrust = true
 		slog.Warn("rate limiter trusting all proxy headers without validation",
 			"trust_mode", "true",
-			"remote_ip", remoteIP,
-			"x_forwarded_for", r.Header.Get("X-Forwarded-For"),
+			"remote_ip", privacy.RedactIP(remoteIP, config.IsAnonymousMode()),
+			"x_forwarded_for", privacy.RedactIP(r.Header.Get("X-Forwarded-For"), config.IsAnonymousMode()),
 			"security_risk", "IP spoofing possible - consider using 'auto' mode",
 		)
 	case "false":
@@ -169,9 +170,9 @@ func getClientIPForRateLimit(r *http.Request, config ConfigProvider) string {
 			clientIP := strings.TrimSpace(ips[0])
 			if trustProxyHeaders == "true" {
 				slog.Debug("accepting X-Forwarded-For header without validation",
-					"client_ip", clientIP,
-					"remote_ip", remoteIP,
-					"full_xff_chain", xff,
+					"client_ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()),
+					"remote_ip", privacy.RedactIP(remoteIP, config.IsAnonymousMode()),
+					"full_xff_chain", privacy.RedactIP(xff, config.IsAnonymousMode()),
 				)
 			}
 			return clientIP
@@ -209,9 +210,9 @@ func CreateLoginRateLimiter(repo repository.RateLimitRepository, useDBRateLimiti
 
 	// Fall back to in-memory rate limiting
 	if limitType == "admin_login" {
-		return RateLimitAdminLogin()
+		return RateLimitAdminLogin(config.IsAnonymousMode())
 	}
-	return RateLimitUserLogin()
+	return RateLimitUserLogin(config.IsAnonymousMode())
 }
 
 // DBRateLimitLoginMiddleware creates a rate limit middleware for login endpoints using database storage.
@@ -230,14 +231,14 @@ func DBRateLimitLoginMiddleware(repo repository.RateLimitRepository, limitType s
 			// could all pass the check before any counter is incremented.
 			allowed, count, err := repo.IncrementAndCheck(ctx, clientIP, limitType, maxAttempts, windowDuration)
 			if err != nil {
-				slog.Error("failed to check login rate limit", "error", err, "ip", clientIP)
+				slog.Error("failed to check login rate limit", "error", err, "ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()))
 
 				// Security-critical limits should fail closed to prevent brute force
 				// attacks during database issues
 				if securityCriticalLimitTypes[limitType] {
 					slog.Warn("failing closed for security-critical limit type",
 						"limit_type", limitType,
-						"ip", clientIP,
+						"ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()),
 					)
 					http.Error(w, "Service temporarily unavailable. Please try again later.", http.StatusServiceUnavailable)
 					return
@@ -250,7 +251,7 @@ func DBRateLimitLoginMiddleware(repo repository.RateLimitRepository, limitType s
 
 			if !allowed {
 				slog.Warn("login rate limit exceeded",
-					"ip", clientIP,
+					"ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()),
 					"limit_type", limitType,
 					"attempts", count,
 				)

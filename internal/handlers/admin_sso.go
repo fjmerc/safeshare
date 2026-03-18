@@ -77,7 +77,7 @@ func AdminListSSOProvidersHandler(repos *repository.Repositories, cfg *config.Co
 		if err != nil {
 			slog.Error("admin failed to list SSO providers",
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -116,7 +116,7 @@ func AdminListSSOProvidersHandler(repos *repository.Repositories, cfg *config.Co
 
 		slog.Info("admin listed SSO providers",
 			"count", len(providers),
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -147,7 +147,7 @@ func AdminCreateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			slog.Error("admin failed to parse SSO provider create request",
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -229,7 +229,7 @@ func AdminCreateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 				"name", input.Name,
 				"slug", input.Slug,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -239,7 +239,7 @@ func AdminCreateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 			"provider_id", provider.ID,
 			"name", provider.Name,
 			"slug", provider.Slug,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Return created provider
@@ -310,7 +310,7 @@ func AdminGetSSOProviderHandler(repos *repository.Repositories, cfg *config.Conf
 			slog.Error("admin failed to get SSO provider",
 				"provider_id", providerID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -386,7 +386,7 @@ func AdminUpdateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			slog.Error("admin failed to parse SSO provider update request",
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -410,7 +410,7 @@ func AdminUpdateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 			slog.Error("admin failed to update SSO provider",
 				"provider_id", providerID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -419,7 +419,7 @@ func AdminUpdateSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 		slog.Info("admin updated SSO provider",
 			"provider_id", providerID,
 			"name", provider.Name,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -488,7 +488,7 @@ func AdminDeleteSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 			slog.Error("admin failed to get SSO provider for deletion",
 				"provider_id", providerID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -507,7 +507,7 @@ func AdminDeleteSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 			slog.Error("admin failed to delete SSO provider",
 				"provider_id", providerID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -517,7 +517,7 @@ func AdminDeleteSSOProviderHandler(repos *repository.Repositories, cfg *config.C
 			"provider_id", providerID,
 			"name", provider.Name,
 			"slug", provider.Slug,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -566,7 +566,7 @@ func AdminTestSSOProviderHandler(repos *repository.Repositories, cfg *config.Con
 			slog.Error("admin failed to get SSO provider for test",
 				"provider_id", providerID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -589,7 +589,7 @@ func AdminTestSSOProviderHandler(repos *repository.Repositories, cfg *config.Con
 				"provider_id", providerID,
 				"name", provider.Name,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 
 			testResult["success"] = false
@@ -605,7 +605,7 @@ func AdminTestSSOProviderHandler(repos *repository.Repositories, cfg *config.Con
 			"provider_id", providerID,
 			"name", provider.Name,
 			"duration", testDuration,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		testResult["success"] = true
@@ -665,7 +665,7 @@ func AdminListSSOLinksHandler(repos *repository.Repositories, cfg *config.Config
 			if pErr != nil {
 				slog.Error("admin failed to list providers for SSO links",
 					"error", pErr,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
@@ -684,7 +684,7 @@ func AdminListSSOLinksHandler(repos *repository.Repositories, cfg *config.Config
 		if err != nil {
 			slog.Error("admin failed to list SSO links",
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -743,7 +743,7 @@ func AdminListSSOLinksHandler(repos *repository.Repositories, cfg *config.Config
 		slog.Info("admin listed SSO links",
 			"count", len(linkResponses),
 			"page", page,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -795,7 +795,7 @@ func AdminDeleteSSOLinkHandler(repos *repository.Repositories, cfg *config.Confi
 			slog.Error("admin failed to get SSO link for deletion",
 				"link_id", linkID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -814,7 +814,7 @@ func AdminDeleteSSOLinkHandler(repos *repository.Repositories, cfg *config.Confi
 			slog.Error("admin failed to delete SSO link",
 				"link_id", linkID,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -825,7 +825,7 @@ func AdminDeleteSSOLinkHandler(repos *repository.Repositories, cfg *config.Confi
 			"user_id", link.UserID,
 			"provider_id", link.ProviderID,
 			"external_id", link.ExternalID,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")

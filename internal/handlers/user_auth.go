@@ -45,7 +45,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		if req.Username == "" || req.Password == "" {
 			slog.Warn("user login failed - empty username or password",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -68,7 +68,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		if user == nil || !utils.VerifyPassword(user.PasswordHash, req.Password) {
 			slog.Warn("user login failed - invalid credentials",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -83,7 +83,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		if !user.IsActive {
 			slog.Warn("user login failed - account disabled",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -106,7 +106,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		expiresAt := time.Now().Add(time.Duration(cfg.SessionExpiryHours) * time.Hour)
 
 		// Store session in repository
-		err = repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, clientIP, userAgent)
+		err = repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, storeIP(clientIP, cfg), userAgent)
 		if err != nil {
 			slog.Error("failed to create user session", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -139,7 +139,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		slog.Info("user login successful",
 			"username", req.Username,
 			"user_id", user.ID,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Return user info (without password hash)
@@ -195,7 +195,7 @@ func UserLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.
 		})
 
 		slog.Info("user logout successful",
-			"ip", getClientIP(r),
+			"ip", logIP(getClientIP(r), cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")

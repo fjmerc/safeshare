@@ -69,7 +69,7 @@ func serveFileWithRangeSupport(
 			"range_header", rangeHeader,
 			"file_size", fileSize,
 			"error", err,
-			"client_ip", getClientIP(r),
+			"client_ip", logIP(getClientIP(r), cfg),
 		)
 		sendErrorResponse(w, r, "Range Not Satisfiable", "The requested byte range is invalid or exceeds the file size.", "RANGE_NOT_SATISFIABLE", http.StatusRequestedRangeNotSatisfiable)
 		return
@@ -219,7 +219,7 @@ func serveEntireFile(
 		"claim_code", redactClaimCode(file.ClaimCode),
 		"filename", file.OriginalFilename,
 		"size", written,
-		"client_ip", getClientIP(r),
+		"client_ip", logIP(getClientIP(r), cfg),
 		"user_agent", getUserAgent(r),
 	)
 }
@@ -337,7 +337,7 @@ func servePartialContent(
 		"range_start", httpRange.Start,
 		"range_end", httpRange.End,
 		"bytes_sent", written,
-		"client_ip", getClientIP(r),
+		"client_ip", logIP(getClientIP(r), cfg),
 		"user_agent", getUserAgent(r),
 	)
 }

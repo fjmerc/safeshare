@@ -80,7 +80,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			slog.Warn("blocked file extension during chunked upload init",
 				"filename", req.Filename,
 				"extension", blockedExt,
-				"client_ip", clientIP,
+				"client_ip", logIP(clientIP, cfg),
 			)
 			sendSmartError(w,
 				fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
@@ -168,7 +168,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 		if !hasSpace {
 			slog.Warn("insufficient disk space for chunked upload init",
 				"file_size", req.TotalSize,
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 				"reason", errMsg,
 			)
 			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
@@ -225,7 +225,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 					slog.Warn("quota exceeded for chunked upload (transactional check)",
 						"file_size", req.TotalSize,
 						"quota_limit_gb", cfg.GetQuotaLimitGB(),
-						"client_ip", getClientIP(r),
+						"client_ip", logIP(getClientIP(r), cfg),
 					)
 					sendSmartError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
 					return
@@ -269,7 +269,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			"total_chunks", totalChunks,
 			"expires_in_hours", req.ExpiresInHours,
 			"password_protected", passwordHash != "",
-			"client_ip", getClientIP(r),
+			"client_ip", logIP(getClientIP(r), cfg),
 		)
 	}
 }
@@ -781,7 +781,7 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			"filename", partialUpload.Filename,
 			"size", partialUpload.TotalSize,
 			"total_chunks", partialUpload.TotalChunks,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 
 		response := map[string]interface{}{

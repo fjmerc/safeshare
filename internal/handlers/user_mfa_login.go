@@ -259,7 +259,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		if req.Username == "" || req.Password == "" {
 			slog.Warn("user login failed - empty username or password",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -282,7 +282,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		if user == nil || !utils.VerifyPassword(user.PasswordHash, req.Password) {
 			slog.Warn("user login failed - invalid credentials",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -297,7 +297,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		if !user.IsActive {
 			slog.Warn("user login failed - account disabled",
 				"username", req.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
@@ -355,7 +355,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				slog.Info("user login - MFA required but not configured",
 					"username", req.Username,
 					"user_id", user.ID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 			}
 		}
@@ -372,7 +372,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				if err == ErrTooManyChallenges {
 					slog.Warn("MFA challenge creation rate limited",
 						"user_id", user.ID,
-						"ip", clientIP,
+						"ip", logIP(clientIP, cfg),
 					)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusTooManyRequests)
@@ -390,7 +390,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				"username", req.Username,
 				"user_id", user.ID,
 				"available_methods", availableMethods,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 
 			// Determine primary challenge type for backward compatibility
@@ -486,7 +486,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 		if !exists {
 			slog.Warn("MFA login verification failed - invalid or expired challenge",
 				"challenge_id", req.ChallengeID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -500,8 +500,8 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 		if ipMismatch {
 			slog.Warn("MFA verification from different IP",
 				"challenge_id", req.ChallengeID,
-				"original_ip", challenge.ClientIP,
-				"request_ip", clientIP,
+				"original_ip", logIP(challenge.ClientIP, cfg),
+				"request_ip", logIP(clientIP, cfg),
 				"user_id", challenge.UserID,
 			)
 			// Delete the challenge to prevent further attempts
@@ -520,7 +520,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 			slog.Warn("MFA login verification failed - too many attempts",
 				"challenge_id", req.ChallengeID,
 				"user_id", challenge.UserID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -556,7 +556,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 				valid = true
 				slog.Info("recovery code used for login",
 					"user_id", user.ID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 			}
 		} else {
@@ -600,7 +600,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 				"challenge_id", req.ChallengeID,
 				"user_id", challenge.UserID,
 				"code_type", codeType,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -617,7 +617,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 			"user_id", user.ID,
 			"username", user.Username,
 			"is_recovery", req.IsRecovery,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Complete the login
@@ -641,7 +641,7 @@ func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 	expiresAt := time.Now().Add(time.Duration(cfg.SessionExpiryHours) * time.Hour)
 
 	// Store session in repository
-	err = repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, clientIP, userAgent)
+	err = repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, storeIP(clientIP, cfg), userAgent)
 	if err != nil {
 		slog.Error("failed to create user session", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -674,7 +674,7 @@ func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 	slog.Info("user login successful",
 		"username", user.Username,
 		"user_id", user.ID,
-		"ip", clientIP,
+		"ip", logIP(clientIP, cfg),
 	)
 
 	// Check if MFA is required but not set up
@@ -820,7 +820,7 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized for login",
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -835,7 +835,7 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 		if !exists {
 			slog.Warn("WebAuthn login begin failed - invalid or expired challenge",
 				"challenge_id", req.ChallengeID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -849,8 +849,8 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 		if ipMismatch {
 			slog.Warn("WebAuthn login begin from different IP",
 				"challenge_id", req.ChallengeID,
-				"original_ip", challenge.ClientIP,
-				"request_ip", clientIP,
+				"original_ip", logIP(challenge.ClientIP, cfg),
+				"request_ip", logIP(clientIP, cfg),
 				"user_id", challenge.UserID,
 			)
 			mfaLoginStore.Delete(req.ChallengeID)
@@ -939,7 +939,7 @@ func MFAWebAuthnLoginBeginHandler(repos *repository.Repositories, cfg *config.Co
 		slog.Info("WebAuthn login authentication started",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		response := MFAWebAuthnLoginBeginResponse{
@@ -1009,7 +1009,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 		webauthnSvc := GetWebAuthnService()
 		if webauthnSvc == nil {
 			slog.Error("WebAuthn service not initialized for login finish",
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -1024,7 +1024,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 		if !exists {
 			slog.Warn("WebAuthn login finish failed - invalid or expired challenge",
 				"challenge_id", req.ChallengeID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -1038,8 +1038,8 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 		if ipMismatch {
 			slog.Warn("WebAuthn login finish from different IP",
 				"challenge_id", req.ChallengeID,
-				"original_ip", challenge.ClientIP,
-				"request_ip", clientIP,
+				"original_ip", logIP(challenge.ClientIP, cfg),
+				"request_ip", logIP(clientIP, cfg),
 				"user_id", challenge.UserID,
 			)
 			mfaLoginStore.Delete(req.ChallengeID)
@@ -1057,7 +1057,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 			slog.Warn("WebAuthn login verification failed - too many attempts",
 				"challenge_id", req.ChallengeID,
 				"user_id", challenge.UserID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -1073,7 +1073,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 			if err == repository.ErrChallengeNotFound || err == repository.ErrChallengeExpired {
 				slog.Warn("WebAuthn login finish failed - WebAuthn challenge not found or expired",
 					"user_id", challenge.UserID,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
@@ -1135,7 +1135,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 			slog.Warn("failed to parse WebAuthn assertion response for login",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -1157,7 +1157,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 			slog.Warn("WebAuthn login verification failed",
 				"error", err,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -1187,7 +1187,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 							"credential_id", dbCredID,
 							"stored_count", cred.SignCount,
 							"new_count", validatedCredential.Authenticator.SignCount,
-							"ip", clientIP,
+							"ip", logIP(clientIP, cfg),
 						)
 						// Allow authentication to continue but log the warning
 					}
@@ -1209,7 +1209,7 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 		slog.Info("WebAuthn login MFA verification successful",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Complete the login

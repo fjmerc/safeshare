@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // AdminAuth middleware checks for valid admin session
-func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
+func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -26,7 +27,7 @@ func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 				if err != nil {
 					slog.Error("failed to validate admin session",
 						"error", err,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Internal server error", http.StatusInternalServerError)
 					return
@@ -48,7 +49,7 @@ func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 			if userErr != nil {
 				slog.Warn("admin authentication failed - no session cookie",
 					"path", r.URL.Path,
-					"ip", getClientIP(r),
+					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to admin login page
 				if isAdminHTMLRequest(r) {
@@ -64,7 +65,7 @@ func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 			if err != nil {
 				slog.Error("failed to validate user session",
 					"error", err,
-					"ip", getClientIP(r),
+					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
@@ -73,7 +74,7 @@ func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 			if userSession == nil {
 				slog.Warn("admin authentication failed - invalid session token",
 					"path", r.URL.Path,
-					"ip", getClientIP(r),
+					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to admin login page
 				if isAdminHTMLRequest(r) {
@@ -123,7 +124,7 @@ func AdminAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 }
 
 // CSRFProtection middleware validates CSRF tokens for state-changing requests
-func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Handler {
+func CSRFProtection(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only check CSRF for state-changing methods
@@ -166,7 +167,7 @@ func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Hand
 				if !hasValidSession {
 					slog.Warn("CSRF validation failed - no valid session",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden", http.StatusForbidden)
 					return
@@ -177,7 +178,7 @@ func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Hand
 				if err != nil || csrfToken == "" || csrfCookie == nil {
 					slog.Warn("CSRF validation failed - missing token",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 						"has_csrf_header", csrfToken != "",
 						"has_csrf_cookie", csrfCookie != nil,
 					)
@@ -189,7 +190,7 @@ func CSRFProtection(repos *repository.Repositories) func(http.Handler) http.Hand
 				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
 					slog.Warn("CSRF validation failed - token mismatch",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
 					return
@@ -245,7 +246,7 @@ func SetUserCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error
 
 // UserCSRFProtection middleware validates CSRF tokens for user routes (non-admin)
 // This accepts any valid user session, not just admin sessions
-func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.Handler {
+func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only check CSRF for state-changing methods
@@ -271,7 +272,7 @@ func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.
 				if !hasValidSession {
 					slog.Warn("user CSRF validation failed - no valid session",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - No valid session", http.StatusForbidden)
 					return
@@ -282,7 +283,7 @@ func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.
 				if err != nil || csrfToken == "" || csrfCookie == nil {
 					slog.Warn("user CSRF validation failed - missing token",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 						"has_csrf_header", csrfToken != "",
 						"has_csrf_cookie", csrfCookie != nil,
 					)
@@ -294,7 +295,7 @@ func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.
 				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
 					slog.Warn("user CSRF validation failed - token mismatch",
 						"path", r.URL.Path,
-						"ip", getClientIP(r),
+						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
 					return
@@ -308,7 +309,7 @@ func UserCSRFProtection(repos *repository.Repositories) func(http.Handler) http.
 
 // RateLimitTOTPVerify rate limits TOTP verification attempts per user/IP
 // Prevents brute-force attacks on 6-digit TOTP codes
-func RateLimitTOTPVerify() func(http.Handler) http.Handler {
+func RateLimitTOTPVerify(anonymousMode bool) func(http.Handler) http.Handler {
 	type verifyAttempt struct {
 		count       int
 		lastAttempt time.Time
@@ -335,7 +336,7 @@ func RateLimitTOTPVerify() func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("TOTP verification rate limit exceeded",
-							"ip", clientIP,
+							"ip", privacy.RedactIP(clientIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
@@ -361,7 +362,7 @@ func RateLimitTOTPVerify() func(http.Handler) http.Handler {
 }
 
 // RateLimitAdminLogin rate limits admin login attempts
-func RateLimitAdminLogin() func(http.Handler) http.Handler {
+func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
 	type loginAttempt struct {
 		count       int
 		lastAttempt time.Time
@@ -388,7 +389,7 @@ func RateLimitAdminLogin() func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("admin login rate limit exceeded",
-							"ip", clientIP,
+							"ip", privacy.RedactIP(clientIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
@@ -415,7 +416,7 @@ func RateLimitAdminLogin() func(http.Handler) http.Handler {
 }
 
 // RateLimitUserLogin rate limits user login attempts
-func RateLimitUserLogin() func(http.Handler) http.Handler {
+func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
 	type loginAttempt struct {
 		count       int
 		lastAttempt time.Time
@@ -442,7 +443,7 @@ func RateLimitUserLogin() func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("user login rate limit exceeded",
-							"ip", clientIP,
+							"ip", privacy.RedactIP(clientIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)

@@ -437,7 +437,7 @@ func TestRevokeAPITokenHandler_Success(t *testing.T) {
 	req.URL.RawQuery = q.Encode()
 	rr = httptest.NewRecorder()
 
-	handler := RevokeAPITokenHandler(db)
+	handler := RevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -447,6 +447,7 @@ func TestRevokeAPITokenHandler_Success(t *testing.T) {
 
 func TestRevokeAPITokenHandler_NotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -457,7 +458,7 @@ func TestRevokeAPITokenHandler_NotFound(t *testing.T) {
 	req.URL.RawQuery = q.Encode()
 	rr := httptest.NewRecorder()
 
-	handler := RevokeAPITokenHandler(db)
+	handler := RevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
@@ -467,6 +468,7 @@ func TestRevokeAPITokenHandler_NotFound(t *testing.T) {
 
 func TestRevokeAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -489,7 +491,7 @@ func TestRevokeAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 	req.URL.RawQuery = q.Encode()
 	rr := httptest.NewRecorder()
 
-	handler := RevokeAPITokenHandler(db)
+	handler := RevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusForbidden {
@@ -499,6 +501,7 @@ func TestRevokeAPITokenHandler_ViaAPIToken_Forbidden(t *testing.T) {
 
 func TestRevokeAPITokenHandler_InvalidID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -509,7 +512,7 @@ func TestRevokeAPITokenHandler_InvalidID(t *testing.T) {
 	req.URL.RawQuery = q.Encode()
 	rr := httptest.NewRecorder()
 
-	handler := RevokeAPITokenHandler(db)
+	handler := RevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -554,6 +557,7 @@ func TestListAPITokensHandler_MethodNotAllowed(t *testing.T) {
 
 func TestRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	_, ctx := setupTestUserWithSession(t, db)
 
@@ -561,7 +565,7 @@ func TestRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
 
-	handler := RevokeAPITokenHandler(db)
+	handler := RevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -1505,6 +1509,7 @@ func TestAdminListAPITokensHandler_EmptyResult(t *testing.T) {
 
 func TestAdminRevokeAPITokenHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	user, _ := setupTestUserWithSession(t, db)
 
@@ -1518,7 +1523,7 @@ func TestAdminRevokeAPITokenHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/tokens/revoke?id=%d", token.ID), nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminRevokeAPITokenHandler(db)
+	handler := AdminRevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -1537,11 +1542,12 @@ func TestAdminRevokeAPITokenHandler_Success(t *testing.T) {
 
 func TestAdminRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/tokens/revoke?id=1", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminRevokeAPITokenHandler(db)
+	handler := AdminRevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -1551,11 +1557,12 @@ func TestAdminRevokeAPITokenHandler_MethodNotAllowed(t *testing.T) {
 
 func TestAdminRevokeAPITokenHandler_InvalidTokenID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/revoke?id=invalid", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminRevokeAPITokenHandler(db)
+	handler := AdminRevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -1565,11 +1572,12 @@ func TestAdminRevokeAPITokenHandler_InvalidTokenID(t *testing.T) {
 
 func TestAdminRevokeAPITokenHandler_TokenNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/revoke?id=99999", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminRevokeAPITokenHandler(db)
+	handler := AdminRevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
@@ -1579,6 +1587,7 @@ func TestAdminRevokeAPITokenHandler_TokenNotFound(t *testing.T) {
 
 func TestAdminRevokeAPITokenHandler_PostMethod(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	user, _ := setupTestUserWithSession(t, db)
 
@@ -1593,7 +1602,7 @@ func TestAdminRevokeAPITokenHandler_PostMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/tokens/revoke?id=%d", token.ID), nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminRevokeAPITokenHandler(db)
+	handler := AdminRevokeAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -1605,6 +1614,7 @@ func TestAdminRevokeAPITokenHandler_PostMethod(t *testing.T) {
 
 func TestAdminDeleteAPITokenHandler_Success(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	user, _ := setupTestUserWithSession(t, db)
 
@@ -1618,7 +1628,7 @@ func TestAdminDeleteAPITokenHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/admin/api/tokens/delete?id=%d", token.ID), nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminDeleteAPITokenHandler(db)
+	handler := AdminDeleteAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
@@ -1643,11 +1653,12 @@ func TestAdminDeleteAPITokenHandler_Success(t *testing.T) {
 
 func TestAdminDeleteAPITokenHandler_MethodNotAllowed(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/delete?id=1", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminDeleteAPITokenHandler(db)
+	handler := AdminDeleteAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -1657,11 +1668,12 @@ func TestAdminDeleteAPITokenHandler_MethodNotAllowed(t *testing.T) {
 
 func TestAdminDeleteAPITokenHandler_InvalidTokenID(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/delete?id=invalid", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminDeleteAPITokenHandler(db)
+	handler := AdminDeleteAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -1671,11 +1683,12 @@ func TestAdminDeleteAPITokenHandler_InvalidTokenID(t *testing.T) {
 
 func TestAdminDeleteAPITokenHandler_TokenNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/api/tokens/delete?id=99999", nil)
 	rr := httptest.NewRecorder()
 
-	handler := AdminDeleteAPITokenHandler(db)
+	handler := AdminDeleteAPITokenHandler(db, cfg)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
