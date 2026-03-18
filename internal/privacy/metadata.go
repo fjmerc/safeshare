@@ -12,11 +12,15 @@ const maxStrippableFileSize = 100 * 1024 * 1024 // 100 MB
 
 // supportedMimeTypes maps MIME types to their stripping functions.
 var supportedMimeTypes = map[string]func(string) error{
-	"image/jpeg": stripJPEGMetadata,
-	"image/png":  stripPNGMetadata,
+	"image/jpeg":      stripJPEGMetadata,
+	"image/png":       stripPNGMetadata,
+	"application/pdf": stripPDFMetadata,
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   stripOfficeMetadata, // .docx
 	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         stripOfficeMetadata, // .xlsx
 	"application/vnd.openxmlformats-officedocument.presentationml.presentation": stripOfficeMetadata, // .pptx
+	"video/mp4":       stripMP4Metadata, // .mp4
+	"video/quicktime": stripMP4Metadata, // .mov
+	"audio/mpeg":      stripMP3Metadata, // .mp3
 }
 
 // SupportsMetadataStripping returns true if the MIME type supports metadata stripping.

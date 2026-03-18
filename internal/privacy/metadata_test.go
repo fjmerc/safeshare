@@ -232,7 +232,7 @@ func TestSupportsMetadataStripping(t *testing.T) {
 		{"image/jpeg", true},
 		{"image/png", true},
 		{"image/tiff", false},
-		{"application/pdf", false},
+		{"application/pdf", true},
 		{"text/plain", false},
 		{"", false},
 	}
