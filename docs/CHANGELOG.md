@@ -33,6 +33,14 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- QR code library is now self-hosted (removed external CDN dependency on jsdelivr)
+
+---
+
 ## [1.5.3] - 2026-03-15
 
 ### Security
