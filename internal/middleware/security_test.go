@@ -81,13 +81,13 @@ func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
 		t.Fatal("Content-Security-Policy header not set")
 	}
 
-	// Verify critical CSP directives
+	// Verify critical CSP directives are present
 	requiredDirectives := []string{
 		"default-src 'self'",
-		"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net", // QR code library
+		"script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: blob:", // QR codes use data URLs
-		"frame-ancestors 'none'",     // Prevent clickjacking
+		"img-src 'self' data: blob:",
+		"frame-ancestors 'none'",
 		"base-uri 'self'",
 		"form-action 'self'",
 	}
@@ -96,6 +96,23 @@ func TestSecurityHeadersMiddleware_CSP(t *testing.T) {
 		if !strings.Contains(csp, directive) {
 			t.Errorf("CSP missing directive: %q\nFull CSP: %s", directive, csp)
 		}
+	}
+
+	// Verify unsafe-inline is NOT in script-src (hardened CSP)
+	// Extract the script-src directive and check for unsafe-inline within it
+	for _, part := range strings.Split(csp, ";") {
+		trimmed := strings.TrimSpace(part)
+		if strings.HasPrefix(trimmed, "script-src") {
+			if strings.Contains(trimmed, "'unsafe-inline'") {
+				t.Errorf("CSP script-src contains 'unsafe-inline' — should have been removed\nscript-src directive: %s", trimmed)
+			}
+			break
+		}
+	}
+
+	// Verify stale CDN reference is removed
+	if strings.Contains(csp, "cdn.jsdelivr.net") {
+		t.Errorf("CSP still contains stale cdn.jsdelivr.net reference\nFull CSP: %s", csp)
 	}
 }
 

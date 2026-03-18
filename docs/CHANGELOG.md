@@ -42,6 +42,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Tor hidden service deployment guide for maximum anonymity
 - Client-side end-to-end encryption option — files can be encrypted in the browser before upload using AES-256-GCM, with the decryption key embedded in the share URL fragment (never sent to the server)
 
+### Security
+
+- Hardened Content Security Policy: removed `unsafe-inline` from `script-src` and stale CDN allowance to prevent XSS-based key exfiltration
+
 ### Changed
 
 - QR code library is now self-hosted (removed external CDN dependency on jsdelivr)

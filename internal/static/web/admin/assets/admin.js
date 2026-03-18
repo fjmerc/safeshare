@@ -409,7 +409,7 @@ function updateFilesTable(files) {
             <td>${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
             <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td>
-                <button class="btn-small btn-delete" onclick="deleteFile('${escapeHtml(file.claim_code)}')">
+                <button class="btn-small btn-delete" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -446,7 +446,7 @@ function updateBlockedIPsTable(blockedIPs) {
             <td>${formatDate(ip.BlockedAt)}</td>
             <td>${escapeHtml(ip.BlockedBy)}</td>
             <td>
-                <button class="btn-small btn-action" onclick="unblockIP('${escapeHtml(ip.IPAddress)}')">
+                <button class="btn-small btn-action" data-action="unblockIP" data-ip="${escapeHtml(ip.IPAddress)}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
@@ -469,7 +469,7 @@ function updatePagination(pagination) {
     let html = '';
 
     // Previous button
-    html += `<button onclick="goToPage(${pagination.page - 1})" ${pagination.page === 1 ? 'disabled' : ''}>Previous</button>`;
+    html += `<button data-action="goToPage" data-page="${pagination.page - 1}" ${pagination.page === 1 ? 'disabled' : ''}>Previous</button>`;
 
     // Page numbers
     const maxPages = 5;
@@ -481,11 +481,11 @@ function updatePagination(pagination) {
     }
 
     for (let i = startPage; i <= endPage; i++) {
-        html += `<button class="${i === pagination.page ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
+        html += `<button class="${i === pagination.page ? 'active' : ''}" data-action="goToPage" data-page="${i}">${i}</button>`;
     }
 
     // Next button
-    html += `<button onclick="goToPage(${pagination.page + 1})" ${pagination.page === pagination.total_pages ? 'disabled' : ''}>Next</button>`;
+    html += `<button data-action="goToPage" data-page="${pagination.page + 1}" ${pagination.page === pagination.total_pages ? 'disabled' : ''}>Next</button>`;
 
     container.innerHTML = html;
 }
@@ -1845,14 +1845,14 @@ function displayUsers(users) {
             <td>${new Date(user.created_at).toLocaleDateString()}</td>
             <td>${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
             <td class="actions">
-                <button class="btn-icon btn-primary" onclick="editUser(${user.id})" title="Edit">
+                <button class="btn-icon btn-primary" data-action="editUser" data-user-id="${user.id}" title="Edit">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                 </button>
                 <button class="btn-icon ${user.is_active ? 'btn-warning' : 'btn-success'}"
-                        onclick="toggleUserStatus(${user.id}, ${user.is_active})"
+                        data-action="toggleUserStatus" data-user-id="${user.id}" data-is-active="${user.is_active}"
                         title="${user.is_active ? 'Disable' : 'Enable'}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         ${user.is_active ?
@@ -1861,13 +1861,13 @@ function displayUsers(users) {
                         }
                     </svg>
                 </button>
-                <button class="btn-icon btn-info" onclick="resetUserPassword(${user.id})" title="Reset Password">
+                <button class="btn-icon btn-info" data-action="resetUserPassword" data-user-id="${user.id}" title="Reset Password">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                     </svg>
                 </button>
-                <button class="btn-icon btn-danger" onclick="deleteUser(${user.id})" title="Delete">
+                <button class="btn-icon btn-danger" data-action="deleteUser" data-user-id="${user.id}" title="Delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2168,18 +2168,18 @@ function updateWebhooksTable(webhooks) {
                 <td>${webhook.max_retries}</td>
                 <td>${webhook.timeout_seconds}s</td>
                 <td class="actions">
-                    <button class="btn-icon btn-primary" onclick="editWebhook(${webhook.id})" title="Edit webhook">
+                    <button class="btn-icon btn-primary" data-action="editWebhook" data-webhook-id="${webhook.id}" title="Edit webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-warning" onclick="testWebhook(${webhook.id})" title="Test webhook">
+                    <button class="btn-icon btn-warning" data-action="testWebhook" data-webhook-id="${webhook.id}" title="Test webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-danger" onclick="deleteWebhook(${webhook.id})" title="Delete webhook">
+                    <button class="btn-icon btn-danger" data-action="deleteWebhook" data-webhook-id="${webhook.id}" title="Delete webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2466,7 +2466,7 @@ function updateDeliveriesTable(deliveries) {
                 <td>${delivery.response_code || '-'}</td>
                 <td>${delivery.attempt_count}</td>
                 <td>
-                    <button class="btn-small btn-action" onclick="viewDeliveryDetails(${delivery.id})" title="View details">
+                    <button class="btn-small btn-action" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
@@ -3146,7 +3146,7 @@ function displayAdminTokens(tokens) {
 
         // Action buttons - show revoke only for active tokens, delete for all
         const revokeButton = isActive ? `
-            <button class="btn-icon btn-warning" onclick="adminRevokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+            <button class="btn-icon btn-warning" data-action="adminRevokeToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Revoke Token">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
@@ -3154,7 +3154,7 @@ function displayAdminTokens(tokens) {
             </button>` : '';
 
         const deleteButton = `
-            <button class="btn-icon btn-danger" onclick="adminDeleteToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Delete Token Permanently">
+            <button class="btn-icon btn-danger" data-action="adminDeleteToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Delete Token Permanently">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3 6 5 6 21 6"></polyline>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -3901,18 +3901,18 @@ function updateSSOProvidersTable(providers) {
                 <td>${linkedCount}</td>
                 <td>${formatDate(provider.created_at)}</td>
                 <td class="actions">
-                    <button class="btn-icon btn-primary" onclick="editSSOProvider(${provider.id})" title="Edit provider">
+                    <button class="btn-icon btn-primary" data-action="editSSOProvider" data-provider-id="${provider.id}" title="Edit provider">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-warning" onclick="testSSOProvider(${provider.id})" title="Test connection">
+                    <button class="btn-icon btn-warning" data-action="testSSOProvider" data-provider-id="${provider.id}" title="Test connection">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-danger" onclick="deleteSSOProvider(${provider.id})" title="Delete provider">
+                    <button class="btn-icon btn-danger" data-action="deleteSSOProvider" data-provider-id="${provider.id}" title="Delete provider">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -3946,7 +3946,7 @@ function updateSSOLinksTable(links) {
                 <td>${formatDate(link.linked_at)}</td>
                 <td>${link.last_login ? formatDate(link.last_login) : 'Never'}</td>
                 <td class="actions">
-                    <button class="btn-icon btn-danger" onclick="unlinkSSOAccount(${link.id}, '${escapeHtml(link.username)}')" title="Unlink account">
+                    <button class="btn-icon btn-danger" data-action="unlinkSSOAccount" data-link-id="${link.id}" data-username="${escapeHtml(link.username)}" title="Unlink account">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M18 6L6 18M6 6l12 12"></path>
                         </svg>
@@ -4219,3 +4219,178 @@ async function unlinkSSOAccount(linkId, username) {
         showError(error.message);
     }
 }
+
+// ============================================================================
+// Event Listeners (CSP-compliant - replaces all inline onclick handlers)
+// ============================================================================
+document.addEventListener('DOMContentLoaded', function() {
+    // --- Static HTML element listeners (from dashboard.html) ---
+
+    // Settings buttons
+    var btnResetStorage = document.getElementById('btn-reset-storage-defaults');
+    if (btnResetStorage) btnResetStorage.addEventListener('click', resetStorageDefaults);
+
+    var btnResetSecurity = document.getElementById('btn-reset-security-defaults');
+    if (btnResetSecurity) btnResetSecurity.addEventListener('click', resetSecurityDefaults);
+
+    // Tab navigation links
+    var linkSSOProviders = document.getElementById('link-switch-sso-providers');
+    if (linkSSOProviders) linkSSOProviders.addEventListener('click', function(e) {
+        e.preventDefault();
+        switchToTab('ssoProviders');
+    });
+
+    var linkEnterpriseFeatures = document.getElementById('link-switch-enterprise-features');
+    if (linkEnterpriseFeatures) linkEnterpriseFeatures.addEventListener('click', function(e) {
+        e.preventDefault();
+        switchToTab('enterpriseFeatures');
+    });
+
+    // Create User modal
+    var btnCancelCreateUser = document.getElementById('btn-cancel-create-user');
+    if (btnCancelCreateUser) btnCancelCreateUser.addEventListener('click', hideCreateUserModal);
+
+    // User Created modal
+    var btnCopyPassword = document.getElementById('btn-copy-password');
+    if (btnCopyPassword) btnCopyPassword.addEventListener('click', copyPassword);
+
+    var btnCloseUserCreated = document.getElementById('btn-close-user-created');
+    if (btnCloseUserCreated) btnCloseUserCreated.addEventListener('click', hideUserCreatedModal);
+
+    // Edit User modal
+    var btnCancelEditUser = document.getElementById('btn-cancel-edit-user');
+    if (btnCancelEditUser) btnCancelEditUser.addEventListener('click', hideEditUserModal);
+
+    // Reset Password modal
+    var btnCopyResetPassword = document.getElementById('btn-copy-reset-password');
+    if (btnCopyResetPassword) btnCopyResetPassword.addEventListener('click', copyResetPassword);
+
+    var btnCloseResetPassword = document.getElementById('btn-close-reset-password');
+    if (btnCloseResetPassword) btnCloseResetPassword.addEventListener('click', hideResetPasswordModal);
+
+    // Extend Tokens modal
+    var btnConfirmExtendTokens = document.getElementById('btn-confirm-extend-tokens');
+    if (btnConfirmExtendTokens) btnConfirmExtendTokens.addEventListener('click', confirmExtendTokens);
+
+    var btnCancelExtendTokens = document.getElementById('btn-cancel-extend-tokens');
+    if (btnCancelExtendTokens) btnCancelExtendTokens.addEventListener('click', hideExtendTokensModal);
+
+    // Webhook modal
+    var btnGenerateWebhookSecret = document.getElementById('btn-generate-webhook-secret');
+    if (btnGenerateWebhookSecret) btnGenerateWebhookSecret.addEventListener('click', generateWebhookSecret);
+
+    var btnCancelWebhook = document.getElementById('btn-cancel-webhook');
+    if (btnCancelWebhook) btnCancelWebhook.addEventListener('click', hideWebhookModal);
+
+    // Delivery Detail modal
+    var btnCloseDeliveryDetail = document.getElementById('btn-close-delivery-detail');
+    if (btnCloseDeliveryDetail) btnCloseDeliveryDetail.addEventListener('click', hideDeliveryDetailModal);
+
+    // Restore Backup modal
+    var btnCancelRestoreBackup = document.getElementById('btn-cancel-restore-backup');
+    if (btnCancelRestoreBackup) btnCancelRestoreBackup.addEventListener('click', hideRestoreBackupModal);
+
+    // Backup Result modal
+    var btnCloseBackupResult = document.getElementById('btn-close-backup-result');
+    if (btnCloseBackupResult) btnCloseBackupResult.addEventListener('click', hideBackupResultModal);
+
+    // SSO Provider modal
+    var btnCancelSSOProvider = document.getElementById('btn-cancel-sso-provider');
+    if (btnCancelSSOProvider) btnCancelSSOProvider.addEventListener('click', hideSSOProviderModal);
+
+    // SSO Test Result modal
+    var btnCloseSSOTestResult = document.getElementById('btn-close-sso-test-result');
+    if (btnCloseSSOTestResult) btnCloseSSOTestResult.addEventListener('click', hideSSOTestResultModal);
+
+    // --- Event delegation for dynamically generated elements ---
+    // All dynamic buttons use data-action attributes instead of inline onclick
+    document.body.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-action]');
+        if (!btn) return;
+
+        var action = btn.getAttribute('data-action');
+
+        switch (action) {
+            // File management
+            case 'deleteFile':
+                deleteFile(btn.getAttribute('data-claim-code'));
+                break;
+
+            // Blocked IPs
+            case 'unblockIP':
+                unblockIP(btn.getAttribute('data-ip'));
+                break;
+
+            // Pagination
+            case 'goToPage':
+                goToPage(parseInt(btn.getAttribute('data-page'), 10));
+                break;
+
+            // User management
+            case 'editUser':
+                editUser(parseInt(btn.getAttribute('data-user-id'), 10));
+                break;
+            case 'toggleUserStatus':
+                toggleUserStatus(
+                    parseInt(btn.getAttribute('data-user-id'), 10),
+                    btn.getAttribute('data-is-active') === 'true'
+                );
+                break;
+            case 'resetUserPassword':
+                resetUserPassword(parseInt(btn.getAttribute('data-user-id'), 10));
+                break;
+            case 'deleteUser':
+                deleteUser(parseInt(btn.getAttribute('data-user-id'), 10));
+                break;
+
+            // Webhook management
+            case 'editWebhook':
+                editWebhook(parseInt(btn.getAttribute('data-webhook-id'), 10));
+                break;
+            case 'testWebhook':
+                testWebhook(parseInt(btn.getAttribute('data-webhook-id'), 10));
+                break;
+            case 'deleteWebhook':
+                deleteWebhook(parseInt(btn.getAttribute('data-webhook-id'), 10));
+                break;
+
+            // Webhook delivery details
+            case 'viewDeliveryDetails':
+                viewDeliveryDetails(parseInt(btn.getAttribute('data-delivery-id'), 10));
+                break;
+
+            // API Token management
+            case 'adminRevokeToken':
+                adminRevokeToken(
+                    parseInt(btn.getAttribute('data-token-id'), 10),
+                    btn.getAttribute('data-token-name')
+                );
+                break;
+            case 'adminDeleteToken':
+                adminDeleteToken(
+                    parseInt(btn.getAttribute('data-token-id'), 10),
+                    btn.getAttribute('data-token-name')
+                );
+                break;
+
+            // SSO Provider management
+            case 'editSSOProvider':
+                editSSOProvider(parseInt(btn.getAttribute('data-provider-id'), 10));
+                break;
+            case 'testSSOProvider':
+                testSSOProvider(parseInt(btn.getAttribute('data-provider-id'), 10));
+                break;
+            case 'deleteSSOProvider':
+                deleteSSOProvider(parseInt(btn.getAttribute('data-provider-id'), 10));
+                break;
+
+            // SSO Account linking
+            case 'unlinkSSOAccount':
+                unlinkSSOAccount(
+                    parseInt(btn.getAttribute('data-link-id'), 10),
+                    btn.getAttribute('data-username')
+                );
+                break;
+        }
+    });
+});
