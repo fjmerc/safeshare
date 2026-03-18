@@ -39,6 +39,12 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - **Anonymous Mode**: New `ANONYMOUS_MODE` environment variable that, when enabled, prevents IP addresses from being stored in the database or logged. IPs are replaced with "anonymous" in database records and "redacted" in log output. Rate limiting and IP blocking continue to use real IPs internally for security. Configurable via `ANONYMOUS_MODE=true`.
 
+### Changed
+
+- QR code library is now self-hosted (removed external CDN dependency on jsdelivr)
+
+---
+
 ## [1.5.3] - 2026-03-15
 
 ### Security
