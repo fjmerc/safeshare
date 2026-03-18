@@ -602,6 +602,7 @@ See **docs/REVERSE_PROXY.md** for detailed proxy configurations.
 - **docs/API_REFERENCE_FOR_TESTING.md** - Comprehensive API testing examples
 - **docs/HTTP_RANGE_SUPPORT.md** - HTTP Range request implementation
 - **docs/REVERSE_PROXY.md** - Reverse proxy configurations (Traefik, nginx, etc.)
+- **docs/TOR_DEPLOYMENT.md** - Tor hidden service deployment for maximum anonymity
 - **docs/SECURITY.md** - Security features and best practices
 - **cmd/import-file/README.md** - Import tool documentation
 - **cmd/migrate-encryption/README.md** - Migration tool documentation
