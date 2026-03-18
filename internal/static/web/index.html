@@ -202,6 +202,21 @@
                                     </button>
                                 </div>
                             </div>
+
+                            <div class="form-group e2e-encryption-group hidden" id="e2eEncryptionGroup">
+                                <label class="e2e-toggle-label">
+                                    <input type="checkbox" id="e2eEncryptionToggle">
+                                    <span class="e2e-toggle-text">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="e2e-lock-icon">
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                        </svg>
+                                        End-to-End Encryption
+                                    </span>
+                                </label>
+                                <p class="e2e-description">Encrypt in your browser — server never sees your file</p>
+                                <p class="e2e-size-warning hidden" id="e2eSizeWarning">Large files (>500 MB) may cause browser memory issues. Consider server-side encryption for very large files.</p>
+                            </div>
                             </div>
                         </div>
                     </form>
@@ -224,6 +239,15 @@
                         <div class="success-icon">✓</div>
                         <h2>File Uploaded Successfully!</h2>
                     </div>
+
+                    <div class="e2e-badge hidden" id="e2eBadge">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                        End-to-End Encrypted
+                    </div>
+                    <p class="e2e-warning hidden" id="e2eWarning">Save this link — the decryption key is embedded in the URL. If you lose the link, the file cannot be recovered.</p>
 
                     <div class="result-item">
                         <label>Claim Code:</label>
@@ -417,6 +441,35 @@
         </footer>
     </div>
 
+    <!-- E2E Decryption Overlay -->
+    <div id="e2eDecryptOverlay" class="e2e-decrypt-overlay hidden">
+        <div class="e2e-decrypt-card">
+            <div class="e2e-decrypt-icon" id="e2eDecryptIcon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+            </div>
+            <h2 id="e2eDecryptTitle">Downloading encrypted file...</h2>
+            <p id="e2eDecryptStatus">Please wait</p>
+            <div class="e2e-decrypt-progress">
+                <div class="progress-bar">
+                    <div id="e2eDecryptProgressFill" class="progress-fill"></div>
+                </div>
+            </div>
+            <div class="e2e-decrypt-password hidden" id="e2eDecryptPasswordSection">
+                <label for="e2eDecryptPassword">This file is password-protected:</label>
+                <div class="password-wrapper">
+                    <input type="password" id="e2eDecryptPassword" placeholder="Enter password" maxlength="128" autocomplete="current-password">
+                </div>
+                <button class="btn-primary" id="e2eDecryptPasswordSubmit">Continue</button>
+            </div>
+            <p class="e2e-decrypt-error hidden" id="e2eDecryptError"></p>
+            <button class="btn-primary hidden" id="e2eDecryptRetry">Try Again</button>
+            <button class="btn-secondary hidden" id="e2eDecryptClose">Close</button>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>
 
@@ -466,6 +519,8 @@
     <script src="/assets/qrcode.min.js"></script>
     <!-- Toast Notification System (must load before other scripts) -->
     <script src="/assets/toast.js"></script>
+    <!-- Client-Side Encryption (must load before app.js) -->
+    <script src="/assets/crypto.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
     <!-- Resumable Download Handler -->
