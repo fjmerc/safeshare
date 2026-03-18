@@ -41,6 +41,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **Anonymous Mode**: New `ANONYMOUS_MODE` environment variable that, when enabled, prevents IP addresses from being stored in the database or logged. IPs are replaced with "anonymous" in database records and "redacted" in log output. Rate limiting and IP blocking continue to use real IPs internally for security. Configurable via `ANONYMOUS_MODE=true`.
 - Tor hidden service deployment guide for maximum anonymity
 - Client-side end-to-end encryption option — files can be encrypted in the browser before upload using AES-256-GCM, with the decryption key embedded in the share URL fragment (never sent to the server)
+- E2E encrypted uploads now anonymize filenames — the real filename is embedded in the encrypted payload and only visible to the recipient with the decryption key
 
 ### Security
 

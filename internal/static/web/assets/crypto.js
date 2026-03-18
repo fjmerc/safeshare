@@ -142,6 +142,65 @@
         return `${base}/#/claim/${claimCode}/key/${base64urlKey}`;
     }
 
+    // === Payload wrapping (v2 format: filename anonymization) ===
+
+    // Magic marker for v2 payload format
+    var PAYLOAD_MAGIC = new Uint8Array([0x53, 0x46, 0x30, 0x31]); // "SF01"
+    var MAX_FILENAME_BYTES = 1024;
+
+    /**
+     * Wrap file data with filename header for encryption.
+     * Format: [SF01][4-byte name length, little-endian uint32][name UTF-8][file data]
+     * @param {string} filename
+     * @param {ArrayBuffer} fileArrayBuffer
+     * @returns {ArrayBuffer}
+     */
+    function wrapPayload(filename, fileArrayBuffer) {
+        var encoder = new TextEncoder();
+        var nameBytes = encoder.encode(filename);
+        if (nameBytes.byteLength > MAX_FILENAME_BYTES) {
+            nameBytes = nameBytes.slice(0, MAX_FILENAME_BYTES);
+        }
+        var headerSize = PAYLOAD_MAGIC.byteLength + 4 + nameBytes.byteLength;
+        var result = new Uint8Array(headerSize + fileArrayBuffer.byteLength);
+        // Magic
+        result.set(PAYLOAD_MAGIC, 0);
+        // Filename length (little-endian uint32)
+        var view = new DataView(result.buffer);
+        view.setUint32(PAYLOAD_MAGIC.byteLength, nameBytes.byteLength, true);
+        // Filename
+        result.set(nameBytes, PAYLOAD_MAGIC.byteLength + 4);
+        // File data
+        result.set(new Uint8Array(fileArrayBuffer), headerSize);
+        return result.buffer;
+    }
+
+    /**
+     * Unwrap decrypted data to extract filename and file content.
+     * @param {ArrayBuffer} decryptedArrayBuffer
+     * @returns {{ filename: string|null, data: ArrayBuffer }}
+     */
+    function unwrapPayload(decryptedArrayBuffer) {
+        var bytes = new Uint8Array(decryptedArrayBuffer);
+        // Check for SF01 magic
+        if (bytes.byteLength < 8 ||
+            bytes[0] !== 0x53 || bytes[1] !== 0x46 ||
+            bytes[2] !== 0x30 || bytes[3] !== 0x31) {
+            // v1 format — no header, return original data
+            return { filename: null, data: decryptedArrayBuffer };
+        }
+        var view = new DataView(decryptedArrayBuffer);
+        var nameLength = view.getUint32(4, true);
+        if (nameLength > MAX_FILENAME_BYTES || nameLength + 8 > bytes.byteLength) {
+            // Corrupt header — treat as v1
+            return { filename: null, data: decryptedArrayBuffer };
+        }
+        var decoder = new TextDecoder();
+        var filename = decoder.decode(bytes.slice(8, 8 + nameLength));
+        var data = decryptedArrayBuffer.slice(8 + nameLength);
+        return { filename: filename, data: data };
+    }
+
     // === Base64url helpers ===
 
     function arrayBufferToBase64url(buffer) {
@@ -187,6 +246,8 @@
         isFileTooLargeForClientEncryption,
         parseFragment,
         buildEncryptedUrl,
+        wrapPayload,
+        unwrapPayload,
         LARGE_FILE_WARNING_BYTES
     };
 })();

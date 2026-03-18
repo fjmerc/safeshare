@@ -626,7 +626,7 @@ function createSSOButton(provider) {
     // Create icon element
     let iconHTML = '';
     if (provider.icon_url) {
-        iconHTML = `<img src="${escapeHTML(provider.icon_url)}" alt="" aria-hidden="true" onerror="this.style.display='none'">`;
+        iconHTML = `<img src="${escapeHTML(provider.icon_url)}" alt="" aria-hidden="true">`;
     } else {
         // Default SSO icon
         iconHTML = `
@@ -641,6 +641,12 @@ function createSSOButton(provider) {
     }
 
     button.innerHTML = `${iconHTML}<span>Continue with ${escapeHTML(provider.name)}</span>`;
+
+    // Hide broken icon images (CSP blocks inline onerror handlers)
+    var img = button.querySelector('img');
+    if (img) {
+        img.addEventListener('error', function() { this.style.display = 'none'; });
+    }
 
     // Handle click
     button.addEventListener('click', () => handleSSOLogin(provider.slug, button));
