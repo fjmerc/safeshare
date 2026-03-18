@@ -33,6 +33,13 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+### Added
+- Automatic metadata stripping for uploaded images (`STRIP_METADATA=true`) — removes EXIF/GPS data from JPEG and PNG files to prevent deanonymization through file forensics
+
+---
+
 ## [1.5.3] - 2026-03-15
 
 ### Security

@@ -92,6 +92,7 @@ type Config struct {
 	WriteTimeoutSeconds      int
 	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
+	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -138,6 +139,7 @@ func Load() (*Config, error) {
 		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
+		StripMetadata:            getEnvBool("STRIP_METADATA", false),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
@@ -258,6 +260,11 @@ func (c *Config) GetTrustProxyHeaders() string {
 // GetTrustedProxyIPs returns the trusted proxy IPs configuration
 func (c *Config) GetTrustedProxyIPs() string {
 	return c.TrustedProxyIPs
+}
+
+// IsStripMetadata returns whether metadata stripping is enabled
+func (c *Config) IsStripMetadata() bool {
+	return c.StripMetadata
 }
 
 // Setter methods for mutable fields (thread-safe writes with validation)

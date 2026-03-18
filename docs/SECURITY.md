@@ -177,6 +177,43 @@ X-CSRF-Token: <token>
 
 ---
 
+## 🧹 File Metadata Stripping
+
+### Overview
+Uploaded files can contain identifying metadata such as EXIF data (GPS coordinates, camera model, serial numbers, timestamps), document properties (author name, organization), and other embedded information. A whistleblower uploading a phone photo could leak their exact location through GPS metadata.
+
+### Setup
+
+Enable metadata stripping by setting the environment variable:
+```bash
+docker run -e STRIP_METADATA=true ...
+```
+
+When enabled, SafeShare automatically strips metadata from supported file types during upload. The stripping is **lossless** — image quality is preserved exactly; only metadata segments are removed.
+
+### Supported File Types
+
+| File Type | What's Stripped | Method |
+|-----------|----------------|--------|
+| JPEG | APP1 segments (EXIF, XMP) — GPS, camera info, timestamps | Byte-level segment removal |
+| PNG | tEXt, iTXt, zTXt, eXIf chunks — author, software, comments | Chunk filtering |
+
+### Behavior
+
+- **Default**: Disabled (`STRIP_METADATA=false`)
+- **Unsupported types**: Passed through unchanged (no error)
+- **Stripping failures**: Non-fatal — a warning is logged and the original file is kept
+- **With encryption**: Metadata is stripped before encryption
+- **File hash/size**: Recomputed after stripping so database records are accurate
+
+### Limitations
+
+- PDF, Office documents, and HEIC files are not currently supported
+- Already-uploaded files are not retroactively stripped
+- Metadata stripping is irreversible — the original metadata cannot be recovered
+
+---
+
 ## 🔐 Encryption at Rest
 
 ### Overview
