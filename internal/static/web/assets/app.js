@@ -882,16 +882,17 @@
 
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
-                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, arrayBuffer);
+
+                // Wrap file data with filename header before encryption
+                // The real filename is embedded inside the encrypted payload
+                const wrappedPayload = SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer);
+                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, wrappedPayload);
 
                 progressText.textContent = 'Uploading...';
                 progressFill.style.width = '15%';
 
-                // Create a new File from the encrypted data, preserving original name.
-                // Note: original filename is sent to server intentionally — blocked extension
-                // validation still applies (e.g., .exe files are rejected even when E2E encrypted).
-                // The filename is needed server-side for Content-Disposition on download.
-                fileToUpload = new File([encryptedBuffer], selectedFile.name, {
+                // Send anonymous filename to server — real name is inside the encrypted payload
+                fileToUpload = new File([encryptedBuffer], 'encrypted.bin', {
                     type: 'application/octet-stream'
                 });
 
@@ -1175,8 +1176,10 @@
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = displayUrl;
             const fileNameElement = document.getElementById('fileName');
-            fileNameElement.textContent = data.original_filename;
-            fileNameElement.title = data.original_filename; // Show full name on hover
+            // When E2E, server sees 'encrypted.bin' — show the real filename from selectedFile
+            const displayFilename = isE2E && selectedFile ? selectedFile.name : data.original_filename;
+            fileNameElement.textContent = displayFilename;
+            fileNameElement.title = displayFilename; // Show full name on hover
             document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
             document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
             // Display downloads in "X / Y" format to match Pickup/Dashboard pages
@@ -2310,18 +2313,23 @@
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
 
+                // Unwrap payload to extract real filename (v2) or use server filename (v1)
+                const unwrapped = SafeShareCrypto.unwrapPayload(decryptedData);
+                const downloadFilename = unwrapped.filename || fileInfo.original_filename;
+                const downloadData = unwrapped.data;
+
                 progressFillEl.style.width = '100%';
 
                 // Step 5: Trigger download
                 title.textContent = 'Download complete';
-                status.textContent = fileInfo.original_filename;
+                status.textContent = downloadFilename;
                 iconEl.className = 'e2e-decrypt-icon success';
 
-                const blob = new Blob([decryptedData]);
+                const blob = new Blob([downloadData]);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = fileInfo.original_filename;
+                a.download = downloadFilename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);

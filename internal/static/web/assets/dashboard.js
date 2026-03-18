@@ -193,7 +193,7 @@
                         <td>
                             <div class="file-name">
                                 <span class="file-name-text">${escapeHtml(file.original_filename)}</span>
-                                <svg class="inline-edit-icon" onclick="renameFile(${file.id}, '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}' )" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg class="inline-edit-icon" data-action="renameFile" data-file-id="${file.id}" data-filename="${escapeHtml(file.original_filename)}" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                                 </svg>
                             </div>
@@ -204,7 +204,7 @@
                         <td>
                             <div class="file-name-expires">
                                 <span class="file-name-text" title="${expiresDateFull}">${expiresDate}</span>
-                                <svg class="inline-edit-icon" onclick="editExpiration(${file.id}, '${file.expires_at}')" title="Edit expiration" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg class="inline-edit-icon" data-action="editExpiration" data-file-id="${file.id}" data-expires-at="${file.expires_at}" title="Edit expiration" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
                                 </svg>
                             </div>
@@ -213,7 +213,7 @@
                         <td style="text-align: center;">${statusBadge}</td>
                         <td class="actions-col">
                             <div class="actions-cell">
-                                <button class="btn-icon btn-primary" onclick="openShareModal({id: ${file.id}, original_filename: '${escapeHtml(file.original_filename).replace(/'/g, "\\'")}', file_size: ${file.file_size}, download_url: '${downloadUrl}', expires_at: '${file.expires_at}', max_downloads: ${file.max_downloads || 'null'}, download_count: ${file.completed_downloads}, claim_code: '${file.claim_code}'})" title="Share File">
+                                <button class="btn-icon btn-primary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${escapeHtml(file.original_filename)}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${file.expires_at}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${file.claim_code}" title="Share File">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
                                         <circle cx="6" cy="12" r="3"></circle>
@@ -222,7 +222,7 @@
                                         <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                                     </svg>
                                 </button>
-                                <button class="btn-icon btn-danger" onclick="deleteFile(${file.id})" title="Delete">
+                                <button class="btn-icon btn-danger" data-action="deleteFile" data-file-id="${file.id}" title="Delete">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -1114,12 +1114,12 @@
                         <td>${lastUsed}</td>
                         <td style="text-align: center;">
                             <div style="display: flex; gap: 6px; justify-content: center;">
-                                <button class="btn-icon btn-secondary" onclick="rotateToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Rotate Token (Generate New)">
+                                <button class="btn-icon btn-secondary" data-action="rotateToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Rotate Token (Generate New)">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
                                     </svg>
                                 </button>
-                                <button class="btn-icon btn-danger" onclick="revokeToken(${token.id}, '${escapeHtml(token.name).replace(/'/g, "\\'")}')" title="Revoke Token">
+                                <button class="btn-icon btn-danger" data-action="revokeToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Revoke Token">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -1955,7 +1955,7 @@
                         </div>
                         ` : ''}
                         <div class="mfa-actions" style="margin-top: 16px;">
-                            <button class="btn btn-danger btn-sm" onclick="showDisableMFAModal()">
+                            <button class="btn btn-danger btn-sm" data-action="showDisableMFAModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="18" y1="6" x2="6" y2="18"></line>
                                     <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -1967,7 +1967,7 @@
                 } else {
                     html += `
                         <div class="mfa-actions" style="margin-top: 16px;">
-                            <button class="btn btn-success btn-sm" onclick="showMFASetupModal()">
+                            <button class="btn btn-success btn-sm" data-action="showMFASetupModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="12" y1="5" x2="12" y2="19"></line>
                                     <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -2003,7 +2003,7 @@
                             <div class="webauthn-loading">Loading security keys...</div>
                         </div>
                         <div class="mfa-actions" style="margin-top: 16px;">
-                            <button class="btn btn-success btn-sm" onclick="showWebAuthnRegisterModal()">
+                            <button class="btn btn-success btn-sm" data-action="showWebAuthnRegisterModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="12" y1="5" x2="12" y2="19"></line>
                                     <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -2090,14 +2090,14 @@
                             <div class="webauthn-credential-meta">Added ${createdDate} • Last used: ${lastUsed}</div>
                         </div>
                         <div class="webauthn-credential-actions">
-                            <button onclick="showWebAuthnRenameModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                            <button data-action="showWebAuthnRenameModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
                                     title="Rename">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                 </svg>
                             </button>
-                            <button class="delete" onclick="showWebAuthnDeleteModal(${cred.id}, '${escapeHtml(cred.name).replace(/'/g, "\\'")}')"
+                            <button class="delete" data-action="showWebAuthnDeleteModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
                                     title="Delete">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="3 6 5 6 21 6"></polyline>
@@ -3251,4 +3251,55 @@ you may be locked out of your account.
             // MFA disable modal
             document.getElementById('mfaDisableCancelBtn').addEventListener('click', hideMFADisableModal);
             document.getElementById('mfaDisableConfirmBtn').addEventListener('click', confirmDisableMFA);
+
+            // Event delegation for dynamically generated buttons (replaces inline onclick handlers)
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest('[data-action]');
+                if (!btn) return;
+                var action = btn.getAttribute('data-action');
+                switch (action) {
+                    case 'renameFile':
+                        renameFile(parseInt(btn.getAttribute('data-file-id')), btn.getAttribute('data-filename'));
+                        break;
+                    case 'editExpiration':
+                        editExpiration(parseInt(btn.getAttribute('data-file-id')), btn.getAttribute('data-expires-at'));
+                        break;
+                    case 'openShareModal':
+                        openShareModal({
+                            id: parseInt(btn.getAttribute('data-file-id')),
+                            original_filename: btn.getAttribute('data-filename'),
+                            file_size: parseInt(btn.getAttribute('data-file-size')),
+                            download_url: btn.getAttribute('data-download-url'),
+                            expires_at: btn.getAttribute('data-expires-at'),
+                            max_downloads: btn.getAttribute('data-max-downloads') ? parseInt(btn.getAttribute('data-max-downloads')) : null,
+                            download_count: parseInt(btn.getAttribute('data-download-count')),
+                            claim_code: btn.getAttribute('data-claim-code')
+                        });
+                        break;
+                    case 'deleteFile':
+                        deleteFile(parseInt(btn.getAttribute('data-file-id')));
+                        break;
+                    case 'rotateToken':
+                        rotateToken(parseInt(btn.getAttribute('data-token-id')), btn.getAttribute('data-token-name'));
+                        break;
+                    case 'revokeToken':
+                        revokeToken(parseInt(btn.getAttribute('data-token-id')), btn.getAttribute('data-token-name'));
+                        break;
+                    case 'showDisableMFAModal':
+                        showDisableMFAModal();
+                        break;
+                    case 'showMFASetupModal':
+                        showMFASetupModal();
+                        break;
+                    case 'showWebAuthnRegisterModal':
+                        showWebAuthnRegisterModal();
+                        break;
+                    case 'showWebAuthnRenameModal':
+                        showWebAuthnRenameModal(parseInt(btn.getAttribute('data-cred-id')), btn.getAttribute('data-cred-name'));
+                        break;
+                    case 'showWebAuthnDeleteModal':
+                        showWebAuthnDeleteModal(parseInt(btn.getAttribute('data-cred-id')), btn.getAttribute('data-cred-name'));
+                        break;
+                }
+            });
         });

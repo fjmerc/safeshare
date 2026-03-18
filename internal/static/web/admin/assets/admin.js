@@ -3166,7 +3166,7 @@ function displayAdminTokens(tokens) {
         return `
             <tr class="${rowClass}">
                 <td>
-                    <input type="checkbox" class="token-checkbox" value="${token.id}" onchange="updateBulkTokenButtons()">
+                    <input type="checkbox" class="token-checkbox" value="${token.id}" data-action="token-checkbox-change">
                 </td>
                 <td><strong>${escapeHtml(token.name)}</strong></td>
                 <td>${escapeHtml(token.username || 'Unknown')}</td>
@@ -4391,6 +4391,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     btn.getAttribute('data-username')
                 );
                 break;
+        }
+    });
+
+    // Event delegation for change events on dynamic elements
+    document.body.addEventListener('change', function(e) {
+        var el = e.target.closest('[data-action]');
+        if (!el) return;
+        if (el.getAttribute('data-action') === 'token-checkbox-change') {
+            updateBulkTokenButtons();
         }
     });
 });
