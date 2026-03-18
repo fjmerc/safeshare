@@ -42,6 +42,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Tor hidden service deployment guide for maximum anonymity
 - Client-side end-to-end encryption option — files can be encrypted in the browser before upload using AES-256-GCM, with the decryption key embedded in the share URL fragment (never sent to the server)
 - E2E encrypted uploads now anonymize filenames — the real filename is embedded in the encrypted payload and only visible to the recipient with the decryption key
+- Metadata stripping extended to PDF (author, creator, dates, XMP), MP4/MOV (GPS, camera, timestamps), and MP3 (ID3v1/v2, APE tags) files
 
 ### Security
 

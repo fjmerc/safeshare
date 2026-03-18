@@ -200,6 +200,9 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 | DOCX | docProps/ — author, company, template, revision history, timestamps | ZIP entry removal + XML filtering |
 | XLSX | docProps/ — same as DOCX | ZIP entry removal + XML filtering |
 | PPTX | docProps/ — same as DOCX | ZIP entry removal + XML filtering |
+| PDF | Info dictionary (Author, Creator, Producer, dates), XMP metadata, document ID | pdfcpu library |
+| MP4/MOV | udta (GPS, camera), meta (iTunes metadata), mvhd/tkhd timestamps | Manual atom parsing |
+| MP3 | ID3v2 tags, ID3v1 tags, APE tags — artist, album, GPS, comments | Manual tag removal |
 
 ### Behavior
 
@@ -211,7 +214,7 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 ### Limitations
 
-- PDF and HEIC files are not currently supported
+- HEIC/HEIF, FLAC, WAV, OGG, and WebM files are not currently supported
 - Legacy Office formats (.doc, .xls, .ppt) are not supported — only modern Open XML formats
 - Office document comments and tracked changes (which may contain author names) are not stripped — only file-level metadata in docProps/
 - Already-uploaded files are not retroactively stripped
