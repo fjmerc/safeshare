@@ -887,7 +887,10 @@
                 progressText.textContent = 'Uploading...';
                 progressFill.style.width = '15%';
 
-                // Create a new File from the encrypted data, preserving original name
+                // Create a new File from the encrypted data, preserving original name.
+                // Note: original filename is sent to server intentionally — blocked extension
+                // validation still applies (e.g., .exe files are rejected even when E2E encrypted).
+                // The filename is needed server-side for Content-Disposition on download.
                 fileToUpload = new File([encryptedBuffer], selectedFile.name, {
                     type: 'application/octet-stream'
                 });
