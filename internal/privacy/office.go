@@ -128,7 +128,6 @@ func stripOfficeMetadata(filePath string) error {
 func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
-	defer writer.Close()
 
 	var totalDecompressed int64
 

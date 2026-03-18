@@ -1149,9 +1149,6 @@
             // Recovery feature: Upload completions are saved by upload handlers
             // (ChunkedUploader.complete() for chunked, XHR handler for simple)
 
-            // Send browser notification
-            sendUploadCompleteNotification(data);
-
             // If E2E encrypted, construct URL with key fragment
             let displayUrl = data.download_url;
             const isE2E = !!e2eExportedKey;
@@ -1160,11 +1157,17 @@
                 displayUrl = SafeShareCrypto.buildEncryptedUrl(baseUrl, data.claim_code, e2eExportedKey);
             }
 
-            // Store data for sharing (override download_url if E2E)
+            // Store data for sharing (override download_url and filename if E2E)
             currentShareData = Object.assign({}, data);
             if (isE2E) {
                 currentShareData.download_url = displayUrl;
+                if (selectedFile) {
+                    currentShareData.original_filename = selectedFile.name;
+                }
             }
+
+            // Send browser notification (after E2E overrides so it shows real filename)
+            sendUploadCompleteNotification(currentShareData);
 
             // Show/hide E2E badge and warning
             const e2eBadge = document.getElementById('e2eBadge');

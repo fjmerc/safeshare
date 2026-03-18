@@ -191,7 +191,7 @@
         }
         var view = new DataView(decryptedArrayBuffer);
         var nameLength = view.getUint32(4, true);
-        if (nameLength > MAX_FILENAME_BYTES || nameLength + 8 > bytes.byteLength) {
+        if (nameLength === 0 || nameLength > MAX_FILENAME_BYTES || nameLength + 8 > bytes.byteLength) {
             // Corrupt header — treat as v1
             return { filename: null, data: decryptedArrayBuffer };
         }
