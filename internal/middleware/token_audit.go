@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 )
 
@@ -37,7 +38,7 @@ func (w *statusCapturingWriter) Write(b []byte) (int, error) {
 // It should be applied to routes that support API token authentication.
 // This middleware captures the HTTP response status code and logs it along with
 // the request details for audit purposes.
-func APITokenAuditLog(repos *repository.Repositories) func(http.Handler) http.Handler {
+func APITokenAuditLog(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Wrap the response writer to capture status code
@@ -58,7 +59,7 @@ func APITokenAuditLog(repos *repository.Repositories) func(http.Handler) http.Ha
 
 			// Log the usage asynchronously to not delay the response
 			endpoint := r.URL.Path
-			clientIP := getClientIP(r)
+			clientIP := privacy.AnonymizeIP(getClientIP(r), anonymousMode)
 			userAgent := r.Header.Get("User-Agent")
 			status := captured.statusCode
 

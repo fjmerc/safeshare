@@ -741,7 +741,7 @@ func TestAdminBlockIPHandler(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	handler := AdminBlockIPHandler(repos)
+	handler := AdminBlockIPHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "192.168.1.100")
@@ -772,7 +772,7 @@ func TestAdminBlockIPHandler_MethodNotAllowed(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := AdminBlockIPHandler(repos)
+	handler := AdminBlockIPHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 	for _, method := range methods {
@@ -795,7 +795,7 @@ func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := AdminBlockIPHandler(repos)
+	handler := AdminBlockIPHandler(repos, cfg)
 
 	// Empty IP address
 	formData := url.Values{}
@@ -825,7 +825,7 @@ func TestAdminUnblockIPHandler(t *testing.T) {
 	// Block an IP first
 	repos.Admin.BlockIP(ctx, "192.168.1.100", "Test", "admin")
 
-	handler := AdminUnblockIPHandler(repos)
+	handler := AdminUnblockIPHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "192.168.1.100")
@@ -947,7 +947,7 @@ func TestAdminCreateUserHandler(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	createReq := models.CreateUserRequest{
 		Username: "newuser",
@@ -997,7 +997,7 @@ func TestAdminCreateUserHandler_DuplicateUsername(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("password123")
 	repos.Users.Create(ctx, "existing", "existing@example.com", hashedPassword, "user", true)
 
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	createReq := models.CreateUserRequest{
 		Username: "existing",
@@ -1025,7 +1025,7 @@ func TestAdminCreateUserHandler_InvalidUsername(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	createReq := models.CreateUserRequest{
 		Username: "user@invalid!", // Invalid characters
@@ -1098,7 +1098,7 @@ func TestAdminToggleUserActiveHandler_Disable(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("password")
 	user, _ := repos.Users.Create(ctx, "activeuser", "active@example.com", hashedPassword, "user", true)
 
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/disable", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1129,7 +1129,7 @@ func TestAdminToggleUserActiveHandler_Enable(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("password")
 	user, _ := repos.Users.Create(ctx, "disableduser", "disabled@example.com", hashedPassword, "user", false)
 
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/enable", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1160,7 +1160,7 @@ func TestAdminResetUserPasswordHandler(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("oldpassword")
 	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", hashedPassword, "user", true)
 
-	handler := AdminResetUserPasswordHandler(repos)
+	handler := AdminResetUserPasswordHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/admin/api/users/%d/reset-password", user.ID), nil)
 	rr := httptest.NewRecorder()
@@ -1255,7 +1255,7 @@ func TestAdminUpdateUserHandler(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("password")
 	user, _ := repos.Users.Create(ctx, "oldusername", "old@example.com", hashedPassword, "user", true)
 
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "newusername",
@@ -1302,7 +1302,7 @@ func TestAdminUpdateUserHandler_InvalidRole(t *testing.T) {
 	hashedPassword, _ := utils.HashPassword("password")
 	user, _ := repos.Users.Create(ctx, "testuser", "test@example.com", hashedPassword, "user", true)
 
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "testuser",
@@ -1799,7 +1799,7 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	handler := AdminBlockIPHandler(repos)
+	handler := AdminBlockIPHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "10.0.0.1")
@@ -1830,7 +1830,7 @@ func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := AdminUnblockIPHandler(repos)
+	handler := AdminUnblockIPHandler(repos, cfg)
 
 	formData := url.Values{}
 	formData.Set("ip_address", "10.0.0.99")

@@ -130,7 +130,7 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			slog.Error("failed to parse MFA config request", "error", err, "ip", clientIP)
+			slog.Error("failed to parse MFA config request", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -143,7 +143,7 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Get current MFA config from database
 		currentCfg, err := repos.Settings.GetMFAConfig(ctx)
 		if err != nil {
-			slog.Error("failed to get current MFA config", "error", err, "ip", clientIP)
+			slog.Error("failed to get current MFA config", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -178,7 +178,7 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 
 		// Persist to database
 		if err := repos.Settings.UpdateMFAConfig(ctx, currentCfg); err != nil {
-			slog.Error("failed to update MFA config in database", "error", err, "ip", clientIP)
+			slog.Error("failed to update MFA config in database", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -214,7 +214,7 @@ func AdminUpdateMFAConfigHandler(repos *repository.Repositories, cfg *config.Con
 		}
 
 		slog.Info("MFA configuration updated",
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"enabled", currentCfg.Enabled,
 			"required", currentCfg.Required,
 			"issuer", currentCfg.Issuer,
@@ -266,7 +266,7 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			slog.Error("failed to parse SSO config request", "error", err, "ip", clientIP)
+			slog.Error("failed to parse SSO config request", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -279,7 +279,7 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 		// Get current SSO config from database
 		currentCfg, err := repos.Settings.GetSSOConfig(ctx)
 		if err != nil {
-			slog.Error("failed to get current SSO config", "error", err, "ip", clientIP)
+			slog.Error("failed to get current SSO config", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -308,7 +308,7 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 
 		// Persist to database
 		if err := repos.Settings.UpdateSSOConfig(ctx, currentCfg); err != nil {
-			slog.Error("failed to update SSO config in database", "error", err, "ip", clientIP)
+			slog.Error("failed to update SSO config in database", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -335,7 +335,7 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 		cfg.Features.SetSSOEnabled(currentCfg.Enabled)
 
 		slog.Info("SSO configuration updated",
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"enabled", currentCfg.Enabled,
 			"auto_provision", currentCfg.AutoProvision,
 			"default_role", currentCfg.DefaultRole,

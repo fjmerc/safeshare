@@ -460,7 +460,7 @@ func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 	mux := http.NewServeMux()
 
 	// Upload endpoint (with optional auth to associate files with user)
-	mux.Handle("/api/upload", middleware.OptionalUserAuth(repos)(handlers.UploadHandler(repos, cfg)))
+	mux.Handle("/api/upload", middleware.OptionalUserAuth(repos, false)(handlers.UploadHandler(repos, cfg)))
 
 	// Claim info endpoint
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
@@ -475,7 +475,7 @@ func setupAuthenticatedTestServer(t *testing.T) (*authTestServer, func()) {
 	})
 
 	// User files endpoint (requires auth)
-	mux.Handle("/api/user/files", middleware.UserAuth(repos)(handlers.UserDashboardDataHandler(repos, cfg)))
+	mux.Handle("/api/user/files", middleware.UserAuth(repos, false)(handlers.UserDashboardDataHandler(repos, cfg)))
 
 	server := httptest.NewServer(mux)
 

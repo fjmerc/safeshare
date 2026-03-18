@@ -223,7 +223,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		MimeType:         mimeType,
 		ExpiresAt:        expiresAt,
 		MaxDownloads:     maxDownloads,
-		UploaderIP:       clientIP,
+		UploaderIP:       storeIP(clientIP, cfg),
 		PasswordHash:     partialUpload.PasswordHash,
 		UserID:           partialUpload.UserID,
 		SHA256Hash:       sha256Hash,
@@ -271,6 +271,6 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		"size", partialUpload.TotalSize,
 		"total_chunks", partialUpload.TotalChunks,
 		"password_protected", partialUpload.PasswordHash != "",
-		"client_ip", clientIP,
+		"client_ip", logIP(clientIP, cfg),
 	)
 }

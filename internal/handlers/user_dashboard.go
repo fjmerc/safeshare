@@ -174,7 +174,7 @@ func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) h
 				"filename", file.StoredFilename,
 				"error", err,
 				"user_id", user.ID,
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -485,7 +485,7 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 				"filename", file.StoredFilename,
 				"error", err,
 				"user_id", user.ID,
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -797,7 +797,7 @@ func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, c
 			"filename", result.OriginalFilename,
 			"old_claim_code", claimCode,
 			"new_claim_code", result.NewClaimCode,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 
 		// Build download URL
@@ -921,7 +921,7 @@ func UserRegenerateClaimCodeHandler(repos *repository.Repositories, cfg *config.
 			"filename", result.OriginalFilename,
 			"old_claim_code", result.OldClaimCode,
 			"new_claim_code", result.NewClaimCode,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 
 		// Build download URL

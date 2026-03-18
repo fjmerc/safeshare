@@ -218,7 +218,7 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 
 		// Check if SSO is globally enabled
 		if cfg.SSO == nil || !cfg.SSO.Enabled {
-			slog.Warn("SSO login attempt but SSO is disabled", "ip", clientIP)
+			slog.Warn("SSO login attempt but SSO is disabled", "ip", logIP(clientIP, cfg))
 			http.Error(w, "SSO is not enabled", http.StatusForbidden)
 			return
 		}
@@ -236,7 +236,7 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 			if errors.Is(err, repository.ErrSSOProviderNotFound) {
 				slog.Warn("SSO login attempt for unknown provider",
 					"provider", providerSlug,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 				http.Error(w, "Provider not found", http.StatusNotFound)
 				return
@@ -244,7 +244,7 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 			if errors.Is(err, repository.ErrSSOProviderDisabled) {
 				slog.Warn("SSO login attempt for disabled provider",
 					"provider", providerSlug,
-					"ip", clientIP,
+					"ip", logIP(clientIP, cfg),
 				)
 				http.Error(w, "Provider is disabled", http.StatusForbidden)
 				return
@@ -310,7 +310,7 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 
 		slog.Info("SSO login initiated",
 			"provider", providerSlug,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Redirect to identity provider
@@ -334,7 +334,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		// Check if SSO is globally enabled
 		if cfg.SSO == nil || !cfg.SSO.Enabled {
-			slog.Warn("SSO callback received but SSO is disabled", "ip", clientIP)
+			slog.Warn("SSO callback received but SSO is disabled", "ip", logIP(clientIP, cfg))
 			http.Error(w, "SSO is not enabled", http.StatusForbidden)
 			return
 		}
@@ -357,7 +357,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"provider", providerSlug,
 				"error", errorCode,
 				"description", errorDesc,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			// Redirect to login with URL-encoded error message to prevent XSS
 			http.Redirect(w, r, "/login?error=sso_failed&message="+url.QueryEscape(errorCode), http.StatusFound)
@@ -367,7 +367,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 		if code == "" {
 			slog.Warn("SSO callback missing authorization code",
 				"provider", providerSlug,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=missing_code", http.StatusFound)
 			return
@@ -376,7 +376,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 		if state == "" {
 			slog.Warn("SSO callback missing state parameter",
 				"provider", providerSlug,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=missing_state", http.StatusFound)
 			return
@@ -388,7 +388,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 			slog.Error("SSO callback for invalid provider",
 				"provider", providerSlug,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=invalid_provider", http.StatusFound)
 			return
@@ -411,7 +411,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 			slog.Warn("SSO token exchange failed",
 				"provider", providerSlug,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=token_exchange_failed", http.StatusFound)
 			return
@@ -432,7 +432,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 		if err := oidcProvider.ValidateEmailDomain(userInfo.Email); err != nil {
 			slog.Warn("SSO login rejected - email domain not allowed",
 				"provider", providerSlug,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=domain_not_allowed", http.StatusFound)
 			return
@@ -444,7 +444,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 			slog.Error("SSO authentication processing failed",
 				"provider", providerSlug,
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=auth_failed", http.StatusFound)
 			return
@@ -456,7 +456,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"provider", providerSlug,
 				"user_id", user.ID,
 				"username", user.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			http.Redirect(w, r, "/login?error=account_disabled", http.StatusFound)
 			return
@@ -482,7 +482,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 		expiresAt := time.Now().Add(time.Duration(sessionExpiryHours) * time.Hour)
 
 		// Store session in repository
-		if err := repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, clientIP, userAgent); err != nil {
+		if err := repos.Users.CreateSession(ctx, user.ID, sessionToken, expiresAt, storeIP(clientIP, cfg), userAgent); err != nil {
 			slog.Error("failed to create user session", "error", err)
 			http.Redirect(w, r, "/login?error=session_error", http.StatusFound)
 			return
@@ -516,14 +516,14 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"provider", providerSlug,
 				"user_id", user.ID,
 				"username", user.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 		} else {
 			slog.Info("SSO login successful",
 				"provider", providerSlug,
 				"user_id", user.ID,
 				"username", user.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 		}
 
@@ -772,7 +772,7 @@ func SSOLinkAccountHandler(repos *repository.Repositories, cfg *config.Config) h
 
 		// Check if SSO is globally enabled
 		if cfg.SSO == nil || !cfg.SSO.Enabled {
-			slog.Warn("SSO link attempt but SSO is disabled", "ip", clientIP)
+			slog.Warn("SSO link attempt but SSO is disabled", "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -919,7 +919,7 @@ func SSOLinkAccountHandler(repos *repository.Repositories, cfg *config.Config) h
 			"provider", req.ProviderSlug,
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Return the authorization URL for the frontend to redirect
@@ -1025,7 +1025,7 @@ func SSOUnlinkAccountHandler(repos *repository.Repositories, cfg *config.Config)
 			"provider", providerSlug,
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1298,7 +1298,7 @@ func SSORefreshTokenHandler(repos *repository.Repositories, cfg *config.Config) 
 			slog.Info("SSO token refreshed",
 				"provider", provider.Slug,
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 		}
 
@@ -1403,7 +1403,7 @@ func SSOLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"user_id", user.ID,
 			"username", user.Username,
 			"idp_logout", req.IdPLogout,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// If IdP logout requested, try to get the logout URL

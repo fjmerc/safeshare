@@ -55,7 +55,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			slog.Warn("file access denied",
 				"reason", "not_found_or_expired",
 				"claim_code", redactClaimCode(claimCode),
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
 			return
@@ -72,7 +72,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 					"reason", "incorrect_password",
 					"claim_code", redactClaimCode(claimCode),
 					"filename", file.OriginalFilename,
-					"client_ip", getClientIP(r),
+					"client_ip", logIP(getClientIP(r), cfg),
 					"user_agent", getUserAgent(r),
 				)
 				sendErrorResponse(w, r, "Incorrect Password", "The password provided for this file is incorrect. Please check the password and try again, or contact the sender for the correct password.", "INCORRECT_PASSWORD", http.StatusUnauthorized)
@@ -88,7 +88,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				"filename", file.StoredFilename,
 				"error", err,
 				"claim_code", redactClaimCode(claimCode),
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -109,7 +109,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				slog.Warn("claim code changed during download",
 					"file_id", file.ID,
 					"original_code", redactClaimCode(originalClaimCode),
-					"client_ip", getClientIP(r),
+					"client_ip", logIP(getClientIP(r), cfg),
 				)
 				// Continue with download - file retrieval already succeeded
 				// But don't increment counter since claim code is now invalid
@@ -126,7 +126,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				"reason", "download_limit_reached",
 				"claim_code", redactClaimCode(claimCode),
 				"filename", file.OriginalFilename,
-				"client_ip", getClientIP(r),
+				"client_ip", logIP(getClientIP(r), cfg),
 			)
 
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)

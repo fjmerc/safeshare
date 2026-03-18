@@ -64,7 +64,7 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields() // Reject unknown fields for strict validation
 		if err := decoder.Decode(&req); err != nil {
-			slog.Error("failed to parse feature flags request", "error", err, "ip", clientIP)
+			slog.Error("failed to parse feature flags request", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -77,7 +77,7 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 		// Get current flags from database (or defaults)
 		currentFlags, err := repos.Settings.GetFeatureFlags(ctx)
 		if err != nil {
-			slog.Error("failed to get current feature flags", "error", err, "ip", clientIP)
+			slog.Error("failed to get current feature flags", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -115,7 +115,7 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 
 		// Persist to database
 		if err := repos.Settings.UpdateFeatureFlags(ctx, currentFlags); err != nil {
-			slog.Error("failed to update feature flags in database", "error", err, "ip", clientIP)
+			slog.Error("failed to update feature flags in database", "error", err, "ip", logIP(clientIP, cfg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -154,7 +154,7 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 		}
 
 		slog.Info("feature flags updated",
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"postgresql", currentFlags.EnablePostgreSQL,
 			"s3_storage", currentFlags.EnableS3Storage,
 			"sso", currentFlags.EnableSSO,
