@@ -254,6 +254,8 @@ SafeShare is configured via environment variables. Common settings:
 | `READ_TIMEOUT` | `120` | HTTP read timeout (seconds) |
 | `WRITE_TIMEOUT` | `120` | HTTP write timeout (seconds) |
 | `TZ` | `UTC` | Timezone for container |
+| `ANONYMOUS_MODE` | `false` | Redact IPs from database, logs, and admin dashboard |
+| `STRIP_METADATA` | `false` | Strip file metadata (EXIF, document properties) on upload |
 
 **Advanced Configuration**:
 - `TRUST_PROXY_HEADERS` - Proxy header validation (`auto`, `true`, `false`)
