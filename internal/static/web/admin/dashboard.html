@@ -150,13 +150,14 @@
                             <th>Created</th>
                             <th>Expires</th>
                             <th>Downloads</th>
+                            <th>Scan</th>
                             <th>Protected</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="filesTableBody">
                         <tr>
-                            <td colspan="11" class="loading">Loading...</td>
+                            <td colspan="12" class="loading">Loading...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -605,9 +606,9 @@
                         <div class="form-group">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="featureMalwareScan" name="enable_malware_scan" disabled>
-                                <span>Malware Scanning (Coming Soon)</span>
+                                <span>Malware Scanning</span>
                             </label>
-                            <small>Enable ClamAV malware scanning for uploaded files</small>
+                            <small>Requires ClamAV sidecar container. Configured via <code>FEATURE_MALWARE_SCAN</code> environment variable.</small>
                         </div>
                         <div class="button-group">
                             <button type="submit" class="btn-primary">
@@ -748,6 +749,10 @@
                         <div class="info-item">
                             <strong>Backups Status:</strong>
                             <span id="backupsStatusText">Disabled</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Malware Scan Status:</strong>
+                            <span id="malwareScanStatusText">Disabled</span>
                         </div>
                     </div>
                     <div class="alert-info" style="margin-top: 16px;">

@@ -19,10 +19,10 @@ type File struct {
 	PasswordHash       string  // bcrypt hash - empty string means no password
 	UserID             *int64  // nullable - nil means no associated user (anonymous upload or legacy)
 	Username           *string // optional - populated in admin queries for display purposes
-	SHA256Hash         string  // SHA256 checksum of original file (before encryption) - empty for legacy files
-	ScanStatus string     // Malware scan status: "", "pending", "clean", "infected", "error", "skipped"
-	ScanResult string     // Virus name (if infected) or error message (if error)
-	ScannedAt  *time.Time // When scan completed (nil if not scanned)
+	SHA256Hash         string     // SHA256 checksum of original file (before encryption) - empty for legacy files
+	ScanStatus         string     // Malware scan status: "", "pending", "clean", "infected", "error", "skipped"
+	ScanResult         string     // Virus name (if infected) or error message (if error)
+	ScannedAt          *time.Time // When scan completed (nil if not scanned)
 }
 
 // UploadResponse is the JSON response returned after a successful upload
