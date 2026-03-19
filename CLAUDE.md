@@ -596,6 +596,7 @@ See **docs/REVERSE_PROXY.md** for detailed proxy configurations.
 
 ## Additional Documentation
 
+- **docs/DEPLOYMENT_MODES.md** - Deployment mode guide (Ghost, Standard, Hardened, Fortress)
 - **docs/VERSION_STRATEGY.md** - Semantic versioning, branching strategy, changelog guidelines
 - **docs/ARCHITECTURE.md** - Detailed technical architecture documentation
 - **docs/CHUNKED_UPLOAD.md** - Chunked upload API specifications and usage

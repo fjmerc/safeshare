@@ -110,6 +110,28 @@ A self-hosted secure file sharing service for temporary transfers with automatic
 
 ---
 
+## Deployment Modes
+
+SafeShare serves two fundamentally different missions depending on how you deploy it:
+
+```
+ANONYMITY                                                              SECURITY
+Protect users from the system                    Protect the operator from users
+
+  [GHOST]           [STANDARD]           [HARDENED]           [FORTRESS]
+```
+
+| Mode | For | Trust Model |
+|------|-----|-------------|
+| **Ghost** | Whistleblowers, journalists, activists | "I can't hand over what I don't have" |
+| **Standard** | Personal use, small teams | Secure defaults, minimal config |
+| **Hardened** | Enterprises, internal tools | "I need to control what flows through" |
+| **Fortress** | Regulated industries (HIPAA, SOC2) | Zero trust, full audit trail |
+
+**Choose your mode**: See [docs/DEPLOYMENT_MODES.md](docs/DEPLOYMENT_MODES.md) for complete configuration profiles, docker-compose examples, and a decision flowchart.
+
+---
+
 ## Quick Start
 
 ### Web UI
@@ -275,6 +297,7 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 | Document | Description |
 |----------|-------------|
+| **[DEPLOYMENT_MODES.md](docs/DEPLOYMENT_MODES.md)** | Choose your deployment mode: Ghost, Standard, Hardened, or Fortress |
 | **[API_REFERENCE.md](docs/API_REFERENCE.md)** | Complete API documentation with all endpoints, authentication, and examples |
 | **[SECURITY.md](docs/SECURITY.md)** | Enterprise security features, encryption, admin dashboard security, best practices |
 | **[SSO_SETUP.md](docs/SSO_SETUP.md)** | SSO/OIDC configuration guide with provider-specific examples |
