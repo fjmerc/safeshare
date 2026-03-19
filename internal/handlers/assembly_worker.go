@@ -296,6 +296,10 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		},
 	})
 
+	// Trigger async malware scan (no-op if feature is disabled).
+	// triggerAsyncScan is defined in upload.go (same package).
+	triggerAsyncScan(fileRecord.ID, finalPath, claimCode, partialUpload.Filename, totalBytesWritten, mimeType, expiresAt, cfg, repos)
+
 	slog.Info("async assembly completed successfully",
 		"upload_id", uploadID,
 		"claim_code", redactClaimCode(claimCode),

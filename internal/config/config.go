@@ -46,6 +46,14 @@ type APITokenConfig struct {
 	MaxExpiryDays    int // Maximum token expiration in days (default: 365)
 }
 
+// ClamAVConfig holds ClamAV malware scanning configuration.
+type ClamAVConfig struct {
+	Host        string // ClamAV daemon host (default: "clamav")
+	Port        int    // ClamAV daemon port (default: 3310)
+	Timeout     int    // Scan timeout in seconds (default: 30)
+	MaxFileSize int64  // Maximum file size to scan in bytes, 0 = unlimited (default: 104857600 = 100MB)
+}
+
 // MFAConfig holds Multi-Factor Authentication configuration.
 type MFAConfig struct {
 	Enabled                bool   // Enable MFA feature (default: false)
@@ -72,6 +80,7 @@ type Config struct {
 	APIToken                 *APITokenConfig   // API token limit configuration
 	MFA                      *MFAConfig        // MFA configuration
 	SSO                      *SSOConfig        // SSO/OIDC configuration
+	ClamAV                   *ClamAVConfig     // ClamAV malware scanning configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -163,6 +172,14 @@ func Load() (*Config, error) {
 
 		// SSO configuration
 		SSO: loadSSOConfig(),
+
+		// ClamAV malware scanning configuration
+		ClamAV: &ClamAVConfig{
+			Host:        getEnv("CLAMAV_HOST", "clamav"),
+			Port:        getEnvInt("CLAMAV_PORT", 3310),
+			Timeout:     getEnvInt("CLAMAV_TIMEOUT", 30),
+			MaxFileSize: getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+		},
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default

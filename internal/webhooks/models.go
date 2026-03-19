@@ -13,6 +13,7 @@ const (
 	EventFileDownloaded EventType = "file.downloaded"
 	EventFileDeleted    EventType = "file.deleted"
 	EventFileExpired    EventType = "file.expired"
+	EventFileInfected   EventType = "file.infected"
 )
 
 // WebhookFormat represents the format/protocol for webhook payloads
@@ -93,6 +94,8 @@ type FileData struct {
 	ExpiresAt    time.Time  `json:"expires_at"`
 	DownloadedAt *time.Time `json:"downloaded_at,omitempty"` // For file.downloaded events
 	Reason       *string    `json:"reason,omitempty"`        // For file.deleted/expired events
+	ScanStatus   *string    `json:"scan_status,omitempty"`   // For file.infected events
+	ScanResult   *string    `json:"scan_result,omitempty"`   // Virus name for file.infected events
 }
 
 // ToJSON converts an Event to JSON string

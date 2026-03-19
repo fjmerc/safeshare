@@ -47,6 +47,7 @@ type FileRepository struct {
 	GetAllStoredFilenamesError           error
 	GetAllForAdminError                  error
 	SearchForAdminError                  error
+	UpdateScanStatusError                error
 
 	// Custom behavior hooks
 	// NOTE: Set these BEFORE concurrent access begins
@@ -97,6 +98,7 @@ func (r *FileRepository) Reset() {
 	r.GetAllStoredFilenamesError = nil
 	r.GetAllForAdminError = nil
 	r.SearchForAdminError = nil
+	r.UpdateScanStatusError = nil
 
 	// Clear hooks
 	r.OnCreate = nil
@@ -123,6 +125,10 @@ func deepCopyFile(src *models.File) *models.File {
 	if src.Username != nil {
 		uname := *src.Username
 		dst.Username = &uname
+	}
+	if src.ScannedAt != nil {
+		t := *src.ScannedAt
+		dst.ScannedAt = &t
 	}
 	return &dst
 }
@@ -711,4 +717,40 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	}
 
 	return matches[offset:end], total, nil
+}
+
+// UpdateScanStatus implements repository.FileRepository.UpdateScanStatus
+func (r *FileRepository) UpdateScanStatus(ctx context.Context, id int64, status string, result string) error {
+	if r.UpdateScanStatusError != nil {
+		return r.UpdateScanStatusError
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	file, exists := r.files[id]
+	if !exists {
+		return repository.ErrNotFound
+	}
+
+	now := time.Now()
+	file.ScanStatus = status
+	file.ScanResult = result
+	file.ScannedAt = &now
+
+	// Update byClaimCode map separately
+	if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+		t := now
+		ccFile.ScanStatus = status
+		ccFile.ScanResult = result
+		ccFile.ScannedAt = &t
+	}
+
+	return nil
 }

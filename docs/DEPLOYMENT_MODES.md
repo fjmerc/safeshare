@@ -229,6 +229,12 @@ services:
       # --- Integrations ---
       - FEATURE_WEBHOOKS=true
       - FEATURE_API_TOKENS=true
+      # --- Malware scanning ---
+      - FEATURE_MALWARE_SCAN=true
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+      - CLAMAV_TIMEOUT=30
+      - CLAMAV_MAX_FILE_SIZE=104857600
       # --- Access control ---
       - BLOCKED_EXTENSIONS=.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm
       - RATE_LIMIT_UPLOAD=10
@@ -243,17 +249,28 @@ services:
       - safeshare-uploads:/app/uploads
     ports:
       - "8080:8080"
+    depends_on:
+      clamav:
+        condition: service_started
+
+  clamav:
+    image: clamav/clamav:latest
+    volumes:
+      - clam-db:/var/lib/clamav
+    restart: unless-stopped
 
 volumes:
   safeshare-data:
   safeshare-uploads:
+  clam-db:
 ```
 
 ### What this enables
 
 - **User management**: Invite-only registration, role-based access (user/admin)
 - **MFA**: TOTP authenticator apps for all users
-- **Webhook notifications**: Real-time alerts on `file.uploaded`, `file.downloaded`, `file.expired`, `file.deleted`
+- **Malware scanning**: Uploaded files scanned asynchronously via ClamAV sidecar; infected files quarantined automatically
+- **Webhook notifications**: Real-time alerts on `file.uploaded`, `file.downloaded`, `file.expired`, `file.deleted`, `file.infected`
 - **API tokens**: Programmatic access with scoped permissions and rotation
 - **Audit logs**: Every upload, download, login, and admin action logged in structured JSON
 
@@ -316,6 +333,12 @@ services:
       # --- Integrations ---
       - FEATURE_WEBHOOKS=true
       - FEATURE_API_TOKENS=true
+      # --- Malware scanning ---
+      - FEATURE_MALWARE_SCAN=true
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+      - CLAMAV_TIMEOUT=30
+      - CLAMAV_MAX_FILE_SIZE=104857600
       # --- PostgreSQL ---
       - DATABASE_TYPE=postgresql
       - FEATURE_POSTGRESQL=true
@@ -349,6 +372,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      clamav:
+        condition: service_started
+
+  clamav:
+    image: clamav/clamav:latest
+    volumes:
+      - clam-db:/var/lib/clamav
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -368,6 +399,7 @@ volumes:
   safeshare-data:
   safeshare-uploads:
   postgres-data:
+  clam-db:
 ```
 
 ### Infrastructure requirements
@@ -377,6 +409,7 @@ Fortress mode requires infrastructure beyond a single Docker container:
 | Component | Purpose | Required? |
 |-----------|---------|-----------|
 | PostgreSQL 16+ | Durable database with replication support | Yes |
+| ClamAV | Malware scanning sidecar (~1GB RAM for signature DB) | Yes |
 | Reverse proxy (Traefik/nginx) | TLS termination, security headers | Yes |
 | Log aggregation (ELK/Splunk/Datadog) | Centralized audit log storage | Recommended |
 | Prometheus + Grafana | Monitoring and alerting | Recommended |
@@ -430,6 +463,7 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 | **Admin dashboard** | On | On | On | On |
 | **IP blocking** | Off | Available | On | On |
 | **Rate limiting** | On | On | On | Strict |
+| **Malware scanning (ClamAV)** | Off | Off | On | On |
 | **Extension blocking** | On | On | On | On |
 | **Webhooks** | Off | Off | On | On |
 | **API tokens** | Off | Off | On | On |
