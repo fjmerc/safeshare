@@ -52,7 +52,7 @@ func InitializeOrClearWebAuthn(cfg *config.Config, clientIP string) string {
 		if err != nil {
 			slog.Error("failed to initialize WebAuthn service",
 				"error", err,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			// Return warning - WebAuthn is optional, TOTP still works
 			return "WebAuthn initialization failed - security keys will not work. Check PUBLIC_URL configuration. Error: " + err.Error()

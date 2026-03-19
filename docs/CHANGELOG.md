@@ -33,6 +33,34 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+---
+
+## [1.5.4] - 2026-03-19
+
+### Added
+
+- Automatic metadata stripping for uploaded files (`STRIP_METADATA=true`) — removes EXIF/GPS data from JPEG/PNG images and author/company/timestamp metadata from Office documents (DOCX, XLSX, PPTX) to prevent deanonymization through file forensics
+- **Anonymous Mode**: New `ANONYMOUS_MODE` environment variable that, when enabled, prevents IP addresses from being stored in the database or logged. IPs are replaced with "anonymous" in database records and "redacted" in log output. Rate limiting and IP blocking continue to use real IPs internally for security. Configurable via `ANONYMOUS_MODE=true`.
+- Tor hidden service deployment guide for maximum anonymity
+- Client-side end-to-end encryption option — files can be encrypted in the browser before upload using AES-256-GCM, with the decryption key embedded in the share URL fragment (never sent to the server)
+- E2E encrypted uploads now anonymize filenames — the real filename is embedded in the encrypted payload and only visible to the recipient with the decryption key
+- Metadata stripping extended to PDF (author, creator, dates, XMP), MP4/MOV (GPS, camera, timestamps), and MP3 (ID3v1/v2, APE tags) files
+- **ClamAV Malware Scanning**: Optional async malware scanning via ClamAV sidecar container. Uploaded files are scanned in the background after upload — infected files are automatically quarantined and a `file.infected` webhook event is fired. Downloads of infected files are blocked with HTTP 410. Configured via `FEATURE_MALWARE_SCAN=true` and `CLAMAV_HOST`/`CLAMAV_PORT` environment variables. Files larger than `CLAMAV_MAX_FILE_SIZE` (default 100MB) are skipped. Zero performance impact on upload response times.
+- **Deployment Modes Guide**: New `docs/DEPLOYMENT_MODES.md` documenting four named deployment profiles (Ghost, Standard, Hardened, Fortress) with complete docker-compose examples, decision flowchart, and feature matrix
+- **Admin Dashboard**: Malware scanning status is now visible in the Enterprise Features tab (read-only, configured via `FEATURE_MALWARE_SCAN` env var) and scan status column added to the files table with colored badges (clean/infected/pending/error/skipped)
+
+### Security
+
+- Hardened Content Security Policy: removed `unsafe-inline` from `script-src` and stale CDN allowance to prevent XSS-based key exfiltration
+
+### Changed
+
+- QR code library is now self-hosted (removed external CDN dependency on jsdelivr)
+
+---
+
 ## [1.5.3] - 2026-03-15
 
 ### Security

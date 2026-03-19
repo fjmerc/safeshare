@@ -46,6 +46,10 @@ func (m *mockConfigProvider) SetDownloadLimit(limit int) {
 	m.downloadLimit = limit
 }
 
+func (m *mockConfigProvider) IsAnonymousMode() bool {
+	return false
+}
+
 func TestRateLimiter_UploadLimit(t *testing.T) {
 	cfg := &mockConfigProvider{
 		uploadLimit:   10,

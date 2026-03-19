@@ -596,12 +596,15 @@ See **docs/REVERSE_PROXY.md** for detailed proxy configurations.
 
 ## Additional Documentation
 
+- **docs/DEPLOYMENT_MODES.md** - Deployment mode guide (Ghost, Standard, Hardened, Fortress)
 - **docs/VERSION_STRATEGY.md** - Semantic versioning, branching strategy, changelog guidelines
 - **docs/ARCHITECTURE.md** - Detailed technical architecture documentation
 - **docs/CHUNKED_UPLOAD.md** - Chunked upload API specifications and usage
 - **docs/API_REFERENCE_FOR_TESTING.md** - Comprehensive API testing examples
 - **docs/HTTP_RANGE_SUPPORT.md** - HTTP Range request implementation
 - **docs/REVERSE_PROXY.md** - Reverse proxy configurations (Traefik, nginx, etc.)
+- **docs/TOR_DEPLOYMENT.md** - Tor hidden service deployment for maximum anonymity
+- **docs/E2E_ENCRYPTION.md** - Client-side end-to-end encryption documentation
 - **docs/SECURITY.md** - Security features and best practices
 - **cmd/import-file/README.md** - Import tool documentation
 - **cmd/migrate-encryption/README.md** - Migration tool documentation

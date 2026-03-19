@@ -407,7 +407,7 @@ func TestUploadHandler_FilenameSanitization(t *testing.T) {
 		{
 			name:       "header injection",
 			filename:   "file\r\nContent-Type: evil",
-			shouldFail: true, // \r\n breaks multipart form encoding at HTTP level
+			shouldFail: true, // control characters in filename rejected by ValidateUploadFilename
 		},
 		{
 			name:              "normal filename",
@@ -429,7 +429,7 @@ func TestUploadHandler_FilenameSanitization(t *testing.T) {
 			handler.ServeHTTP(rr, req)
 
 			if tt.shouldFail {
-				// Upload should fail at HTTP level due to malformed multipart form
+				// Upload should be rejected (e.g., control characters in filename)
 				if rr.Code == http.StatusCreated {
 					t.Errorf("upload should have failed but succeeded")
 				}

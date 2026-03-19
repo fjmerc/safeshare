@@ -24,7 +24,7 @@ func TestAdminCreateUserHandler_Success(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	createReq := models.CreateUserRequest{
 		Username: "newuser",
@@ -76,7 +76,7 @@ func TestAdminCreateUserHandler_AutoGeneratePassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	createReq := models.CreateUserRequest{
 		Username: "autopassuser",
@@ -114,7 +114,7 @@ func TestAdminCreateUserHandler_ValidationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	tests := []struct {
 		name       string
@@ -197,7 +197,7 @@ func TestAdminCreateUserHandler_DuplicateEmail(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	// Create first user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -228,7 +228,7 @@ func TestAdminCreateUserHandler_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/create", bytes.NewReader([]byte("invalid json")))
 	req.Header.Set("Content-Type", "application/json")
@@ -247,7 +247,7 @@ func TestAdminCreateUserHandler_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminCreateUserHandler(repos)
+	handler := AdminCreateUserHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -412,7 +412,7 @@ func TestAdminUpdateUserHandler_Success(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -457,7 +457,7 @@ func TestAdminUpdateUserHandler_PartialUpdate(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -500,7 +500,7 @@ func TestAdminUpdateUserHandler_ConflictUsername(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	passwordHash, _ := utils.HashPassword("password123")
 	user1, _ := repos.Users.Create(ctx, "user1", "user1@example.com", passwordHash, "user", false)
@@ -531,7 +531,7 @@ func TestAdminUpdateUserHandler_UserNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	updateReq := models.UpdateUserRequest{
 		Username: "newname",
@@ -555,7 +555,7 @@ func TestAdminUpdateUserHandler_InvalidUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminUpdateUserHandler(repos)
+	handler := AdminUpdateUserHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPut, "/admin/api/users/invalid", nil)
 	rr := httptest.NewRecorder()
@@ -574,7 +574,7 @@ func TestAdminToggleUserActiveHandler_EnableSuccess(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	// Create inactive user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -608,7 +608,7 @@ func TestAdminToggleUserActiveHandler_DisableSuccess(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	// Create active user
 	passwordHash, _ := utils.HashPassword("password123")
@@ -638,7 +638,7 @@ func TestAdminToggleUserActiveHandler_UserNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/99999/enable", nil)
 	rr := httptest.NewRecorder()
@@ -656,7 +656,7 @@ func TestAdminToggleUserActiveHandler_InvalidUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/invalid/enable", nil)
 	rr := httptest.NewRecorder()
@@ -674,7 +674,7 @@ func TestAdminToggleUserActiveHandler_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminToggleUserActiveHandler(repos)
+	handler := AdminToggleUserActiveHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -699,7 +699,7 @@ func TestAdminResetUserPasswordHandler_Success(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 	ctx := context.Background()
-	handler := AdminResetUserPasswordHandler(repos)
+	handler := AdminResetUserPasswordHandler(repos, cfg)
 
 	// Create user
 	passwordHash, _ := utils.HashPassword("oldpassword")
@@ -749,7 +749,7 @@ func TestAdminResetUserPasswordHandler_UserNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminResetUserPasswordHandler(repos)
+	handler := AdminResetUserPasswordHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/99999/reset-password", nil)
 	rr := httptest.NewRecorder()
@@ -767,7 +767,7 @@ func TestAdminResetUserPasswordHandler_InvalidUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminResetUserPasswordHandler(repos)
+	handler := AdminResetUserPasswordHandler(repos, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/invalid/reset-password", nil)
 	rr := httptest.NewRecorder()
@@ -785,7 +785,7 @@ func TestAdminResetUserPasswordHandler_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := AdminResetUserPasswordHandler(repos)
+	handler := AdminResetUserPasswordHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 

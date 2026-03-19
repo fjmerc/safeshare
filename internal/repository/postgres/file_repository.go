@@ -154,8 +154,9 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-			uploader_ip, password_hash, user_id, sha256_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+			uploader_ip, password_hash, user_id, sha256_hash,
+			scan_status, scan_result, scanned_at
 		FROM files
 		WHERE id = $1
 	`
@@ -165,6 +166,9 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	var userID sql.NullInt64
 	var sha256Hash sql.NullString
 	var maxDownloads sql.NullInt64
+	var scanStatus sql.NullString
+	var scanResult sql.NullString
+	var scannedAt sql.NullTime
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&file.ID,
@@ -182,6 +186,9 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&passwordHash,
 		&userID,
 		&sha256Hash,
+		&scanStatus,
+		&scanResult,
+		&scannedAt,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -205,6 +212,11 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	if sha256Hash.Valid {
 		file.SHA256Hash = sha256Hash.String
 	}
+	file.ScanStatus = scanStatus.String
+	file.ScanResult = scanResult.String
+	if scannedAt.Valid {
+		file.ScannedAt = &scannedAt.Time
+	}
 
 	return file, nil
 }
@@ -215,8 +227,9 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-			uploader_ip, password_hash, user_id, sha256_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+			uploader_ip, password_hash, user_id, sha256_hash,
+			scan_status, scan_result, scanned_at
 		FROM files
 		WHERE claim_code = $1 AND expires_at > NOW()
 	`
@@ -226,6 +239,9 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	var userID sql.NullInt64
 	var sha256Hash sql.NullString
 	var maxDownloads sql.NullInt64
+	var scanStatus sql.NullString
+	var scanResult sql.NullString
+	var scannedAt sql.NullTime
 
 	err := r.pool.QueryRow(ctx, query, claimCode).Scan(
 		&file.ID,
@@ -243,6 +259,9 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 		&passwordHash,
 		&userID,
 		&sha256Hash,
+		&scanStatus,
+		&scanResult,
+		&scannedAt,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -265,6 +284,11 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	}
 	if sha256Hash.Valid {
 		file.SHA256Hash = sha256Hash.String
+	}
+	file.ScanStatus = scanStatus.String
+	file.ScanResult = scanResult.String
+	if scannedAt.Valid {
+		file.ScannedAt = &scannedAt.Time
 	}
 
 	return file, nil
@@ -741,7 +765,8 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads,
-			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash
+			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			scan_status, scan_result, scanned_at
 		FROM files
 		ORDER BY created_at DESC
 	`
@@ -759,6 +784,9 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		var userID sql.NullInt64
 		var sha256Hash sql.NullString
 		var maxDownloads sql.NullInt64
+		var scanStatus sql.NullString
+		var scanResult sql.NullString
+		var scannedAt sql.NullTime
 
 		err := rows.Scan(
 			&file.ID,
@@ -775,6 +803,9 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			&passwordHash,
 			&userID,
 			&sha256Hash,
+			&scanStatus,
+			&scanResult,
+			&scannedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan file row: %w", err)
@@ -793,6 +824,11 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		}
 		if sha256Hash.Valid {
 			file.SHA256Hash = sha256Hash.String
+		}
+		file.ScanStatus = scanStatus.String
+		file.ScanResult = scanResult.String
+		if scannedAt.Valid {
+			file.ScannedAt = &scannedAt.Time
 		}
 
 		files = append(files, file)
@@ -855,11 +891,12 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 	// Get paginated files with username via LEFT JOIN
 	query := `
 		SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
-			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, 
-			f.uploader_ip, f.password_hash, f.user_id, u.username
+			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads,
+			f.uploader_ip, f.password_hash, f.user_id, u.username,
+			f.scan_status, f.scan_result, f.scanned_at
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		ORDER BY f.created_at DESC 
+		ORDER BY f.created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
@@ -876,6 +913,9 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		var maxDownloads sql.NullInt64
 		var userID sql.NullInt64
 		var username sql.NullString
+		var scanStatus sql.NullString
+		var scanResult sql.NullString
+		var scannedAt sql.NullTime
 
 		err := rows.Scan(
 			&file.ID,
@@ -893,6 +933,9 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			&passwordHash,
 			&userID,
 			&username,
+			&scanStatus,
+			&scanResult,
+			&scannedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -911,6 +954,11 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		}
 		if username.Valid {
 			file.Username = &username.String
+		}
+		file.ScanStatus = scanStatus.String
+		file.ScanResult = scanResult.String
+		if scannedAt.Valid {
+			file.ScannedAt = &scannedAt.Time
 		}
 
 		files = append(files, file)
@@ -958,15 +1006,16 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	// Get paginated results with username via LEFT JOIN
 	query := `
 		SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
-			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, 
-			f.uploader_ip, f.password_hash, f.user_id, u.username
+			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads,
+			f.uploader_ip, f.password_hash, f.user_id, u.username,
+			f.scan_status, f.scan_result, f.scanned_at
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		WHERE f.claim_code ILIKE $1 ESCAPE '\' 
-		   OR f.original_filename ILIKE $1 ESCAPE '\' 
-		   OR f.uploader_ip ILIKE $1 ESCAPE '\' 
+		WHERE f.claim_code ILIKE $1 ESCAPE '\'
+		   OR f.original_filename ILIKE $1 ESCAPE '\'
+		   OR f.uploader_ip ILIKE $1 ESCAPE '\'
 		   OR u.username ILIKE $1 ESCAPE '\'
-		ORDER BY f.created_at DESC 
+		ORDER BY f.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 
@@ -983,6 +1032,9 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		var maxDownloads sql.NullInt64
 		var userID sql.NullInt64
 		var username sql.NullString
+		var scanStatus sql.NullString
+		var scanResult sql.NullString
+		var scannedAt sql.NullTime
 
 		err := rows.Scan(
 			&file.ID,
@@ -1000,6 +1052,9 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 			&passwordHash,
 			&userID,
 			&username,
+			&scanStatus,
+			&scanResult,
+			&scannedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -1019,6 +1074,11 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		if username.Valid {
 			file.Username = &username.String
 		}
+		file.ScanStatus = scanStatus.String
+		file.ScanResult = scanResult.String
+		if scannedAt.Valid {
+			file.ScannedAt = &scannedAt.Time
+		}
 
 		files = append(files, file)
 	}
@@ -1028,6 +1088,19 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	}
 
 	return files, total, nil
+}
+
+// UpdateScanStatus updates the malware scan status for a file.
+func (r *FileRepository) UpdateScanStatus(ctx context.Context, id int64, status string, result string) error {
+	query := `UPDATE files SET scan_status = $1, scan_result = $2, scanned_at = $3 WHERE id = $4`
+	res, err := r.pool.Exec(ctx, query, status, result, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("failed to update scan status: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
 }
 
 // Ensure FileRepository implements repository.FileRepository.

@@ -102,4 +102,9 @@ type FileRepository interface {
 	// SECURITY: Implementation MUST use parameterized queries and escape
 	// LIKE wildcards (% and _) in searchTerm to prevent injection.
 	SearchForAdmin(ctx context.Context, searchTerm string, limit, offset int) ([]models.File, int, error)
+
+	// UpdateScanStatus updates the malware scan status for a file.
+	// status should be one of: "pending", "clean", "infected", "error", "skipped"
+	// result contains the virus name or error message (empty for clean/skipped).
+	UpdateScanStatus(ctx context.Context, id int64, status string, result string) error
 }

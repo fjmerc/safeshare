@@ -21,7 +21,9 @@ import (
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/gabriel-vasile/mimetype"
@@ -101,6 +103,18 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			return // Error already sent to client
 		}
 
+		// Strip metadata if enabled and supported
+		if cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(result.detectedMimeType) {
+			if err := stripMetadataFromUpload(result, cfg); err != nil {
+				slog.Warn("failed to strip metadata",
+					"error", err,
+					"filename", header.Filename,
+					"mime_type", result.detectedMimeType,
+				)
+				// Non-fatal: continue with original file
+			}
+		}
+
 		// Create database record and handle response
 		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured)
 	}
@@ -122,6 +136,18 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 		return nil, nil, err
 	}
 
+	// Validate filename for control characters (header injection prevention)
+	if err := utils.ValidateUploadFilename(header.Filename); err != nil {
+		clientIP := getClientIP(r)
+		slog.Warn("rejected filename with control characters",
+			"filename", header.Filename,
+			"error", err,
+			"client_ip", clientIP,
+		)
+		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
+		return nil, nil, err
+	}
+
 	// Validate file extension
 	allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
 	if err != nil {
@@ -134,7 +160,7 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 		slog.Warn("blocked file extension",
 			"filename", header.Filename,
 			"extension", blockedExt,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 		sendError(w,
 			fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
@@ -165,7 +191,7 @@ func checkStorageAvailability(w http.ResponseWriter, r *http.Request, cfg *confi
 	if !hasSpace {
 		slog.Warn("insufficient disk space",
 			"file_size", fileSize,
-			"client_ip", getClientIP(r),
+			"client_ip", logIP(getClientIP(r), cfg),
 			"reason", errMsg,
 		)
 		sendError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
@@ -424,7 +450,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		MimeType:         result.detectedMimeType,
 		ExpiresAt:        expiresAt,
 		MaxDownloads:     params.maxDownloads,
-		UploaderIP:       clientIP,
+		UploaderIP:       storeIP(clientIP, cfg),
 		PasswordHash:     params.passwordHash,
 		UserID:           userID,
 		SHA256Hash:       result.sha256Hash,
@@ -436,7 +462,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	// Send success response and record metrics
-	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP)
+	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP, repos)
 }
 
 // createFileRecord creates the database record with optional quota check
@@ -449,7 +475,7 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 				slog.Warn("quota exceeded (transactional check)",
 					"file_size", fileRecord.FileSize,
 					"quota_limit_gb", cfg.GetQuotaLimitGB(),
-					"client_ip", clientIP,
+					"client_ip", logIP(clientIP, cfg),
 				)
 				sendError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
 				return err
@@ -469,8 +495,8 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 	return nil
 }
 
-// sendSuccessResponse sends the upload success response and records metrics
-func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
+// sendSuccessResponse sends the upload success response, records metrics, and triggers async scanning.
+func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string, repos *repository.Repositories) {
 	downloadURL := buildDownloadURL(r, cfg, claimCode)
 
 	response := models.UploadResponse{
@@ -505,6 +531,9 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		},
 	})
 
+	// Trigger async malware scan (no-op if feature is disabled)
+	triggerAsyncScan(fileRecord.ID, result.filePath, claimCode, sanitizedFilename, result.written, result.detectedMimeType, fileRecord.ExpiresAt, cfg, repos)
+
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),
 		"filename", header.Filename,
@@ -513,7 +542,218 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"expires_at", fileRecord.ExpiresAt,
 		"max_downloads", fileRecord.MaxDownloads,
 		"password_protected", passwordHash != "",
-		"client_ip", clientIP,
+		"client_ip", logIP(clientIP, cfg),
 		"user_agent", getUserAgent(r),
 	)
+}
+
+// stripMetadataFromUpload strips metadata from an uploaded file and updates the result.
+// Handles both encrypted and unencrypted files.
+func stripMetadataFromUpload(result *fileProcessingResult, cfg *config.Config) error {
+	encrypted := utils.IsEncryptionEnabled(cfg.EncryptionKey)
+
+	if encrypted {
+		return stripMetadataEncrypted(result, cfg)
+	}
+	return stripMetadataPlaintext(result)
+}
+
+// stripMetadataPlaintext strips metadata from an unencrypted file in-place,
+// then recomputes the file size and SHA256 hash.
+func stripMetadataPlaintext(result *fileProcessingResult) error {
+	if err := privacy.StripFileMetadata(result.filePath, result.detectedMimeType); err != nil {
+		return fmt.Errorf("strip metadata: %w", err)
+	}
+
+	// Recompute file size
+	info, err := os.Stat(result.filePath)
+	if err != nil {
+		return fmt.Errorf("stat after stripping: %w", err)
+	}
+	result.written = info.Size()
+
+	// Recompute SHA256 hash
+	hash, err := computeFileHash(result.filePath)
+	if err != nil {
+		return fmt.Errorf("hash after stripping: %w", err)
+	}
+	result.sha256Hash = hash
+
+	slog.Info("metadata stripped from upload",
+		"mime_type", result.detectedMimeType,
+		"file_size", result.written,
+	)
+	return nil
+}
+
+// stripMetadataEncrypted handles stripping for encrypted files:
+// decrypt to OS temp dir → strip → re-encrypt to temp → atomic rename.
+// The original encrypted file is preserved until re-encryption fully succeeds.
+func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) error {
+	// Decrypt to OS temp directory (not uploads dir) to avoid plaintext exposure
+	tempFile, err := os.CreateTemp("", "safeshare-strip-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	tempFile.Close()
+	defer os.Remove(tempPath)
+
+	if err := utils.DecryptFileStreaming(result.filePath, tempPath, cfg.EncryptionKey); err != nil {
+		return fmt.Errorf("decrypt for stripping: %w", err)
+	}
+
+	// Strip metadata from decrypted temp file
+	if err := privacy.StripFileMetadata(tempPath, result.detectedMimeType); err != nil {
+		return fmt.Errorf("strip metadata (encrypted): %w", err)
+	}
+
+	// Compute hash from stripped plaintext
+	hash, err := computeFileHash(tempPath)
+	if err != nil {
+		return fmt.Errorf("hash stripped plaintext: %w", err)
+	}
+
+	// Get stripped plaintext size (stored in DB as the user-facing file size)
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		return fmt.Errorf("stat stripped plaintext: %w", err)
+	}
+
+	// Re-encrypt to a temp file next to the original, then atomic rename.
+	// This preserves the original encrypted file until re-encryption succeeds.
+	reencryptPath := result.filePath + ".reenc-tmp"
+	srcFile, err := os.Open(tempPath)
+	if err != nil {
+		return fmt.Errorf("open stripped temp: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(reencryptPath)
+	if err != nil {
+		return fmt.Errorf("create re-encrypt temp: %w", err)
+	}
+
+	if err := utils.EncryptFileStreamingFromReader(dstFile, srcFile, cfg.EncryptionKey); err != nil {
+		dstFile.Close()
+		os.Remove(reencryptPath)
+		return fmt.Errorf("re-encrypt after stripping: %w", err)
+	}
+	dstFile.Close()
+
+	// Atomic replace — original file is preserved until this succeeds
+	if err := os.Rename(reencryptPath, result.filePath); err != nil {
+		os.Remove(reencryptPath)
+		return fmt.Errorf("rename re-encrypted file: %w", err)
+	}
+
+	result.sha256Hash = hash
+	result.written = info.Size()
+
+	slog.Info("metadata stripped from encrypted upload",
+		"mime_type", result.detectedMimeType,
+		"file_size", result.written,
+	)
+	return nil
+}
+
+// computeFileHash computes the SHA256 hash of a file.
+func computeFileHash(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// triggerAsyncScan starts a background malware scan if the feature is enabled.
+// It runs in a separate goroutine so it does not block the upload response.
+func triggerAsyncScan(fileID int64, filePath string, claimCode string, filename string, fileSize int64, mimeType string, expiresAt time.Time, cfg *config.Config, repos *repository.Repositories) {
+	if !cfg.Features.IsMalwareScanEnabled() {
+		return
+	}
+
+	// Set initial scan status to pending before launching the goroutine so
+	// the DB reflects the intent even if the goroutine has not yet started.
+	ctx := context.Background()
+	if err := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusPending, ""); err != nil {
+		slog.Error("failed to set scan status to pending", "error", err, "file_id", fileID)
+		return
+	}
+
+	go func() {
+		scanner := scanning.NewClamAVScanner(
+			cfg.ClamAV.Host,
+			cfg.ClamAV.Port,
+			time.Duration(cfg.ClamAV.Timeout)*time.Second,
+			cfg.ClamAV.MaxFileSize,
+		)
+
+		result, err := scanner.ScanFile(filePath)
+		if err != nil {
+			slog.Error("malware scan failed",
+				"error", err,
+				"file_id", fileID,
+				"claim_code", redactClaimCode(claimCode),
+			)
+			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusError, err.Error()); updateErr != nil {
+				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+			}
+			return
+		}
+
+		if result.Infected {
+			slog.Warn("malware detected in uploaded file",
+				"virus_name", result.VirusName,
+				"file_id", fileID,
+				"claim_code", redactClaimCode(claimCode),
+				"scan_duration", result.Duration,
+			)
+
+			// Update status to infected
+			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusInfected, result.VirusName); updateErr != nil {
+				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+			}
+
+			// Emit webhook
+			scanStatus := scanning.ScanStatusInfected
+			virusName := result.VirusName
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileInfected,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ID:         fileID,
+					ClaimCode:  claimCode,
+					Filename:   filename,
+					Size:       fileSize,
+					MimeType:   mimeType,
+					ExpiresAt:  expiresAt,
+					ScanStatus: &scanStatus,
+					ScanResult: &virusName,
+				},
+			})
+
+			// Delete the infected file from disk
+			if err := os.Remove(filePath); err != nil {
+				slog.Error("failed to remove infected file", "error", err, "file_id", fileID)
+			}
+			return
+		}
+
+		// File is clean
+		slog.Info("malware scan completed: clean",
+			"file_id", fileID,
+			"claim_code", redactClaimCode(claimCode),
+			"scan_duration", result.Duration,
+		)
+		if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusClean, ""); updateErr != nil {
+			slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+		}
+	}()
 }

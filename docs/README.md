@@ -4,6 +4,12 @@ This directory contains comprehensive documentation for SafeShare.
 
 ## Documentation Index
 
+### Start Here
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md) | Choose your deployment mode (Ghost, Standard, Hardened, Fortress) | All operators |
+
 ### Core Documentation
 
 | Document | Description | Audience |
@@ -100,8 +106,9 @@ Pre-built Grafana dashboard for SafeShare monitoring:
 
 ### Getting Started
 
-1. **Quick Start**: See [main README](../README.md) for Docker commands
-2. **Enable Admin**: Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` environment variables
+1. **Choose Your Mode**: See [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md) for Ghost, Standard, Hardened, or Fortress profiles
+2. **Quick Start**: See [main README](../README.md) for Docker commands
+3. **Enable Admin**: Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` environment variables
 3. **Setup Encryption**: Generate key with `openssl rand -hex 32` and set `ENCRYPTION_KEY`
 4. **Configure Proxy**: See [REVERSE_PROXY.md](REVERSE_PROXY.md) for your proxy
 

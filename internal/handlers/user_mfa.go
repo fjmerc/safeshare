@@ -85,7 +85,7 @@ func MFATOTPSetupHandler(repos *repository.Repositories, cfg *config.Config) htt
 		if cfg.MFA == nil || !cfg.MFA.Enabled {
 			slog.Warn("TOTP setup attempted but MFA is disabled",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -99,7 +99,7 @@ func MFATOTPSetupHandler(repos *repository.Repositories, cfg *config.Config) htt
 		if !cfg.MFA.TOTPEnabled {
 			slog.Warn("TOTP setup attempted but TOTP method is disabled",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -123,7 +123,7 @@ func MFATOTPSetupHandler(repos *repository.Repositories, cfg *config.Config) htt
 		if enabled {
 			slog.Warn("TOTP setup attempted but already enabled",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
@@ -196,7 +196,7 @@ func MFATOTPSetupHandler(repos *repository.Repositories, cfg *config.Config) htt
 		slog.Info("TOTP setup initiated",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		// Return the setup information
@@ -297,7 +297,7 @@ func MFATOTPVerifyHandler(repos *repository.Repositories, cfg *config.Config) ht
 		if storedSecret == "" {
 			slog.Warn("TOTP verification attempted without setup",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -348,7 +348,7 @@ func MFATOTPVerifyHandler(repos *repository.Repositories, cfg *config.Config) ht
 		if !valid {
 			slog.Warn("TOTP verification failed - invalid code",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -397,7 +397,7 @@ func MFATOTPVerifyHandler(repos *repository.Repositories, cfg *config.Config) ht
 		slog.Info("TOTP enabled successfully",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"recovery_codes_generated", len(recoveryCodes),
 		)
 
@@ -523,7 +523,7 @@ func MFATOTPDisableHandler(repos *repository.Repositories, cfg *config.Config) h
 		if !valid {
 			slog.Warn("TOTP disable failed - invalid code",
 				"user_id", user.ID,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -546,7 +546,7 @@ func MFATOTPDisableHandler(repos *repository.Repositories, cfg *config.Config) h
 		slog.Info("TOTP disabled successfully",
 			"user_id", user.ID,
 			"username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -685,7 +685,7 @@ type AdminMFAStatusResponse struct {
 
 // AdminGetUserMFAStatusHandler handles GET /admin/api/users/{id}/mfa/status
 // Returns the MFA status for a specific user (admin only)
-func AdminGetUserMFAStatusHandler(repos *repository.Repositories) http.HandlerFunc {
+func AdminGetUserMFAStatusHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -711,7 +711,7 @@ func AdminGetUserMFAStatusHandler(repos *repository.Repositories) http.HandlerFu
 				"path", r.URL.Path,
 				"admin_user_id", adminUserID,
 				"admin_username", adminUsername,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -764,7 +764,7 @@ func AdminGetUserMFAStatusHandler(repos *repository.Repositories) http.HandlerFu
 			"admin_username", adminUsername,
 			"target_user_id", userID,
 			"target_username", user.Username,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 		)
 
 		response := AdminMFAStatusResponse{
@@ -808,7 +808,7 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 		if err != nil {
 			slog.Warn("invalid user ID in MFA reset request",
 				"path", r.URL.Path,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 				"admin", adminUsername,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -854,7 +854,7 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 				"admin", adminUsername,
 				"target_user_id", userID,
 				"target_username", user.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -874,7 +874,7 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 				"admin", adminUsername,
 				"target_user_id", userID,
 				"target_username", user.Username,
-				"ip", clientIP,
+				"ip", logIP(clientIP, cfg),
 			)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -903,7 +903,7 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 			"target_user_id", userID,
 			"target_username", user.Username,
 			"target_email", user.Email,
-			"ip", clientIP,
+			"ip", logIP(clientIP, cfg),
 			"had_totp", statusBefore.TOTPEnabled,
 			"had_webauthn", statusBefore.WebAuthnEnabled,
 			"webauthn_credentials", statusBefore.WebAuthnCredentials,

@@ -30,7 +30,7 @@ func TestAdminAuth_ValidSession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -58,7 +58,7 @@ func TestAdminAuth_NoSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -106,7 +106,7 @@ func TestAdminAuth_ExpiredSession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -149,7 +149,7 @@ func TestAdminAuth_UserSessionWithAdminRole(t *testing.T) {
 		t.Fatalf("failed to create user session: %v", err)
 	}
 
-	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -193,7 +193,7 @@ func TestAdminAuth_UserSessionWithoutAdminRole(t *testing.T) {
 		t.Fatalf("failed to create user session: %v", err)
 	}
 
-	handler := AdminAuth(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AdminAuth(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -241,7 +241,7 @@ func TestCSRFProtection_ValidToken(t *testing.T) {
 
 	csrfToken := "test-csrf-token"
 
-	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -277,7 +277,7 @@ func TestCSRFProtection_MissingToken(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -310,7 +310,7 @@ func TestCSRFProtection_TokenMismatch(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -336,7 +336,7 @@ func TestCSRFProtection_GetRequest(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -360,7 +360,7 @@ func TestCSRFProtection_NoSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := CSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -414,7 +414,7 @@ func TestSetCSRFCookie(t *testing.T) {
 
 // TestRateLimitAdminLogin_BelowLimit tests rate limiting when below threshold
 func TestRateLimitAdminLogin_BelowLimit(t *testing.T) {
-	handler := RateLimitAdminLogin()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitAdminLogin(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -435,7 +435,7 @@ func TestRateLimitAdminLogin_BelowLimit(t *testing.T) {
 
 // TestRateLimitAdminLogin_ExceedsLimit tests rate limiting when exceeding threshold
 func TestRateLimitAdminLogin_ExceedsLimit(t *testing.T) {
-	handler := RateLimitAdminLogin()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitAdminLogin(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -463,7 +463,7 @@ func TestRateLimitAdminLogin_ExceedsLimit(t *testing.T) {
 
 // TestRateLimitAdminLogin_DifferentIPs tests rate limiting with different IPs
 func TestRateLimitAdminLogin_DifferentIPs(t *testing.T) {
-	handler := RateLimitAdminLogin()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitAdminLogin(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -487,7 +487,7 @@ func TestRateLimitAdminLogin_DifferentIPs(t *testing.T) {
 
 // TestRateLimitUserLogin_BelowLimit tests user login rate limiting when below threshold
 func TestRateLimitUserLogin_BelowLimit(t *testing.T) {
-	handler := RateLimitUserLogin()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitUserLogin(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -508,7 +508,7 @@ func TestRateLimitUserLogin_BelowLimit(t *testing.T) {
 
 // TestRateLimitUserLogin_ExceedsLimit tests user login rate limiting when exceeding threshold
 func TestRateLimitUserLogin_ExceedsLimit(t *testing.T) {
-	handler := RateLimitUserLogin()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitUserLogin(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -629,7 +629,7 @@ func TestUserCSRFProtection_ValidToken(t *testing.T) {
 
 	csrfToken := "test-user-csrf-token"
 
-	handler := UserCSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserCSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -675,7 +675,7 @@ func TestUserCSRFProtection_MissingToken(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserCSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserCSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -718,7 +718,7 @@ func TestUserCSRFProtection_TokenMismatch(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	handler := UserCSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserCSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -744,7 +744,7 @@ func TestUserCSRFProtection_NoSession(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := UserCSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserCSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -768,7 +768,7 @@ func TestUserCSRFProtection_GetRequest(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	handler := UserCSRFProtection(repos)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := UserCSRFProtection(repos, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -785,7 +785,7 @@ func TestUserCSRFProtection_GetRequest(t *testing.T) {
 
 // TestRateLimitTOTPVerify_BelowLimit tests TOTP rate limiting when below threshold
 func TestRateLimitTOTPVerify_BelowLimit(t *testing.T) {
-	handler := RateLimitTOTPVerify()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitTOTPVerify(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("success"))
 	}))
@@ -806,7 +806,7 @@ func TestRateLimitTOTPVerify_BelowLimit(t *testing.T) {
 
 // TestRateLimitTOTPVerify_ExceedsLimit tests TOTP rate limiting when exceeding threshold
 func TestRateLimitTOTPVerify_ExceedsLimit(t *testing.T) {
-	handler := RateLimitTOTPVerify()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitTOTPVerify(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -834,7 +834,7 @@ func TestRateLimitTOTPVerify_ExceedsLimit(t *testing.T) {
 
 // TestRateLimitTOTPVerify_DifferentIPs tests TOTP rate limiting with different IPs
 func TestRateLimitTOTPVerify_DifferentIPs(t *testing.T) {
-	handler := RateLimitTOTPVerify()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RateLimitTOTPVerify(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

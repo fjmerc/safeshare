@@ -1061,7 +1061,7 @@ func TestAdminGetUserMFAStatusHandler_Success(t *testing.T) {
 		t.Fatalf("failed to enable TOTP: %v", err)
 	}
 
-	handler := AdminGetUserMFAStatusHandler(repos)
+	handler := AdminGetUserMFAStatusHandler(repos, cfg)
 
 	adminCtx := context.WithValue(ctx, middleware.ContextKeyUser, admin)
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/admin/api/users/%d/mfa/status", targetUser.ID), nil)
@@ -1097,7 +1097,7 @@ func TestAdminGetUserMFAStatusHandler_UserNotFound(t *testing.T) {
 		t.Fatalf("failed to create admin user: %v", err)
 	}
 
-	handler := AdminGetUserMFAStatusHandler(repos)
+	handler := AdminGetUserMFAStatusHandler(repos, cfg)
 
 	adminCtx := context.WithValue(ctx, middleware.ContextKeyUser, admin)
 	req := httptest.NewRequest(http.MethodGet, "/admin/api/users/99999/mfa/status", nil)

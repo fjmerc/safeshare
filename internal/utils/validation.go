@@ -2,9 +2,11 @@ package utils
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // claimCodePattern matches valid claim codes: 8-32 characters using URL-safe base64 alphabet.
@@ -67,6 +69,30 @@ func IsFileAllowed(filename string, blockedExtensions []string) (bool, string, e
 	}
 
 	return true, "", nil
+}
+
+// ValidateUploadFilename checks that a filename does not contain control characters
+// or percent-encoded control characters. This prevents header injection attacks
+// and log injection through malicious filenames.
+func ValidateUploadFilename(filename string) error {
+	if filename == "" {
+		return fmt.Errorf("filename cannot be empty")
+	}
+
+	// Decode percent-encoded characters first so we catch encoded control chars
+	decoded, err := url.QueryUnescape(filename)
+	if err != nil {
+		// If it can't be decoded, check the raw string
+		decoded = filename
+	}
+
+	for _, r := range decoded {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("filename contains control character (U+%04X)", r)
+		}
+	}
+
+	return nil
 }
 
 // GetFileExtension returns the file extension in lowercase

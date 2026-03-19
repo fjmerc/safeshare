@@ -46,6 +46,14 @@ type APITokenConfig struct {
 	MaxExpiryDays    int // Maximum token expiration in days (default: 365)
 }
 
+// ClamAVConfig holds ClamAV malware scanning configuration.
+type ClamAVConfig struct {
+	Host        string // ClamAV daemon host (default: "clamav")
+	Port        int    // ClamAV daemon port (default: 3310)
+	Timeout     int    // Scan timeout in seconds (default: 30)
+	MaxFileSize int64  // Maximum file size to scan in bytes, 0 = unlimited (default: 104857600 = 100MB)
+}
+
 // MFAConfig holds Multi-Factor Authentication configuration.
 type MFAConfig struct {
 	Enabled                bool   // Enable MFA feature (default: false)
@@ -72,6 +80,7 @@ type Config struct {
 	APIToken                 *APITokenConfig   // API token limit configuration
 	MFA                      *MFAConfig        // MFA configuration
 	SSO                      *SSOConfig        // SSO/OIDC configuration
+	ClamAV                   *ClamAVConfig     // ClamAV malware scanning configuration
 	UploadDir                string
 	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
 	DataDir                  string // Data directory for database and backups
@@ -92,6 +101,8 @@ type Config struct {
 	WriteTimeoutSeconds      int
 	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
+	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
+	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -138,6 +149,8 @@ func Load() (*Config, error) {
 		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
+		StripMetadata:            getEnvBool("STRIP_METADATA", false),
+		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
@@ -159,6 +172,14 @@ func Load() (*Config, error) {
 
 		// SSO configuration
 		SSO: loadSSOConfig(),
+
+		// ClamAV malware scanning configuration
+		ClamAV: &ClamAVConfig{
+			Host:        getEnv("CLAMAV_HOST", "clamav"),
+			Port:        getEnvInt("CLAMAV_PORT", 3310),
+			Timeout:     getEnvInt("CLAMAV_TIMEOUT", 30),
+			MaxFileSize: getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+		},
 
 		// Mutable fields (lowercase, accessed via getters/setters)
 		maxFileSize:            getEnvInt64("MAX_FILE_SIZE", 104857600), // 100MB default
@@ -258,6 +279,16 @@ func (c *Config) GetTrustProxyHeaders() string {
 // GetTrustedProxyIPs returns the trusted proxy IPs configuration
 func (c *Config) GetTrustedProxyIPs() string {
 	return c.TrustedProxyIPs
+}
+
+// IsStripMetadata returns whether metadata stripping is enabled
+func (c *Config) IsStripMetadata() bool {
+	return c.StripMetadata
+}
+
+// IsAnonymousMode returns whether anonymous mode is enabled
+func (c *Config) IsAnonymousMode() bool {
+	return c.anonymousMode
 }
 
 // Setter methods for mutable fields (thread-safe writes with validation)

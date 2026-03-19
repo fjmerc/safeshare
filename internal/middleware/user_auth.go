@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -67,13 +68,13 @@ func extractBearerToken(r *http.Request) string {
 
 // UserAuth middleware checks for valid user session OR API token
 // It tries Bearer token first, then falls back to session cookie
-func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
+func UserAuth(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try Bearer token first
 			bearerToken := extractBearerToken(r)
 			if bearerToken != "" {
-				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken)
+				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken, anonymousMode)
 				if err != nil {
 					handleAuthError(w, r, err)
 					return
@@ -89,7 +90,7 @@ func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 			}
 
 			// Fall back to session-based auth
-			user, ctx, err := authenticateWithSession(repos, r)
+			user, ctx, err := authenticateWithSession(repos, r, anonymousMode)
 			if err != nil {
 				handleAuthError(w, r, err)
 				return
@@ -97,7 +98,7 @@ func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 			if user == nil {
 				slog.Warn("user authentication failed - no valid credentials",
 					"path", r.URL.Path,
-					"ip", getClientIP(r),
+					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to login page
 				if isHTMLRequest(r) {
@@ -116,13 +117,13 @@ func UserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
 // OptionalUserAuth middleware checks for a user session or API token but doesn't require it
 // If valid auth exists, it adds the user to the context
 // If no auth or invalid auth, it continues without error
-func OptionalUserAuth(repos *repository.Repositories) func(http.Handler) http.Handler {
+func OptionalUserAuth(repos *repository.Repositories, anonymousMode bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try Bearer token first
 			bearerToken := extractBearerToken(r)
 			if bearerToken != "" {
-				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken)
+				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken, anonymousMode)
 				if err == nil && user != nil {
 					// Add token expiration warning headers before serving
 					addTokenExpirationHeaders(w, ctx)
@@ -134,7 +135,7 @@ func OptionalUserAuth(repos *repository.Repositories) func(http.Handler) http.Ha
 			}
 
 			// Try session-based auth
-			user, ctx, _ := authenticateWithSession(repos, r)
+			user, ctx, _ := authenticateWithSession(repos, r, anonymousMode)
 			if user != nil {
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -151,7 +152,7 @@ func OptionalUserAuth(repos *repository.Repositories) func(http.Handler) http.Ha
 const tokenAuthBaseDelay = 5 * time.Millisecond
 
 // authenticateWithAPIToken validates a Bearer token and returns the user
-func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, token string) (*models.User, context.Context, error) {
+func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, token string, anonymousMode bool) (*models.User, context.Context, error) {
 	authStart := time.Now()
 	ctx := r.Context()
 
@@ -168,7 +169,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 		normalizeResponseTime()
 		slog.Warn("invalid API token format",
 			"path", r.URL.Path,
-			"ip", getClientIP(r),
+			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
 			message:    "Invalid API token",
@@ -183,7 +184,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 		normalizeResponseTime()
 		slog.Error("failed to validate API token",
 			"error", err,
-			"ip", getClientIP(r),
+			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
 			message:    "Internal server error",
@@ -196,7 +197,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 		normalizeResponseTime()
 		slog.Warn("API token not found or revoked",
 			"path", r.URL.Path,
-			"ip", getClientIP(r),
+			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
 			message:    "Invalid API token",
@@ -255,7 +256,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 	}
 
 	// Update last used (async, don't block request)
-	clientIP := getClientIP(r)
+	clientIP := privacy.AnonymizeIP(getClientIP(r), anonymousMode)
 	go func() {
 		// Use a background context since this runs asynchronously
 		if err := repos.APITokens.UpdateLastUsed(context.Background(), apiToken.ID, clientIP); err != nil {
@@ -301,7 +302,7 @@ func addTokenExpirationHeaders(w http.ResponseWriter, ctx context.Context) {
 }
 
 // authenticateWithSession validates a session cookie and returns the user
-func authenticateWithSession(repos *repository.Repositories, r *http.Request) (*models.User, context.Context, error) {
+func authenticateWithSession(repos *repository.Repositories, r *http.Request, anonymousMode bool) (*models.User, context.Context, error) {
 	ctx := r.Context()
 
 	// Get session token from cookie
@@ -316,7 +317,7 @@ func authenticateWithSession(repos *repository.Repositories, r *http.Request) (*
 	if err != nil {
 		slog.Error("failed to validate user session",
 			"error", err,
-			"ip", getClientIP(r),
+			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
 			message:    "Internal server error",

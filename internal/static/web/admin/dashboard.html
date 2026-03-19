@@ -14,12 +14,7 @@
     <meta name="theme-color" content="#3b82f6">
 
     <!-- Load theme before CSS to prevent flash -->
-    <script>
-        (function() {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-        })();
-    </script>
+    <script src="/assets/theme-init.js"></script>
 
     <link rel="stylesheet" href="/admin/assets/admin.css">
 </head>
@@ -155,13 +150,14 @@
                             <th>Created</th>
                             <th>Expires</th>
                             <th>Downloads</th>
+                            <th>Scan</th>
                             <th>Protected</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="filesTableBody">
                         <tr>
-                            <td colspan="11" class="loading">Loading...</td>
+                            <td colspan="12" class="loading">Loading...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -408,7 +404,7 @@
                             </svg>
                             Update Settings
                         </button>
-                        <button type="button" class="btn-secondary" onclick="resetStorageDefaults()">
+                        <button type="button" class="btn-secondary" id="btn-reset-storage-defaults">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
                                 <path d="M21 3v5h-5"></path>
@@ -448,7 +444,7 @@
                             </svg>
                             Update Settings
                         </button>
-                        <button type="button" class="btn-secondary" onclick="resetSecurityDefaults()">
+                        <button type="button" class="btn-secondary" id="btn-reset-security-defaults">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
                                 <path d="M21 3v5h-5"></path>
@@ -610,9 +606,9 @@
                         <div class="form-group">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="featureMalwareScan" name="enable_malware_scan" disabled>
-                                <span>Malware Scanning (Coming Soon)</span>
+                                <span>Malware Scanning</span>
                             </label>
-                            <small>Enable ClamAV malware scanning for uploaded files</small>
+                            <small>Requires ClamAV sidecar container. Configured via <code>FEATURE_MALWARE_SCAN</code> environment variable.</small>
                         </div>
                         <div class="button-group">
                             <button type="submit" class="btn-primary">
@@ -689,7 +685,7 @@
                 <div class="settings-section" id="ssoConfigSection" style="display: none;">
                     <h2>SSO Configuration</h2>
                     <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
-                        Configure single sign-on settings. SSO providers are managed in the <a href="#" onclick="switchToTab('ssoProviders'); return false;">SSO Providers</a> tab.
+                        Configure single sign-on settings. SSO providers are managed in the <a href="#" id="link-switch-sso-providers">SSO Providers</a> tab.
                     </p>
                     <form id="ssoConfigForm" class="settings-form">
                         <div class="form-group">
@@ -754,6 +750,10 @@
                             <strong>Backups Status:</strong>
                             <span id="backupsStatusText">Disabled</span>
                         </div>
+                        <div class="info-item">
+                            <strong>Malware Scan Status:</strong>
+                            <span id="malwareScanStatusText">Disabled</span>
+                        </div>
                     </div>
                     <div class="alert-info" style="margin-top: 16px;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -793,7 +793,7 @@
                     <line x1="12" y1="9" x2="12" y2="13"></line>
                     <line x1="12" y1="17" x2="12.01" y2="17"></line>
                 </svg>
-                <span>SSO is currently disabled. Enable it in the <a href="#" onclick="switchToTab('enterpriseFeatures'); return false;">Enterprise Features</a> tab to allow users to log in with SSO providers.</span>
+                <span>SSO is currently disabled. Enable it in the <a href="#" id="link-switch-enterprise-features">Enterprise Features</a> tab to allow users to log in with SSO providers.</span>
             </div>
 
             <!-- SSO Providers Stats -->
@@ -1257,7 +1257,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Create User</button>
-                    <button type="button" class="btn-secondary" onclick="hideCreateUserModal()">Cancel</button>
+                    <button type="button" class="btn-secondary" id="btn-cancel-create-user">Cancel</button>
                 </div>
             </form>
         </div>
@@ -1290,7 +1290,7 @@
                     <label class="credential-label">Temporary Password</label>
                     <div class="password-display-container">
                         <code id="createdPassword" class="password-code"></code>
-                        <button class="btn-copy" onclick="copyPassword()" title="Copy password">
+                        <button class="btn-copy" id="btn-copy-password" title="Copy password">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -1311,7 +1311,7 @@
             </div>
 
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideUserCreatedModal()">
+                <button class="btn-primary" id="btn-close-user-created">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
@@ -1344,7 +1344,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Save Changes</button>
-                    <button type="button" class="btn-secondary" onclick="hideEditUserModal()">Cancel</button>
+                    <button type="button" class="btn-secondary" id="btn-cancel-edit-user">Cancel</button>
                 </div>
             </form>
         </div>
@@ -1357,13 +1357,13 @@
             <div style="margin: 20px 0;">
                 <p><strong>New Temporary Password:</strong></p>
                 <code id="resetPassword" style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; display: block; margin: 10px 0;"></code>
-                <button class="btn-secondary" onclick="copyResetPassword()">Copy Password</button>
+                <button class="btn-secondary" id="btn-copy-reset-password">Copy Password</button>
                 <div class="alert-info" style="margin-top: 16px;">
                     <span>Share this temporary password securely with the user.</span>
                 </div>
             </div>
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideResetPasswordModal()">Close</button>
+                <button class="btn-primary" id="btn-close-reset-password">Close</button>
             </div>
         </div>
     </div>
@@ -1395,8 +1395,8 @@
                 </select>
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn-primary" onclick="confirmExtendTokens()">Extend</button>
-                <button type="button" class="btn-secondary" onclick="hideExtendTokensModal()">Cancel</button>
+                <button type="button" class="btn-primary" id="btn-confirm-extend-tokens">Extend</button>
+                <button type="button" class="btn-secondary" id="btn-cancel-extend-tokens">Cancel</button>
             </div>
         </div>
     </div>
@@ -1416,7 +1416,7 @@
                     <label for="webhookSecret">Secret *</label>
                     <div class="input-with-button">
                         <input type="password" id="webhookSecret" name="secret" required placeholder="Enter webhook secret">
-                        <button type="button" class="btn-secondary btn-small" onclick="generateWebhookSecret()" style="white-space: nowrap;">
+                        <button type="button" class="btn-secondary btn-small" id="btn-generate-webhook-secret" style="white-space: nowrap;">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
                             </svg>
@@ -1492,7 +1492,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Save Webhook</button>
-                    <button type="button" class="btn-secondary" onclick="hideWebhookModal()">Cancel</button>
+                    <button type="button" class="btn-secondary" id="btn-cancel-webhook">Cancel</button>
                 </div>
             </form>
         </div>
@@ -1506,7 +1506,7 @@
                 <!-- Content populated by JavaScript -->
             </div>
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideDeliveryDetailModal()">Close</button>
+                <button class="btn-primary" id="btn-close-delivery-detail">Close</button>
             </div>
         </div>
     </div>
@@ -1545,7 +1545,7 @@
             </div>
             <div class="modal-actions">
                 <button id="confirmRestoreBtn" class="btn-danger">Restore Backup</button>
-                <button class="btn-secondary" onclick="hideRestoreBackupModal()">Cancel</button>
+                <button class="btn-secondary" id="btn-cancel-restore-backup">Cancel</button>
             </div>
         </div>
     </div>
@@ -1569,7 +1569,7 @@
                 <!-- Populated by JavaScript -->
             </div>
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideBackupResultModal()">Close</button>
+                <button class="btn-primary" id="btn-close-backup-result">Close</button>
             </div>
         </div>
     </div>
@@ -1637,7 +1637,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="submit" class="btn-primary">Save Provider</button>
-                    <button type="button" class="btn-secondary" onclick="hideSSOProviderModal()">Cancel</button>
+                    <button type="button" class="btn-secondary" id="btn-cancel-sso-provider">Cancel</button>
                 </div>
             </form>
         </div>
@@ -1649,7 +1649,7 @@
             <h3>SSO Provider Test Result</h3>
             <div id="ssoTestResultContent" style="margin: 20px 0;"></div>
             <div class="modal-actions">
-                <button class="btn-primary" onclick="hideSSOTestResultModal()">Close</button>
+                <button class="btn-primary" id="btn-close-sso-test-result">Close</button>
             </div>
         </div>
     </div>

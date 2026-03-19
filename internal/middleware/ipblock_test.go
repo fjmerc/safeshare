@@ -21,6 +21,10 @@ func (m *mockProxyConfig) GetTrustedProxyIPs() string {
 	return "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 }
 
+func (m *mockProxyConfig) IsAnonymousMode() bool {
+	return false
+}
+
 func TestIPBlockCheck_BlockedIP(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)

@@ -22,7 +22,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// Content Security Policy: Restrict what resources can be loaded
 		// This is a strict policy that prevents inline scripts and restricts resource loading
 		csp := "default-src 'self'; " +
-			"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " + // Allow QR code library
+			"script-src 'self'; " +
 			"style-src 'self' 'unsafe-inline'; " + // Allow inline styles
 			"img-src 'self' data: blob:; " + // Allow data URLs for QR codes
 			"font-src 'self'; " +
