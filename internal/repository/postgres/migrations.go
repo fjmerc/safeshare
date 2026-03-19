@@ -599,6 +599,23 @@ CREATE INDEX IF NOT EXISTS idx_sso_states_expires_at ON sso_states(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sso_states_provider_id ON sso_states(provider_id);
 `,
 	},
+	{
+		Version:     8,
+		Name:        "008_malware_scanning",
+		Description: "Add malware scanning status columns to files table",
+		SQL: `
+-- ============================================================================
+-- MALWARE SCANNING COLUMNS (ClamAV integration)
+-- ============================================================================
+ALTER TABLE files ADD COLUMN IF NOT EXISTS scan_status TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS scan_result TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS scanned_at TIMESTAMPTZ;
+
+-- Index for finding files pending scan
+CREATE INDEX IF NOT EXISTS idx_files_scan_status ON files(scan_status)
+    WHERE scan_status IS NOT NULL;
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

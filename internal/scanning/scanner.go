@@ -111,7 +111,7 @@ func (s *ClamAVScanner) scanReader(r io.Reader, filePath string) (*ScanResult, e
 	if err != nil {
 		return nil, fmt.Errorf("scanning: connect to clamd at %s: %w", addr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Apply a single deadline that covers the entire scan so a slow or
 	// unresponsive clamd cannot block the caller indefinitely.
