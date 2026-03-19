@@ -13,6 +13,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
@@ -58,6 +59,19 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
+			return
+		}
+
+		// Block download of infected files
+		if file.ScanStatus == scanning.ScanStatusInfected {
+			slog.Warn("download blocked: file infected",
+				"claim_code", redactClaimCode(claimCode),
+				"virus_name", file.ScanResult,
+				"client_ip", logIP(getClientIP(r), cfg),
+			)
+			sendErrorResponse(w, r, "File Quarantined",
+				"This file was detected as malware and is not available for download.",
+				"FILE_QUARANTINED", http.StatusGone)
 			return
 		}
 

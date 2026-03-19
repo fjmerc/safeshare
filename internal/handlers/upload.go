@@ -23,6 +23,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/gabriel-vasile/mimetype"
@@ -461,7 +462,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	// Send success response and record metrics
-	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP)
+	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP, repos)
 }
 
 // createFileRecord creates the database record with optional quota check
@@ -494,8 +495,8 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 	return nil
 }
 
-// sendSuccessResponse sends the upload success response and records metrics
-func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
+// sendSuccessResponse sends the upload success response, records metrics, and triggers async scanning.
+func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string, repos *repository.Repositories) {
 	downloadURL := buildDownloadURL(r, cfg, claimCode)
 
 	response := models.UploadResponse{
@@ -529,6 +530,9 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 			ExpiresAt: fileRecord.ExpiresAt,
 		},
 	})
+
+	// Trigger async malware scan (no-op if feature is disabled)
+	triggerAsyncScan(fileRecord.ID, result.filePath, claimCode, sanitizedFilename, result.written, result.detectedMimeType, fileRecord.ExpiresAt, cfg, repos)
 
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),
@@ -666,4 +670,90 @@ func computeFileHash(filePath string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// triggerAsyncScan starts a background malware scan if the feature is enabled.
+// It runs in a separate goroutine so it does not block the upload response.
+func triggerAsyncScan(fileID int64, filePath string, claimCode string, filename string, fileSize int64, mimeType string, expiresAt time.Time, cfg *config.Config, repos *repository.Repositories) {
+	if !cfg.Features.IsMalwareScanEnabled() {
+		return
+	}
+
+	// Set initial scan status to pending before launching the goroutine so
+	// the DB reflects the intent even if the goroutine has not yet started.
+	ctx := context.Background()
+	if err := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusPending, ""); err != nil {
+		slog.Error("failed to set scan status to pending", "error", err, "file_id", fileID)
+		return
+	}
+
+	go func() {
+		scanner := scanning.NewClamAVScanner(
+			cfg.ClamAV.Host,
+			cfg.ClamAV.Port,
+			time.Duration(cfg.ClamAV.Timeout)*time.Second,
+			cfg.ClamAV.MaxFileSize,
+		)
+
+		result, err := scanner.ScanFile(filePath)
+		if err != nil {
+			slog.Error("malware scan failed",
+				"error", err,
+				"file_id", fileID,
+				"claim_code", redactClaimCode(claimCode),
+			)
+			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusError, err.Error()); updateErr != nil {
+				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+			}
+			return
+		}
+
+		if result.Infected {
+			slog.Warn("malware detected in uploaded file",
+				"virus_name", result.VirusName,
+				"file_id", fileID,
+				"claim_code", redactClaimCode(claimCode),
+				"scan_duration", result.Duration,
+			)
+
+			// Update status to infected
+			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusInfected, result.VirusName); updateErr != nil {
+				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+			}
+
+			// Emit webhook
+			scanStatus := scanning.ScanStatusInfected
+			virusName := result.VirusName
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileInfected,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ID:         fileID,
+					ClaimCode:  claimCode,
+					Filename:   filename,
+					Size:       fileSize,
+					MimeType:   mimeType,
+					ExpiresAt:  expiresAt,
+					ScanStatus: &scanStatus,
+					ScanResult: &virusName,
+				},
+			})
+
+			// Delete the infected file from disk
+			if err := os.Remove(filePath); err != nil {
+				slog.Error("failed to remove infected file", "error", err, "file_id", fileID)
+			}
+			return
+		}
+
+		// File is clean
+		slog.Info("malware scan completed: clean",
+			"file_id", fileID,
+			"claim_code", redactClaimCode(claimCode),
+			"scan_duration", result.Duration,
+		)
+		if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusClean, ""); updateErr != nil {
+			slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
+		}
+	}()
 }
