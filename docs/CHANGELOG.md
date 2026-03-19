@@ -45,6 +45,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Metadata stripping extended to PDF (author, creator, dates, XMP), MP4/MOV (GPS, camera, timestamps), and MP3 (ID3v1/v2, APE tags) files
 - **ClamAV Malware Scanning**: Optional async malware scanning via ClamAV sidecar container. Uploaded files are scanned in the background after upload — infected files are automatically quarantined and a `file.infected` webhook event is fired. Downloads of infected files are blocked with HTTP 410. Configured via `FEATURE_MALWARE_SCAN=true` and `CLAMAV_HOST`/`CLAMAV_PORT` environment variables. Files larger than `CLAMAV_MAX_FILE_SIZE` (default 100MB) are skipped. Zero performance impact on upload response times.
 - **Deployment Modes Guide**: New `docs/DEPLOYMENT_MODES.md` documenting four named deployment profiles (Ghost, Standard, Hardened, Fortress) with complete docker-compose examples, decision flowchart, and feature matrix
+- **Admin Dashboard**: Malware scanning status is now visible in the Enterprise Features tab (read-only, configured via `FEATURE_MALWARE_SCAN` env var) and scan status column added to the files table with colored badges (clean/infected/pending/error/skipped)
 
 ### Security
 

@@ -472,6 +472,8 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 			Username           *string   `json:"username"` // nullable - nil for anonymous uploads
 			UploaderIP         string    `json:"uploader_ip"`
 			PasswordProtected  bool      `json:"password_protected"`
+			ScanStatus         string    `json:"scan_status"`
+			ScanResult         string    `json:"scan_result"`
 		}
 
 		fileResponses := make([]FileResponse, len(files))
@@ -490,6 +492,8 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 				Username:           file.Username,
 				UploaderIP:         logIP(file.UploaderIP, cfg),
 				PasswordProtected:  file.PasswordHash != "",
+				ScanStatus:         file.ScanStatus,
+				ScanResult:         file.ScanResult,
 			}
 		}
 

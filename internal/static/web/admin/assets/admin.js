@@ -298,6 +298,24 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// Format scan status as a colored badge with optional tooltip for details.
+// SECURITY: style values must be hardcoded constants only; never interpolate
+// server-sourced strings into the style attribute. label is escapeHtml()-safe.
+function formatScanStatus(status, result) {
+    if (!status) return '<span class="badge" style="background: var(--bg-tertiary); color: var(--text-secondary);">N/A</span>';
+    const styles = {
+        'pending':  'background: #f59e0b; color: #000;',
+        'clean':    'background: var(--success-color); color: #fff;',
+        'infected': 'background: var(--error-color); color: #fff;',
+        'error':    'background: #ef4444; color: #fff;',
+        'skipped':  'background: var(--bg-tertiary); color: var(--text-secondary);'
+    };
+    const style = styles[status] || 'background: #6b7280; color: #fff;';
+    const label = escapeHtml(status.charAt(0).toUpperCase() + status.slice(1));
+    const tooltip = result ? ` title="${escapeHtml(result)}"` : '';
+    return `<span class="badge" style="${style}"${tooltip}>${label}</span>`;
+}
+
 // Format date
 function formatDate(dateString) {
     const date = new Date(dateString);
@@ -381,7 +399,7 @@ function updateFilesTable(files) {
     const tbody = document.getElementById('filesTableBody');
 
     if (files.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="loading">No files found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="loading">No files found</td></tr>';
 
         // Reset select all checkbox even when no files
         const selectAllCheckbox = document.getElementById('selectAllCheckbox');
@@ -407,6 +425,7 @@ function updateFilesTable(files) {
             <td>${formatDate(file.created_at)}</td>
             <td>${formatDate(file.expires_at)}</td>
             <td>${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
+            <td>${formatScanStatus(file.scan_status, file.scan_result)}</td>
             <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td>
                 <button class="btn-small btn-delete" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}">
@@ -3488,7 +3507,8 @@ function updateEnterpriseStatusDisplay(flags) {
         ssoStatusText: flags.enable_sso,
         webhooksStatusText: flags.enable_webhooks,
         apiTokensStatusText: flags.enable_api_tokens,
-        backupsStatusText: flags.enable_backups
+        backupsStatusText: flags.enable_backups,
+        malwareScanStatusText: flags.enable_malware_scan
     };
 
     for (const [elementId, enabled] of Object.entries(statusElements)) {
@@ -3571,7 +3591,7 @@ async function saveFeatureFlags() {
         enable_webhooks: document.getElementById('featureWebhooks')?.checked || false,
         enable_api_tokens: document.getElementById('featureAPITokens')?.checked || false,
         enable_backups: document.getElementById('featureBackups')?.checked || false
-        // Malware scan is coming soon - disabled in UI
+        // Malware scanning is configured via FEATURE_MALWARE_SCAN env var (requires ClamAV sidecar)
     };
 
     try {
