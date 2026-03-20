@@ -2103,7 +2103,7 @@ footer .version-info {
     margin-top: 0.5rem;
 }
 
-.e2e-toggle-label {
+.e2e-encryption-group .e2e-toggle-label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
