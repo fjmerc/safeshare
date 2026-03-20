@@ -130,6 +130,9 @@
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
 
+        // Handle file received via Web Share Target API
+        await handleShareTarget();
+
         // Check for encrypted download URL fragment
         const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
         if (e2eFragment) {
@@ -745,6 +748,71 @@
         if (e.target.files.length > 0) {
             selectedFile = e.target.files[0];
             prepareFile(selectedFile);
+        }
+    }
+
+    // Handle file received via Web Share Target API
+    // Must match SHARE_TARGET_CACHE in service-worker.js
+    const SHARE_TARGET_CACHE = 'safeshare-share-target';
+
+    async function handleShareTarget() {
+        const params = new URLSearchParams(window.location.search);
+        if (!params.has('share-target')) return;
+
+        // Clean up the URL
+        window.history.replaceState(null, '', '/');
+
+        // Cache API requires secure context (HTTPS or localhost)
+        if (!('caches' in window)) return;
+
+        // Check if auth is required and user is not logged in
+        if (serverConfig.require_auth_for_upload && !currentUser) {
+            await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+            showToast('Please log in to upload files.', 'warning', 4000);
+            window.location.href = '/login';
+            return;
+        }
+
+        try {
+            const cache = await caches.open(SHARE_TARGET_CACHE);
+            const response = await cache.match('shared-file');
+            if (!response) {
+                await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+                showToast('Could not retrieve shared file. Please try again.', 'error', 4000);
+                return;
+            }
+
+            let filename = 'shared-file';
+            try {
+                filename = decodeURIComponent(response.headers.get('X-Share-Filename') || 'shared-file');
+            } catch (e) {
+                console.warn('[ShareTarget] Failed to decode filename, using fallback');
+            }
+            const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+            const blob = await response.blob();
+
+            // Clean up cache immediately after reading
+            await cache.delete('shared-file');
+            await caches.delete(SHARE_TARGET_CACHE);
+
+            const file = new File([blob], filename, { type: contentType });
+
+            // Validate file size before proceeding
+            if (file.size > maxFileSizeBytes) {
+                showToast(`Shared file is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 5000);
+                return;
+            }
+
+            // Switch to the Dropoff tab so the upload UI is visible
+            const dropoffBtn = document.querySelector('.tab-button[data-tab="dropoff"]');
+            if (dropoffBtn) dropoffBtn.click();
+
+            // Set the file and prepare for upload
+            selectedFile = file;
+            await prepareFile(file);
+        } catch (error) {
+            await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+            console.error('[ShareTarget] Failed to handle shared file:', error);
         }
     }
 
