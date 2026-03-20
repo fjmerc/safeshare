@@ -67,6 +67,8 @@
     const newPickupButton = document.getElementById('newPickupButton');
     const limitWarning = document.getElementById('limitWarning');
     const passwordPrompt = document.getElementById('passwordPrompt');
+    const e2eKeyPrompt = document.getElementById('e2eKeyPrompt');
+    const e2eKeyInput = document.getElementById('e2eKeyInput');
 
     // DOM Elements - Download Progress
     const downloadProgress = document.getElementById('downloadProgress');
@@ -1820,7 +1822,7 @@
         retrieveButton.textContent = 'Retrieving...';
 
         try {
-            const response = await fetch(`/api/claim/${claimCode}/info`);
+            const response = await fetch(`/api/claim/${encodeURIComponent(claimCode)}/info`);
 
             if (!response.ok) {
                 const error = await response.json();
@@ -1924,6 +1926,16 @@
             passwordPrompt.classList.add('hidden');
         }
 
+        // Detect E2E encrypted file and show key prompt
+        if (e2eKeyPrompt) {
+            if (isE2EEncryptedFile(data)) {
+                e2eKeyPrompt.classList.remove('hidden');
+                if (e2eKeyInput) e2eKeyInput.value = '';
+            } else {
+                e2eKeyPrompt.classList.add('hidden');
+            }
+        }
+
         // Check for resumable download
         checkForResumableDownload(data);
 
@@ -1960,6 +1972,24 @@
     // Handle download
     async function handleDownload(forceNew = false) {
         if (!currentFileInfo) return;
+
+        // If E2E encrypted, require key before downloading
+        if (isE2EEncryptedFile(currentFileInfo)) {
+            const keyValue = e2eKeyInput ? e2eKeyInput.value.trim() : '';
+            if (keyValue) {
+                const encryptionKey = extractE2EKeyFromInput(keyValue);
+                if (encryptionKey) {
+                    handleEncryptedDownload({ claimCode: claimCodeInput.value.trim(), encryptionKey: encryptionKey });
+                    return;
+                } else {
+                    showToast('Invalid encryption key format. Please paste the full share link or key.', 'warning', 4000);
+                    return;
+                }
+            } else {
+                showToast('Please paste the share link or encryption key to decrypt this file.', 'warning', 3000);
+                return;
+            }
+        }
 
         // Build download URL with password if required
         let downloadUrl = currentFileInfo.download_url;
@@ -2089,6 +2119,9 @@
         currentFileInfo = null;
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
+        // Clear E2E key prompt
+        if (e2eKeyInput) e2eKeyInput.value = '';
+        if (e2eKeyPrompt) e2eKeyPrompt.classList.add('hidden');
     }
 
     // ========================================
@@ -2135,8 +2168,8 @@
                             <div class="recovery-claim">
                                 <label>Claim Code:</label>
                                 <div class="recovery-code-display">
-                                    <code class="recovery-claim-code">${completion.claim_code}</code>
-                                    <button class="btn-copy-recovery" data-claim="${completion.claim_code}" aria-label="Copy claim code">
+                                    <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
+                                    <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
                                         📋
                                     </button>
                                 </div>
@@ -2262,6 +2295,45 @@
     }
 
     // ===== E2E ENCRYPTED DOWNLOAD =====
+
+    // The server stores E2E-encrypted files under this reserved filename.
+    // See: app.js upload flow and crypto.js wrapPayload()
+    const E2E_ENCRYPTED_FILENAME = 'encrypted.bin';
+
+    /**
+     * Check if a file info response indicates an E2E encrypted file.
+     * @param {Object} fileInfo - File info from /api/claim/CODE/info
+     * @returns {boolean}
+     */
+    function isE2EEncryptedFile(fileInfo) {
+        return fileInfo && fileInfo.original_filename === E2E_ENCRYPTED_FILENAME && !!window.SafeShareCrypto;
+    }
+
+    /**
+     * Extract E2E encryption key from user input.
+     * Accepts a full share URL, a URL fragment, or a raw base64url key.
+     * @param {string} input - User-provided string
+     * @returns {string|null} base64url key or null if invalid
+     */
+    function extractE2EKeyFromInput(input) {
+        if (!input) return null;
+        input = input.trim();
+
+        // Try to extract key from full share URL or fragment: .../key/KEY
+        const keyMatch = input.match(/\/key\/([A-Za-z0-9_-]+)$/);
+        if (keyMatch) return keyMatch[1];
+
+        // Try as hash fragment: #/claim/CODE/key/KEY
+        const hashMatch = input.match(/#\/claim\/[^/]+\/key\/([A-Za-z0-9_-]+)/);
+        if (hashMatch) return hashMatch[1];
+
+        // Assume raw base64url key (AES-256 = 32 bytes = 43 base64url chars)
+        if (/^[A-Za-z0-9_-]+$/.test(input) && input.length >= 20) {
+            return input;
+        }
+
+        return null;
+    }
 
     /**
      * Handle an encrypted download triggered by URL fragment.

@@ -390,6 +390,16 @@
                         </div>
                     </form>
 
+                    <!-- E2E Key Prompt (shown when file is E2E encrypted) -->
+                    <div id="e2eKeyPrompt" class="e2e-key-section hidden">
+                        <div class="e2e-key-header">
+                            <span class="e2e-key-icon">🔐</span>
+                            <span>End-to-End Encrypted File</span>
+                        </div>
+                        <p class="e2e-key-hint">This file is end-to-end encrypted. Paste the full share link or encryption key to decrypt it.</p>
+                        <input type="text" id="e2eKeyInput" class="e2e-key-input" placeholder="Paste share link or encryption key" autocomplete="off">
+                    </div>
+
                     <button id="downloadButton" class="btn-primary btn-large">
                         ⬇️ Download File
                     </button>
