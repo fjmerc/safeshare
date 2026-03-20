@@ -949,6 +949,8 @@ func run() error {
 	}
 
 	// Register static file routes (embedded frontend)
+	// Manifest needs dedicated handler for correct MIME type (share_target requires it)
+	mux.HandleFunc("/assets/manifest.json", serveManifest())
 	mux.Handle("/assets/", http.StripPrefix("/", static.Handler()))
 
 	// Service worker route (must be at root scope for PWA)
@@ -1258,5 +1260,29 @@ func serveServiceWorker() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeContent(w, r, "service-worker.js", stat.ModTime(), file.(io.ReadSeeker))
+	}
+}
+
+// serveManifest serves the PWA manifest with the correct MIME type.
+// Go's http.FileServer serves .json as application/json, but the Web Share
+// Target API requires application/manifest+json for share_target to register.
+func serveManifest() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fs := static.FileSystem()
+		file, err := fs.Open("assets/manifest.json")
+		if err != nil {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+
+		stat, err := file.Stat()
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/manifest+json")
+		http.ServeContent(w, r, "manifest.json", stat.ModTime(), file.(io.ReadSeeker))
 	}
 }
