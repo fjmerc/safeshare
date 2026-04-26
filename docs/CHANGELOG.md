@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- Bump Go toolchain from 1.25.8 to 1.25.9 to address `crypto/tls` and `crypto/x509` vulnerabilities (GO-2026-4870, GO-2026-4946, GO-2026-4947) affecting the TLS stack and WebAuthn certificate validation.
+
 ---
 
 ## [1.5.4] - 2026-03-19
