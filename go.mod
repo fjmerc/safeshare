@@ -16,7 +16,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/fjmerc/safeshare/sdk/go v0.0.0-20251201002744-8ca8bd1ea6d0
 	github.com/gabriel-vasile/mimetype v1.4.13
-	github.com/go-webauthn/webauthn v0.17.0
+	github.com/go-webauthn/webauthn v0.17.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/mattn/go-sqlite3 v1.14.42
