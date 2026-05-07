@@ -200,21 +200,22 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 		// Create partial upload record
 		partialUpload := &models.PartialUpload{
-			UploadID:       uploadID,
-			UserID:         userID,
-			Filename:       req.Filename,
-			TotalSize:      req.TotalSize,
-			ChunkSize:      chunkSize, // Use calculated chunk size, not config default
-			TotalChunks:    totalChunks,
-			ChunksReceived: 0,
-			ReceivedBytes:  0,
-			ExpiresInHours: req.ExpiresInHours,
-			MaxDownloads:   req.MaxDownloads,
-			PasswordHash:   passwordHash,
-			CreatedAt:      time.Now(),
-			LastActivity:   time.Now(),
-			Completed:      false,
-			ClaimCode:      nil,
+			UploadID:        uploadID,
+			UserID:          userID,
+			Filename:        req.Filename,
+			TotalSize:       req.TotalSize,
+			ChunkSize:       chunkSize, // Use calculated chunk size, not config default
+			TotalChunks:     totalChunks,
+			ChunksReceived:  0,
+			ReceivedBytes:   0,
+			ExpiresInHours:  req.ExpiresInHours,
+			MaxDownloads:    req.MaxDownloads,
+			PasswordHash:    passwordHash,
+			CreatedAt:       time.Now(),
+			LastActivity:    time.Now(),
+			Completed:       false,
+			ClaimCode:       nil,
+			ClientEncrypted: req.ClientEncrypted,
 		}
 
 		// Use transactional quota check to prevent race conditions (P0 fix)

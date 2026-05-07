@@ -41,8 +41,9 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 		INSERT INTO partial_uploads (
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
-			password_hash, created_at, last_activity, completed, claim_code, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			password_hash, created_at, last_activity, completed, claim_code, status,
+			client_encrypted
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	status := upload.Status
@@ -67,6 +68,7 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 		upload.Completed,
 		upload.ClaimCode,
 		status,
+		upload.ClientEncrypted,
 	)
 
 	if err != nil {
@@ -160,8 +162,9 @@ func (r *PartialUploadRepository) createWithQuotaCheckOnce(ctx context.Context, 
 		INSERT INTO partial_uploads (
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
-			password_hash, created_at, last_activity, completed, claim_code, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			password_hash, created_at, last_activity, completed, claim_code, status,
+			client_encrypted
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = tx.ExecContext(ctx, insertQuery,
@@ -181,6 +184,7 @@ func (r *PartialUploadRepository) createWithQuotaCheckOnce(ctx context.Context, 
 		upload.Completed,
 		upload.ClaimCode,
 		status,
+		upload.ClientEncrypted,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert partial upload: %w", err)
@@ -205,7 +209,7 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
 		FROM partial_uploads
 		WHERE upload_id = ?
 	`
@@ -239,6 +243,7 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 		&errorMessage,
 		&assemblyStartedAt,
 		&assemblyCompletedAt,
+		&upload.ClientEncrypted,
 	)
 
 	if err == sql.ErrNoRows {
@@ -406,7 +411,7 @@ func (r *PartialUploadRepository) GetAbandoned(ctx context.Context, expiryHours 
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
 		FROM partial_uploads
 		WHERE completed = 0
 		AND (
@@ -434,7 +439,7 @@ func (r *PartialUploadRepository) GetOldCompleted(ctx context.Context, retention
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
 		FROM partial_uploads
 		WHERE completed = 1
 		AND datetime(last_activity) < datetime('now', '-' || ? || ' hours')
@@ -451,7 +456,7 @@ func (r *PartialUploadRepository) GetByUserID(ctx context.Context, userID int64)
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
 		FROM partial_uploads
 		WHERE user_id = ?
 		ORDER BY created_at DESC
@@ -631,7 +636,7 @@ func (r *PartialUploadRepository) GetProcessing(ctx context.Context) ([]models.P
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
 		FROM partial_uploads
 		WHERE status = 'processing'
 		ORDER BY assembly_started_at ASC
@@ -722,6 +727,7 @@ func (r *PartialUploadRepository) scanPartialUploads(rows *sql.Rows) ([]models.P
 			&errorMessage,
 			&assemblyStartedAt,
 			&assemblyCompletedAt,
+			&upload.ClientEncrypted,
 		)
 
 		if err != nil {

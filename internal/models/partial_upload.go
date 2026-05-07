@@ -23,16 +23,18 @@ type PartialUpload struct {
 	ErrorMessage        *string    `json:"error_message,omitempty"`
 	AssemblyStartedAt   *time.Time `json:"assembly_started_at,omitempty"`
 	AssemblyCompletedAt *time.Time `json:"assembly_completed_at,omitempty"`
+	ClientEncrypted     bool       `json:"client_encrypted"` // True when contents were encrypted in the browser before upload (E2E)
 }
 
 // UploadInitRequest represents the request to initialize a chunked upload
 type UploadInitRequest struct {
-	Filename       string `json:"filename"`
-	TotalSize      int64  `json:"total_size"`
-	ChunkSize      int64  `json:"chunk_size"`
-	ExpiresInHours int    `json:"expires_in_hours"`
-	MaxDownloads   int    `json:"max_downloads"`
-	Password       string `json:"password,omitempty"`
+	Filename        string `json:"filename"`
+	TotalSize       int64  `json:"total_size"`
+	ChunkSize       int64  `json:"chunk_size"`
+	ExpiresInHours  int    `json:"expires_in_hours"`
+	MaxDownloads    int    `json:"max_downloads"`
+	Password        string `json:"password,omitempty"`
+	ClientEncrypted bool   `json:"client_encrypted,omitempty"`
 }
 
 // UploadInitResponse represents the response after initializing a chunked upload

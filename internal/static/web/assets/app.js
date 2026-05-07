@@ -236,14 +236,22 @@
     function initE2EEncryption() {
         const e2eGroup = document.getElementById('e2eEncryptionGroup');
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameGroup = document.getElementById('e2eHideFilenameGroup');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
         if (!e2eGroup || !e2eToggle) return;
 
         if (window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported()) {
             e2eGroup.classList.remove('hidden');
 
-            // Show size warning when toggle is enabled and file is large
+            // Show size warning + sub-option when toggle is enabled
             e2eToggle.addEventListener('change', function() {
                 updateE2ESizeWarning();
+                if (hideFilenameGroup && hideFilenameToggle) {
+                    hideFilenameGroup.classList.toggle('hidden', !e2eToggle.checked);
+                    if (!e2eToggle.checked) {
+                        hideFilenameToggle.checked = false;
+                    }
+                }
             });
         }
     }
@@ -933,7 +941,9 @@
         if (!selectedFile) return;
 
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
         const useE2E = e2eToggle && e2eToggle.checked && window.SafeShareCrypto;
+        const hideFilename = useE2E && hideFilenameToggle && hideFilenameToggle.checked;
 
         let fileToUpload = selectedFile;
 
@@ -953,16 +963,18 @@
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
 
-                // Wrap file data with filename header before encryption
-                // The real filename is embedded inside the encrypted payload
-                const wrappedPayload = SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer);
-                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, wrappedPayload);
+                // When hiding filename, wrap [SF01 magic + filename + data] before encryption.
+                // When filename stays visible, encrypt raw bytes only.
+                const payload = hideFilename
+                    ? SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer)
+                    : arrayBuffer;
+                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, payload);
 
                 progressText.textContent = 'Uploading...';
                 progressFill.style.width = '15%';
 
-                // Send anonymous filename to server — real name is inside the encrypted payload
-                fileToUpload = new File([encryptedBuffer], 'encrypted.bin', {
+                const uploadName = hideFilename ? 'encrypted.bin' : selectedFile.name;
+                fileToUpload = new File([encryptedBuffer], uploadName, {
                     type: 'application/octet-stream'
                 });
 
@@ -981,10 +993,10 @@
         if (serverConfig.chunked_upload_enabled &&
             fileToUpload.size >= serverConfig.chunked_upload_threshold) {
             console.log('Using chunked upload for large file:', formatFileSize(fileToUpload.size));
-            await handleChunkedUpload(fileToUpload);
+            await handleChunkedUpload(fileToUpload, useE2E);
         } else {
             console.log('Using simple upload for file:', formatFileSize(fileToUpload.size));
-            await handleSimpleUpload(fileToUpload);
+            await handleSimpleUpload(fileToUpload, useE2E);
         }
     }
 
@@ -1003,7 +1015,7 @@
     }
 
     // Handle simple upload (existing logic for files below threshold)
-    async function handleSimpleUpload(fileToUpload) {
+    async function handleSimpleUpload(fileToUpload, isClientEncrypted) {
         const file = fileToUpload || selectedFile;
         if (!file) return;
 
@@ -1024,6 +1036,10 @@
         const password = document.getElementById('uploadPassword').value.trim();
         if (password) {
             formData.append('password', password);
+        }
+
+        if (isClientEncrypted) {
+            formData.append('client_encrypted', 'true');
         }
 
         // Update upload state
@@ -1092,7 +1108,7 @@
     }
 
     // Handle chunked upload for large files
-    async function handleChunkedUpload(fileToUpload) {
+    async function handleChunkedUpload(fileToUpload, isClientEncrypted) {
         const file = fileToUpload || selectedFile;
         if (!file) return;
 
@@ -1118,7 +1134,8 @@
             const uploader = new ChunkedUploader(file, {
                 expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
-                password: password
+                password: password,
+                clientEncrypted: !!isClientEncrypted
             });
             currentChunkedUploader = uploader; // Store for cancellation
 
@@ -1249,7 +1266,8 @@
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = displayUrl;
             const fileNameElement = document.getElementById('fileName');
-            // When E2E, server sees 'encrypted.bin' — show the real filename from selectedFile
+            // For E2E uploads we always know the real name locally — prefer it so the
+            // result panel shows the original name even when the server stored 'encrypted.bin'.
             const displayFilename = isE2E && selectedFile ? selectedFile.name : data.original_filename;
             fileNameElement.textContent = displayFilename;
             fileNameElement.title = displayFilename; // Show full name on hover
@@ -2296,8 +2314,11 @@
 
     // ===== E2E ENCRYPTED DOWNLOAD =====
 
-    // The server stores E2E-encrypted files under this reserved filename.
-    // See: app.js upload flow and crypto.js wrapPayload()
+    // Reserved filename used for E2E uploads when "Hide filename from server" is on.
+    // Pre-flag uploads (before client_encrypted was tracked server-side) used this
+    // filename as the only signal — kept as a fallback for backward compatibility.
+    // Once all pre-flag uploads have expired, the filename fallback in
+    // isE2EEncryptedFile() can be dropped (the server-side flag is authoritative).
     const E2E_ENCRYPTED_FILENAME = 'encrypted.bin';
 
     /**
@@ -2306,7 +2327,10 @@
      * @returns {boolean}
      */
     function isE2EEncryptedFile(fileInfo) {
-        return fileInfo && fileInfo.original_filename === E2E_ENCRYPTED_FILENAME && !!window.SafeShareCrypto;
+        if (!fileInfo || !window.SafeShareCrypto) return false;
+        if (fileInfo.client_encrypted === true) return true;
+        // Backward compat: files uploaded before client_encrypted existed
+        return fileInfo.original_filename === E2E_ENCRYPTED_FILENAME;
     }
 
     /**
@@ -2456,8 +2480,14 @@
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
 
-                // Unwrap payload to extract real filename (v2) or use server filename (v1)
-                const unwrapped = SafeShareCrypto.unwrapPayload(decryptedData);
+                // Only unwrap (look for the SF01 filename header) when the upload was
+                // actually wrapped — i.e. the server stored 'encrypted.bin'. Otherwise
+                // a plaintext file that happens to start with the SF01 magic bytes would
+                // be silently truncated, see crypto.js:unwrapPayload.
+                const wasWrapped = fileInfo.original_filename === E2E_ENCRYPTED_FILENAME;
+                const unwrapped = wasWrapped
+                    ? SafeShareCrypto.unwrapPayload(decryptedData)
+                    : { filename: null, data: decryptedData };
                 const downloadFilename = unwrapped.filename || fileInfo.original_filename;
                 const downloadData = unwrapped.data;
 

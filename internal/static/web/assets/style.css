@@ -2143,6 +2143,25 @@ footer .version-info {
     border-radius: 4px;
 }
 
+.e2e-suboption {
+    margin: 0.6rem 0 0 1.6rem;
+    padding-left: 0.6rem;
+    border-left: 2px solid rgba(16, 185, 129, 0.25);
+}
+
+.e2e-suboption .e2e-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.e2e-suboption .e2e-description {
+    margin: 0.25rem 0 0 1.6rem;
+}
+
 /* ===== E2E Key Prompt (Pickup Tab) ===== */
 
 .e2e-key-section {
