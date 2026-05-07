@@ -259,6 +259,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		PasswordHash:     partialUpload.PasswordHash,
 		UserID:           partialUpload.UserID,
 		SHA256Hash:       sha256Hash,
+		ClientEncrypted:  partialUpload.ClientEncrypted,
 	}
 
 	if err := repos.Files.Create(ctx, fileRecord); err != nil {

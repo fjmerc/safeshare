@@ -35,6 +35,15 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- New "Also hide filename from server" sub-toggle under End-to-End Encryption. When unchecked (the new default), the file is still encrypted in the browser, but the original filename stays visible to the server — so a recipient who only has the claim code at least sees what file they're trying to retrieve. When checked, behaviour matches the prior release: the filename is wrapped inside the encrypted payload and the server stores `encrypted.bin`.
+- The Pickup tab key prompt now appears for any E2E upload (not only ones whose filename was hidden), so claim-code-only recipients can still paste the share link or key to decrypt.
+
+### Fixed
+
+- Fixed a latent corruption issue where a plaintext file whose first four bytes happened to match the SF01 wrapper magic could be silently truncated on E2E download. The decryptor now only attempts to unwrap a filename header when the server actually wrapped the upload.
+
 ### Security
 
 - Bump Go toolchain from 1.25.8 to 1.25.9 to address `crypto/tls` and `crypto/x509` vulnerabilities (GO-2026-4870, GO-2026-4946, GO-2026-4947) affecting the TLS stack and WebAuthn certificate validation.

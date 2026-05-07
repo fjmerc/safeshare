@@ -41,7 +41,8 @@ func setupPartialUploadTestDB(t *testing.T) *sql.DB {
 			status TEXT DEFAULT 'uploading',
 			error_message TEXT,
 			assembly_started_at TEXT,
-			assembly_completed_at TEXT
+			assembly_completed_at TEXT,
+			client_encrypted INTEGER NOT NULL DEFAULT 0
 		)
 	`)
 	if err != nil {

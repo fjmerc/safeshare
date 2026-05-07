@@ -30,8 +30,9 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 	query := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
@@ -51,6 +52,7 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		file.PasswordHash,
 		file.UserID,
 		file.SHA256Hash,
+		file.ClientEncrypted,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -99,8 +101,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 	insertQuery := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
@@ -119,6 +122,7 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		file.PasswordHash,
 		file.UserID,
 		file.SHA256Hash,
+		file.ClientEncrypted,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -145,7 +149,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted
 		FROM files
 		WHERE id = ?
 	`
@@ -179,6 +183,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&scanStatus,
 		&scanResult,
 		&scannedAt,
+		&file.ClientEncrypted,
 	)
 
 	if err == sql.ErrNoRows {
@@ -232,7 +237,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -266,6 +271,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 		&scanStatus,
 		&scanResult,
 		&scannedAt,
+		&file.ClientEncrypted,
 	)
 
 	if err == sql.ErrNoRows {
@@ -469,8 +475,8 @@ func (r *FileRepository) DeleteByClaimCode(ctx context.Context, claimCode string
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-			uploader_ip, password_hash, user_id
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+			uploader_ip, password_hash, user_id, client_encrypted
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -496,6 +502,7 @@ func (r *FileRepository) DeleteByClaimCode(ctx context.Context, claimCode string
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
+		&file.ClientEncrypted,
 	)
 
 	if err == sql.ErrNoRows {
@@ -563,8 +570,8 @@ func (r *FileRepository) DeleteByClaimCodes(ctx context.Context, claimCodes []st
 		query := `
 			SELECT
 				id, claim_code, original_filename, stored_filename, file_size,
-				mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-				uploader_ip, password_hash, user_id
+				mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+				uploader_ip, password_hash, user_id, client_encrypted
 			FROM files
 			WHERE claim_code = ?
 		`
@@ -590,6 +597,7 @@ func (r *FileRepository) DeleteByClaimCodes(ctx context.Context, claimCodes []st
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
+			&file.ClientEncrypted,
 		)
 
 		if err == sql.ErrNoRows {
@@ -885,7 +893,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads,
 			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted
 		FROM files
 		ORDER BY created_at DESC
 	`
@@ -925,6 +933,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan file row: %w", err)
@@ -1012,7 +1021,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 	// Get paginated files with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
-		u.username, f.scan_status, f.scan_result, f.scanned_at
+		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
@@ -1054,6 +1063,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -1132,7 +1142,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	// Get paginated results with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
-		u.username, f.scan_status, f.scan_result, f.scanned_at
+		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
@@ -1175,6 +1185,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)

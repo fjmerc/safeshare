@@ -616,6 +616,15 @@ CREATE INDEX IF NOT EXISTS idx_files_scan_status ON files(scan_status)
     WHERE scan_status IS NOT NULL;
 `,
 	},
+	{
+		Version:     9,
+		Name:        "009_e2e_filename_visibility",
+		Description: "Track client-side (E2E) encryption flag on files and partial uploads",
+		SQL: `
+ALTER TABLE files ADD COLUMN IF NOT EXISTS client_encrypted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS client_encrypted BOOLEAN NOT NULL DEFAULT FALSE;
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

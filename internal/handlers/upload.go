@@ -36,6 +36,7 @@ type uploadParams struct {
 	neverExpire      bool
 	maxDownloads     *int
 	passwordHash     string
+	clientEncrypted  bool
 }
 
 // fileProcessingResult holds the result of file processing and storage
@@ -260,6 +261,11 @@ func parseUploadParameters(w http.ResponseWriter, r *http.Request, cfg *config.C
 		params.passwordHash = hash
 	}
 
+	// Parse client_encrypted flag (E2E indicator). Untrusted; affects display only.
+	if v := r.FormValue("client_encrypted"); v == "true" || v == "1" {
+		params.clientEncrypted = true
+	}
+
 	return params, nil
 }
 
@@ -454,6 +460,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		PasswordHash:     params.passwordHash,
 		UserID:           userID,
 		SHA256Hash:       result.sha256Hash,
+		ClientEncrypted:  params.clientEncrypted,
 	}
 
 	// Create database record with quota check if needed

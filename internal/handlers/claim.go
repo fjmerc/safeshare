@@ -259,6 +259,7 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
 			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
+			"client_encrypted":       file.ClientEncrypted,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

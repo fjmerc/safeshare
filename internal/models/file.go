@@ -23,6 +23,7 @@ type File struct {
 	ScanStatus         string     // Malware scan status: "", "pending", "clean", "infected", "error", "skipped"
 	ScanResult         string     // Virus name (if infected) or error message (if error)
 	ScannedAt          *time.Time // When scan completed (nil if not scanned)
+	ClientEncrypted    bool       // True when contents were encrypted in the browser before upload (E2E)
 }
 
 // UploadResponse is the JSON response returned after a successful upload
