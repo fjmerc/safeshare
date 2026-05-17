@@ -2198,31 +2198,15 @@ code {
     flex: 1;
 }
 
-/* Badge for event types */
+/* Tinted pill badges (inherit pill shape + sizing from .badge) */
 .badge-info {
-    background-color: #3b82f6;
-    color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
+    background: var(--primary-light);
+    color: var(--primary-color);
 }
 
 .badge-warning {
-    background-color: #f59e0b;
-    color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-}
-
-[data-theme="dark"] .badge-info {
-    background-color: #2563eb;
-}
-
-[data-theme="dark"] .badge-warning {
-    background-color: #d97706;
+    background: var(--warning-light);
+    color: var(--warning-color);
 }
 
 /* Scope Badge Styles (API Tokens) */

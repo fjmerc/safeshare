@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -574,6 +575,62 @@ func ClearWebhookDeliveriesHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"message":       "Webhook delivery history cleared successfully",
 			"deleted_count": count,
+		})
+	}
+}
+
+// DeleteWebhookDeliveryHandler deletes a single webhook delivery record by ID.
+func DeleteWebhookDeliveryHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		idStr := r.URL.Query().Get("id")
+		if idStr == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Delivery ID is required",
+			})
+			return
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid delivery ID",
+			})
+			return
+		}
+
+		if err := database.DeleteWebhookDelivery(db, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Webhook delivery not found",
+				})
+				return
+			}
+			slog.Error("failed to delete webhook delivery", "id", id, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to delete webhook delivery",
+			})
+			return
+		}
+
+		slog.Info("webhook delivery deleted", "id", id)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Webhook delivery deleted successfully",
+			"id":      id,
 		})
 	}
 }
