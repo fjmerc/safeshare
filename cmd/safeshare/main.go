@@ -780,6 +780,10 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/webhook-deliveries/delete", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookDeliveryHandler(repos.DB)))).ServeHTTP(w, r)
+		})
+
 		// Admin API Token management routes
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {

@@ -802,6 +802,16 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Render a webhook event type as a human label: "file.uploaded" -> "Uploaded".
+// Falls back to the raw value (escaped) for unrecognized shapes.
+function formatEventType(eventType) {
+    if (!eventType) return '';
+    const idx = eventType.lastIndexOf('.');
+    const tail = idx >= 0 ? eventType.slice(idx + 1) : eventType;
+    if (!tail) return escapeHtml(eventType);
+    return escapeHtml(tail.charAt(0).toUpperCase() + tail.slice(1));
+}
+
 function getCookie(name) {
     const value = `; ${document.cookie}`;
     const parts = value.split(`; ${name}=`);
@@ -2173,8 +2183,8 @@ function updateWebhooksTable(webhooks) {
 
     tbody.innerHTML = webhooks.map(webhook => {
         const truncatedURL = webhook.url.length > 50 ? webhook.url.substring(0, 50) + '...' : webhook.url;
-        const eventBadges = webhook.events.map(event => 
-            `<span class="badge badge-info" style="margin: 2px; font-size: 11px;">${escapeHtml(event)}</span>`
+        const eventBadges = webhook.events.map(event =>
+            `<span class="badge badge-info" style="margin: 2px;" title="${escapeHtml(event)}">${formatEventType(event)}</span>`
         ).join('');
 
         return `
@@ -2467,7 +2477,7 @@ function updateDeliveriesTable(deliveries) {
                 statusBadge = '<span class="badge badge-yes">Success</span>';
                 break;
             case 'failed':
-                statusBadge = '<span class="badge badge-no">Failed</span>';
+                statusBadge = '<span class="badge badge-danger">Failed</span>';
                 break;
             case 'retrying':
                 statusBadge = '<span class="badge badge-warning">Retrying</span>';
@@ -2479,17 +2489,22 @@ function updateDeliveriesTable(deliveries) {
         return `
             <tr>
                 <td>${formatDate(delivery.created_at)}</td>
-                <td><span class="badge badge-info" style="font-size: 11px;">${escapeHtml(delivery.event_type)}</span></td>
+                <td><span class="badge badge-info" title="${escapeHtml(delivery.event_type)}">${formatEventType(delivery.event_type)}</span></td>
                 <td>${statusBadge}</td>
                 <td>${delivery.response_code || '-'}</td>
                 <td>${delivery.attempt_count}</td>
-                <td>
-                    <button class="btn-small btn-action" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
+                <td class="actions">
+                    <button class="btn-icon btn-info" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
                         </svg>
-                        Details
+                    </button>
+                    <button class="btn-icon btn-danger" data-action="deleteDelivery" data-delivery-id="${delivery.id}" title="Delete delivery">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
                     </button>
                 </td>
             </tr>
@@ -2524,7 +2539,7 @@ function displayDeliveryDetails(delivery) {
             statusBadge = '<span class="badge badge-yes">Success</span>';
             break;
         case 'failed':
-            statusBadge = '<span class="badge badge-no">Failed</span>';
+            statusBadge = '<span class="badge badge-danger">Failed</span>';
             break;
         case 'retrying':
             statusBadge = '<span class="badge badge-warning">Retrying</span>';
@@ -2542,7 +2557,7 @@ function displayDeliveryDetails(delivery) {
                 <strong>Webhook Config ID:</strong> ${delivery.webhook_config_id}
             </div>
             <div>
-                <strong>Event Type:</strong> <span class="badge badge-info" style="font-size: 11px;">${escapeHtml(delivery.event_type)}</span>
+                <strong>Event Type:</strong> <span class="badge badge-info" title="${escapeHtml(delivery.event_type)}">${formatEventType(delivery.event_type)}</span>
             </div>
             <div>
                 <strong>Status:</strong> ${statusBadge}
@@ -2599,6 +2614,33 @@ function toggleAutoRefresh() {
             clearInterval(autoRefreshInterval);
             autoRefreshInterval = null;
         }
+    }
+}
+
+// Delete a single delivery record by ID
+async function deleteDelivery(deliveryId) {
+    const confirmed = await confirm('Delete this delivery record? This action cannot be undone.');
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/admin/api/webhook-deliveries/delete?id=${encodeURIComponent(deliveryId)}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken()
+            }
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showSuccess('Delivery record deleted');
+            loadDeliveries();
+        } else {
+            showError(data.error || 'Failed to delete delivery record');
+        }
+    } catch (error) {
+        console.error('Error deleting delivery record:', error);
+        showError('Failed to delete delivery record');
     }
 }
 
@@ -4376,6 +4418,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // Webhook delivery details
             case 'viewDeliveryDetails':
                 viewDeliveryDetails(parseInt(btn.getAttribute('data-delivery-id'), 10));
+                break;
+
+            case 'deleteDelivery':
+                deleteDelivery(parseInt(btn.getAttribute('data-delivery-id'), 10));
                 break;
 
             // API Token management

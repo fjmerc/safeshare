@@ -412,6 +412,25 @@ func ClearAllWebhookDeliveries(db *sql.DB) (int64, error) {
 	return rows, nil
 }
 
+// DeleteWebhookDelivery deletes a single webhook delivery record by ID.
+// Returns sql.ErrNoRows when no row was deleted (caller treats as 404).
+func DeleteWebhookDelivery(db *sql.DB, id int64) error {
+	result, err := db.Exec("DELETE FROM webhook_deliveries WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete webhook delivery: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // GetPendingRetries retrieves webhook deliveries that are due for retry
 func GetPendingRetries(db *sql.DB) ([]*webhooks.Delivery, error) {
 	rows, err := db.Query(`
