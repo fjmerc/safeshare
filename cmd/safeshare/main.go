@@ -26,8 +26,6 @@ import (
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webauthn"
 	"github.com/fjmerc/safeshare/internal/webhooks"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
@@ -994,23 +992,22 @@ func run() error {
 		),
 	)
 
-	// Enable HTTP/2 support (with h2c for non-TLS environments)
-	h2Server := &http2.Server{
-		MaxConcurrentStreams: 250, // Allow many parallel chunk uploads
-	}
+	// Setup HTTP server with HTTP/2 support, including h2c for non-TLS environments.
+	// HTTP/2 over TLS is negotiated via ALPN when HTTPS is enabled.
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	protocols.SetUnencryptedHTTP2(true)
 
-	// Wrap handler with h2c for HTTP/2 over cleartext (dev/testing)
-	// If HTTPS is enabled, Go automatically uses HTTP/2 via TLS ALPN
-	handlerWithH2C := h2c.NewHandler(handler, h2Server)
-
-	// Setup HTTP server
 	server := &http.Server{
 		Addr:           ":" + cfg.Port,
-		Handler:        handlerWithH2C,
+		Handler:        handler,
 		ReadTimeout:    time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
 		WriteTimeout:   time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
 		IdleTimeout:    120 * time.Second, // Increased from 60s for HTTP/2 connection reuse
 		MaxHeaderBytes: 1 << 20,           // 1MB header limit
+		Protocols:      protocols,
+		HTTP2:          &http.HTTP2Config{MaxConcurrentStreams: 250},
 	}
 
 	// Start cleanup workers with WaitGroup for graceful shutdown
