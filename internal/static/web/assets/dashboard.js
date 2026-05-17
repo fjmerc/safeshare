@@ -3164,6 +3164,7 @@ you may be locked out of your account.
             document.getElementById('adminDashboardBtn').addEventListener('click', function() { window.location.href = '/admin'; });
             document.getElementById('changePasswordBtn').addEventListener('click', showChangePasswordModal);
             document.getElementById('uploadFilesBtn').addEventListener('click', function() { window.location.href = '/#dropoff'; });
+            document.getElementById('downloadFileBtn').addEventListener('click', function() { window.location.href = '/#pickup'; });
             document.getElementById('logoutBtn').addEventListener('click', logout);
 
             // Refresh buttons
