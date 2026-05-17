@@ -428,12 +428,11 @@ function updateFilesTable(files) {
             <td>${formatScanStatus(file.scan_status, file.scan_result)}</td>
             <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td>
-                <button class="btn-small btn-delete" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}">
+                <button class="btn-icon btn-danger" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}" title="Delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                     </svg>
-                    Delete
                 </button>
             </td>
         </tr>
