@@ -49,6 +49,17 @@ var (
 		},
 	)
 
+	// ChunkedUploadAssemblySaturated counts how many times an assembly request
+	// was refused with 503 because every assembly slot was in use. Spikes here
+	// indicate operators should raise ASSEMBLY_WORKERS_MAX or investigate stuck
+	// uploads. Added in SH-1.4.
+	ChunkedUploadAssemblySaturated = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "safeshare_chunked_upload_assembly_saturated_total",
+			Help: "Total number of /api/upload/complete requests refused with 503 due to assembly worker saturation",
+		},
+	)
+
 	// HTTPRequestsTotal counts total HTTP requests by method, path, and status code
 	HTTPRequestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

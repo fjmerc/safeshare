@@ -104,6 +104,7 @@ type Config struct {
 	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
 	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
 	AllowPrivateWebhookTargets bool // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
+	AssemblyWorkersMax         int  // Max concurrent chunked-upload assembly workers (SH-1.4). 503 returned beyond this; raise to absorb burstier upload completions.
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -153,6 +154,7 @@ func Load() (*Config, error) {
 		StripMetadata:            getEnvBool("STRIP_METADATA", false),
 		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
 		AllowPrivateWebhookTargets: getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
+		AssemblyWorkersMax:         getEnvInt("ASSEMBLY_WORKERS_MAX", 10),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
