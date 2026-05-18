@@ -194,9 +194,16 @@ func run() error {
 	webhookMetrics := webhooks.NewPrometheusMetrics()
 	webhookDB := database.NewWebhookDBAdapter(db)
 	webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
+	// SH-1.1: SSRF guard on webhook delivery. Off by default; operators that
+	// legitimately webhook against localhost (homelab / dev) opt in via
+	// WEBHOOK_ALLOW_PRIVATE_TARGETS (mapped onto cfg.AllowPrivateWebhookTargets).
+	webhooks.SetAllowPrivateNetworks(cfg.AllowPrivateWebhookTargets)
 	webhookDispatcher.Start()
 	defer webhookDispatcher.Shutdown()
-	slog.Info("webhook dispatcher started", "workers", 5, "buffer_size", 1000)
+	slog.Info("webhook dispatcher started",
+		"workers", 5,
+		"buffer_size", 1000,
+		"allow_private_targets", cfg.AllowPrivateWebhookTargets)
 
 	// Make webhook dispatcher available to handlers
 	handlers.SetWebhookDispatcher(webhookDispatcher)

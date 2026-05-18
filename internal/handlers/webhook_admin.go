@@ -6,9 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
@@ -91,34 +89,15 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Validate URL format and scheme
-		parsedURL, err := url.Parse(req.URL)
-		if err != nil {
+		// Validate URL: scheme (http/https), hostname presence, and (defence in
+		// depth against SSRF) reject private / loopback / metadata IPs at
+		// config time. The dialer enforces the same check at connect time so a
+		// DNS-rebinding flip cannot bypass this guard.
+		if err := webhooks.ValidateWebhookURL(req.URL); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Invalid URL format",
-			})
-			return
-		}
-
-		// Only allow HTTP and HTTPS schemes to prevent SSRF
-		scheme := strings.ToLower(parsedURL.Scheme)
-		if scheme != "http" && scheme != "https" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Only HTTP and HTTPS URLs are allowed",
-			})
-			return
-		}
-
-		// Validate hostname is present
-		if parsedURL.Host == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "URL must include a hostname",
+				"error": "Webhook URL is not allowed: " + err.Error(),
 			})
 			return
 		}
@@ -264,34 +243,15 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Validate URL format and scheme
-		parsedURL, err := url.Parse(req.URL)
-		if err != nil {
+		// Validate URL: scheme (http/https), hostname presence, and (defence in
+		// depth against SSRF) reject private / loopback / metadata IPs at
+		// config time. The dialer enforces the same check at connect time so a
+		// DNS-rebinding flip cannot bypass this guard.
+		if err := webhooks.ValidateWebhookURL(req.URL); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Invalid URL format",
-			})
-			return
-		}
-
-		// Only allow HTTP and HTTPS schemes to prevent SSRF
-		scheme := strings.ToLower(parsedURL.Scheme)
-		if scheme != "http" && scheme != "https" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Only HTTP and HTTPS URLs are allowed",
-			})
-			return
-		}
-
-		// Validate hostname is present
-		if parsedURL.Host == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "URL must include a hostname",
+				"error": "Webhook URL is not allowed: " + err.Error(),
 			})
 			return
 		}
