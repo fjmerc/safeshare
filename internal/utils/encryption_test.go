@@ -750,3 +750,115 @@ func decryptStreamingData(encryptedData []byte, keyHex string) ([]byte, error) {
 
 	return result.Bytes(), nil
 }
+
+// oneBytePerReadReader wraps an io.Reader and returns at most one byte per
+// Read call. This simulates the short-read behaviour seen from network-mounted
+// filesystems (NFS/FUSE/CIFS), io.MultiReader-style wrappers, and the future
+// S3-backed streaming reader path. A `Read(b)` call returns `(1, nil)` until
+// the underlying buffer is exhausted, then `(0, io.EOF)`.
+type oneBytePerReadReader struct{ inner *bytes.Reader }
+
+func (s *oneBytePerReadReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return s.inner.Read(p[:1])
+}
+
+// TestDecryptChunkStream_ShortReads is the SH-1.2 regression test: confirms
+// that the decrypt loop reassembles chunks correctly when the backing reader
+// returns short reads, which it would not have done before the io.ReadFull
+// migration (bare `Read` would have surfaced ErrUnexpectedEOF-shaped buffers
+// into gcm.Open as "failed to decrypt chunk" on intact data).
+func TestDecryptChunkStream_ShortReads(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	// Build plaintext large enough to span multiple chunks. The streaming
+	// format uses 1 MB chunks by default (1024 * 1024), so 3.5 MB exercises
+	// 3 full chunks + 1 short final chunk.
+	const chunkSize = 1 << 20 // 1 MiB
+	plaintext := make([]byte, chunkSize*3+chunkSize/2)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 251) // non-repeating-modulo pattern
+	}
+
+	// Encrypt via the production writer.
+	var encryptedBuf bytes.Buffer
+	if err := EncryptFileStreamingFromReader(&encryptedBuf, bytes.NewReader(plaintext), testKey); err != nil {
+		t.Fatalf("EncryptFileStreamingFromReader: %v", err)
+	}
+	encrypted := encryptedBuf.Bytes()
+
+	// Parse SFSE1 header to recover the chunk size the writer used (the
+	// writer may pick a different size than we passed; we trust the on-disk
+	// chunk_size field).
+	if len(encrypted) < 10 {
+		t.Fatalf("encrypted payload too short: %d bytes", len(encrypted))
+	}
+	if string(encrypted[0:5]) != StreamEncryptionMagic {
+		t.Fatalf("bad magic: %q", encrypted[0:5])
+	}
+	if encrypted[5] != StreamEncryptionVersion {
+		t.Fatalf("bad version: %d", encrypted[5])
+	}
+	encodedChunkSize := binary.LittleEndian.Uint32(encrypted[6:10])
+
+	// Build a GCM exactly as the production decrypt path would.
+	key, err := hex.DecodeString(testKey)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("NewCipher: %v", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("NewGCM: %v", err)
+	}
+	encryptedChunkSize := int(encodedChunkSize) + gcm.NonceSize() + gcm.Overhead()
+
+	// Drive the chunk loop through a one-byte-per-read wrapper, which is
+	// the worst-case short-read pattern. Pre-SH-1.2 code would fail on the
+	// first chunk because srcFile.Read returns (1, nil) — n=1 is less than
+	// the gcm.NonceSize() check and the whole loop bails with
+	// "chunk too small: 1 bytes". Post-fix uses io.ReadFull which retries
+	// until the buffer is full or hits EOF.
+	chunkPortion := encrypted[10:] // skip header
+	src := &oneBytePerReadReader{inner: bytes.NewReader(chunkPortion)}
+	var out bytes.Buffer
+	if err := decryptChunkStream(src, &out, gcm, encryptedChunkSize); err != nil {
+		t.Fatalf("decryptChunkStream under short reads: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), plaintext) {
+		t.Fatalf("plaintext mismatch: got %d bytes, want %d bytes", out.Len(), len(plaintext))
+	}
+}
+
+// TestDecryptChunkStream_HappyPath confirms the helper is also correct under
+// normal (full-buffer) reads, so the io.ReadFull change is not papering over a
+// regression in the typical local-FS case.
+func TestDecryptChunkStream_HappyPath(t *testing.T) {
+	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	plaintext := bytes.Repeat([]byte("safeshare"), 200_000) // ~1.8 MB
+
+	var encryptedBuf bytes.Buffer
+	if err := EncryptFileStreamingFromReader(&encryptedBuf, bytes.NewReader(plaintext), testKey); err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	encrypted := encryptedBuf.Bytes()
+	encodedChunkSize := binary.LittleEndian.Uint32(encrypted[6:10])
+
+	key, _ := hex.DecodeString(testKey)
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	encryptedChunkSize := int(encodedChunkSize) + gcm.NonceSize() + gcm.Overhead()
+
+	var out bytes.Buffer
+	if err := decryptChunkStream(bytes.NewReader(encrypted[10:]), &out, gcm, encryptedChunkSize); err != nil {
+		t.Fatalf("decryptChunkStream: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), plaintext) {
+		t.Fatalf("plaintext mismatch")
+	}
+}

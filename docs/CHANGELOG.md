@@ -43,6 +43,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - Fixed a latent corruption issue where a plaintext file whose first four bytes happened to match the SF01 wrapper magic could be silently truncated on E2E download. The decryptor now only attempts to unwrap a filename header when the server actually wrapped the upload.
+- Fixed sporadic "failed to decrypt chunk" / "chunk too small" errors on encrypted-at-rest downloads when the upload directory is backed by a filesystem that returns short reads (NFS, FUSE, CIFS, or any future non-local backend). The SFSE1 streaming decrypt path now uses `io.ReadFull` to reassemble each authenticated chunk before passing it to AES-GCM, matching what the encrypt side has always done. Affects three decrypt loops: `DecryptFileStreaming`, `DecryptFileStreamingRange`, and the storage-layer `EncryptedStorage` range and streaming readers.
 
 ### Security
 

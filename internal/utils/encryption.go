@@ -368,46 +368,50 @@ func DecryptFileStreaming(srcPath, dstPath, keyHex string) error {
 	}
 	defer dstFile.Close()
 
-	// Process chunks
 	// Each encrypted chunk has: nonce(12) + ciphertext + tag(16)
 	// So encrypted chunk size is: chunkSize + 12 + 16
 	encryptedChunkSize := int(chunkSize) + gcm.NonceSize() + gcm.Overhead()
-	buffer := make([]byte, encryptedChunkSize)
 
+	return decryptChunkStream(srcFile, dstFile, gcm, encryptedChunkSize)
+}
+
+// decryptChunkStream reads SFSE1 chunks from r using io.ReadFull (so a backing
+// reader that returns short reads — NFS/FUSE/CIFS/wrapped — does not feed
+// partial chunks into gcm.Open, which would surface as a spurious "failed to
+// decrypt chunk" error on uncorrupted data). Treats io.ErrUnexpectedEOF as the
+// legitimate short final chunk; io.EOF as clean termination.
+//
+// Do NOT regress this to bare r.Read — see SH-1.2 in the Security Hardening
+// plan. The parallel range-aware loop in DecryptFileStreamingRange and the
+// loops in storage/encrypted_storage.go follow the same invariants; keep them
+// in sync.
+func decryptChunkStream(r io.Reader, w io.Writer, gcm cipher.AEAD, encryptedChunkSize int) error {
+	buffer := make([]byte, encryptedChunkSize)
 	for {
-		// Read encrypted chunk (may be partial on last chunk)
-		n, err := srcFile.Read(buffer)
-		if err != nil && err != io.EOF {
+		n, err := io.ReadFull(r, buffer)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}
-		if n == 0 {
-			break
-		}
-
-		// Extract nonce
+		// err is either nil (full chunk) or io.ErrUnexpectedEOF (final short chunk).
 		if n < gcm.NonceSize() {
 			return fmt.Errorf("chunk too small: %d bytes", n)
 		}
 		nonce := buffer[:gcm.NonceSize()]
 		ciphertext := buffer[gcm.NonceSize():n]
-
-		// Decrypt chunk
-		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt chunk: %w", err)
+		plaintext, decErr := gcm.Open(nil, nonce, ciphertext, nil)
+		if decErr != nil {
+			return fmt.Errorf("failed to decrypt chunk: %w", decErr)
 		}
-
-		// Write decrypted chunk
-		if _, err := dstFile.Write(plaintext); err != nil {
-			return fmt.Errorf("failed to write decrypted chunk: %w", err)
+		if _, writeErr := w.Write(plaintext); writeErr != nil {
+			return fmt.Errorf("failed to write decrypted chunk: %w", writeErr)
 		}
-
-		if err == io.EOF {
-			break
+		if err == io.ErrUnexpectedEOF {
+			return nil
 		}
 	}
-
-	return nil
 }
 
 // IsStreamEncrypted checks if a file is encrypted with streaming encryption format.
@@ -532,14 +536,26 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 	var totalReadTime, totalDecryptTime, totalWriteTime time.Duration
 	currentChunk := startChunk // Start from the first chunk we need, not 0
 
+	// Range-aware decrypt loop: structurally mirrors decryptChunkStream but
+	// keeps inline because of seek-pinning, partial-chunk windowing
+	// (chunkStart/chunkEnd), and telemetry counters. Keep the io.ReadFull
+	// invariant in sync with the helper — see SH-1.2.
 	for currentChunk <= endChunk {
-		// Read encrypted chunk (may be partial on last chunk)
+		// Read encrypted chunk via io.ReadFull so a short read from the
+		// backing storage (NFS/FUSE/CIFS — or any wrapped reader in future
+		// non-os.File backends) does not feed a partial chunk into gcm.Open
+		// and surface as a spurious "failed to decrypt chunk" on intact
+		// data. ErrUnexpectedEOF is the legitimate short final chunk; EOF
+		// is clean termination.
 		readStart := time.Now()
-		n, err := srcFile.Read(buffer)
+		n, err := io.ReadFull(srcFile, buffer)
 		readDuration := time.Since(readStart)
 		totalReadTime += readDuration
 
-		if err != nil && err != io.EOF {
+		if err == io.EOF {
+			break
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return totalWritten, fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}
 		if n == 0 {
