@@ -2009,8 +2009,15 @@
             }
         }
 
-        // Build download URL with password if required
+        // SH-1.5: separate the password from the URL. For same-origin
+        // downloads we pass it via X-File-Password header (no leak into
+        // proxy logs / browser history / Referer). The cross-origin <a>
+        // tag fallback still has to use the URL since browser navigation
+        // can't carry custom headers — the server emits Deprecation +
+        // Referrer-Policy on that path. Tracked for full removal in
+        // v1.6.0 via a signed-token exchange.
         let downloadUrl = currentFileInfo.download_url;
+        let downloadPassword = null;
 
         if (currentFileInfo.password_required) {
             const password = document.getElementById('downloadPassword').value.trim();
@@ -2018,31 +2025,36 @@
                 showToast('Please enter the password to download this file', 'warning', 3000);
                 return;
             }
-            downloadUrl += `?password=${encodeURIComponent(password)}`;
+            downloadPassword = password;
         }
 
-        // CRITICAL: Check if download URL is cross-origin
+        // Check if download URL is cross-origin
         // Cross-origin downloads should bypass ResumableDownloader to avoid Service Worker issues
         try {
             const downloadUrlObj = new URL(downloadUrl);
             const currentOrigin = window.location.origin;
-            
+
             if (downloadUrlObj.origin !== currentOrigin) {
-                // Cross-origin download - use simple browser download (no Service Worker interference)
+                // Cross-origin download - browser <a> tag, cannot set headers.
+                // Fall back to query-string password (deprecated server-side).
+                let aHrefUrl = downloadUrl;
+                if (downloadPassword) {
+                    aHrefUrl += `?password=${encodeURIComponent(downloadPassword)}`;
+                }
                 console.log('Cross-origin download detected - using <a> tag download');
                 console.log(`Download origin: ${downloadUrlObj.origin}, Current origin: ${currentOrigin}`);
-                
+
                 // Use <a> tag for cross-origin downloads (avoids pop-up blockers)
                 // This completely bypasses Service Worker and uses native browser download
                 const link = document.createElement('a');
-                link.href = downloadUrl;
+                link.href = aHrefUrl;
                 link.download = currentFileInfo.original_filename; // Suggest filename
                 link.target = '_blank';
                 link.rel = 'noopener noreferrer'; // Security best practice
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-                
+
                 showToast('Download started', 'success', 3000);
                 return; // Exit early - don't use ResumableDownloader for cross-origin
             }
@@ -2061,7 +2073,8 @@
             currentDownloader = new ResumableDownloader(
                 downloadUrl,
                 currentFileInfo.original_filename,
-                currentFileInfo.file_size
+                currentFileInfo.file_size,
+                { password: downloadPassword } // SH-1.5: header transport
             );
 
             // Set up event listeners
@@ -2442,8 +2455,9 @@
                 }
                 const fileInfo = await infoResponse.json();
 
-                // Step 2: Handle password if required
-                let passwordParam = '';
+                // Step 2: Handle password if required.
+                // SH-1.5: password goes in the X-File-Password header, not the URL.
+                let passwordHeader = null;
                 if (fileInfo.password_required) {
                     const password = await requestPassword();
                     if (!password) {
@@ -2452,7 +2466,7 @@
                         history.replaceState(null, '', window.location.pathname);
                         return;
                     }
-                    passwordParam = `?password=${encodeURIComponent(password)}`;
+                    passwordHeader = password;
                 }
 
                 // Step 3: Download encrypted file
@@ -2460,7 +2474,8 @@
                 status.textContent = formatFileSize(fileInfo.file_size);
                 progressFillEl.style.width = '30%';
 
-                const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}${passwordParam}`);
+                const downloadHeaders = passwordHeader ? { 'X-File-Password': passwordHeader } : undefined;
+                const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}`, downloadHeaders ? { headers: downloadHeaders } : undefined);
                 if (!downloadResponse.ok) {
                     if (downloadResponse.status === 401) {
                         throw new Error('Incorrect password');

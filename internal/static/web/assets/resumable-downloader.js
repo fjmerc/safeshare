@@ -18,7 +18,7 @@
  * await downloader.start();
  */
 class ResumableDownloader {
-    constructor(downloadUrl, filename, fileSize = null) {
+    constructor(downloadUrl, filename, fileSize = null, options = {}) {
         this.downloadUrl = downloadUrl;
         this.filename = filename;
         this.fileSize = fileSize; // Can be null initially, will be fetched
@@ -26,6 +26,11 @@ class ResumableDownloader {
         this.startTime = null;
         this.isPaused = false;
         this.isCompleted = false;
+
+        // SH-1.5: optional password sent as X-File-Password header on every
+        // request instead of being baked into the URL. Keeps the secret out
+        // of proxy access logs, browser history, and Referer headers.
+        this.password = options.password || null;
 
         // Storage key for resume capability
         this.storageKey = `download_${this.filename}_${btoa(downloadUrl).slice(0, 16)}`;
@@ -35,6 +40,18 @@ class ResumableDownloader {
 
         // Collected chunks
         this.chunks = [];
+    }
+
+    /**
+     * Build the headers used on every fetch, including the optional
+     * X-File-Password header when this download is password-protected.
+     */
+    _authHeaders(extra = {}) {
+        const headers = { ...extra };
+        if (this.password) {
+            headers['X-File-Password'] = this.password;
+        }
+        return headers;
     }
 
     /**
@@ -113,7 +130,8 @@ class ResumableDownloader {
      */
     async fetchFileSize() {
         const response = await fetch(this.downloadUrl, {
-            method: 'HEAD'
+            method: 'HEAD',
+            headers: this._authHeaders()
         });
 
         if (!response.ok) {
@@ -169,7 +187,7 @@ class ResumableDownloader {
 
             // Start download with fetch
             const response = await fetch(this.downloadUrl, {
-                headers: rangeHeader ? { 'Range': rangeHeader } : {}
+                headers: this._authHeaders(rangeHeader ? { 'Range': rangeHeader } : {})
             });
 
             if (!response.ok && response.status !== 206) {

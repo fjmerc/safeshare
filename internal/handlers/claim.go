@@ -22,9 +22,10 @@ import (
 func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		// Only accept GET requests
-		if r.Method != http.MethodGet {
-			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
+		// Accept GET (browser navigation / <a> tag) and POST (programmatic clients
+		// that want to put the password in a form body instead of the URL).
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET or POST requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -75,11 +76,40 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			return
 		}
 
-		// Check password if file is password-protected
+		// Check password if file is password-protected.
+		// SH-1.5: accept the password via three channels, in priority order:
+		//   1. X-File-Password header — preferred; never lands in proxy logs,
+		//      browser history, or outbound Referer.
+		//   2. POST form body (`password`) — for programmatic clients that
+		//      can't set custom headers but can POST a form.
+		//   3. URL query string (`?password=…`) — deprecated; kept for one
+		//      release to avoid breaking direct browser <a href> downloads
+		//      while frontends migrate. Emits a WARN log + Deprecation
+		//      response header so operators can see who still uses it.
 		if utils.IsPasswordProtected(file.PasswordHash) {
-			providedPassword := r.URL.Query().Get("password")
+			providedPassword, passwordViaQuery := extractDownloadPassword(w, r)
+
+			if passwordViaQuery {
+				// Defence-in-depth even on the deprecated path: tell the browser
+				// not to forward the URL (which still contains the password) as a
+				// Referer on any subsequent navigation triggered by the download
+				// page.
+				w.Header().Set("Referrer-Policy", "no-referrer")
+				w.Header().Set("Deprecation", "true")
+				w.Header().Set("Sunset", "Wed, 30 Sep 2026 00:00:00 GMT")
+				// Points at a fetchable docs URL (RFC 8594 / draft-ietf-httpapi-
+				// deprecation-header expect an actual resource, not a repo
+				// path). Track this if the default branch is renamed.
+				w.Header().Set("Link", `<https://github.com/fjmerc/safeshare/blob/main/docs/API_REFERENCE_FOR_TESTING.md#file-passwords-sh-15>; rel="deprecation"; type="text/markdown"`)
+				slog.Warn("deprecated password-in-query-string usage",
+					"claim_code", redactClaimCode(claimCode),
+					"client_ip", logIP(getClientIP(r), cfg),
+					"user_agent", getUserAgent(r),
+				)
+				metrics.DownloadsTotal.WithLabelValues("password_via_query_deprecated").Inc()
+			}
+
 			if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
-				// Record metrics
 				metrics.DownloadsTotal.WithLabelValues("password_failed").Inc()
 
 				slog.Warn("file access denied",
@@ -271,4 +301,39 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"filename", file.OriginalFilename,
 		)
 	}
+}
+
+// extractDownloadPassword reads the file-download password from one of three
+// channels in priority order: X-File-Password header, POST form body
+// (`password`), then URL query string (`?password=…`). Returns the password
+// and a flag indicating it came from the query string — the caller emits a
+// deprecation warning + Referrer-Policy when that flag is set, since
+// query-string transport leaks the secret to proxy logs, browser history,
+// and outbound Referer headers.
+//
+// `w` is used to bound the size of POST bodies (passwords fit comfortably in
+// 4 KiB; a multi-GB urlencoded body would otherwise stream into ParseForm and
+// waste memory on an unauthenticated endpoint).
+//
+// See SH-1.5 in SafeShare-Planning/09-Security-Hardening/.
+func extractDownloadPassword(w http.ResponseWriter, r *http.Request) (password string, viaQuery bool) {
+	if h := r.Header.Get("X-File-Password"); h != "" {
+		return h, false
+	}
+	if r.Method == http.MethodPost {
+		// Gate to POST because PostFormValue reads only r.PostForm (which is
+		// populated from a request body), never the URL query string —
+		// otherwise a GET's `?password=` would be picked up here and silently
+		// bypass the deprecation path. Cap the body at 4 KiB.
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		if err := r.ParseForm(); err == nil {
+			if v := r.PostFormValue("password"); v != "" {
+				return v, false
+			}
+		}
+	}
+	if q := r.URL.Query().Get("password"); q != "" {
+		return q, true
+	}
+	return "", false
 }
