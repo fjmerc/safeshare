@@ -488,8 +488,17 @@ func (es *EncryptedStorage) decryptRange(filePath string, w io.Writer, startByte
 	currentChunk := startChunk
 
 	for currentChunk <= endChunk {
-		n, err := srcFile.Read(buffer)
-		if err != nil && err != io.EOF {
+		// SH-1.2: io.ReadFull so a short read from non-os.File backed storage
+		// (NFS/FUSE/CIFS or future S3-backed reader) does not pass a partial
+		// buffer to gcm.Open and surface as "chunk too small" / "failed to
+		// decrypt chunk" on intact data. ErrUnexpectedEOF is the legitimate
+		// short final chunk; EOF is clean termination. Do NOT regress this
+		// to bare srcFile.Read — see SH-1.2.
+		n, err := io.ReadFull(srcFile, buffer)
+		if err == io.EOF {
+			break
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return totalWritten, err
 		}
 		if n == 0 {
@@ -651,9 +660,16 @@ func (dr *decryptingReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Read next encrypted chunk
-	n, err := dr.file.Read(dr.buffer)
-	if err != nil && err != io.EOF {
+	// Read next encrypted chunk via io.ReadFull. See SH-1.2: bare Read on a
+	// non-os.File backend can return short, feeding a partial chunk to
+	// gcm.Open. ErrUnexpectedEOF = legitimate short final chunk;
+	// EOF = clean end-of-stream.
+	n, err := io.ReadFull(dr.file, dr.buffer)
+	if err == io.EOF {
+		dr.eof = true
+		return 0, io.EOF
+	}
+	if err != nil && err != io.ErrUnexpectedEOF {
 		return 0, err
 	}
 	if n == 0 {
