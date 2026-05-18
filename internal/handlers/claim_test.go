@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,6 +224,112 @@ func TestClaimHandler_PasswordProtected(t *testing.T) {
 	}
 }
 
+// TestClaimHandler_PasswordChannels exercises the SH-1.5 password-transport
+// migration: the header path is preferred, the POST form-body path works for
+// programmatic clients, the query-string path still works but emits a
+// Deprecation header + Referrer-Policy + a WARN log. Header precedence beats
+// query (so a misconfigured client that sends both gets the safe path).
+func TestClaimHandler_PasswordChannels(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := ClaimHandler(repos, cfg)
+	ctx := context.Background()
+
+	const correctPassword = "MySecret123!"
+	testContent := []byte("channel-test content")
+	storedFilename := "channels-uuid.txt"
+	if err := os.WriteFile(filepath.Join(cfg.UploadDir, storedFilename), testContent, 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+	passwordHash, _ := utils.HashPassword(correctPassword)
+	file := &models.File{
+		ClaimCode:        "channels1",
+		OriginalFilename: "channels.txt",
+		StoredFilename:   storedFilename,
+		FileSize:         int64(len(testContent)),
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		PasswordHash:     passwordHash,
+		UploaderIP:       "127.0.0.1",
+	}
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("create test file: %v", err)
+	}
+
+	t.Run("header path — no deprecation markers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/channels1", nil)
+		req.Header.Set("X-File-Password", correctPassword)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		testutil.AssertStatusCode(t, rr, http.StatusOK)
+		if got := rr.Header().Get("Deprecation"); got != "" {
+			t.Errorf("Deprecation header set on header path: %q", got)
+		}
+		if got := rr.Header().Get("Referrer-Policy"); got != "" {
+			t.Errorf("Referrer-Policy header set on header path (should only fire on query path): %q", got)
+		}
+	})
+
+	t.Run("POST form body — no deprecation markers", func(t *testing.T) {
+		form := url.Values{"password": []string{correctPassword}}
+		req := httptest.NewRequest(http.MethodPost, "/api/claim/channels1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		testutil.AssertStatusCode(t, rr, http.StatusOK)
+		if got := rr.Header().Get("Deprecation"); got != "" {
+			t.Errorf("Deprecation header set on form path: %q", got)
+		}
+	})
+
+	t.Run("query string — deprecation + referrer-policy emitted", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/channels1?password="+correctPassword, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		testutil.AssertStatusCode(t, rr, http.StatusOK)
+		if got := rr.Header().Get("Deprecation"); got != "true" {
+			t.Errorf("Deprecation header = %q, want \"true\"", got)
+		}
+		if got := rr.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("Referrer-Policy = %q, want \"no-referrer\"", got)
+		}
+		if got := rr.Header().Get("Sunset"); got == "" {
+			t.Error("Sunset header not set on deprecated path")
+		}
+		if got := rr.Header().Get("Link"); !strings.Contains(got, `rel="deprecation"`) {
+			t.Errorf("Link header missing deprecation rel: %q", got)
+		}
+	})
+
+	t.Run("header beats query — correct header wins even if wrong query present", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/channels1?password=wrong", nil)
+		req.Header.Set("X-File-Password", correctPassword)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		testutil.AssertStatusCode(t, rr, http.StatusOK)
+		if got := rr.Header().Get("Deprecation"); got != "" {
+			t.Errorf("Deprecation header set when header path was used: %q", got)
+		}
+	})
+
+	t.Run("wrong password via query still emits deprecation headers on the 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/channels1?password=wrong", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		testutil.AssertStatusCode(t, rr, http.StatusUnauthorized)
+		if got := rr.Header().Get("Deprecation"); got != "true" {
+			t.Errorf("Deprecation header missing on 401 query path: %q", got)
+		}
+		if got := rr.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("Referrer-Policy missing on 401 query path: %q", got)
+		}
+	})
+}
+
 func TestClaimHandler_DownloadLimit(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -289,8 +396,10 @@ func TestClaimHandler_MethodNotAllowed(t *testing.T) {
 	}
 	handler := ClaimHandler(repos, cfg)
 
+	// SH-1.5: POST is now an allowed method (used to send the password in a
+	// form body rather than the URL query string). It's excluded from this
+	// "method not allowed" set.
 	methods := []string{
-		http.MethodPost,
 		http.MethodPut,
 		http.MethodDelete,
 		http.MethodPatch,
