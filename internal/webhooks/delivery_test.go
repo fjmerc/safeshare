@@ -189,8 +189,10 @@ func TestDeliverWebhook_ResponseBodyTruncation(t *testing.T) {
 		t.Errorf("Expected success, got failure: %v", result.Error)
 	}
 
-	// Response should be truncated to 1KB + "... (truncated)"
-	maxSize := 1024 + len("... (truncated)")
+	// Response should be truncated to 256 bytes + "... (truncated)"
+	// (Lowered from 1 KB in SH-1.1 to minimise blast radius of any future
+	// webhook-target misconfiguration that echoes secrets back to us.)
+	maxSize := 256 + len("... (truncated)")
 	if len(result.ResponseBody) > maxSize {
 		t.Errorf("Response body not truncated: got %d bytes, max should be ~%d", len(result.ResponseBody), maxSize)
 	}

@@ -21,17 +21,27 @@ var (
 	httpClient     *http.Client
 )
 
-// getHTTPClient returns a reusable HTTP client with connection pooling
+// getHTTPClient returns a reusable HTTP client with connection pooling and
+// SSRF protection. The custom Transport.DialContext rejects connections to
+// private / loopback / link-local / metadata IPs (configurable via
+// WEBHOOK_ALLOW_PRIVATE_TARGETS for homelab use). CheckRedirect re-applies
+// the same validation on every hop so an attacker-controlled webhook target
+// cannot 302 us to an internal endpoint.
+//
+// Note: the timeout-mutation race on the shared client is tracked separately
+// as SH-1.3 and fixed there.
 func getHTTPClient(timeoutSeconds int) *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = &http.Client{
 			Timeout: time.Duration(timeoutSeconds) * time.Second,
 			Transport: &http.Transport{
+				DialContext:         safeDialContext,
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
 				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 			},
+			CheckRedirect: safeCheckRedirect,
 		}
 	})
 
@@ -110,9 +120,12 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	}
 	defer resp.Body.Close()
 
-	// Read response body (limit to 10KB for logging, 1KB for storage)
-	const maxStoredResponseSize = 1024      // 1KB stored in DB
-	const maxLoggedResponseSize = 10 * 1024 // 10KB for logs
+	// Read response body. Tight 256-byte cap on the stored copy minimises the
+	// blast radius if a webhook target is ever pointed at an internal service
+	// that echoes secrets in its response (defence in depth alongside the SSRF
+	// dialer guard). Logs still keep 10KB for diagnostics.
+	const maxStoredResponseSize = 256
+	const maxLoggedResponseSize = 10 * 1024
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxLoggedResponseSize))
 	responseBody := string(bodyBytes)
@@ -121,7 +134,9 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 		responseBody = fmt.Sprintf("failed to read response: %v", err)
 	}
 
-	// Truncate for database storage to prevent bloat
+	// Redact common credential patterns before either logging or storing.
+	responseBody = redactSensitiveResponseBody(responseBody)
+
 	storedResponseBody := responseBody
 	if len(storedResponseBody) > maxStoredResponseSize {
 		storedResponseBody = storedResponseBody[:maxStoredResponseSize] + "... (truncated)"

@@ -47,6 +47,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Security
 
 - Bump Go toolchain from 1.25.8 to 1.25.9 to address `crypto/tls` and `crypto/x509` vulnerabilities (GO-2026-4870, GO-2026-4946, GO-2026-4947) affecting the TLS stack and WebAuthn certificate validation.
+- Webhook delivery now refuses to dial private, loopback, link-local, multicast, CGNAT, NAT64, and IPv6 zone-ID addresses (cloud-metadata IPs included). The guard applies at both configuration time (admin webhook URL validation) and at connect time on every redirect hop, defeating DNS rebinding. Webhook URLs that previously pointed at internal hosts will be rejected on save and on delivery; homelab and dev deployments that intentionally webhook against localhost can opt in via `WEBHOOK_ALLOW_PRIVATE_TARGETS=true`. Persisted webhook response bodies are tightened from 1 KB to 256 bytes and scrubbed of common credential patterns (Bearer tokens, AWS access/secret keys, JWTs, generic `api_key`/`secret_*_key` fields).
 
 ---
 

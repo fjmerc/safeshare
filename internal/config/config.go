@@ -103,6 +103,7 @@ type Config struct {
 	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
 	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
 	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
+	AllowPrivateWebhookTargets bool // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -151,6 +152,7 @@ func Load() (*Config, error) {
 		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
 		StripMetadata:            getEnvBool("STRIP_METADATA", false),
 		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
+		AllowPrivateWebhookTargets: getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
