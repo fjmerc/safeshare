@@ -672,6 +672,31 @@ func (r *PartialUploadRepository) TryLockForProcessing(ctx context.Context, uplo
 	return rowsAffected > 0, nil
 }
 
+// ReleaseProcessingLock is the strict inverse of TryLockForProcessing. Only
+// transitions an upload from "processing" back to "uploading" — never
+// overwrites a row that has advanced to "completed" or "failed". Caller uses
+// this to unwind a lock taken speculatively (SH-1.4 assembly saturation).
+func (r *PartialUploadRepository) ReleaseProcessingLock(ctx context.Context, uploadID string) (bool, error) {
+	if uploadID == "" {
+		return false, fmt.Errorf("upload_id cannot be empty")
+	}
+	now := time.Now().Format(time.RFC3339)
+	query := `
+		UPDATE partial_uploads
+		SET status = 'uploading', assembly_started_at = NULL, last_activity = ?
+		WHERE upload_id = ? AND status = 'processing'
+	`
+	result, err := r.db.ExecContext(ctx, query, now, uploadID)
+	if err != nil {
+		return false, fmt.Errorf("failed to release processing lock: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	return rowsAffected > 0, nil
+}
+
 // queryPartialUploads is a helper that executes a query and returns partial uploads.
 func (r *PartialUploadRepository) queryPartialUploads(ctx context.Context, query string, arg interface{}) ([]models.PartialUpload, error) {
 	rows, err := r.db.QueryContext(ctx, query, arg)

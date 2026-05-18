@@ -190,6 +190,11 @@ func run() error {
 	// Make storage backend available to handlers
 	handlers.SetStorageBackend(storageBackend)
 
+	// SH-1.4: size the chunked-upload assembly worker pool from config. The
+	// handler returns 503 with Retry-After once all slots are in use; raise
+	// ASSEMBLY_WORKERS_MAX to absorb burstier upload completions.
+	handlers.InitAssemblyWorkers(cfg.AssemblyWorkersMax)
+
 	// Initialize webhook dispatcher
 	webhookMetrics := webhooks.NewPrometheusMetrics()
 	webhookDB := database.NewWebhookDBAdapter(db)
