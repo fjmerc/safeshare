@@ -128,9 +128,8 @@ const (
 	// and prevent client timeouts during decryption.
 	DefaultChunkSize = 10 * 1024 * 1024
 
-	// sfse1HeaderSize = magic(5) + version(1) + chunk_size(4).
-	sfse1HeaderSize = 10
 	// sfse2HeaderSize = magic(5) + version(1) + chunk_size(4) + total_plaintext_len(8).
+	// (SFSE1's 10-byte header is hardcoded inline at the legacy V1 Range reader.)
 	sfse2HeaderSize = 18
 	// SFSE2EncFileIDSize is the byte length of the AAD file identifier.
 	SFSE2EncFileIDSize = 16
