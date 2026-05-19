@@ -254,6 +254,17 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// nullableBytea converts a Go byte slice to a value suitable for a nullable
+// BYTEA column: nil/empty slice becomes SQL NULL via pgx's interface{} path,
+// everything else is passed through. The corresponding SELECT scans into a
+// *[]byte so NULL maps back to a nil slice.
+func nullableBytea(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
 // parseBlockedExtensions converts a comma-separated string to a slice of extensions.
 func parseBlockedExtensions(s string) []string {
 	if s == "" {

@@ -188,16 +188,27 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		}
 	}
 
-	// Encrypt if encryption is enabled
+	// Encrypt if encryption is enabled (SFSE2)
+	var encFileID []byte
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		slog.Debug("encrypting assembled file using streaming encryption", "upload_id", uploadID)
+		slog.Debug("encrypting assembled file using SFSE2 streaming encryption", "upload_id", uploadID)
 
-		// Use streaming encryption to avoid loading entire file into memory
-		// Encrypt to temporary file, then replace original
+		var err error
+		encFileID, err = utils.GenerateEncFileID()
+		if err != nil {
+			slog.Error("failed to generate enc_file_id", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath)
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate enc_file_id: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
+			return
+		}
+
+		// Encrypt to temporary file, then replace original.
 		tempEncryptedPath := finalPath + ".encrypted.tmp"
 
-		if err := utils.EncryptFileStreaming(finalPath, tempEncryptedPath, cfg.EncryptionKey); err != nil {
-			slog.Error("failed to encrypt file", "error", err, "upload_id", uploadID)
+		if err := utils.EncryptFileStreamingV2(finalPath, tempEncryptedPath, cfg.EncryptionKey, encFileID); err != nil {
+			slog.Error("failed to encrypt file (SFSE2)", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath)
 			os.Remove(tempEncryptedPath)
 			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err)); setErr != nil {
@@ -228,7 +239,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			return
 		}
 
-		slog.Debug("file encrypted with streaming encryption",
+		slog.Debug("file encrypted with SFSE2 streaming encryption",
 			"upload_id", uploadID,
 			"original_size", originalInfo.Size(),
 			"encrypted_size", encryptedInfo.Size())
@@ -260,6 +271,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		UserID:           partialUpload.UserID,
 		SHA256Hash:       sha256Hash,
 		ClientEncrypted:  partialUpload.ClientEncrypted,
+		EncFileID:        encFileID,
 	}
 
 	if err := repos.Files.Create(ctx, fileRecord); err != nil {

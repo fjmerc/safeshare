@@ -46,6 +46,7 @@ type fileProcessingResult struct {
 	written          int64
 	sha256Hash       string
 	detectedMimeType string
+	encFileID        []byte // 16-byte SFSE2 file identity (nil when encryption disabled or legacy SFSE1 path used)
 }
 
 // UploadHandler handles file upload requests
@@ -320,7 +321,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 
 	// Stream file to disk with hashing and optional encryption
 	filePath := filepath.Join(cfg.UploadDir, storedFilename)
-	written, sha256Hash, err := streamFileToStorage(w, fullReader, header, filePath, cfg)
+	written, sha256Hash, encFileID, err := streamFileToStorage(w, fullReader, header, filePath, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +332,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 		written:          written,
 		sha256Hash:       sha256Hash,
 		detectedMimeType: detectedMimeType,
+		encFileID:        encFileID,
 	}, nil
 }
 
@@ -361,8 +363,10 @@ func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, h
 	return detectedMimeType, fullReader, nil
 }
 
-// streamFileToStorage streams file to disk with hashing and optional encryption
-func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, error) {
+// streamFileToStorage streams file to disk with hashing and optional encryption.
+// Returns (written, sha256Hash, encFileID, err). encFileID is non-nil and 16 bytes
+// when encryption is enabled (SFSE2); nil when encryption is disabled.
+func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, []byte, error) {
 	// Setup SHA256 hashing during streaming
 	hasher := sha256.New()
 	hashedReader := io.TeeReader(reader, hasher)
@@ -373,7 +377,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	if err != nil {
 		slog.Error("failed to create temp file", "path", tempPath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", err
+		return 0, "", nil, err
 	}
 
 	// Track success for cleanup
@@ -387,15 +391,22 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 
 	// Stream file with optional encryption
 	var written int64
+	var encFileID []byte
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		err = utils.EncryptFileStreamingFromReader(tempFile, hashedReader, cfg.EncryptionKey)
+		encFileID, err = utils.GenerateEncFileID()
 		if err != nil {
-			slog.Error("failed to encrypt file stream", "error", err)
+			slog.Error("failed to generate enc_file_id", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return 0, "", err
+			return 0, "", nil, err
+		}
+		err = utils.EncryptFileStreamingV2FromReader(tempFile, hashedReader, cfg.EncryptionKey, encFileID, header.Size)
+		if err != nil {
+			slog.Error("failed to encrypt file stream (SFSE2)", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", nil, err
 		}
 		written = header.Size
-		slog.Debug("file encrypted with streaming encryption",
+		slog.Debug("file encrypted with SFSE2 streaming encryption",
 			"original_size", header.Size,
 			"filename", header.Filename,
 		)
@@ -404,7 +415,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 		if err != nil {
 			slog.Error("failed to write file stream", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return 0, "", err
+			return 0, "", nil, err
 		}
 		slog.Debug("file written without encryption", "size", written)
 	}
@@ -416,17 +427,17 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	if err := tempFile.Close(); err != nil {
 		slog.Error("failed to close temp file", "path", tempPath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", err
+		return 0, "", nil, err
 	}
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", err
+		return 0, "", nil, err
 	}
 
 	succeeded = true
-	return written, sha256Hash, nil
+	return written, sha256Hash, encFileID, nil
 }
 
 // createRecordAndRespond creates database record and sends response
@@ -461,6 +472,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		UserID:           userID,
 		SHA256Hash:       result.sha256Hash,
 		ClientEncrypted:  params.clientEncrypted,
+		EncFileID:        result.encFileID,
 	}
 
 	// Create database record with quota check if needed
@@ -596,6 +608,12 @@ func stripMetadataPlaintext(result *fileProcessingResult) error {
 // stripMetadataEncrypted handles stripping for encrypted files:
 // decrypt to OS temp dir → strip → re-encrypt to temp → atomic rename.
 // The original encrypted file is preserved until re-encryption fully succeeds.
+//
+// The newly stripped file is re-emitted as SFSE2 — the re-encrypted file uses
+// the same enc_file_id as the original (preserves AAD identity for the same
+// logical file). For legacy V1 uploads that have an empty encFileID, a fresh
+// one is generated here so the re-encrypted output is always SFSE2; the
+// caller (createFileRecord) then persists it on the new DB row.
 func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) error {
 	// Decrypt to OS temp directory (not uploads dir) to avoid plaintext exposure
 	tempFile, err := os.CreateTemp("", "safeshare-strip-*.tmp")
@@ -606,7 +624,12 @@ func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) er
 	tempFile.Close()
 	defer os.Remove(tempPath)
 
-	if err := utils.DecryptFileStreaming(result.filePath, tempPath, cfg.EncryptionKey); err != nil {
+	// Use the version-aware dispatcher; the file may be V1 (e.g. legacy data
+	// in the uploads dir from before SFSE2 landed) or V2 (the path this
+	// commit emits). Empty encFileID is safe for the V1 branch.
+	// result.written is the plaintext length recorded at upload time; passing
+	// it lets the V2 reader reject a header-length forgery before any AAD work.
+	if err := utils.DecryptFileStreamingAny(result.filePath, tempPath, cfg.EncryptionKey, result.encFileID, "", result.written); err != nil {
 		return fmt.Errorf("decrypt for stripping: %w", err)
 	}
 
@@ -627,26 +650,23 @@ func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) er
 		return fmt.Errorf("stat stripped plaintext: %w", err)
 	}
 
+	// If we are stripping a legacy V1 upload, mint a fresh enc_file_id so the
+	// re-encrypted output is SFSE2 (forward-only upgrade).
+	encFileID := result.encFileID
+	if len(encFileID) == 0 {
+		encFileID, err = utils.GenerateEncFileID()
+		if err != nil {
+			return fmt.Errorf("generate enc_file_id for re-encrypt: %w", err)
+		}
+	}
+
 	// Re-encrypt to a temp file next to the original, then atomic rename.
 	// This preserves the original encrypted file until re-encryption succeeds.
 	reencryptPath := result.filePath + ".reenc-tmp"
-	srcFile, err := os.Open(tempPath)
-	if err != nil {
-		return fmt.Errorf("open stripped temp: %w", err)
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(reencryptPath)
-	if err != nil {
-		return fmt.Errorf("create re-encrypt temp: %w", err)
-	}
-
-	if err := utils.EncryptFileStreamingFromReader(dstFile, srcFile, cfg.EncryptionKey); err != nil {
-		dstFile.Close()
+	if err := utils.EncryptFileStreamingV2(tempPath, reencryptPath, cfg.EncryptionKey, encFileID); err != nil {
 		os.Remove(reencryptPath)
 		return fmt.Errorf("re-encrypt after stripping: %w", err)
 	}
-	dstFile.Close()
 
 	// Atomic replace — original file is preserved until this succeeds
 	if err := os.Rename(reencryptPath, result.filePath); err != nil {
@@ -656,6 +676,7 @@ func stripMetadataEncrypted(result *fileProcessingResult, cfg *config.Config) er
 
 	result.sha256Hash = hash
 	result.written = info.Size()
+	result.encFileID = encFileID
 
 	slog.Info("metadata stripped from encrypted upload",
 		"mime_type", result.detectedMimeType,

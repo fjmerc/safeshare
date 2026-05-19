@@ -24,6 +24,7 @@ type File struct {
 	ScanResult         string     // Virus name (if infected) or error message (if error)
 	ScannedAt          *time.Time // When scan completed (nil if not scanned)
 	ClientEncrypted    bool       // True when contents were encrypted in the browser before upload (E2E)
+	EncFileID          []byte     // 16-byte random identifier bound into SFSE2 chunk AAD; nil/empty for legacy SFSE1 files (ADR-011)
 }
 
 // UploadResponse is the JSON response returned after a successful upload

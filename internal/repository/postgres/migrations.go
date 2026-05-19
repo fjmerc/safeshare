@@ -625,6 +625,14 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS client_encrypted BOOLEAN NOT NULL DEF
 ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS client_encrypted BOOLEAN NOT NULL DEFAULT FALSE;
 `,
 	},
+	{
+		Version:     10,
+		Name:        "010_enc_file_id",
+		Description: "Add 16-byte per-file random identifier (SFSE2 AAD binding; see ADR-011)",
+		SQL: `
+ALTER TABLE files ADD COLUMN IF NOT EXISTS enc_file_id BYTEA;
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.
