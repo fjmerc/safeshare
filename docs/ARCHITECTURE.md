@@ -310,7 +310,25 @@ erDiagram
     }
 ```
 
-### Encryption Architecture (SFSE1)
+### At-Rest Encryption Architecture (SFSE1 / SFSE2)
+
+SafeShare's at-rest encryption uses a SafeShare-Streaming-Encryption family of
+formats with a shared `"SFSE1"` magic prefix and a one-byte version
+discriminator. Two versions are currently defined:
+
+- **SFSE1** (version `0x01`) — the original format. Per-chunk AES-256-GCM with
+  no Additional Authenticated Data; chunks are authenticated individually but
+  their position and file identity are not signed.
+- **SFSE2** (version `0x02`, default for all new uploads since v1.6.0) —
+  per-chunk AAD binds `enc_file_id ‖ chunk_index ‖ is_last_flag` into every
+  GCM tag, and the header carries an authoritative `total_plaintext_length`
+  trailer. Full-file downloads also verify the plaintext SHA-256 against
+  `files.checksum_sha256` after decrypt.
+
+Both formats coexist via a version-byte dispatcher in
+`internal/utils/encryption.go`: the reader peeks the version byte at offset 5
+and routes to the appropriate decrypt path. Legacy SFSE1 files remain readable
+indefinitely with no operator action required.
 
 ```mermaid
 flowchart LR
@@ -328,18 +346,18 @@ flowchart LR
 
     subgraph Encryption
         direction TB
-        E1["AES-256-GCM\n+ Nonce + Tag"]
-        E2["AES-256-GCM\n+ Nonce + Tag"]
-        E3["AES-256-GCM\n+ Nonce + Tag"]
-        EN["AES-256-GCM\n+ Nonce + Tag"]
+        E1["AES-256-GCM\n+ Nonce + Tag\n+ AAD (V2)"]
+        E2["AES-256-GCM\n+ Nonce + Tag\n+ AAD (V2)"]
+        E3["AES-256-GCM\n+ Nonce + Tag\n+ AAD (V2)"]
+        EN["AES-256-GCM\n+ Nonce + Tag\n+ AAD (V2)"]
     end
 
     subgraph Output
-        H["SFSE1 Header"]
+        H["SFSE Header\n(magic+version+chunk_size\n+plaintext_len for V2)"]
         EC1["Encrypted Chunk 1"]
         EC2["Encrypted Chunk 2"]
         EC3["Encrypted Chunk 3"]
-        ECN["Encrypted Chunk N"]
+        ECN["Encrypted Chunk N\n(is_last AAD bit set)"]
     end
 
     F --> C1 & C2 & C3 & CN
@@ -351,11 +369,33 @@ flowchart LR
     H --- EC1 --- EC2 --- EC3 --- ECN
 ```
 
-**SFSE1 Format Benefits:**
-- Streaming encryption/decryption
-- HTTP Range requests only decrypt needed chunks
-- Constant memory usage (~10MB buffer)
+**On-disk layout:**
+
+```
+SFSE1: [magic(5) "SFSE1"] [version(1) 0x01] [chunk_size(4 LE)] [chunks...]
+SFSE2: [magic(5) "SFSE1"] [version(1) 0x02] [chunk_size(4 LE)] [total_plaintext_len(8 BE)] [chunks...]
+
+Each chunk (both versions): [nonce(12)] [ciphertext] [tag(16)]
+SFSE2 per-chunk AAD: [enc_file_id(16)] [chunk_index(8 BE)] [flags(1)]
+  flags bit 0 = is_last_chunk; bits 1-7 reserved-must-be-zero.
+```
+
+**Format Benefits:**
+- Streaming encryption/decryption — constant ~10MB buffer
+- HTTP Range requests only decrypt the chunks they touch
 - Each chunk independently authenticated
+- **SFSE2 additionally defeats** truncation (`is_last` AAD), reorder
+  (`chunk_index` AAD), cross-file splice (`enc_file_id` AAD), and length
+  forgery (header trailer + caller-supplied expected length)
+
+The per-file `enc_file_id` is a 16-byte random value generated on first
+encryption and persisted in `files.enc_file_id` (SQLite `BLOB`, PostgreSQL
+`BYTEA`). It is decoupled from the auto-increment `files.id` so it survives
+backup/restore and cross-instance file import unchanged. Legacy SFSE1 rows
+leave this column NULL.
+
+Full format rationale, threat model, and migration story: ADR-011 (in the
+local planning notes under `SafeShare-Planning/06-Architecture-Decisions/`).
 
 ---
 

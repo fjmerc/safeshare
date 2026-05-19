@@ -130,6 +130,9 @@ func deepCopyFile(src *models.File) *models.File {
 		t := *src.ScannedAt
 		dst.ScannedAt = &t
 	}
+	if len(src.EncFileID) > 0 {
+		dst.EncFileID = append([]byte(nil), src.EncFileID...)
+	}
 	return &dst
 }
 

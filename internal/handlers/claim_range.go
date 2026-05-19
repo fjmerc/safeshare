@@ -26,7 +26,7 @@ func serveFileWithRangeSupport(
 	cfg *config.Config,
 	repos *repository.Repositories,
 ) {
-	// Check if file is stream-encrypted (SFSE1 format)
+	// Check if file is stream-encrypted (SFSE1 or SFSE2 — same magic, distinguished by version byte).
 	isStreamEnc, err := utils.IsStreamEncrypted(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -93,7 +93,11 @@ func serveEntireFile(
 	ctx := r.Context()
 	var written int64
 
-	// Handle streaming encrypted files
+	// Handle streaming encrypted files (SFSE1 or SFSE2 via version-aware dispatcher).
+	// SH-2.1 / ADR-011 §6: for SFSE2, pass the DB-recorded SHA-256 and plaintext
+	// length so the post-decrypt integrity verify and header-length check actually
+	// run on the full-file download path (start=0 .. end=fileSize-1 satisfies the
+	// dispatcher's "fullRead" condition).
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
 		// Stream decrypt directly to response (no temp file)
 		// Use optimized range decryption for the full file (0 to fileSize-1)
@@ -101,7 +105,7 @@ func serveEntireFile(
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
 
 		var err error
-		written, err = utils.DecryptFileStreamingRange(filePath, w, cfg.EncryptionKey, 0, fileSize-1)
+		written, err = utils.DecryptFileStreamingRangeAny(filePath, w, cfg.EncryptionKey, file.EncFileID, file.SHA256Hash, fileSize, 0, fileSize-1)
 		if err != nil {
 			slog.Error("failed to stream decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 			// Can't send error response - headers already sent
@@ -243,10 +247,14 @@ func servePartialContent(
 	var written int64
 	var err error
 
-	// Handle streaming encrypted files (optimized for ranges)
+	// Handle streaming encrypted files (SFSE1 or SFSE2 via version-aware dispatcher).
+	// SH-2.1 / ADR-011: pass expectedPlaintextLen so a header-length forgery is
+	// caught even on partial-range reads. SHA-256 is only verified by the V2
+	// reader when the range is in fact full-file; partial reads cannot validate
+	// a whole-file digest so we pass "".
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
 		// Use optimized range decryption - only decrypt the chunks we need
-		written, err = utils.DecryptFileStreamingRange(filePath, w, cfg.EncryptionKey, httpRange.Start, httpRange.End)
+		written, err = utils.DecryptFileStreamingRangeAny(filePath, w, cfg.EncryptionKey, file.EncFileID, "", fileSize, httpRange.Start, httpRange.End)
 		if err != nil {
 			slog.Error("failed to decrypt file range", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 			// Can't send error response - headers already sent

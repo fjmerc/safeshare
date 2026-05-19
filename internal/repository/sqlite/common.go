@@ -112,3 +112,14 @@ func generateClaimCode() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
+
+// nullableBlob converts a Go byte slice to a value suitable for a nullable
+// SQLite BLOB column: nil/empty slice becomes SQL NULL, everything else is
+// passed through. The corresponding SELECT path should scan into a
+// *[]byte (or use sql.RawBytes) so NULL maps back to a nil slice.
+func nullableBlob(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}

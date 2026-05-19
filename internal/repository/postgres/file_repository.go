@@ -32,8 +32,8 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			client_encrypted, enc_file_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at
 	`
 
@@ -62,6 +62,7 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		file.UserID,
 		sha256Hash,
 		file.ClientEncrypted,
+		nullableBytea(file.EncFileID),
 	).Scan(&file.ID, &file.CreatedAt)
 
 	if err != nil {
@@ -106,8 +107,8 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			INSERT INTO files (
 				claim_code, original_filename, stored_filename, file_size,
 				mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-				client_encrypted
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				client_encrypted, enc_file_id
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			RETURNING id, created_at
 		`
 
@@ -136,6 +137,7 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			file.UserID,
 			sha256Hash,
 			file.ClientEncrypted,
+			nullableBytea(file.EncFileID),
 		).Scan(&file.ID, &file.CreatedAt)
 
 		if err != nil {
@@ -160,7 +162,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		WHERE id = $1
 	`
@@ -173,6 +175,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	var scanStatus sql.NullString
 	var scanResult sql.NullString
 	var scannedAt sql.NullTime
+	var encFileID []byte
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&file.ID,
@@ -194,6 +197,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&scanResult,
 		&scannedAt,
 		&file.ClientEncrypted,
+		&encFileID,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -222,6 +226,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	if scannedAt.Valid {
 		file.ScannedAt = &scannedAt.Time
 	}
+	file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 	return file, nil
 }
@@ -234,7 +239,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		WHERE claim_code = $1 AND expires_at > NOW()
 	`
@@ -247,6 +252,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	var scanStatus sql.NullString
 	var scanResult sql.NullString
 	var scannedAt sql.NullTime
+	var encFileID []byte
 
 	err := r.pool.QueryRow(ctx, query, claimCode).Scan(
 		&file.ID,
@@ -268,6 +274,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 		&scanResult,
 		&scannedAt,
 		&file.ClientEncrypted,
+		&encFileID,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -296,6 +303,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	if scannedAt.Valid {
 		file.ScannedAt = &scannedAt.Time
 	}
+	file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 	return file, nil
 }
@@ -774,7 +782,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads,
 			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		ORDER BY created_at DESC
 	`
@@ -795,6 +803,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		var scanStatus sql.NullString
 		var scanResult sql.NullString
 		var scannedAt sql.NullTime
+		var encFileID []byte
 
 		err := rows.Scan(
 			&file.ID,
@@ -815,6 +824,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			&scanResult,
 			&scannedAt,
 			&file.ClientEncrypted,
+			&encFileID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan file row: %w", err)
@@ -839,6 +849,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		if scannedAt.Valid {
 			file.ScannedAt = &scannedAt.Time
 		}
+		file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 		files = append(files, file)
 	}
