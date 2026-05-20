@@ -167,23 +167,21 @@ func run() error {
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
 
-	// Initialize storage backend
+	// Initialize storage backend. SH-2.2 deletes the local-FS
+	// storage.EncryptedStorage wrapper — production handlers call
+	// utils.EncryptFileStreamingV2 / utils.DecryptFileStreamingRangeAny
+	// directly against the underlying filesystem path, so the wrapper layer
+	// was dead code (only its HealthCheck passthrough was reached). Encryption
+	// at rest is unchanged: every upload still flows through SFSE2 in the
+	// upload handlers (see internal/handlers/upload.go and assembly_worker.go).
 	fsStorage, err := filesystem.NewFilesystemStorage(cfg.UploadDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize filesystem storage: %w", err)
 	}
-
-	// Wrap with encryption if encryption is enabled
-	var storageBackend storage.StorageBackend
+	var storageBackend storage.StorageBackend = fsStorage
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		encStorage, err := storage.NewEncryptedStorage(fsStorage, cfg.EncryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to initialize encrypted storage: %w", err)
-		}
-		storageBackend = encStorage
-		slog.Info("storage initialized with encryption")
+		slog.Info("storage initialized with encryption (SFSE2 emitted directly by upload handlers)")
 	} else {
-		storageBackend = fsStorage
 		slog.Info("storage initialized without encryption")
 	}
 
