@@ -129,25 +129,16 @@ jobs:
   # streaming decrypt against regression. Runs the `integration` build tag
   # tests in internal/storage/s3/. Independent of `test-postgres`; both run
   # in parallel.
+  #
+  # MinIO is launched via `docker run` rather than `services:` because the
+  # official minio/minio image needs `server /data` as its command, and
+  # GitHub Actions service containers don't expose a `command` field. This
+  # matches the local `scripts/test-minio.sh` flow (which also uses an
+  # explicit `mc mb` bucket-creation step after MinIO is healthy).
   test-minio:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    services:
-      minio:
-        image: bitnami/minio:2024
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin123
-          MINIO_DEFAULT_BUCKETS: safeshare-test
-          MINIO_SCHEME: http
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd="curl -f http://127.0.0.1:9000/minio/health/ready || exit 1"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
 
     steps:
       - name: Checkout code
@@ -161,6 +152,39 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name safeshare-minio-ci \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            minio/minio:RELEASE.2024-11-07T00-52-20Z \
+            server /data
+
+      - name: Wait for MinIO ready + create test bucket
+        env:
+          MC_HOST_local: http://minioadmin:minioadmin123@localhost:9000
+        run: |
+          # Poll the /minio/health/ready endpoint for up to 60s.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+              echo "MinIO ready after ${i} attempts"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "MinIO did not become ready in time"
+              docker logs safeshare-minio-ci
+              exit 1
+            fi
+            sleep 2
+          done
+          # Idempotent bucket creation via mc.
+          docker run --rm --network host \
+            -e MC_HOST_local="$MC_HOST_local" \
+            minio/mc:RELEASE.2024-11-05T11-29-45Z \
+            mb -p local/safeshare-test
 
       - name: Run MinIO integration tests
         env:
@@ -177,15 +201,26 @@ jobs:
             -cover -coverprofile=coverage-minio.out -covermode=atomic
 
       - name: Show MinIO test coverage
+        if: always()
         run: |
           go tool cover -func=coverage-minio.out | grep -E 'total:|internal/storage/s3' || true
 
       - name: Upload MinIO coverage artifact
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: minio-coverage
           path: coverage-minio.out
           retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Dump MinIO logs on failure
+        if: failure()
+        run: docker logs safeshare-minio-ci 2>&1 | tail -100
+
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f safeshare-minio-ci 2>/dev/null || true
 
   # Go vulnerability scanning with govulncheck
   security-scan:
