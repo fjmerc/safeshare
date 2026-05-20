@@ -397,6 +397,55 @@ leave this column NULL.
 Full format rationale, threat model, and migration story: ADR-011 (in the
 local planning notes under `SafeShare-Planning/06-Architecture-Decisions/`).
 
+### S3-Backed At-Rest Encryption (SH-2.2)
+
+The S3 storage backend (`internal/storage/s3/encrypted_storage.go`) wraps the
+plain S3 backend with transparent SFSE2 encryption. All four hot methods
+(`Retrieve`, `StreamRange`, `Store`, `AssembleChunks`) stream end-to-end — no
+full plaintext or ciphertext is ever buffered in heap. This is enforced by an
+`integration`-tagged MinIO test (`encrypted_storage_integration_test.go`) that
+asserts `HeapInuse` delta < 256 MB on a 1 GB end-to-end round-trip.
+
+**Streaming pipelines:**
+
+- **Store**: source reader → `TeeReader(SHA-256)` → `io.Pipe(encrypt-goroutine)`
+  → `manager.Uploader.Upload` (multipart). SFSE2 `enc_file_id` and plaintext
+  length stashed in S3 object `UserMetadata` so the wrapper can recover them
+  on read without DB plumbing.
+- **Retrieve**: single `GetObject` → `io.Pipe(decrypt-goroutine)` → caller's
+  `io.ReadCloser`. In-band SFSE version byte dispatches V1 or V2.
+  `ContentLength` cross-checked against the SFSE2 header trailer for
+  fast-fail.
+- **StreamRange**: two `GetObject` calls per request — first 18 bytes for the
+  header, then the covering ciphertext range computed by
+  `utils.ComputeSFSE2CiphertextRange(plaintextStart, plaintextEnd, chunkSize,
+  totalPlaintextLen)`. Chunks decrypt directly to the response writer.
+- **AssembleChunks**: `orderedChunkReader` (sequential per-chunk
+  `GetObject`s, one chunk's worth of body in flight at a time) →
+  `TeeReader(SHA-256)` → `io.Pipe(encrypt-goroutine)` →
+  `manager.Uploader.Upload`. Total plaintext length is precomputed by a
+  single `ListObjectsV2` over the chunk prefix (which also validates that
+  every expected `chunk_N` key is present and no foreign objects exist).
+
+**Reader-agnostic decrypt core**: the SFSE2 chunk decrypt loop lives in
+`internal/utils/encryption.go` as `decryptSFSE2Core(r io.Reader, w io.Writer,
+gcm cipher.AEAD, p sfse2RangeParams)`. The file-based path
+(`DecryptFileStreamingV2`) and the reader-based path
+(`DecryptSFSE2FromReader` / `DecryptSFSE2RangeFromReader` in
+`internal/utils/encryption_stream_reader.go`, plus
+`DecryptSFSE1RangeFromReader` for legacy V1) both delegate to it. Single
+source of truth for every per-chunk AAD check, length trailer check, and
+full-read SHA-256 verification.
+
+**Known limitation**: S3 object `UserMetadata` is not cryptographically
+protected. A write-access attacker who substitutes both the object body and
+the metadata together (with another SFSE2 file encrypted under the same key)
+can replace files without the wrapper detecting it — the substituted file is
+self-consistent. The filesystem download path doesn't have this gap because
+production handlers source `expectedSHA256Hex` and `expectedPlaintextLen`
+from `files.checksum_sha256` / `files.file_size` in the DB. A future
+follow-up will plumb DB-sourced expected values through the S3 wrapper.
+
 ---
 
 ## User Authentication Architecture

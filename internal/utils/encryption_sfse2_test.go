@@ -108,8 +108,8 @@ func TestSFSE2_RoundTrip_ZeroByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Size() != sfse2HeaderSize {
-		t.Fatalf("zero-byte SFSE2 file size = %d, want %d (header only)", info.Size(), sfse2HeaderSize)
+	if info.Size() != SFSE2HeaderSize {
+		t.Fatalf("zero-byte SFSE2 file size = %d, want %d (header only)", info.Size(), SFSE2HeaderSize)
 	}
 
 	got := decryptV2ToBuffer(t, encPath, encFileID, sha256Hex(nil))
@@ -171,7 +171,7 @@ func TestSFSE2_Tamper_ReorderChunks(t *testing.T) {
 	}
 
 	encChunkSize := DefaultChunkSize + 12 + 16
-	chunk0Start := sfse2HeaderSize
+	chunk0Start := SFSE2HeaderSize
 	chunk1Start := chunk0Start + encChunkSize
 
 	// Swap chunks 0 and 1 in-place. Both are the same length so this is just a byte-block swap.
@@ -213,7 +213,7 @@ func TestSFSE2_Tamper_CrossFileSplice(t *testing.T) {
 
 	// Replace A's lone chunk with B's lone chunk; both files keep their
 	// own headers (so total_plaintext_len matches A's plaintext length).
-	copy(rawA[sfse2HeaderSize:], rawB[sfse2HeaderSize:])
+	copy(rawA[SFSE2HeaderSize:], rawB[SFSE2HeaderSize:])
 	if err := os.WriteFile(encPathA, rawA, 0600); err != nil {
 		t.Fatalf("write spliced: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestSFSE2_Tamper_FlipCiphertextBit(t *testing.T) {
 
 	raw, _ := os.ReadFile(encPath)
 	// Flip a byte inside the first chunk's ciphertext (past nonce).
-	raw[sfse2HeaderSize+20] ^= 0xFF
+	raw[SFSE2HeaderSize+20] ^= 0xFF
 	if err := os.WriteFile(encPath, raw, 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestSFSE2_Tamper_ZeroByteCollapse(t *testing.T) {
 
 	// Attacker truncates to header-only (18 bytes) and rewrites the
 	// total_plaintext_len trailer to 0.
-	if err := os.Truncate(encPath, sfse2HeaderSize); err != nil {
+	if err := os.Truncate(encPath, SFSE2HeaderSize); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	raw, err := os.ReadFile(encPath)
@@ -421,7 +421,7 @@ func TestSFSE2_Range_DetectsSpliceInTouchedChunk(t *testing.T) {
 	encChunkSize := DefaultChunkSize + 12 + 16
 
 	// Splice B's chunk 0 into A.
-	copy(rawA[sfse2HeaderSize:sfse2HeaderSize+encChunkSize], rawB[sfse2HeaderSize:sfse2HeaderSize+encChunkSize])
+	copy(rawA[SFSE2HeaderSize:SFSE2HeaderSize+encChunkSize], rawB[SFSE2HeaderSize:SFSE2HeaderSize+encChunkSize])
 	if err := os.WriteFile(encPathA, rawA, 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}

@@ -125,6 +125,68 @@ jobs:
           path: coverage-postgres.out
           retention-days: 7
 
+  # MinIO (S3-compatible) integration tests — guards SH-2.2's bounded-heap
+  # streaming decrypt against regression. Runs the `integration` build tag
+  # tests in internal/storage/s3/. Independent of `test-postgres`; both run
+  # in parallel.
+  test-minio:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      minio:
+        image: bitnami/minio:2024
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          MINIO_DEFAULT_BUCKETS: safeshare-test
+          MINIO_SCHEME: http
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd="curl -f http://127.0.0.1:9000/minio/health/ready || exit 1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v5
+        with:
+          go-version: '1.25.10'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run MinIO integration tests
+        env:
+          MINIO_HOST: localhost
+          MINIO_PORT: 9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin123
+          MINIO_BUCKET: safeshare-test
+          # CI defaults to 1 GB to keep runner-minutes bounded. Bump via
+          # workflow_dispatch input or manual override when validating perf.
+          SH22_LARGE_FILE_SIZE_GB: '1'
+        run: |
+          go test -tags=integration -v -timeout=15m ./internal/storage/s3/... \
+            -cover -coverprofile=coverage-minio.out -covermode=atomic
+
+      - name: Show MinIO test coverage
+        run: |
+          go tool cover -func=coverage-minio.out | grep -E 'total:|internal/storage/s3' || true
+
+      - name: Upload MinIO coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: minio-coverage
+          path: coverage-minio.out
+          retention-days: 7
+
   # Go vulnerability scanning with govulncheck
   security-scan:
     runs-on: ubuntu-latest
@@ -163,7 +225,7 @@ jobs:
         run: govulncheck ./...
 
   build-and-push:
-    needs: [test, test-postgres, security-scan]
+    needs: [test, test-postgres, test-minio, security-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
