@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-05-21
+
 ### Added
 
 - New "Also hide filename from server" sub-toggle under End-to-End Encryption. When unchecked (the new default), the file is still encrypted in the browser, but the original filename stays visible to the server — so a recipient who only has the claim code at least sees what file they're trying to retrieve. When checked, behaviour matches the prior release: the filename is wrapped inside the encrypted payload and the server stores `encrypted.bin`.
