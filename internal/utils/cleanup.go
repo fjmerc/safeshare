@@ -315,6 +315,23 @@ func CleanupOrphanedFiles(repos *repository.Repositories, uploadDir string, grac
 	var bytesReclaimed int64
 	graceThreshold := time.Now().Add(-time.Duration(graceHours) * time.Hour)
 
+	// SH-3.3: take a single second snapshot of DB-tracked filenames *before*
+	// entering the deletion loop, then reuse it for all per-orphan TOCTOU
+	// re-checks. The previous implementation called GetAllStoredFilenames
+	// inside the loop — O(orphans) full-table scans, each holding a SQLite
+	// read lock that contends with the hot upload/download path. The grace
+	// period (`info.ModTime().After(graceThreshold)` below) remains the
+	// primary defence against deleting an in-progress upload; this snapshot
+	// is the secondary defence against the narrower window where a file was
+	// already on disk at the initial scan and gets committed to DB during
+	// cleanup. Since `graceHours` is typically hours and the cleanup loop
+	// runs in seconds-to-minutes, the TOCTOU window the snapshot leaves open
+	// is comfortably inside what the grace period would have caught anyway.
+	dbFilenamesAfterScan, err := repos.Files.GetAllStoredFilenames(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to re-fetch DB filenames before orphan deletion: %w", err)
+	}
+
 	for _, orphan := range orphans {
 		// Security: Validate filename to prevent path traversal (defense-in-depth)
 		// Although files come from os.ReadDir which returns safe basenames,
@@ -354,18 +371,9 @@ func CleanupOrphanedFiles(repos *repository.Repositories, uploadDir string, grac
 			continue
 		}
 
-		// Security: Re-verify file is not in database just before deletion
-		// This mitigates TOCTOU race conditions where a file might have been
-		// uploaded and committed to DB between our initial query and now
-		currentDbFilenames, err := repos.Files.GetAllStoredFilenames(ctx)
-		if err != nil {
-			slog.Warn("failed to re-verify database before deletion, skipping",
-				"filename", orphan,
-				"error", err,
-			)
-			continue
-		}
-		if currentDbFilenames[orphan] {
+		// SH-3.3: re-verify against the snapshot taken just before this loop
+		// rather than re-querying per orphan. See dbFilenamesAfterScan above.
+		if dbFilenamesAfterScan[orphan] {
 			slog.Debug("file appeared in database during cleanup, skipping",
 				"filename", orphan,
 			)
