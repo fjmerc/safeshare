@@ -3,11 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/database"
@@ -90,34 +89,15 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Validate URL format and scheme
-		parsedURL, err := url.Parse(req.URL)
-		if err != nil {
+		// Validate URL: scheme (http/https), hostname presence, and (defence in
+		// depth against SSRF) reject private / loopback / metadata IPs at
+		// config time. The dialer enforces the same check at connect time so a
+		// DNS-rebinding flip cannot bypass this guard.
+		if err := webhooks.ValidateWebhookURL(req.URL); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Invalid URL format",
-			})
-			return
-		}
-
-		// Only allow HTTP and HTTPS schemes to prevent SSRF
-		scheme := strings.ToLower(parsedURL.Scheme)
-		if scheme != "http" && scheme != "https" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Only HTTP and HTTPS URLs are allowed",
-			})
-			return
-		}
-
-		// Validate hostname is present
-		if parsedURL.Host == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "URL must include a hostname",
+				"error": "Webhook URL is not allowed: " + err.Error(),
 			})
 			return
 		}
@@ -193,6 +173,9 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// SH-3.2: tell the dispatcher its cached config view is stale.
+		InvalidateWebhookConfigCache()
+
 		slog.Info("webhook config created", "id", config.ID, "url", config.URL)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -263,34 +246,15 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Validate URL format and scheme
-		parsedURL, err := url.Parse(req.URL)
-		if err != nil {
+		// Validate URL: scheme (http/https), hostname presence, and (defence in
+		// depth against SSRF) reject private / loopback / metadata IPs at
+		// config time. The dialer enforces the same check at connect time so a
+		// DNS-rebinding flip cannot bypass this guard.
+		if err := webhooks.ValidateWebhookURL(req.URL); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Invalid URL format",
-			})
-			return
-		}
-
-		// Only allow HTTP and HTTPS schemes to prevent SSRF
-		scheme := strings.ToLower(parsedURL.Scheme)
-		if scheme != "http" && scheme != "https" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "Only HTTP and HTTPS URLs are allowed",
-			})
-			return
-		}
-
-		// Validate hostname is present
-		if parsedURL.Host == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "URL must include a hostname",
+				"error": "Webhook URL is not allowed: " + err.Error(),
 			})
 			return
 		}
@@ -365,6 +329,10 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// SH-3.2: covers the enable/disable toggle path too — the Enabled flag
+		// is mutated through this handler, so the cached snapshot must drop.
+		InvalidateWebhookConfigCache()
+
 		slog.Info("webhook config updated", "id", config.ID, "url", config.URL)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -410,6 +378,9 @@ func DeleteWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
+
+		// SH-3.2: tell the dispatcher its cached config view is stale.
+		InvalidateWebhookConfigCache()
 
 		slog.Info("webhook config deleted", "id", id)
 
@@ -574,6 +545,62 @@ func ClearWebhookDeliveriesHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"message":       "Webhook delivery history cleared successfully",
 			"deleted_count": count,
+		})
+	}
+}
+
+// DeleteWebhookDeliveryHandler deletes a single webhook delivery record by ID.
+func DeleteWebhookDeliveryHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		idStr := r.URL.Query().Get("id")
+		if idStr == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Delivery ID is required",
+			})
+			return
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Invalid delivery ID",
+			})
+			return
+		}
+
+		if err := database.DeleteWebhookDelivery(db, id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "Webhook delivery not found",
+				})
+				return
+			}
+			slog.Error("failed to delete webhook delivery", "id", id, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Failed to delete webhook delivery",
+			})
+			return
+		}
+
+		slog.Info("webhook delivery deleted", "id", id)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Webhook delivery deleted successfully",
+			"id":      id,
 		})
 	}
 }

@@ -4,12 +4,16 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -17,26 +21,10 @@ import (
 // keyHex must be a 64-character hexadecimal string (32 bytes)
 // Returns: [nonce(12 bytes)][ciphertext][tag(16 bytes)]
 func EncryptFile(plaintext []byte, keyHex string) ([]byte, error) {
-	// Decode hex key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return nil, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode (Galois/Counter Mode provides authentication)
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Generate random nonce (12 bytes for GCM)
@@ -55,26 +43,10 @@ func EncryptFile(plaintext []byte, keyHex string) ([]byte, error) {
 // DecryptFile decrypts data encrypted by EncryptFile
 // keyHex must be the same 64-character hexadecimal string used for encryption
 func DecryptFile(ciphertext []byte, keyHex string) ([]byte, error) {
-	// Decode hex key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return nil, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Check minimum length (nonce + tag)
@@ -109,15 +81,53 @@ func IsEncryptionEnabled(keyHex string) bool {
 }
 
 const (
-	// StreamEncryptionMagic is the file header for streaming encrypted files
+	// StreamEncryptionMagic is the file header for streaming encrypted files.
+	// Shared across SFSE1 and SFSE2; the version byte at offset 5 is the format
+	// discriminator. Kept as "SFSE1" intentionally so IsStreamEncrypted detects
+	// every member of the family.
 	StreamEncryptionMagic = "SFSE1"
-	// StreamEncryptionVersion is the version byte
+	// StreamEncryptionVersion is the legacy version byte (SFSE1).
 	StreamEncryptionVersion = 0x01
-	// DefaultChunkSize is the default chunk size for streaming encryption (10MB)
+	// StreamEncryptionVersionV2 is the version byte for SFSE2 (ADR-011): per-chunk
+	// AAD authenticates chunk identity (file id, chunk index, is-last flag) and
+	// the header carries a total_plaintext_length trailer for length verification.
+	StreamEncryptionVersionV2 byte = 0x02
+	// DefaultChunkSize is the default chunk size for streaming encryption (10MB).
 	// Reduced from 64MB to improve time-to-first-byte for HTTP Range requests
-	// and prevent client timeouts during decryption
+	// and prevent client timeouts during decryption.
 	DefaultChunkSize = 10 * 1024 * 1024
+
+	// SFSE1HeaderSize is the on-wire size of an SFSE1 header:
+	// magic(5) + version(1) + chunk_size(4) = 10 bytes.
+	SFSE1HeaderSize = 10
+	// SFSE2HeaderSize is the on-wire size of an SFSE2 header:
+	// magic(5) + version(1) + chunk_size(4) + total_plaintext_len(8) = 18 bytes.
+	SFSE2HeaderSize = 18
+	// SFSE2NonceSize is the AES-GCM nonce size (12 bytes) prepended to every chunk.
+	SFSE2NonceSize = 12
+	// SFSE2TagSize is the AES-GCM authentication tag size (16 bytes) appended to every chunk.
+	SFSE2TagSize = 16
+	// SFSE2OverheadPerChunk is the per-chunk ciphertext overhead: nonce + tag.
+	// Useful for computing ciphertext byte offsets from chunk indices.
+	SFSE2OverheadPerChunk = SFSE2NonceSize + SFSE2TagSize
+	// SFSE2EncFileIDSize is the byte length of the AAD file identifier.
+	SFSE2EncFileIDSize = 16
+	// sfse2AADSize = enc_file_id(16) + chunk_index(8) + flags(1).
+	sfse2AADSize = SFSE2EncFileIDSize + 8 + 1
+	// sfse2FlagIsLast is bit 0 of the AAD flags byte.
+	sfse2FlagIsLast byte = 0x01
 )
+
+// ErrUnsupportedSFSEVersion is returned when the version byte in an SFSE
+// header is not a recognized value.
+var ErrUnsupportedSFSEVersion = errors.New("unsupported SFSE version")
+
+// ErrSFSE2IntegrityCheckFailed indicates an SFSE2 read produced output that
+// fails a structural integrity check (plaintext length mismatch, missing
+// is_last flag, SHA-256 mismatch against the DB-recorded checksum). Distinct
+// from gcm.Open failures, which surface as wrapping errors with the per-chunk
+// context.
+var ErrSFSE2IntegrityCheckFailed = errors.New("SFSE2 integrity check failed")
 
 // EncryptFileStreaming encrypts a file using chunked AES-256-GCM without loading entire file into memory.
 // This prevents OOM issues for large files (>1GB).
@@ -129,25 +139,10 @@ const (
 // dstPath: path to write encrypted file
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Open source file
@@ -228,25 +223,10 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 // src: source reader (typically HTTP request body)
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Write header: magic + version + chunk_size
@@ -310,25 +290,10 @@ func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string)
 // dstPath: path to write decrypted file
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func DecryptFileStreaming(srcPath, dstPath, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Open source file
@@ -368,46 +333,50 @@ func DecryptFileStreaming(srcPath, dstPath, keyHex string) error {
 	}
 	defer dstFile.Close()
 
-	// Process chunks
 	// Each encrypted chunk has: nonce(12) + ciphertext + tag(16)
 	// So encrypted chunk size is: chunkSize + 12 + 16
 	encryptedChunkSize := int(chunkSize) + gcm.NonceSize() + gcm.Overhead()
-	buffer := make([]byte, encryptedChunkSize)
 
+	return decryptChunkStream(srcFile, dstFile, gcm, encryptedChunkSize)
+}
+
+// decryptChunkStream reads SFSE1 chunks from r using io.ReadFull (so a backing
+// reader that returns short reads — NFS/FUSE/CIFS/wrapped — does not feed
+// partial chunks into gcm.Open, which would surface as a spurious "failed to
+// decrypt chunk" error on uncorrupted data). Treats io.ErrUnexpectedEOF as the
+// legitimate short final chunk; io.EOF as clean termination.
+//
+// Do NOT regress this to bare r.Read — see SH-1.2 in the Security Hardening
+// plan. The parallel range-aware loop in DecryptFileStreamingRange and the
+// loops in storage/encrypted_storage.go follow the same invariants; keep them
+// in sync.
+func decryptChunkStream(r io.Reader, w io.Writer, gcm cipher.AEAD, encryptedChunkSize int) error {
+	buffer := make([]byte, encryptedChunkSize)
 	for {
-		// Read encrypted chunk (may be partial on last chunk)
-		n, err := srcFile.Read(buffer)
-		if err != nil && err != io.EOF {
+		n, err := io.ReadFull(r, buffer)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}
-		if n == 0 {
-			break
-		}
-
-		// Extract nonce
+		// err is either nil (full chunk) or io.ErrUnexpectedEOF (final short chunk).
 		if n < gcm.NonceSize() {
 			return fmt.Errorf("chunk too small: %d bytes", n)
 		}
 		nonce := buffer[:gcm.NonceSize()]
 		ciphertext := buffer[gcm.NonceSize():n]
-
-		// Decrypt chunk
-		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-		if err != nil {
-			return fmt.Errorf("failed to decrypt chunk: %w", err)
+		plaintext, decErr := gcm.Open(nil, nonce, ciphertext, nil)
+		if decErr != nil {
+			return fmt.Errorf("failed to decrypt chunk: %w", decErr)
 		}
-
-		// Write decrypted chunk
-		if _, err := dstFile.Write(plaintext); err != nil {
-			return fmt.Errorf("failed to write decrypted chunk: %w", err)
+		if _, writeErr := w.Write(plaintext); writeErr != nil {
+			return fmt.Errorf("failed to write decrypted chunk: %w", writeErr)
 		}
-
-		if err == io.EOF {
-			break
+		if err == io.ErrUnexpectedEOF {
+			return nil
 		}
 	}
-
-	return nil
 }
 
 // IsStreamEncrypted checks if a file is encrypted with streaming encryption format.
@@ -450,25 +419,10 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
 	}
 
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return 0, fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return 0, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create GCM: %w", err)
+		return 0, err
 	}
 
 	// Open source file
@@ -532,14 +486,26 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 	var totalReadTime, totalDecryptTime, totalWriteTime time.Duration
 	currentChunk := startChunk // Start from the first chunk we need, not 0
 
+	// Range-aware decrypt loop: structurally mirrors decryptChunkStream but
+	// keeps inline because of seek-pinning, partial-chunk windowing
+	// (chunkStart/chunkEnd), and telemetry counters. Keep the io.ReadFull
+	// invariant in sync with the helper — see SH-1.2.
 	for currentChunk <= endChunk {
-		// Read encrypted chunk (may be partial on last chunk)
+		// Read encrypted chunk via io.ReadFull so a short read from the
+		// backing storage (NFS/FUSE/CIFS — or any wrapped reader in future
+		// non-os.File backends) does not feed a partial chunk into gcm.Open
+		// and surface as a spurious "failed to decrypt chunk" on intact
+		// data. ErrUnexpectedEOF is the legitimate short final chunk; EOF
+		// is clean termination.
 		readStart := time.Now()
-		n, err := srcFile.Read(buffer)
+		n, err := io.ReadFull(srcFile, buffer)
 		readDuration := time.Since(readStart)
 		totalReadTime += readDuration
 
-		if err != nil && err != io.EOF {
+		if err == io.EOF {
+			break
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return totalWritten, fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}
 		if n == 0 {
@@ -633,4 +599,659 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 		"throughput_mbps", float64(totalWritten)/(1024*1024)/totalDuration.Seconds())
 
 	return totalWritten, nil
+}
+
+// ============================================================================
+// SFSE2 (ADR-011): Per-chunk AAD-authenticated streaming AES-256-GCM
+// ============================================================================
+//
+// SFSE2 wire format:
+//
+//   [magic(5)="SFSE1"][version(1)=0x02][chunk_size(4 LE)][total_plaintext_len(8 BE)]
+//   then [chunk_0] ... [chunk_N] where each chunk = [nonce(12)][ciphertext][tag(16)]
+//
+// Header total = 18 bytes (V1 had 10). Encrypted chunk shape unchanged from
+// V1 so Range seek math is the same.
+//
+// Per-chunk AAD = [enc_file_id(16)][chunk_index(8 BE)][flags(1)]
+//   flags bit 0 = is_last_chunk; bits 1-7 reserved-must-be-zero.
+//
+// Threats defeated (vs SFSE1's nil-AAD calls):
+//   - truncation: removing trailing chunks means the reader never observes
+//     is_last==1 at the expected index; integrity check fails.
+//   - reorder: chunk_index in AAD must match storage position; tag fails on
+//     a swap.
+//   - cross-file splice: enc_file_id binds chunks to a specific file; chunk
+//     N of file B cannot be fed when decrypting file A.
+//   - length forgery: total_plaintext_len in the header is sanity-checked
+//     before decrypt and re-verified after.
+//
+// See SafeShare-Planning/06-Architecture-Decisions/ADR-011 for the full
+// design rationale.
+
+// GenerateEncFileID returns a fresh 16-byte random identifier suitable for
+// binding into SFSE2 chunk AAD. Stored in files.enc_file_id (BLOB / BYTEA).
+func GenerateEncFileID() ([]byte, error) {
+	id := make([]byte, SFSE2EncFileIDSize)
+	if _, err := io.ReadFull(rand.Reader, id); err != nil {
+		return nil, fmt.Errorf("failed to generate enc_file_id: %w", err)
+	}
+	return id, nil
+}
+
+// buildSFSE2AAD constructs the Additional Authenticated Data for an SFSE2
+// chunk. encFileID must be exactly SFSE2EncFileIDSize bytes.
+func buildSFSE2AAD(encFileID []byte, chunkIndex uint64, isLast bool) ([]byte, error) {
+	if len(encFileID) != SFSE2EncFileIDSize {
+		return nil, fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
+	}
+	aad := make([]byte, sfse2AADSize)
+	copy(aad[0:SFSE2EncFileIDSize], encFileID)
+	binary.BigEndian.PutUint64(aad[SFSE2EncFileIDSize:SFSE2EncFileIDSize+8], chunkIndex)
+	if isLast {
+		aad[SFSE2EncFileIDSize+8] = sfse2FlagIsLast
+	}
+	return aad, nil
+}
+
+// chunkCountFromPlaintextLen returns the number of SFSE2 chunks needed to
+// cover `plaintextLen` bytes at `chunkSize`. Zero-byte files produce 0
+// chunks; otherwise ceil(plaintextLen / chunkSize).
+func chunkCountFromPlaintextLen(plaintextLen, chunkSize int64) int64 {
+	if plaintextLen <= 0 {
+		return 0
+	}
+	return (plaintextLen + chunkSize - 1) / chunkSize
+}
+
+// EncryptFileStreamingV2FromReader writes an SFSE2-formatted encrypted stream
+// to dst, reading plaintext from src. plaintextLen must be the exact byte
+// count of plaintext that will be read; the value is written into the SFSE2
+// header and used to set the is_last AAD flag on the final chunk.
+//
+// encFileID must be exactly SFSE2EncFileIDSize bytes. Persist it in the DB
+// alongside the file row — it is required to decrypt later.
+func EncryptFileStreamingV2FromReader(dst io.Writer, src io.Reader, keyHex string, encFileID []byte, plaintextLen int64) error {
+	if plaintextLen < 0 {
+		return fmt.Errorf("plaintextLen must be non-negative, got %d", plaintextLen)
+	}
+	if len(encFileID) != SFSE2EncFileIDSize {
+		return fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
+	}
+
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
+	if err != nil {
+		return err
+	}
+
+	// Write SFSE2 header: magic(5) + version(1) + chunk_size(4 LE) + total_plaintext_len(8 BE).
+	if _, err := dst.Write([]byte(StreamEncryptionMagic)); err != nil {
+		return fmt.Errorf("failed to write magic: %w", err)
+	}
+	if _, err := dst.Write([]byte{StreamEncryptionVersionV2}); err != nil {
+		return fmt.Errorf("failed to write version: %w", err)
+	}
+	var chunkSizeBytes [4]byte
+	binary.LittleEndian.PutUint32(chunkSizeBytes[:], DefaultChunkSize)
+	if _, err := dst.Write(chunkSizeBytes[:]); err != nil {
+		return fmt.Errorf("failed to write chunk size: %w", err)
+	}
+	var plaintextLenBytes [8]byte
+	binary.BigEndian.PutUint64(plaintextLenBytes[:], uint64(plaintextLen))
+	if _, err := dst.Write(plaintextLenBytes[:]); err != nil {
+		return fmt.Errorf("failed to write total_plaintext_len: %w", err)
+	}
+
+	totalChunks := chunkCountFromPlaintextLen(plaintextLen, int64(DefaultChunkSize))
+	if totalChunks == 0 {
+		// Zero-byte file: header only, no chunks. Reader treats this as
+		// valid empty plaintext; no AAD to compute.
+		return nil
+	}
+
+	buffer := make([]byte, DefaultChunkSize)
+	var totalRead int64
+	for chunkIndex := int64(0); chunkIndex < totalChunks; chunkIndex++ {
+		// io.ReadFull returns ErrUnexpectedEOF for a legitimate short final
+		// chunk and never returns io.EOF when n > 0; any other error is fatal.
+		n, readErr := io.ReadFull(src, buffer)
+		if readErr != nil && readErr != io.ErrUnexpectedEOF {
+			return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, readErr)
+		}
+		if n == 0 {
+			return fmt.Errorf("plaintext shorter than declared length: read %d bytes, expected %d", totalRead, plaintextLen)
+		}
+		totalRead += int64(n)
+
+		isLast := chunkIndex == totalChunks-1
+		aad, err := buildSFSE2AAD(encFileID, uint64(chunkIndex), isLast)
+		if err != nil {
+			return err
+		}
+
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			return fmt.Errorf("failed to generate nonce for chunk %d: %w", chunkIndex, err)
+		}
+
+		encrypted := gcm.Seal(nonce, nonce, buffer[:n], aad)
+		if _, err := dst.Write(encrypted); err != nil {
+			return fmt.Errorf("failed to write encrypted chunk %d: %w", chunkIndex, err)
+		}
+
+		if isLast {
+			break
+		}
+	}
+
+	if totalRead != plaintextLen {
+		return fmt.Errorf("plaintext length mismatch: read %d bytes, header declared %d", totalRead, plaintextLen)
+	}
+	return nil
+}
+
+// EncryptFileStreamingV2 is a path-based wrapper around
+// EncryptFileStreamingV2FromReader. It stats srcPath to obtain the plaintext
+// length needed for the SFSE2 header.
+func EncryptFileStreamingV2(srcPath, dstPath, keyHex string, encFileID []byte) error {
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat source: %w", err)
+	}
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	var succeeded bool
+	defer func() {
+		dstFile.Close()
+		if !succeeded {
+			os.Remove(dstPath)
+		}
+	}()
+
+	if err := EncryptFileStreamingV2FromReader(dstFile, srcFile, keyHex, encFileID, info.Size()); err != nil {
+		return err
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("failed to close destination file: %w", err)
+	}
+	succeeded = true
+	return nil
+}
+
+// PeekSFSEVersion reads and returns the version byte from an SFSE-magic file
+// at srcPath. Returns ErrUnsupportedSFSEVersion if the magic does not match.
+// Used by callers that need to dispatch V1 vs V2 reader paths without
+// re-implementing the header parser.
+func PeekSFSEVersion(srcPath string) (byte, error) {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open source: %w", err)
+	}
+	defer f.Close()
+	var hdr [6]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+		return 0, fmt.Errorf("failed to read SFSE header: %w", err)
+	}
+	if string(hdr[:5]) != StreamEncryptionMagic {
+		return 0, fmt.Errorf("invalid SFSE magic")
+	}
+	return hdr[5], nil
+}
+
+// readSFSE2Header parses the SFSE2 header from r (assumed positioned at the
+// magic byte). Returns chunkSize and totalPlaintextLen on success.
+func readSFSE2Header(r io.Reader) (chunkSize int64, totalPlaintextLen int64, err error) {
+	var hdr [SFSE2HeaderSize]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return 0, 0, fmt.Errorf("failed to read SFSE2 header: %w", err)
+	}
+	if string(hdr[0:5]) != StreamEncryptionMagic {
+		return 0, 0, fmt.Errorf("invalid SFSE magic")
+	}
+	if hdr[5] != StreamEncryptionVersionV2 {
+		return 0, 0, fmt.Errorf("%w: expected v%d, got v%d", ErrUnsupportedSFSEVersion, StreamEncryptionVersionV2, hdr[5])
+	}
+	chunkSize = int64(binary.LittleEndian.Uint32(hdr[6:10]))
+	if chunkSize <= 0 {
+		return 0, 0, fmt.Errorf("invalid chunk_size %d", chunkSize)
+	}
+	totalPlaintextLen = int64(binary.BigEndian.Uint64(hdr[10:18]))
+	if totalPlaintextLen < 0 {
+		return 0, 0, fmt.Errorf("invalid total_plaintext_len %d", totalPlaintextLen)
+	}
+	return chunkSize, totalPlaintextLen, nil
+}
+
+// DecryptFileStreamingV2 decrypts an SFSE2 file at srcPath to dstPath.
+// encFileID must be the 16-byte value bound at encrypt time (typically
+// loaded from files.enc_file_id in the DB).
+//
+// When expectedSHA256Hex is non-empty, the running SHA-256 of decrypted
+// plaintext is verified against it after the final chunk; mismatch returns
+// ErrSFSE2IntegrityCheckFailed. Pass "" to skip (e.g. legacy files predating
+// SHA-256 tracking).
+//
+// When expectedPlaintextLen >= 0, the SFSE2 header's total_plaintext_len is
+// verified to match it before any decryption begins. This kills the
+// zero-byte-collapse attack where a storage-write attacker truncates a file
+// to header-only + rewrites total_plaintext_len=0 to make a non-empty file
+// appear legitimately empty. Pass -1 to skip (e.g. when the caller does not
+// know the expected length).
+func DecryptFileStreamingV2(srcPath, dstPath, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen int64) error {
+	if len(encFileID) != SFSE2EncFileIDSize {
+		return fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
+	}
+
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	var succeeded bool
+	defer func() {
+		dstFile.Close()
+		if !succeeded {
+			os.Remove(dstPath)
+		}
+	}()
+
+	// decryptSFSE2Stream already verifies the bytes-written count against
+	// the header trailer; the explicit return value is informational here.
+	if _, err := decryptSFSE2Stream(srcFile, dstFile, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen, 0, -1); err != nil {
+		return err
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("failed to close destination file: %w", err)
+	}
+	succeeded = true
+	return nil
+}
+
+// DecryptFileStreamingRangeV2 decrypts a specific plaintext byte range from
+// an SFSE2 file. start..end are inclusive plaintext-byte offsets. end == -1
+// means "to end of file".
+//
+// expectedSHA256Hex is verified only when the call covers the entire file
+// (start=0 and end==total_plaintext_len-1); partial-range reads cannot
+// reasonably verify a whole-file hash and pass through with the SHA check
+// disabled. expectedPlaintextLen >= 0 always validates the header's
+// total_plaintext_len even on partial reads (defends against header
+// forgery / zero-byte collapse).
+//
+// Per ADR-011 §6: Range reads authenticate every touched chunk via AAD but
+// cannot detect trailing-chunk truncation if the requested range does not
+// reach the final chunk. SHA-256 verification is skipped for partial reads.
+func DecryptFileStreamingRangeV2(srcPath string, w io.Writer, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen, startByte, endByte int64) (int64, error) {
+	if len(encFileID) != SFSE2EncFileIDSize {
+		return 0, fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
+	}
+	if startByte < 0 || (endByte >= 0 && endByte < startByte) {
+		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
+	}
+
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	return decryptSFSE2Stream(srcFile, w, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen, startByte, endByte)
+}
+
+// decryptSFSE2Stream is the file-based SFSE2 decrypt wrapper. It parses the
+// header, performs the file-size sanity check via srcFile.Stat(), seeks to
+// the first needed chunk, and then delegates the chunk decrypt loop to
+// decryptSFSE2Core, which operates on any io.Reader.
+//
+// Supports both full-file reads (start=0, end=-1, expectedSHA256Hex optional)
+// and Range reads (positive start/end, SHA-256 skipped on partial reads).
+//
+// expectedPlaintextLen >= 0 means the caller knows the plaintext length
+// (typically from files.file_size in the DB); the header's total_plaintext_len
+// is checked against it before any decryption begins, defeating the
+// zero-byte-collapse attack and any other plaintext-length header forgery.
+// Pass -1 to skip.
+//
+// Returns the number of bytes written to w. On any AAD failure, length
+// mismatch, or SHA-256 mismatch, returns an error that wraps either
+// gcm.Open's error or ErrSFSE2IntegrityCheckFailed.
+func decryptSFSE2Stream(srcFile *os.File, w io.Writer, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen, startByte, endByte int64) (int64, error) {
+	gcm, err := newGCMFromKeyHex(keyHex)
+	if err != nil {
+		return 0, err
+	}
+
+	chunkSize, totalPlaintextLen, err := readSFSE2Header(srcFile)
+	if err != nil {
+		return 0, err
+	}
+
+	if expectedPlaintextLen >= 0 && totalPlaintextLen != expectedPlaintextLen {
+		return 0, fmt.Errorf("%w: header total_plaintext_len=%d, caller expected=%d", ErrSFSE2IntegrityCheckFailed, totalPlaintextLen, expectedPlaintextLen)
+	}
+
+	p, empty, err := newSFSE2RangeParams(encFileID, chunkSize, totalPlaintextLen, startByte, endByte, expectedSHA256Hex, gcm)
+	if err != nil {
+		return 0, err
+	}
+	if empty {
+		return 0, nil
+	}
+
+	// File-specific sanity check: the on-disk encrypted size must match what
+	// the header implies. Catches blunt truncation/append tampering before
+	// AAD even runs. Reader-based callers cannot do this (forward-only); they
+	// pass an explicit encryptedSize where available (see DecryptSFSE2FromReader).
+	if fi, statErr := srcFile.Stat(); statErr == nil {
+		if fi.Size() != p.expectedCiphertextSize {
+			return 0, fmt.Errorf("%w: file size %d, header expects %d", ErrSFSE2IntegrityCheckFailed, fi.Size(), p.expectedCiphertextSize)
+		}
+	}
+
+	firstChunkOffset := int64(SFSE2HeaderSize) + p.startChunk*p.encChunkSize
+	if _, err := srcFile.Seek(firstChunkOffset, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("failed to seek to chunk %d: %w", p.startChunk, err)
+	}
+
+	return decryptSFSE2Core(srcFile, w, gcm, p)
+}
+
+// sfse2RangeParams carries pre-computed parameters for the SFSE2 chunk
+// decrypt core. Built once by the wrapper (file-based or reader-based) and
+// passed to decryptSFSE2Core. All chunk indices are 0-based; byte offsets
+// are inclusive plaintext-byte positions.
+type sfse2RangeParams struct {
+	encFileID              []byte
+	chunkSize              int64
+	totalPlaintextLen      int64
+	totalChunks            int64
+	finalChunkPlainBytes   int64
+	encChunkSize           int64 // full-chunk ciphertext size: chunkSize + nonce + tag
+	expectedCiphertextSize int64 // SFSE2 wire size: header + sum of all chunk ciphertext sizes (NOT the input/at-rest file size)
+	startChunk             int64
+	endChunk               int64
+	offsetInFirstChunk     int64
+	endByte                int64 // post-clamp plaintext end (inclusive)
+	fullRead               bool
+	expectedSHA256Hex      string
+}
+
+// newSFSE2RangeParams computes the range parameters needed to decrypt the
+// plaintext byte slice [startByte..endByte] from an SFSE2 blob with the
+// supplied chunkSize / totalPlaintextLen. endByte<0 means "to the end of the
+// plaintext". Returns (params, empty, err): when `empty` is true, the caller
+// should short-circuit with 0 bytes written (zero-byte file or zero-length
+// range — no chunks to read).
+func newSFSE2RangeParams(encFileID []byte, chunkSize, totalPlaintextLen, startByte, endByte int64, expectedSHA256Hex string, gcm cipher.AEAD) (sfse2RangeParams, bool, error) {
+	encChunkSize := chunkSize + int64(gcm.NonceSize()) + int64(gcm.Overhead())
+	totalChunks := chunkCountFromPlaintextLen(totalPlaintextLen, chunkSize)
+	finalChunkPlainBytes := totalPlaintextLen
+	if totalChunks > 0 {
+		finalChunkPlainBytes = totalPlaintextLen - (totalChunks-1)*chunkSize
+	}
+	expectedCiphertextSize := int64(SFSE2HeaderSize)
+	if totalChunks > 0 {
+		expectedCiphertextSize += (totalChunks - 1) * encChunkSize
+		expectedCiphertextSize += finalChunkPlainBytes + int64(gcm.NonceSize()) + int64(gcm.Overhead())
+	}
+
+	// Empty plaintext — no chunks to read. fullRead is meaningful only with
+	// non-empty data; leave it false in the empty struct.
+	if totalPlaintextLen == 0 {
+		return sfse2RangeParams{expectedCiphertextSize: expectedCiphertextSize}, true, nil
+	}
+	if endByte < 0 {
+		endByte = totalPlaintextLen - 1
+	}
+	if startByte < 0 || endByte < startByte {
+		return sfse2RangeParams{}, false, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
+	}
+	if startByte >= totalPlaintextLen {
+		return sfse2RangeParams{}, false, fmt.Errorf("start byte %d beyond plaintext length %d", startByte, totalPlaintextLen)
+	}
+	if endByte >= totalPlaintextLen {
+		endByte = totalPlaintextLen - 1
+	}
+	// fullRead is computed AFTER clamping so a caller passing endByte beyond
+	// totalPlaintextLen still gets the SFSE2 integrity checks (length + SHA)
+	// that fire only on full reads.
+	fullRead := startByte == 0 && endByte == totalPlaintextLen-1
+
+	return sfse2RangeParams{
+		encFileID:              encFileID,
+		chunkSize:              chunkSize,
+		totalPlaintextLen:      totalPlaintextLen,
+		totalChunks:            totalChunks,
+		finalChunkPlainBytes:   finalChunkPlainBytes,
+		encChunkSize:           encChunkSize,
+		expectedCiphertextSize: expectedCiphertextSize,
+		startChunk:             startByte / chunkSize,
+		endChunk:               endByte / chunkSize,
+		offsetInFirstChunk:     startByte % chunkSize,
+		endByte:                endByte,
+		fullRead:               fullRead,
+		expectedSHA256Hex:      expectedSHA256Hex,
+	}, false, nil
+}
+
+// decryptSFSE2Core reads SFSE2 ciphertext chunks [startChunk..endChunk] from
+// r and writes the windowed plaintext to w. r must be positioned exactly at
+// the start of startChunk's ciphertext (file callers do this via Seek; S3
+// callers do this via a ranged GetObject).
+//
+// This is the single source of truth for SFSE2 chunk verification:
+//   - every chunk's AAD is built from (encFileID, chunk_index, is_last)
+//   - AES-GCM tag verifies the per-chunk plaintext + the AAD
+//   - is_last flag must match the actual final-chunk position
+//   - on full reads, totalPlaintextLen and (optional) SHA-256 are verified
+//     after the last chunk
+//
+// Returns bytes written to w on success. On any failure, returns bytes
+// written before the failure plus an error that either wraps gcm.Open's
+// error (chunk decrypt failure) or ErrSFSE2IntegrityCheckFailed (structural
+// failure: short read, length mismatch, SHA-256 mismatch).
+func decryptSFSE2Core(r io.Reader, w io.Writer, gcm cipher.AEAD, p sfse2RangeParams) (int64, error) {
+	funcStart := time.Now()
+
+	buffer := make([]byte, p.encChunkSize)
+	var totalWritten int64
+	var hasher *sha256Verifier
+	if p.fullRead && p.expectedSHA256Hex != "" {
+		hasher = newSHA256Verifier(p.expectedSHA256Hex)
+	}
+
+	for currentChunk := p.startChunk; currentChunk <= p.endChunk; currentChunk++ {
+		isLast := currentChunk == p.totalChunks-1
+		expectedReadSize := p.encChunkSize
+		if isLast {
+			expectedReadSize = p.finalChunkPlainBytes + int64(gcm.NonceSize()) + int64(gcm.Overhead())
+		}
+		if int64(len(buffer)) < expectedReadSize {
+			buffer = make([]byte, expectedReadSize)
+		}
+		n, readErr := io.ReadFull(r, buffer[:expectedReadSize])
+		if readErr != nil && readErr != io.ErrUnexpectedEOF {
+			return totalWritten, fmt.Errorf("failed to read encrypted chunk %d: %w", currentChunk, readErr)
+		}
+		if int64(n) != expectedReadSize {
+			return totalWritten, fmt.Errorf("%w: chunk %d read %d bytes, expected %d", ErrSFSE2IntegrityCheckFailed, currentChunk, n, expectedReadSize)
+		}
+
+		aad, err := buildSFSE2AAD(p.encFileID, uint64(currentChunk), isLast)
+		if err != nil {
+			return totalWritten, err
+		}
+		nonce := buffer[:gcm.NonceSize()]
+		ciphertext := buffer[gcm.NonceSize():n]
+		plaintext, decErr := gcm.Open(nil, nonce, ciphertext, aad)
+		if decErr != nil {
+			return totalWritten, fmt.Errorf("failed to decrypt chunk %d: %w", currentChunk, decErr)
+		}
+
+		var chunkStart, chunkEnd int64
+		if currentChunk == p.startChunk {
+			chunkStart = p.offsetInFirstChunk
+		}
+		if currentChunk == p.endChunk {
+			chunkEnd = (p.endByte % p.chunkSize) + 1
+			if chunkEnd > int64(len(plaintext)) {
+				chunkEnd = int64(len(plaintext))
+			}
+		} else {
+			chunkEnd = int64(len(plaintext))
+		}
+
+		if chunkStart < chunkEnd {
+			slice := plaintext[chunkStart:chunkEnd]
+			written, err := w.Write(slice)
+			if err != nil {
+				return totalWritten, fmt.Errorf("failed to write decrypted data: %w", err)
+			}
+			totalWritten += int64(written)
+			if hasher != nil {
+				hasher.write(slice)
+			}
+		}
+	}
+
+	if p.fullRead {
+		if totalWritten != p.totalPlaintextLen {
+			return totalWritten, fmt.Errorf("%w: wrote %d bytes, header declared %d", ErrSFSE2IntegrityCheckFailed, totalWritten, p.totalPlaintextLen)
+		}
+		if hasher != nil && !hasher.matches() {
+			return totalWritten, fmt.Errorf("%w: SHA-256 mismatch", ErrSFSE2IntegrityCheckFailed)
+		}
+	}
+
+	slog.Debug("SFSE2 decrypt complete",
+		"duration_ms", time.Since(funcStart).Milliseconds(),
+		"bytes_written", totalWritten,
+		"full_read", p.fullRead,
+		"start_chunk", p.startChunk,
+		"end_chunk", p.endChunk,
+	)
+	return totalWritten, nil
+}
+
+// aeadCache holds one cipher.AEAD per distinct hex-encoded AES-256 key.
+// Production deployments use a single key for the entire process lifetime,
+// so this is effectively a singleton; sync.Map is used so that future key
+// rotation and multi-key tests both stay lock-free on the hot path.
+//
+// AES-GCM's cipher.AEAD is documented as safe for concurrent use, so no
+// per-call locking is required around Seal/Open.
+//
+// SH-3.1.
+var aeadCache sync.Map // map[string]cipher.AEAD
+
+// newGCMFromKeyHex returns an AES-256-GCM cipher.AEAD for the given hex-
+// encoded 32-byte key. Centralises what every SFSE entry point would
+// otherwise repeat (hex decode, length check, AES key schedule, GCM init).
+//
+// SH-3.1: caches the AEAD per key. First call for a given keyHex builds
+// the AEAD and stores it; subsequent calls return the cached instance in
+// O(1) with no allocation and no AES key schedule. At 100 concurrent
+// Range requests on a streamed video the pre-cache implementation cost
+// ~300 avoidable allocations and visible CPU in the AES key expansion.
+func newGCMFromKeyHex(keyHex string) (cipher.AEAD, error) {
+	if v, ok := aeadCache.Load(keyHex); ok {
+		return v.(cipher.AEAD), nil
+	}
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid hex key: %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+	// LoadOrStore lets concurrent first-callers race safely: the first to
+	// publish wins; the others discard their build and use the published
+	// instance. AES-GCM init is deterministic so the discard is wasted CPU
+	// but never wrong.
+	actual, _ := aeadCache.LoadOrStore(keyHex, gcm)
+	return actual.(cipher.AEAD), nil
+}
+
+// sha256Verifier hashes running plaintext bytes and compares to an expected
+// hex-encoded digest. Used for SFSE2 post-decrypt integrity verification.
+type sha256Verifier struct {
+	hasher      hash.Hash
+	expectedHex string
+}
+
+func newSHA256Verifier(expectedHex string) *sha256Verifier {
+	return &sha256Verifier{hasher: sha256.New(), expectedHex: expectedHex}
+}
+
+func (v *sha256Verifier) write(p []byte) {
+	_, _ = v.hasher.Write(p)
+}
+
+func (v *sha256Verifier) matches() bool {
+	actual := hex.EncodeToString(v.hasher.Sum(nil))
+	return actual == v.expectedHex
+}
+
+// DecryptFileStreamingAny is a version-aware dispatcher. It peeks the SFSE
+// version byte and routes to the V1 or V2 reader. For V2 reads, encFileID
+// must be the 16-byte value persisted at encrypt time; for V1 it is ignored
+// (legacy files have no AAD). expectedSHA256Hex and expectedPlaintextLen are
+// used only by V2 reads (V1 has no header length to validate).
+func DecryptFileStreamingAny(srcPath, dstPath, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen int64) error {
+	ver, err := PeekSFSEVersion(srcPath)
+	if err != nil {
+		return err
+	}
+	switch ver {
+	case StreamEncryptionVersion:
+		return DecryptFileStreaming(srcPath, dstPath, keyHex)
+	case StreamEncryptionVersionV2:
+		return DecryptFileStreamingV2(srcPath, dstPath, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen)
+	default:
+		return fmt.Errorf("%w: %d", ErrUnsupportedSFSEVersion, ver)
+	}
+}
+
+// DecryptFileStreamingRangeAny is the Range counterpart to
+// DecryptFileStreamingAny. Peeks the SFSE version byte and routes to the V1
+// or V2 Range reader. expectedSHA256Hex / expectedPlaintextLen are forwarded
+// to the V2 path only (V1 has no header length to validate). On the V2 path,
+// callers should pass file.SHA256Hash when start=0 and end==fileSize-1 so
+// the integrity check that ADR-011 §6 promises actually fires on full-file
+// downloads served via the Range API.
+func DecryptFileStreamingRangeAny(srcPath string, w io.Writer, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen, startByte, endByte int64) (int64, error) {
+	ver, err := PeekSFSEVersion(srcPath)
+	if err != nil {
+		return 0, err
+	}
+	switch ver {
+	case StreamEncryptionVersion:
+		return DecryptFileStreamingRange(srcPath, w, keyHex, startByte, endByte)
+	case StreamEncryptionVersionV2:
+		return DecryptFileStreamingRangeV2(srcPath, w, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen, startByte, endByte)
+	default:
+		return 0, fmt.Errorf("%w: %d", ErrUnsupportedSFSEVersion, ver)
+	}
 }

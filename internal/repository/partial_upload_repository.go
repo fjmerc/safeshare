@@ -78,4 +78,13 @@ type PartialUploadRepository interface {
 	// TryLockForProcessing attempts to atomically transition upload from "uploading" to "processing".
 	// Returns true if successful (lock acquired), false if already locked by another process.
 	TryLockForProcessing(ctx context.Context, uploadID string) (bool, error)
+
+	// ReleaseProcessingLock is the strict inverse of TryLockForProcessing: it
+	// transitions an upload from "processing" back to "uploading" ONLY if the
+	// current status is still "processing". Used by the assembly handler to
+	// unwind a lock it acquired but couldn't act on (e.g., assembly queue
+	// saturated). Must not clobber an upload that has already advanced to
+	// "completed" or "failed" — hence the conditional update.
+	// Returns true if the row was reverted, false if no row was in "processing".
+	ReleaseProcessingLock(ctx context.Context, uploadID string) (bool, error)
 }

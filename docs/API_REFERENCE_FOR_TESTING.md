@@ -62,27 +62,43 @@
 
 **Handler**: `handlers.ClaimHandler(db, cfg)`
 
-**Endpoint**: `GET /api/claim/{claim_code}[?password=xxx]`
+**Endpoints**:
+- `GET /api/claim/{claim_code}` — browser navigation / `<a href>` downloads
+- `POST /api/claim/{claim_code}` — programmatic clients that prefer a form body
 
 **Request**:
 - URL path parameter: `claim_code`
-- Query parameter (optional): `password`
+- Password (if file is password-protected) via one of, in priority order:
+  1. `X-File-Password` request header *(preferred — keeps password out of proxy logs / browser history / Referer)*
+  2. POST form body: `Content-Type: application/x-www-form-urlencoded`, body `password=…` *(body capped at 4 KiB)*
+  3. Query parameter `?password=…` *(deprecated, see "File Passwords (SH-1.5)" below; scheduled for removal `2026-09-30` per `Sunset` header)*
 
 **Response Status Codes**:
 - `200 OK` - File download successful
 - `400 Bad Request` - Empty or invalid claim code
 - `401 Unauthorized` - Incorrect password or missing password for protected file
 - `404 Not Found` - File not found **OR expired** (same status for both)
+- `405 Method Not Allowed` - request method other than GET or POST
 - `410 Gone` - Download limit reached
 - `500 Internal Server Error` - File exists in DB but missing on disk
 
+**Response Headers** (only when the deprecated query-string password path is used):
+- `Deprecation: true`
+- `Sunset: Wed, 30 Sep 2026 00:00:00 GMT`
+- `Link: <…>; rel="deprecation"; type="text/markdown"`
+- `Referrer-Policy: no-referrer`
+
 **Important Notes**:
-- Password provided via **query parameter** `?password=xxx`, **NOT POST body**
+- Header path is preferred; if both header and query are sent, header wins and no deprecation markers are emitted
 - Download without password for protected file returns `401 Unauthorized`, **NOT 200**
 - Expired files return `404 Not Found`, **NOT 410 Gone**
 - Empty claim code (`""`) returns `400 Bad Request`, **NOT 404**
 - When download limit reached, file record **remains in database** (access blocked, not deleted)
 - Download count incremented **before** serving file (not after)
+
+#### File Passwords (SH-1.5)
+
+`?password=…` in the URL leaks the password to reverse-proxy access logs (Cloudflare, Traefik, nginx), browser history, and outbound `Referer` headers from the download landing page. Use the `X-File-Password` request header instead. The query-string form remains accepted until `2026-09-30` for backwards compatibility with naive `<a href>` cross-origin downloads; every hit increments the Prometheus counter `safeshare_downloads_total{outcome="password_via_query_deprecated"}` and emits a WARN log line so operators can identify clients that still need to migrate.
 
 ---
 

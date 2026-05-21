@@ -81,6 +81,87 @@ type StorageBackend interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// IntegrityVerifyingBackend is implemented by storage backends that can
+// authenticate retrieved bytes against DB-sourced expectations
+// (`expectedEncFileID` + `expectedSHA256Hex` + `expectedPlaintextLen`).
+// This is the substitution-attack defence documented in ADR-013 / SH-3.5:
+// an attacker with write access to the underlying storage (e.g. a
+// compromised S3 bucket) cannot swap an object body + metadata for
+// another same-key file when the caller passes the DB-recorded
+// expectations through to decrypt.
+//
+// `expectedEncFileID` is the headline defence and is enforced PRE-STREAM:
+// it is cross-checked against the SFSE2 object's metadata-supplied
+// enc_file_id before any chunk is fetched. A mismatch (the body+metadata
+// were swapped for another file's) returns an error before any plaintext
+// is written to the caller's `io.Writer` / `io.Reader`. When the metadata
+// enc_file_id matches the DB value, the same value is then used as
+// per-chunk AAD input — so a body-only swap (metadata kept, body
+// replaced with another file's ciphertext) fails on the first chunk's
+// AAD check, again before any plaintext leaves the wrapper.
+//
+// `expectedSHA256Hex` and `expectedPlaintextLen` are belt-and-suspenders
+// against the (out-of-scope) attacker who also has the encryption key —
+// they catch re-encrypted substitutions but only AFTER bytes have been
+// streamed (the SHA-256 is a full-file hash; partial-write semantics of
+// `io.Pipe` mean these checks fire too late to prevent client receipt).
+// Production handlers SHOULD pass all three.
+//
+// Filesystem backends MAY implement this trivially by delegating to the
+// non-verifying Retrieve / StreamRange — their bytes share a trust
+// boundary with the DB row, so substitution requires already-root access.
+// S3 / object-store backends MUST verify (the storage layer is on a
+// separate trust boundary from the DB).
+//
+// Sentinels:
+//   - `expectedEncFileID == nil` skips the pre-stream cross-check
+//     (admin recovery tools that genuinely have no DB context).
+//   - `expectedSHA256Hex == ""` skips the post-decrypt SHA-256 verify.
+//   - `expectedPlaintextLen == -1` skips the length cross-check.
+//
+// Passing all-sentinel values reduces these methods to their legacy
+// equivalents and forfeits the substitution defence.
+type IntegrityVerifyingBackend interface {
+	// RetrieveWithExpected returns a reader for the decrypted plaintext of
+	// `filename`, with substitution detection enforced PRE-STREAM via
+	// expectedEncFileID. See type docstring for the sentinel contract.
+	//
+	// IMPORTANT: when the metadata enc_file_id matches expectedEncFileID
+	// but the body has been swapped for another same-key file's ciphertext,
+	// the AAD check on chunk 1 fails inside the decrypt goroutine — the
+	// returned reader will surface the error on the first Read and ZERO
+	// plaintext bytes will have been written. Callers that pipe the reader
+	// to an HTTP response MUST observe the Read error and not assume the
+	// bytes that did flow are authoritative until io.Copy returns nil.
+	RetrieveWithExpected(
+		ctx context.Context,
+		filename string,
+		expectedEncFileID []byte,
+		expectedSHA256Hex string,
+		expectedPlaintextLen int64,
+	) (io.ReadCloser, error)
+
+	// StreamRangeWithExpected writes the byte range [start, end] of the
+	// decrypted plaintext to w, with the same DB-sourced expectations
+	// honoured. expectedEncFileID is cross-checked synchronously before
+	// any chunk is fetched and before any decryption begins; mismatches
+	// return an error pre-stream. SHA-256 post-decrypt verify only runs
+	// for full-file reads (start == 0 && end == expectedPlaintextLen-1);
+	// partial Range reads cannot compute the full-file hash, but the
+	// enc_file_id cross-check + AAD verification protect partial reads
+	// against substitution regardless. Returns the number of plaintext
+	// bytes written.
+	StreamRangeWithExpected(
+		ctx context.Context,
+		filename string,
+		start, end int64,
+		expectedEncFileID []byte,
+		expectedSHA256Hex string,
+		expectedPlaintextLen int64,
+		w io.Writer,
+	) (int64, error)
+}
+
 // StorageError represents errors from storage operations with additional context.
 type StorageError struct {
 	Op      string // Operation that failed (e.g., "Store", "Retrieve", "Delete")

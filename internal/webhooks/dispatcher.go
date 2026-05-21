@@ -15,6 +15,13 @@ type DatabaseOperations interface {
 	GetPendingRetries() ([]*Delivery, error)
 }
 
+// configCacheTTL bounds how long a stale enabled-webhook-config view may be
+// served from the in-process cache when no admin edit has invalidated it.
+// 30s is short enough that an operator pushing config changes via the API
+// expects propagation within a tick, while long enough to absorb burst
+// event throughput without re-querying SQLite per event. See SH-3.2.
+const configCacheTTL = 30 * time.Second
+
 // Dispatcher handles asynchronous webhook delivery
 type Dispatcher struct {
 	db           DatabaseOperations
@@ -24,6 +31,16 @@ type Dispatcher struct {
 	wg           sync.WaitGroup
 	metrics      MetricsRecorder
 	shutdownOnce sync.Once
+
+	// SH-3.2: in-process cache of GetEnabledWebhookConfigs(). Without it,
+	// processEvent ran the query on every dispatched event — at N workers
+	// and M events/sec that's N*M SQLite reads, each pinning a connection
+	// and contending with the hot upload path's BeginImmediate writer.
+	// Invalidated explicitly on create/update/delete via
+	// InvalidateConfigCache(); falls back to TTL expiry between admin edits.
+	configMu     sync.RWMutex
+	configCache  []*Config
+	configExpiry time.Time
 }
 
 // MetricsRecorder is an interface for recording webhook metrics
@@ -136,8 +153,8 @@ func (d *Dispatcher) worker(id int) {
 
 // processEvent processes a single webhook event
 func (d *Dispatcher) processEvent(event *Event) {
-	// Get all enabled webhook configs
-	configs, err := d.db.GetEnabledWebhookConfigs()
+	// SH-3.2: cached read; refreshes on TTL expiry or on InvalidateConfigCache.
+	configs, err := d.getConfigsCached()
 	if err != nil {
 		slog.Error("failed to get enabled webhook configs", "error", err)
 		return
@@ -298,4 +315,48 @@ func (d *Dispatcher) processRetries() {
 // GetQueueSize returns the current size of the event queue
 func (d *Dispatcher) GetQueueSize() int {
 	return len(d.eventChan)
+}
+
+// getConfigsCached returns the set of enabled webhook configs, served from
+// the in-process cache when fresh and re-queried otherwise. Double-checked
+// locking keeps the fast path lock-free for cache hits.
+//
+// SH-3.2.
+func (d *Dispatcher) getConfigsCached() ([]*Config, error) {
+	// Fast path: read lock, check expiry, return slice if still fresh.
+	d.configMu.RLock()
+	if time.Now().Before(d.configExpiry) {
+		cached := d.configCache
+		d.configMu.RUnlock()
+		return cached, nil
+	}
+	d.configMu.RUnlock()
+
+	// Slow path: write lock, re-check (another goroutine may have refreshed
+	// while we were waiting), then re-query.
+	d.configMu.Lock()
+	defer d.configMu.Unlock()
+	if time.Now().Before(d.configExpiry) {
+		return d.configCache, nil
+	}
+	configs, err := d.db.GetEnabledWebhookConfigs()
+	if err != nil {
+		return nil, err
+	}
+	d.configCache = configs
+	d.configExpiry = time.Now().Add(configCacheTTL)
+	return configs, nil
+}
+
+// InvalidateConfigCache forces the next processEvent to re-query the database
+// for enabled webhook configs. Called by the webhook admin handlers after
+// create / update / delete so an operator edit propagates within one event
+// instead of waiting up to configCacheTTL.
+//
+// SH-3.2.
+func (d *Dispatcher) InvalidateConfigCache() {
+	d.configMu.Lock()
+	d.configCache = nil
+	d.configExpiry = time.Time{} // zero value is the epoch; always in the past
+	d.configMu.Unlock()
 }

@@ -1,9 +1,12 @@
 // SafeShare Service Worker
 // Enables PWA functionality with offline support for static assets
 
-const CACHE_VERSION = 'safeshare-v43';
+const CACHE_VERSION = 'safeshare-v57';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+// Web Share Target cache - unversioned so page JS can always find it
+// Must match SHARE_TARGET_CACHE in app.js
+const SHARE_TARGET_CACHE = 'safeshare-share-target';
 
 // Assets to cache on service worker installation
 const STATIC_ASSETS = [
@@ -58,7 +61,8 @@ self.addEventListener('activate', (event) => {
               // Delete caches that don't match current version
               return cacheName.startsWith('safeshare-') &&
                      cacheName !== STATIC_CACHE &&
-                     cacheName !== RUNTIME_CACHE;
+                     cacheName !== RUNTIME_CACHE &&
+                     cacheName !== SHARE_TARGET_CACHE;
             })
             .map((cacheName) => {
               console.log('[Service Worker] Deleting old cache:', cacheName);
@@ -78,6 +82,47 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+
+  // Handle Web Share Target API - intercept POST from OS share sheet
+  if (request.method === 'POST' && url.searchParams.has('share-target')) {
+    // Block cross-origin form submissions (OS share sheet typically has no Referer)
+    const referer = request.headers.get('Referer');
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer);
+        if (refererUrl.origin !== self.location.origin) {
+          event.respondWith(Response.redirect('/', 303));
+          return;
+        }
+      } catch (e) {
+        event.respondWith(Response.redirect('/', 303));
+        return;
+      }
+    }
+
+    event.respondWith(
+      request.formData().then((formData) => {
+        const file = formData.get('file');
+        if (!file) {
+          return Response.redirect('/', 303);
+        }
+        // Cache the shared file so the page can retrieve it
+        return caches.open(SHARE_TARGET_CACHE).then((cache) => {
+          return cache.put('shared-file', new Response(file, {
+            headers: {
+              'Content-Type': file.type,
+              'X-Share-Filename': encodeURIComponent(file.name)
+            }
+          }));
+        }).then(() => {
+          return Response.redirect('/?share-target', 303);
+        });
+      }).catch(() => {
+        return Response.redirect('/', 303);
+      })
+    );
+    return;
+  }
 
   // CRITICAL FIX: Skip cross-origin requests entirely
   // Let the browser handle these natively to avoid Service Worker streaming issues

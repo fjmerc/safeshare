@@ -11,13 +11,25 @@ type MockDatabaseOperations struct {
 	configs        []*Config
 	deliveries     []*Delivery
 	pendingRetries []*Delivery
-	mu             sync.Mutex
+	// SH-3.2: counts GetEnabledWebhookConfigs invocations so cache-behaviour
+	// tests can assert on call count without relying on timing.
+	getConfigsCalls int
+	mu              sync.Mutex
 }
 
 func (m *MockDatabaseOperations) GetEnabledWebhookConfigs() ([]*Config, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.getConfigsCalls++
 	return m.configs, nil
+}
+
+// GetConfigsCalls returns the number of times GetEnabledWebhookConfigs has
+// been invoked. Used by SH-3.2 cache-behaviour tests.
+func (m *MockDatabaseOperations) GetConfigsCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getConfigsCalls
 }
 
 func (m *MockDatabaseOperations) CreateWebhookDelivery(delivery *Delivery) error {
@@ -369,5 +381,86 @@ func TestDispatcher_ProcessEvent_NotSubscribed(t *testing.T) {
 
 	if deliveryCount != 0 {
 		t.Errorf("deliveries created = %d, want 0 (not subscribed)", deliveryCount)
+	}
+}
+
+// TestDispatcher_ConfigCache_HitsCacheWithinTTL — SH-3.2.
+// Within the TTL window, repeated processEvent calls must serve enabled-
+// configs from the in-process cache; only the first call should hit the DB.
+func TestDispatcher_ConfigCache_HitsCacheWithinTTL(t *testing.T) {
+	mockDB := &MockDatabaseOperations{
+		configs: []*Config{
+			{ID: 1, URL: "https://example.invalid/hook", Enabled: true, Events: []string{string(EventFileUploaded)}, Format: "safeshare"},
+		},
+	}
+	mockMetrics := &MockMetricsRecorder{}
+	dispatcher := NewDispatcher(mockDB, 1, 16, mockMetrics)
+
+	// processEvent calls go via the cache. Use an event type that isn't subscribed
+	// so we skip the delivery side-effects but still exercise getConfigsCached.
+	event := &Event{Type: EventFileDeleted, Timestamp: time.Now()}
+
+	for i := 0; i < 50; i++ {
+		dispatcher.processEvent(event)
+	}
+
+	if got := mockDB.GetConfigsCalls(); got != 1 {
+		t.Errorf("GetEnabledWebhookConfigs calls = %d, want 1 (cache must serve repeated reads within TTL)", got)
+	}
+}
+
+// TestDispatcher_ConfigCache_InvalidateForcesRefresh — SH-3.2.
+// InvalidateConfigCache must force the next processEvent to re-query the DB,
+// matching what the admin handlers do after a create/update/delete.
+func TestDispatcher_ConfigCache_InvalidateForcesRefresh(t *testing.T) {
+	mockDB := &MockDatabaseOperations{
+		configs: []*Config{
+			{ID: 1, URL: "https://example.invalid/hook", Enabled: true, Events: []string{string(EventFileUploaded)}, Format: "safeshare"},
+		},
+	}
+	mockMetrics := &MockMetricsRecorder{}
+	dispatcher := NewDispatcher(mockDB, 1, 16, mockMetrics)
+	event := &Event{Type: EventFileDeleted, Timestamp: time.Now()}
+
+	// Warm the cache.
+	dispatcher.processEvent(event)
+	if got := mockDB.GetConfigsCalls(); got != 1 {
+		t.Fatalf("after warm-up: GetConfigsCalls = %d, want 1", got)
+	}
+
+	// Cached read — counter must not move.
+	dispatcher.processEvent(event)
+	if got := mockDB.GetConfigsCalls(); got != 1 {
+		t.Fatalf("after cached read: GetConfigsCalls = %d, want 1", got)
+	}
+
+	// Simulate an admin edit.
+	dispatcher.InvalidateConfigCache()
+
+	// Next call re-queries.
+	dispatcher.processEvent(event)
+	if got := mockDB.GetConfigsCalls(); got != 2 {
+		t.Errorf("after invalidate: GetConfigsCalls = %d, want 2 (invalidate must force refresh)", got)
+	}
+}
+
+// TestDispatcher_ConfigCache_FirstCallPopulatesAndReturnsConfigs — SH-3.2.
+// Sanity check the slow-path branch returns the configs (not nil) on first
+// call when the cache is empty.
+func TestDispatcher_ConfigCache_FirstCallPopulatesAndReturnsConfigs(t *testing.T) {
+	expected := []*Config{
+		{ID: 1, URL: "https://example.invalid/hook", Enabled: true, Events: []string{string(EventFileUploaded)}, Format: "safeshare"},
+		{ID: 2, URL: "https://example.invalid/hook2", Enabled: true, Events: []string{string(EventFileExpired)}, Format: "safeshare"},
+	}
+	mockDB := &MockDatabaseOperations{configs: expected}
+	mockMetrics := &MockMetricsRecorder{}
+	dispatcher := NewDispatcher(mockDB, 1, 16, mockMetrics)
+
+	got, err := dispatcher.getConfigsCached()
+	if err != nil {
+		t.Fatalf("getConfigsCached: %v", err)
+	}
+	if len(got) != len(expected) {
+		t.Errorf("returned configs length = %d, want %d", len(got), len(expected))
 	}
 }

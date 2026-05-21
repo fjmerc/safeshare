@@ -3,7 +3,10 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,8 +33,9 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 	query := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted, enc_file_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
@@ -51,6 +55,8 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		file.PasswordHash,
 		file.UserID,
 		file.SHA256Hash,
+		file.ClientEncrypted,
+		nullableBlob(file.EncFileID),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -99,8 +105,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 	insertQuery := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted, enc_file_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
@@ -119,6 +126,8 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		file.PasswordHash,
 		file.UserID,
 		file.SHA256Hash,
+		file.ClientEncrypted,
+		nullableBlob(file.EncFileID),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -145,7 +154,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		WHERE id = ?
 	`
@@ -159,6 +168,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	var scanStatus sql.NullString
 	var scanResult sql.NullString
 	var scannedAt sql.NullString
+	var encFileID []byte
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&file.ID,
@@ -179,6 +189,8 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&scanStatus,
 		&scanResult,
 		&scannedAt,
+		&file.ClientEncrypted,
+		&encFileID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -220,6 +232,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			file.ScannedAt = &t
 		}
 	}
+	file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 	return file, nil
 }
@@ -232,7 +245,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -246,6 +259,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 	var scanStatus sql.NullString
 	var scanResult sql.NullString
 	var scannedAt sql.NullString
+	var encFileID []byte
 
 	err := r.db.QueryRowContext(ctx, query, claimCode).Scan(
 		&file.ID,
@@ -266,6 +280,8 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 		&scanStatus,
 		&scanResult,
 		&scannedAt,
+		&file.ClientEncrypted,
+		&encFileID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -307,6 +323,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			file.ScannedAt = &t
 		}
 	}
+	file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 	// Check if expired
 	if time.Now().After(file.ExpiresAt) {
@@ -410,7 +427,315 @@ func (r *FileRepository) TryIncrementDownloadWithLimit(ctx context.Context, id i
 	return true, nil // Success
 }
 
+// newReservationToken returns 16 random bytes hex-encoded (32 ASCII chars).
+func newReservationToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("failed to generate reservation token: %w", err)
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+// ReserveDownload atomically increments in_flight_reservations and inserts a reservation row.
+// See ADR-012 for the semantics; the guard is `download_count + in_flight_reservations < max_downloads`.
+func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, error) {
+	// Fast path: files with no cap don't need a row in download_reservations.
+	// We still validate the claim code in the same query so concurrent rotation
+	// of the code is observed.
+	//
+	// This SELECT runs outside the transaction below — a concurrent claim-code
+	// rotation between this read and the UPDATE is benign because the UPDATE
+	// uses `WHERE claim_code = ?` and reports `rows == 0` if the code changed,
+	// at which point we return ErrClaimCodeChanged from the disambiguating
+	// SELECT. The transaction is the authoritative guard; this fast path only
+	// short-circuits the unlimited case.
+	var maxDL sql.NullInt64
+	checkQuery := `SELECT max_downloads FROM files WHERE id = ? AND claim_code = ?`
+	if err := r.db.QueryRowContext(ctx, checkQuery, fileID, expectedClaimCode).Scan(&maxDL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", repository.ErrClaimCodeChanged
+		}
+		return "", fmt.Errorf("failed to read file metadata for reservation: %w", err)
+	}
+	if !maxDL.Valid || maxDL.Int64 == 0 {
+		return repository.ReservationTokenUnlimited, nil
+	}
+
+	token, err := newReservationToken()
+	if err != nil {
+		return "", err
+	}
+
+	tx, err := beginImmediateTx(ctx, r.db)
+	if err != nil {
+		return "", fmt.Errorf("failed to begin reserve transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback reserve transaction", "error", rbErr)
+		}
+	}()
+
+	// Atomic guard: take the slot only if download_count + in_flight < max_downloads.
+	// max_downloads = 0 or NULL was already filtered above; here it's always a positive cap.
+	updateQuery := `
+		UPDATE files
+		SET in_flight_reservations = in_flight_reservations + 1
+		WHERE id = ?
+		  AND claim_code = ?
+		  AND (download_count + in_flight_reservations) < max_downloads
+	`
+	res, err := tx.ExecContext(ctx, updateQuery, fileID, expectedClaimCode)
+	if err != nil {
+		return "", fmt.Errorf("failed to reserve download slot: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("failed to read reserve rows affected: %w", err)
+	}
+	if rows == 0 {
+		// Either the claim code changed or the slot was full. Distinguish.
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM files WHERE id = ? AND claim_code = ?`, fileID, expectedClaimCode).Scan(&exists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", repository.ErrClaimCodeChanged
+			}
+			return "", fmt.Errorf("failed to disambiguate reservation failure: %w", err)
+		}
+		// Claim code still matches — the cap was hit.
+		return "", nil
+	}
+
+	// Slot taken; record the reservation row.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO download_reservations (token, file_id) VALUES (?, ?)`, token, fileID); err != nil {
+		return "", fmt.Errorf("failed to insert reservation row: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("failed to commit reservation: %w", err)
+	}
+	return token, nil
+}
+
+// CommitDownload finalises a reservation. See ADR-012 §4 for the two-branch semantics.
+func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
+	if token == "" {
+		return nil
+	}
+	if token == repository.ReservationTokenUnlimited {
+		// No reservation row to delete; just credit the counters.
+		_, err := r.db.ExecContext(ctx, `
+			UPDATE files
+			SET download_count      = download_count + 1,
+			    completed_downloads = completed_downloads + 1
+			WHERE id = ?
+		`, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to credit unlimited download: %w", err)
+		}
+		return nil
+	}
+
+	tx, err := beginImmediateTx(ctx, r.db)
+	if err != nil {
+		return fmt.Errorf("failed to begin commit transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback commit transaction", "error", rbErr)
+		}
+	}()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM download_reservations WHERE token = ? AND file_id = ?`, token, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to delete reservation: %w", err)
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read delete rows: %w", err)
+	}
+
+	if deleted == 1 {
+		// Normal path: swap reservation → completed download.
+		_, err := tx.ExecContext(ctx, `
+			UPDATE files
+			SET in_flight_reservations = CASE WHEN in_flight_reservations > 0 THEN in_flight_reservations - 1 ELSE 0 END,
+			    download_count          = download_count + 1,
+			    completed_downloads     = completed_downloads + 1
+			WHERE id = ?
+		`, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to finalise download counters: %w", err)
+		}
+	} else {
+		// Reaped-mid-stream recovery: try to atomically take a slot now.
+		// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
+		// Using `download_count < max_downloads` alone would let a late-committing
+		// reservation jump past a still-live reservation and over-count past the cap
+		// (bug-hunter C1: same-token replay or retry-race could double-credit).
+		res, err := tx.ExecContext(ctx, `
+			UPDATE files
+			SET download_count      = download_count + 1,
+			    completed_downloads = completed_downloads + 1
+			WHERE id = ?
+			  AND (max_downloads IS NULL OR max_downloads = 0
+			       OR (download_count + in_flight_reservations) < max_downloads)
+		`, fileID)
+		if err != nil {
+			return fmt.Errorf("failed reaped-recovery increment: %w", err)
+		}
+		rows, _ := res.RowsAffected()
+		if rows == 0 {
+			slog.Warn("download committed after reaper deleted reservation; cap already taken by another reader — not counting",
+				"file_id", fileID,
+			)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit download finalisation: %w", err)
+	}
+	return nil
+}
+
+// CancelDownload releases a reservation without crediting a download.
+func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token string) error {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil
+	}
+
+	tx, err := beginImmediateTx(ctx, r.db)
+	if err != nil {
+		return fmt.Errorf("failed to begin cancel transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback cancel transaction", "error", rbErr)
+		}
+	}()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM download_reservations WHERE token = ? AND file_id = ?`, token, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to delete reservation: %w", err)
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read cancel rows: %w", err)
+	}
+	if deleted == 1 {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE files
+			SET in_flight_reservations = CASE WHEN in_flight_reservations > 0 THEN in_flight_reservations - 1 ELSE 0 END
+			WHERE id = ?
+		`, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to decrement in_flight: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit cancel: %w", err)
+	}
+	return nil
+}
+
+// ReapStaleReservations deletes rows older than `ttl` and decrements in_flight_reservations accordingly.
+// The cutoff is `datetime('now', '<-N seconds>')` evaluated DB-side — see interface doc for rationale.
+func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Duration) (int, error) {
+	// `%+d seconds` formats positive TTLs as `-N seconds` (subtracting from now,
+	// the normal case) and negative TTLs as `+N seconds` (used by tests to reap
+	// rows created strictly before now).
+	modifier := fmt.Sprintf("%+d seconds", -int64(ttl.Seconds()))
+
+	tx, err := beginImmediateTx(ctx, r.db)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin reaper transaction: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback reaper transaction", "error", rbErr)
+		}
+	}()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT file_id, COUNT(*)
+		FROM download_reservations
+		WHERE datetime(created_at) < datetime('now', ?)
+		GROUP BY file_id
+	`, modifier)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query stale reservations: %w", err)
+	}
+
+	type counter struct {
+		fileID int64
+		n      int
+	}
+	var buckets []counter
+	for rows.Next() {
+		var c counter
+		if err := rows.Scan(&c.fileID, &c.n); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan reaper row: %w", err)
+		}
+		buckets = append(buckets, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("reaper row iteration error: %w", err)
+	}
+
+	if len(buckets) == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("failed to commit empty reaper tx: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Delete first, then decrement. The two statements are atomic together
+	// inside this BEGIN IMMEDIATE transaction — outside readers (concurrent
+	// ReserveDownload calls) see either the pre-reaper state or the
+	// post-reaper state, never an intermediate state. Doing DELETE first is
+	// belt-and-suspenders for any future refactor that might split the work.
+	delRes, err := tx.ExecContext(ctx, `DELETE FROM download_reservations WHERE datetime(created_at) < datetime('now', ?)`, modifier)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete stale reservations: %w", err)
+	}
+	deleted, err := delRes.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read reaper delete rows: %w", err)
+	}
+
+	total := 0
+	for _, c := range buckets {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE files
+			SET in_flight_reservations = MAX(0, in_flight_reservations - ?)
+			WHERE id = ?
+		`, c.n, c.fileID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to clamp in_flight for file %d: %w", c.fileID, err)
+		}
+		total += c.n
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit reaper tx: %w", err)
+	}
+
+	// total and deleted should match; if they drift, log so we notice but trust the DELETE count.
+	if int(deleted) != total {
+		slog.Warn("reaper delete/count mismatch",
+			"deleted", deleted,
+			"counted", total,
+		)
+	}
+	return int(deleted), nil
+}
+
 // IncrementCompletedDownloads increments the completed downloads counter.
+//
+// Deprecated: see FileRepository.IncrementCompletedDownloads.
 func (r *FileRepository) IncrementCompletedDownloads(ctx context.Context, id int64) error {
 	query := `UPDATE files SET completed_downloads = completed_downloads + 1 WHERE id = ?`
 
@@ -469,8 +794,8 @@ func (r *FileRepository) DeleteByClaimCode(ctx context.Context, claimCode string
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-			uploader_ip, password_hash, user_id
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+			uploader_ip, password_hash, user_id, client_encrypted
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -496,6 +821,7 @@ func (r *FileRepository) DeleteByClaimCode(ctx context.Context, claimCode string
 		&file.UploaderIP,
 		&passwordHash,
 		&userID,
+		&file.ClientEncrypted,
 	)
 
 	if err == sql.ErrNoRows {
@@ -563,8 +889,8 @@ func (r *FileRepository) DeleteByClaimCodes(ctx context.Context, claimCodes []st
 		query := `
 			SELECT
 				id, claim_code, original_filename, stored_filename, file_size,
-				mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, 
-				uploader_ip, password_hash, user_id
+				mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
+				uploader_ip, password_hash, user_id, client_encrypted
 			FROM files
 			WHERE claim_code = ?
 		`
@@ -590,6 +916,7 @@ func (r *FileRepository) DeleteByClaimCodes(ctx context.Context, claimCodes []st
 			&file.UploaderIP,
 			&passwordHash,
 			&userID,
+			&file.ClientEncrypted,
 		)
 
 		if err == sql.ErrNoRows {
@@ -657,6 +984,8 @@ func (r *FileRepository) DeleteExpired(ctx context.Context, uploadDir string, on
 	if err != nil {
 		return 0, fmt.Errorf("failed to query expired files: %w", err)
 	}
+	// Defensive defer — the explicit Close below normally fires first. A second
+	// Close on an already-closed *sql.Rows is a no-op per database/sql.
 	defer rows.Close()
 
 	type expiredFileData struct {
@@ -703,6 +1032,17 @@ func (r *FileRepository) DeleteExpired(ctx context.Context, uploadDir string, on
 
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("error iterating expired files: %w", err)
+	}
+
+	// SH-3.4: close the read cursor explicitly *before* doing filesystem
+	// deletions and the subsequent batch DELETE. The original `defer rows.Close()`
+	// kept the SQLite read transaction open across os.Remove + batchDeleteFiles
+	// on every cleanup cycle, which can run for seconds on large sets. While the
+	// read tx is open, WAL checkpointing is blocked and the WAL file grows
+	// unbounded — causing a checkpoint stall when the cursor finally closes and
+	// elevating read latency for concurrent requests in the meantime.
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("failed to close expired files cursor: %w", err)
 	}
 
 	// Delete files (file first, then database record)
@@ -885,7 +1225,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads,
 			completed_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
 		FROM files
 		ORDER BY created_at DESC
 	`
@@ -906,6 +1246,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 		var scanStatus sql.NullString
 		var scanResult sql.NullString
 		var scannedAt sql.NullString
+		var encFileID []byte
 
 		err := rows.Scan(
 			&file.ID,
@@ -925,6 +1266,8 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
+			&encFileID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan file row: %w", err)
@@ -951,6 +1294,7 @@ func (r *FileRepository) GetAll(ctx context.Context) ([]*models.File, error) {
 				file.ScannedAt = &t
 			}
 		}
+		file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
 
 		files = append(files, file)
 	}
@@ -1012,7 +1356,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 	// Get paginated files with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
-		u.username, f.scan_status, f.scan_result, f.scanned_at
+		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
@@ -1054,6 +1398,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -1132,7 +1477,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	// Get paginated results with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
-		u.username, f.scan_status, f.scan_result, f.scanned_at
+		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
@@ -1175,6 +1520,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 			&scanStatus,
 			&scanResult,
 			&scannedAt,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)

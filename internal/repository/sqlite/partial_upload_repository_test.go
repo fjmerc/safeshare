@@ -41,7 +41,8 @@ func setupPartialUploadTestDB(t *testing.T) *sql.DB {
 			status TEXT DEFAULT 'uploading',
 			error_message TEXT,
 			assembly_started_at TEXT,
-			assembly_completed_at TEXT
+			assembly_completed_at TEXT,
+			client_encrypted INTEGER NOT NULL DEFAULT 0
 		)
 	`)
 	if err != nil {
@@ -752,6 +753,80 @@ func TestPartialUploadRepository_TryLockForProcessing(t *testing.T) {
 	}
 	if locked {
 		t.Error("expected second lock to fail")
+	}
+}
+
+// TestPartialUploadRepository_ReleaseProcessingLock_NoClobber is the SH-1.4
+// safety test: ReleaseProcessingLock must ONLY revert "processing" →
+// "uploading". A pre-fix implementation using an unconditional UpdateStatus
+// could clobber a row that had already advanced to "completed" or "failed",
+// enabling duplicate assembly + duplicate claim codes via a TOCTOU race.
+func TestPartialUploadRepository_ReleaseProcessingLock_NoClobber(t *testing.T) {
+	db := setupPartialUploadTestDB(t)
+	defer db.Close()
+	repo := NewPartialUploadRepository(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Happy path: row in "processing" reverts cleanly.
+	processingUpload := &models.PartialUpload{
+		UploadID:     "release-processing",
+		Filename:     "p.txt",
+		TotalSize:    1024,
+		ChunkSize:    256,
+		TotalChunks:  4,
+		Status:       "uploading",
+		CreatedAt:    now,
+		LastActivity: now,
+	}
+	if err := repo.Create(ctx, processingUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := repo.TryLockForProcessing(ctx, "release-processing"); err != nil {
+		t.Fatalf("TryLock: %v", err)
+	}
+	reverted, err := repo.ReleaseProcessingLock(ctx, "release-processing")
+	if err != nil {
+		t.Fatalf("ReleaseProcessingLock: %v", err)
+	}
+	if !reverted {
+		t.Error("expected processing → uploading revert to succeed")
+	}
+	got, _ := repo.GetByUploadID(ctx, "release-processing")
+	if got.Status != "uploading" {
+		t.Errorf("after release, status = %q, want uploading", got.Status)
+	}
+
+	// No-clobber: a row that has advanced to "completed" must NOT be
+	// reverted, even if a stale unwind call comes in. This is the property
+	// that prevents the SH-1.4 TOCTOU race from producing duplicate claim
+	// codes.
+	for _, terminalStatus := range []string{"completed", "failed"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			id := "release-noclobber-" + terminalStatus
+			u := &models.PartialUpload{
+				UploadID: id, Filename: "n.txt", TotalSize: 1024, ChunkSize: 256,
+				TotalChunks: 4, Status: "uploading", CreatedAt: now, LastActivity: now,
+			}
+			if err := repo.Create(ctx, u); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			// Skip the intermediate steps and mark the upload terminal.
+			if err := repo.UpdateStatus(ctx, id, terminalStatus, nil); err != nil {
+				t.Fatalf("UpdateStatus: %v", err)
+			}
+			reverted, err := repo.ReleaseProcessingLock(ctx, id)
+			if err != nil {
+				t.Fatalf("ReleaseProcessingLock: %v", err)
+			}
+			if reverted {
+				t.Errorf("ReleaseProcessingLock clobbered terminal status %q", terminalStatus)
+			}
+			got, _ := repo.GetByUploadID(ctx, id)
+			if got.Status != terminalStatus {
+				t.Errorf("after no-op release, status = %q, want %q", got.Status, terminalStatus)
+			}
+		})
 	}
 }
 

@@ -211,6 +211,14 @@
                                 </label>
                                 <p class="e2e-description">Encrypt in your browser — server never sees your file</p>
                                 <p class="e2e-size-warning hidden" id="e2eSizeWarning">Large files (>500 MB) may cause browser memory issues. Consider server-side encryption for very large files.</p>
+
+                                <div class="e2e-suboption hidden" id="e2eHideFilenameGroup">
+                                    <label class="e2e-toggle-label">
+                                        <input type="checkbox" id="e2eHideFilenameToggle">
+                                        <span class="e2e-toggle-text">Hide filename from server</span>
+                                    </label>
+                                    <p class="e2e-description">Filename is only revealed by the share link, not the claim code.</p>
+                                </div>
                             </div>
                             </div>
                         </div>
@@ -389,6 +397,16 @@
                             </div>
                         </div>
                     </form>
+
+                    <!-- E2E Key Prompt (shown when file is E2E encrypted) -->
+                    <div id="e2eKeyPrompt" class="e2e-key-section hidden">
+                        <div class="e2e-key-header">
+                            <span class="e2e-key-icon">🔐</span>
+                            <span>End-to-End Encrypted File</span>
+                        </div>
+                        <p class="e2e-key-hint">This file is end-to-end encrypted. Paste the full share link or encryption key to decrypt it.</p>
+                        <input type="text" id="e2eKeyInput" class="e2e-key-input" placeholder="Paste share link or encryption key" autocomplete="off">
+                    </div>
 
                     <button id="downloadButton" class="btn-primary btn-large">
                         ⬇️ Download File

@@ -32,6 +32,7 @@ class ChunkedUploader {
             expiresInHours: options.expiresInHours || 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
+            clientEncrypted: !!options.clientEncrypted,
             concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
             retryAttempts: options.retryAttempts || 3,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
@@ -149,7 +150,8 @@ class ChunkedUploader {
                     chunk_size: this.chunkSize || 5242880, // Will be overridden by server
                     expires_in_hours: this.options.expiresInHours,
                     max_downloads: this.options.maxDownloads,
-                    password: this.options.password
+                    password: this.options.password,
+                    client_encrypted: this.options.clientEncrypted
                 })
             });
 

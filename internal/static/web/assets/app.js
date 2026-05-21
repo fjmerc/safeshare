@@ -67,6 +67,8 @@
     const newPickupButton = document.getElementById('newPickupButton');
     const limitWarning = document.getElementById('limitWarning');
     const passwordPrompt = document.getElementById('passwordPrompt');
+    const e2eKeyPrompt = document.getElementById('e2eKeyPrompt');
+    const e2eKeyInput = document.getElementById('e2eKeyInput');
 
     // DOM Elements - Download Progress
     const downloadProgress = document.getElementById('downloadProgress');
@@ -129,6 +131,9 @@
         handleInitialTab();
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
+
+        // Handle file received via Web Share Target API
+        await handleShareTarget();
 
         // Check for encrypted download URL fragment
         const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
@@ -231,14 +236,22 @@
     function initE2EEncryption() {
         const e2eGroup = document.getElementById('e2eEncryptionGroup');
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameGroup = document.getElementById('e2eHideFilenameGroup');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
         if (!e2eGroup || !e2eToggle) return;
 
         if (window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported()) {
             e2eGroup.classList.remove('hidden');
 
-            // Show size warning when toggle is enabled and file is large
+            // Show size warning + sub-option when toggle is enabled
             e2eToggle.addEventListener('change', function() {
                 updateE2ESizeWarning();
+                if (hideFilenameGroup && hideFilenameToggle) {
+                    hideFilenameGroup.classList.toggle('hidden', !e2eToggle.checked);
+                    if (!e2eToggle.checked) {
+                        hideFilenameToggle.checked = false;
+                    }
+                }
             });
         }
     }
@@ -748,6 +761,71 @@
         }
     }
 
+    // Handle file received via Web Share Target API
+    // Must match SHARE_TARGET_CACHE in service-worker.js
+    const SHARE_TARGET_CACHE = 'safeshare-share-target';
+
+    async function handleShareTarget() {
+        const params = new URLSearchParams(window.location.search);
+        if (!params.has('share-target')) return;
+
+        // Clean up the URL
+        window.history.replaceState(null, '', '/');
+
+        // Cache API requires secure context (HTTPS or localhost)
+        if (!('caches' in window)) return;
+
+        // Check if auth is required and user is not logged in
+        if (serverConfig.require_auth_for_upload && !currentUser) {
+            await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+            showToast('Please log in to upload files.', 'warning', 4000);
+            window.location.href = '/login';
+            return;
+        }
+
+        try {
+            const cache = await caches.open(SHARE_TARGET_CACHE);
+            const response = await cache.match('shared-file');
+            if (!response) {
+                await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+                showToast('Could not retrieve shared file. Please try again.', 'error', 4000);
+                return;
+            }
+
+            let filename = 'shared-file';
+            try {
+                filename = decodeURIComponent(response.headers.get('X-Share-Filename') || 'shared-file');
+            } catch (e) {
+                console.warn('[ShareTarget] Failed to decode filename, using fallback');
+            }
+            const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+            const blob = await response.blob();
+
+            // Clean up cache immediately after reading
+            await cache.delete('shared-file');
+            await caches.delete(SHARE_TARGET_CACHE);
+
+            const file = new File([blob], filename, { type: contentType });
+
+            // Validate file size before proceeding
+            if (file.size > maxFileSizeBytes) {
+                showToast(`Shared file is too large. Maximum size is ${formatFileSize(maxFileSizeBytes)}`, 'error', 5000);
+                return;
+            }
+
+            // Switch to the Dropoff tab so the upload UI is visible
+            const dropoffBtn = document.querySelector('.tab-button[data-tab="dropoff"]');
+            if (dropoffBtn) dropoffBtn.click();
+
+            // Set the file and prepare for upload
+            selectedFile = file;
+            await prepareFile(file);
+        } catch (error) {
+            await caches.delete(SHARE_TARGET_CACHE).catch(() => {});
+            console.error('[ShareTarget] Failed to handle shared file:', error);
+        }
+    }
+
     // Prepare file for upload (show loading state and verify accessibility)
     async function prepareFile(file) {
         // Set preparing state
@@ -863,7 +941,9 @@
         if (!selectedFile) return;
 
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
         const useE2E = e2eToggle && e2eToggle.checked && window.SafeShareCrypto;
+        const hideFilename = useE2E && hideFilenameToggle && hideFilenameToggle.checked;
 
         let fileToUpload = selectedFile;
 
@@ -883,16 +963,18 @@
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
 
-                // Wrap file data with filename header before encryption
-                // The real filename is embedded inside the encrypted payload
-                const wrappedPayload = SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer);
-                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, wrappedPayload);
+                // When hiding filename, wrap [SF01 magic + filename + data] before encryption.
+                // When filename stays visible, encrypt raw bytes only.
+                const payload = hideFilename
+                    ? SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer)
+                    : arrayBuffer;
+                const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, payload);
 
                 progressText.textContent = 'Uploading...';
                 progressFill.style.width = '15%';
 
-                // Send anonymous filename to server — real name is inside the encrypted payload
-                fileToUpload = new File([encryptedBuffer], 'encrypted.bin', {
+                const uploadName = hideFilename ? 'encrypted.bin' : selectedFile.name;
+                fileToUpload = new File([encryptedBuffer], uploadName, {
                     type: 'application/octet-stream'
                 });
 
@@ -911,10 +993,10 @@
         if (serverConfig.chunked_upload_enabled &&
             fileToUpload.size >= serverConfig.chunked_upload_threshold) {
             console.log('Using chunked upload for large file:', formatFileSize(fileToUpload.size));
-            await handleChunkedUpload(fileToUpload);
+            await handleChunkedUpload(fileToUpload, useE2E);
         } else {
             console.log('Using simple upload for file:', formatFileSize(fileToUpload.size));
-            await handleSimpleUpload(fileToUpload);
+            await handleSimpleUpload(fileToUpload, useE2E);
         }
     }
 
@@ -933,7 +1015,7 @@
     }
 
     // Handle simple upload (existing logic for files below threshold)
-    async function handleSimpleUpload(fileToUpload) {
+    async function handleSimpleUpload(fileToUpload, isClientEncrypted) {
         const file = fileToUpload || selectedFile;
         if (!file) return;
 
@@ -954,6 +1036,10 @@
         const password = document.getElementById('uploadPassword').value.trim();
         if (password) {
             formData.append('password', password);
+        }
+
+        if (isClientEncrypted) {
+            formData.append('client_encrypted', 'true');
         }
 
         // Update upload state
@@ -1022,7 +1108,7 @@
     }
 
     // Handle chunked upload for large files
-    async function handleChunkedUpload(fileToUpload) {
+    async function handleChunkedUpload(fileToUpload, isClientEncrypted) {
         const file = fileToUpload || selectedFile;
         if (!file) return;
 
@@ -1048,7 +1134,8 @@
             const uploader = new ChunkedUploader(file, {
                 expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
-                password: password
+                password: password,
+                clientEncrypted: !!isClientEncrypted
             });
             currentChunkedUploader = uploader; // Store for cancellation
 
@@ -1179,7 +1266,8 @@
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = displayUrl;
             const fileNameElement = document.getElementById('fileName');
-            // When E2E, server sees 'encrypted.bin' — show the real filename from selectedFile
+            // For E2E uploads we always know the real name locally — prefer it so the
+            // result panel shows the original name even when the server stored 'encrypted.bin'.
             const displayFilename = isE2E && selectedFile ? selectedFile.name : data.original_filename;
             fileNameElement.textContent = displayFilename;
             fileNameElement.title = displayFilename; // Show full name on hover
@@ -1752,7 +1840,7 @@
         retrieveButton.textContent = 'Retrieving...';
 
         try {
-            const response = await fetch(`/api/claim/${claimCode}/info`);
+            const response = await fetch(`/api/claim/${encodeURIComponent(claimCode)}/info`);
 
             if (!response.ok) {
                 const error = await response.json();
@@ -1856,6 +1944,16 @@
             passwordPrompt.classList.add('hidden');
         }
 
+        // Detect E2E encrypted file and show key prompt
+        if (e2eKeyPrompt) {
+            if (isE2EEncryptedFile(data)) {
+                e2eKeyPrompt.classList.remove('hidden');
+                if (e2eKeyInput) e2eKeyInput.value = '';
+            } else {
+                e2eKeyPrompt.classList.add('hidden');
+            }
+        }
+
         // Check for resumable download
         checkForResumableDownload(data);
 
@@ -1893,8 +1991,33 @@
     async function handleDownload(forceNew = false) {
         if (!currentFileInfo) return;
 
-        // Build download URL with password if required
+        // If E2E encrypted, require key before downloading
+        if (isE2EEncryptedFile(currentFileInfo)) {
+            const keyValue = e2eKeyInput ? e2eKeyInput.value.trim() : '';
+            if (keyValue) {
+                const encryptionKey = extractE2EKeyFromInput(keyValue);
+                if (encryptionKey) {
+                    handleEncryptedDownload({ claimCode: claimCodeInput.value.trim(), encryptionKey: encryptionKey });
+                    return;
+                } else {
+                    showToast('Invalid encryption key format. Please paste the full share link or key.', 'warning', 4000);
+                    return;
+                }
+            } else {
+                showToast('Please paste the share link or encryption key to decrypt this file.', 'warning', 3000);
+                return;
+            }
+        }
+
+        // SH-1.5: separate the password from the URL. For same-origin
+        // downloads we pass it via X-File-Password header (no leak into
+        // proxy logs / browser history / Referer). The cross-origin <a>
+        // tag fallback still has to use the URL since browser navigation
+        // can't carry custom headers — the server emits Deprecation +
+        // Referrer-Policy on that path. Tracked for full removal in
+        // v1.6.0 via a signed-token exchange.
         let downloadUrl = currentFileInfo.download_url;
+        let downloadPassword = null;
 
         if (currentFileInfo.password_required) {
             const password = document.getElementById('downloadPassword').value.trim();
@@ -1902,31 +2025,36 @@
                 showToast('Please enter the password to download this file', 'warning', 3000);
                 return;
             }
-            downloadUrl += `?password=${encodeURIComponent(password)}`;
+            downloadPassword = password;
         }
 
-        // CRITICAL: Check if download URL is cross-origin
+        // Check if download URL is cross-origin
         // Cross-origin downloads should bypass ResumableDownloader to avoid Service Worker issues
         try {
             const downloadUrlObj = new URL(downloadUrl);
             const currentOrigin = window.location.origin;
-            
+
             if (downloadUrlObj.origin !== currentOrigin) {
-                // Cross-origin download - use simple browser download (no Service Worker interference)
+                // Cross-origin download - browser <a> tag, cannot set headers.
+                // Fall back to query-string password (deprecated server-side).
+                let aHrefUrl = downloadUrl;
+                if (downloadPassword) {
+                    aHrefUrl += `?password=${encodeURIComponent(downloadPassword)}`;
+                }
                 console.log('Cross-origin download detected - using <a> tag download');
                 console.log(`Download origin: ${downloadUrlObj.origin}, Current origin: ${currentOrigin}`);
-                
+
                 // Use <a> tag for cross-origin downloads (avoids pop-up blockers)
                 // This completely bypasses Service Worker and uses native browser download
                 const link = document.createElement('a');
-                link.href = downloadUrl;
+                link.href = aHrefUrl;
                 link.download = currentFileInfo.original_filename; // Suggest filename
                 link.target = '_blank';
                 link.rel = 'noopener noreferrer'; // Security best practice
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-                
+
                 showToast('Download started', 'success', 3000);
                 return; // Exit early - don't use ResumableDownloader for cross-origin
             }
@@ -1945,7 +2073,8 @@
             currentDownloader = new ResumableDownloader(
                 downloadUrl,
                 currentFileInfo.original_filename,
-                currentFileInfo.file_size
+                currentFileInfo.file_size,
+                { password: downloadPassword } // SH-1.5: header transport
             );
 
             // Set up event listeners
@@ -2021,6 +2150,9 @@
         currentFileInfo = null;
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
+        // Clear E2E key prompt
+        if (e2eKeyInput) e2eKeyInput.value = '';
+        if (e2eKeyPrompt) e2eKeyPrompt.classList.add('hidden');
     }
 
     // ========================================
@@ -2067,8 +2199,8 @@
                             <div class="recovery-claim">
                                 <label>Claim Code:</label>
                                 <div class="recovery-code-display">
-                                    <code class="recovery-claim-code">${completion.claim_code}</code>
-                                    <button class="btn-copy-recovery" data-claim="${completion.claim_code}" aria-label="Copy claim code">
+                                    <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
+                                    <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
                                         📋
                                     </button>
                                 </div>
@@ -2195,6 +2327,51 @@
 
     // ===== E2E ENCRYPTED DOWNLOAD =====
 
+    // Reserved filename used for E2E uploads when "Hide filename from server" is on.
+    // Pre-flag uploads (before client_encrypted was tracked server-side) used this
+    // filename as the only signal — kept as a fallback for backward compatibility.
+    // Once all pre-flag uploads have expired, the filename fallback in
+    // isE2EEncryptedFile() can be dropped (the server-side flag is authoritative).
+    const E2E_ENCRYPTED_FILENAME = 'encrypted.bin';
+
+    /**
+     * Check if a file info response indicates an E2E encrypted file.
+     * @param {Object} fileInfo - File info from /api/claim/CODE/info
+     * @returns {boolean}
+     */
+    function isE2EEncryptedFile(fileInfo) {
+        if (!fileInfo || !window.SafeShareCrypto) return false;
+        if (fileInfo.client_encrypted === true) return true;
+        // Backward compat: files uploaded before client_encrypted existed
+        return fileInfo.original_filename === E2E_ENCRYPTED_FILENAME;
+    }
+
+    /**
+     * Extract E2E encryption key from user input.
+     * Accepts a full share URL, a URL fragment, or a raw base64url key.
+     * @param {string} input - User-provided string
+     * @returns {string|null} base64url key or null if invalid
+     */
+    function extractE2EKeyFromInput(input) {
+        if (!input) return null;
+        input = input.trim();
+
+        // Try to extract key from full share URL or fragment: .../key/KEY
+        const keyMatch = input.match(/\/key\/([A-Za-z0-9_-]+)$/);
+        if (keyMatch) return keyMatch[1];
+
+        // Try as hash fragment: #/claim/CODE/key/KEY
+        const hashMatch = input.match(/#\/claim\/[^/]+\/key\/([A-Za-z0-9_-]+)/);
+        if (hashMatch) return hashMatch[1];
+
+        // Assume raw base64url key (AES-256 = 32 bytes = 43 base64url chars)
+        if (/^[A-Za-z0-9_-]+$/.test(input) && input.length >= 20) {
+            return input;
+        }
+
+        return null;
+    }
+
     /**
      * Handle an encrypted download triggered by URL fragment.
      * Downloads the file, decrypts in browser, and triggers a save.
@@ -2278,8 +2455,9 @@
                 }
                 const fileInfo = await infoResponse.json();
 
-                // Step 2: Handle password if required
-                let passwordParam = '';
+                // Step 2: Handle password if required.
+                // SH-1.5: password goes in the X-File-Password header, not the URL.
+                let passwordHeader = null;
                 if (fileInfo.password_required) {
                     const password = await requestPassword();
                     if (!password) {
@@ -2288,7 +2466,7 @@
                         history.replaceState(null, '', window.location.pathname);
                         return;
                     }
-                    passwordParam = `?password=${encodeURIComponent(password)}`;
+                    passwordHeader = password;
                 }
 
                 // Step 3: Download encrypted file
@@ -2296,7 +2474,8 @@
                 status.textContent = formatFileSize(fileInfo.file_size);
                 progressFillEl.style.width = '30%';
 
-                const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}${passwordParam}`);
+                const downloadHeaders = passwordHeader ? { 'X-File-Password': passwordHeader } : undefined;
+                const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}`, downloadHeaders ? { headers: downloadHeaders } : undefined);
                 if (!downloadResponse.ok) {
                     if (downloadResponse.status === 401) {
                         throw new Error('Incorrect password');
@@ -2316,8 +2495,14 @@
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
 
-                // Unwrap payload to extract real filename (v2) or use server filename (v1)
-                const unwrapped = SafeShareCrypto.unwrapPayload(decryptedData);
+                // Only unwrap (look for the SF01 filename header) when the upload was
+                // actually wrapped — i.e. the server stored 'encrypted.bin'. Otherwise
+                // a plaintext file that happens to start with the SF01 magic bytes would
+                // be silently truncated, see crypto.js:unwrapPayload.
+                const wasWrapped = fileInfo.original_filename === E2E_ENCRYPTED_FILENAME;
+                const unwrapped = wasWrapped
+                    ? SafeShareCrypto.unwrapPayload(decryptedData)
+                    : { filename: null, data: decryptedData };
                 const downloadFilename = unwrapped.filename || fileInfo.original_filename;
                 const downloadData = unwrapped.data;
 

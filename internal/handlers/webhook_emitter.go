@@ -18,3 +18,16 @@ func EmitWebhookEvent(event *webhooks.Event) {
 		globalWebhookDispatcher.Emit(event)
 	}
 }
+
+// InvalidateWebhookConfigCache tells the dispatcher to re-query its enabled-
+// configs view on the next event. Called by webhook admin handlers after a
+// create / update / delete so the config change propagates within one event
+// rather than waiting up to the dispatcher's cache TTL. No-op when the
+// dispatcher isn't installed (test setups, CLI tools).
+//
+// SH-3.2.
+func InvalidateWebhookConfigCache() {
+	if globalWebhookDispatcher != nil {
+		globalWebhookDispatcher.InvalidateConfigCache()
+	}
+}

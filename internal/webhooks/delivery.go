@@ -17,28 +17,40 @@ import (
 )
 
 var (
-	httpClientOnce sync.Once
-	httpClient     *http.Client
+	sharedTransportOnce sync.Once
+	sharedTransport     *http.Transport
 )
 
-// getHTTPClient returns a reusable HTTP client with connection pooling
-func getHTTPClient(timeoutSeconds int) *http.Client {
-	httpClientOnce.Do(func() {
-		httpClient = &http.Client{
-			Timeout: time.Duration(timeoutSeconds) * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				DisableKeepAlives:   false,
-			},
+// getSharedTransport returns the package-wide http.Transport. Only the
+// transport — which owns the connection pool, DNS cache, and the SH-1.1 SSRF
+// guards (DialContext) — is shared across deliveries. Concurrent deliveries
+// each get their own *http.Client wrapping this transport so per-call fields
+// (notably Timeout) cannot race.
+func getSharedTransport() *http.Transport {
+	sharedTransportOnce.Do(func() {
+		sharedTransport = &http.Transport{
+			DialContext:         safeDialContext,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+			DisableKeepAlives:   false,
 		}
 	})
+	return sharedTransport
+}
 
-	// Update timeout if different from current
-	httpClient.Timeout = time.Duration(timeoutSeconds) * time.Second
-
-	return httpClient
+// newWebhookClient builds a fresh http.Client per delivery so the Timeout
+// field is never mutated on a shared instance. The shared Transport carries
+// the SSRF guards and connection pool (SH-1.1); per-call construction of
+// *http.Client is cheap (no socket/TLS state lives on the client itself).
+// Fixes the SH-1.3 data race where concurrent goroutines with different
+// configured timeouts wrote httpClient.Timeout under each other.
+func newWebhookClient(timeoutSeconds int) *http.Client {
+	return &http.Client{
+		Timeout:       time.Duration(timeoutSeconds) * time.Second,
+		Transport:     getSharedTransport(),
+		CheckRedirect: safeCheckRedirect,
+	}
 }
 
 // DeliveryResult represents the result of a webhook delivery attempt
@@ -72,8 +84,10 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	// Compute HMAC signature
 	signature := ComputeHMACSignature(payload, secret)
 
-	// Use shared HTTP client with connection pooling
-	client := getHTTPClient(timeoutSeconds)
+	// Per-call client (shared transport for pooling + SSRF guards). The
+	// previous shared *http.Client mutated its Timeout field per call, which
+	// raced under concurrent deliveries with different configured timeouts.
+	client := newWebhookClient(timeoutSeconds)
 
 	// Create request
 	req, err := http.NewRequest("POST", finalURL, bytes.NewBufferString(payload))
@@ -110,9 +124,12 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	}
 	defer resp.Body.Close()
 
-	// Read response body (limit to 10KB for logging, 1KB for storage)
-	const maxStoredResponseSize = 1024      // 1KB stored in DB
-	const maxLoggedResponseSize = 10 * 1024 // 10KB for logs
+	// Read response body. Tight 256-byte cap on the stored copy minimises the
+	// blast radius if a webhook target is ever pointed at an internal service
+	// that echoes secrets in its response (defence in depth alongside the SSRF
+	// dialer guard). Logs still keep 10KB for diagnostics.
+	const maxStoredResponseSize = 256
+	const maxLoggedResponseSize = 10 * 1024
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxLoggedResponseSize))
 	responseBody := string(bodyBytes)
@@ -121,7 +138,9 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 		responseBody = fmt.Sprintf("failed to read response: %v", err)
 	}
 
-	// Truncate for database storage to prevent bloat
+	// Redact common credential patterns before either logging or storing.
+	responseBody = redactSensitiveResponseBody(responseBody)
+
 	storedResponseBody := responseBody
 	if len(storedResponseBody) > maxStoredResponseSize {
 		storedResponseBody = storedResponseBody[:maxStoredResponseSize] + "... (truncated)"

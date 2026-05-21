@@ -26,8 +26,6 @@ import (
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webauthn"
 	"github.com/fjmerc/safeshare/internal/webhooks"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
@@ -169,36 +167,53 @@ func run() error {
 
 	slog.Info("upload directory ready", "path", cfg.UploadDir)
 
-	// Initialize storage backend
+	// Initialize storage backend. SH-2.2 deletes the local-FS
+	// storage.EncryptedStorage wrapper — production handlers call
+	// utils.EncryptFileStreamingV2 / utils.DecryptFileStreamingRangeAny
+	// directly against the underlying filesystem path, so the wrapper layer
+	// was dead code (only its HealthCheck passthrough was reached). Encryption
+	// at rest is unchanged: every upload still flows through SFSE2 in the
+	// upload handlers (see internal/handlers/upload.go and assembly_worker.go).
 	fsStorage, err := filesystem.NewFilesystemStorage(cfg.UploadDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize filesystem storage: %w", err)
 	}
-
-	// Wrap with encryption if encryption is enabled
-	var storageBackend storage.StorageBackend
+	var storageBackend storage.StorageBackend = fsStorage
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		encStorage, err := storage.NewEncryptedStorage(fsStorage, cfg.EncryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to initialize encrypted storage: %w", err)
-		}
-		storageBackend = encStorage
-		slog.Info("storage initialized with encryption")
+		slog.Info("storage initialized with encryption (SFSE2 emitted directly by upload handlers)")
 	} else {
-		storageBackend = fsStorage
 		slog.Info("storage initialized without encryption")
 	}
 
 	// Make storage backend available to handlers
 	handlers.SetStorageBackend(storageBackend)
 
+	// SH-2.3 bug-hunter M3: install the per-(file, IP) in-flight reservation
+	// cap so a single attacker can't burst-hold many slots concurrently on
+	// `max_downloads=N` files. The global rate limiter caps total requests/IP/hr;
+	// this caps concurrent ones per file. nil tracker (cfg value 0) disables
+	// the cap; the handler still rate-limits via middleware.
+	handlers.SetInFlightTracker(handlers.NewInFlightTracker(cfg.MaxInFlightPerIPPerFile))
+
+	// SH-1.4: size the chunked-upload assembly worker pool from config. The
+	// handler returns 503 with Retry-After once all slots are in use; raise
+	// ASSEMBLY_WORKERS_MAX to absorb burstier upload completions.
+	handlers.InitAssemblyWorkers(cfg.AssemblyWorkersMax)
+
 	// Initialize webhook dispatcher
 	webhookMetrics := webhooks.NewPrometheusMetrics()
 	webhookDB := database.NewWebhookDBAdapter(db)
 	webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
+	// SH-1.1: SSRF guard on webhook delivery. Off by default; operators that
+	// legitimately webhook against localhost (homelab / dev) opt in via
+	// WEBHOOK_ALLOW_PRIVATE_TARGETS (mapped onto cfg.AllowPrivateWebhookTargets).
+	webhooks.SetAllowPrivateNetworks(cfg.AllowPrivateWebhookTargets)
 	webhookDispatcher.Start()
 	defer webhookDispatcher.Shutdown()
-	slog.Info("webhook dispatcher started", "workers", 5, "buffer_size", 1000)
+	slog.Info("webhook dispatcher started",
+		"workers", 5,
+		"buffer_size", 1000,
+		"allow_private_targets", cfg.AllowPrivateWebhookTargets)
 
 	// Make webhook dispatcher available to handlers
 	handlers.SetWebhookDispatcher(webhookDispatcher)
@@ -782,6 +797,10 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/webhook-deliveries/delete", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookDeliveryHandler(repos.DB)))).ServeHTTP(w, r)
+		})
+
 		// Admin API Token management routes
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
@@ -994,23 +1013,22 @@ func run() error {
 		),
 	)
 
-	// Enable HTTP/2 support (with h2c for non-TLS environments)
-	h2Server := &http2.Server{
-		MaxConcurrentStreams: 250, // Allow many parallel chunk uploads
-	}
+	// Setup HTTP server with HTTP/2 support, including h2c for non-TLS environments.
+	// HTTP/2 over TLS is negotiated via ALPN when HTTPS is enabled.
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	protocols.SetUnencryptedHTTP2(true)
 
-	// Wrap handler with h2c for HTTP/2 over cleartext (dev/testing)
-	// If HTTPS is enabled, Go automatically uses HTTP/2 via TLS ALPN
-	handlerWithH2C := h2c.NewHandler(handler, h2Server)
-
-	// Setup HTTP server
 	server := &http.Server{
 		Addr:           ":" + cfg.Port,
-		Handler:        handlerWithH2C,
+		Handler:        handler,
 		ReadTimeout:    time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
 		WriteTimeout:   time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
 		IdleTimeout:    120 * time.Second, // Increased from 60s for HTTP/2 connection reuse
 		MaxHeaderBytes: 1 << 20,           // 1MB header limit
+		Protocols:      protocols,
+		HTTP2:          &http.HTTP2Config{MaxConcurrentStreams: 250},
 	}
 
 	// Start cleanup workers with WaitGroup for graceful shutdown
@@ -1031,6 +1049,17 @@ func run() error {
 	go func() {
 		defer workerWg.Done()
 		utils.StartPartialUploadCleanupWorker(ctx, repos, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+	}()
+
+	// Start download-reservation reaper (SH-2.3 / ADR-012). TTL is operator-
+	// tunable via DOWNLOAD_RESERVATION_TTL (default 30m); the 1-minute tick is
+	// fixed so crash-recovery latency is bounded regardless of TTL.
+	reservationTTL := utils.ResolveReservationTTL()
+	slog.Info("download reservation reaper configured", "ttl", utils.ReservationTTLDescription(reservationTTL))
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		utils.StartReservationReaper(ctx, repos, reservationTTL)
 	}()
 
 	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)

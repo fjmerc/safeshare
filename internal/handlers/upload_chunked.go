@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -22,9 +23,43 @@ import (
 	"github.com/google/uuid"
 )
 
-// assemblySemaphore limits concurrent assembly workers to prevent memory exhaustion
-// Each assembly uses a 20MB buffer, so 10 concurrent = 200MB max
-var assemblySemaphore = make(chan struct{}, 10)
+// assemblySemaphoreRef holds the *current* assembly-slot channel behind an
+// atomic.Pointer so InitAssemblyWorkers can resize the pool safely (used in
+// tests; in production it's set once at boot from cfg.AssemblyWorkersMax).
+// Each assembly worker uses a 20MB buffer, so 10 concurrent ≈ 200MB max.
+//
+// SH-1.4 invariant: a slot is acquired on the request goroutine BEFORE any
+// worker is spawned, and the channel reference captured at acquire time is
+// the same one used at release — so a mid-flight `InitAssemblyWorkers` swap
+// cannot cause a worker to release into a different-generation channel.
+var assemblySemaphoreRef atomic.Pointer[chan struct{}]
+
+func init() {
+	ch := make(chan struct{}, 10)
+	assemblySemaphoreRef.Store(&ch)
+}
+
+// InitAssemblyWorkers replaces the assembly semaphore with one of the given
+// capacity. Called once at startup from main with cfg.AssemblyWorkersMax.
+// The atomic.Pointer swap makes it race-free against concurrent handler
+// requests; in-flight workers retain the prior channel via the local copy
+// captured at acquire time, so capacity accounting cannot get corrupted
+// across a resize.
+func InitAssemblyWorkers(maxConcurrent int) {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 10
+	}
+	ch := make(chan struct{}, maxConcurrent)
+	assemblySemaphoreRef.Store(&ch)
+}
+
+// currentAssemblySemaphore returns a pointer to the current pool channel.
+// Handlers capture this once per request and pass the same reference to the
+// worker goroutine, ensuring acquire/release symmetry across an
+// InitAssemblyWorkers resize.
+func currentAssemblySemaphore() *chan struct{} {
+	return assemblySemaphoreRef.Load()
+}
 
 // UploadInitHandler handles POST /api/upload/init - Initialize chunked upload session
 func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
@@ -200,21 +235,22 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 		// Create partial upload record
 		partialUpload := &models.PartialUpload{
-			UploadID:       uploadID,
-			UserID:         userID,
-			Filename:       req.Filename,
-			TotalSize:      req.TotalSize,
-			ChunkSize:      chunkSize, // Use calculated chunk size, not config default
-			TotalChunks:    totalChunks,
-			ChunksReceived: 0,
-			ReceivedBytes:  0,
-			ExpiresInHours: req.ExpiresInHours,
-			MaxDownloads:   req.MaxDownloads,
-			PasswordHash:   passwordHash,
-			CreatedAt:      time.Now(),
-			LastActivity:   time.Now(),
-			Completed:      false,
-			ClaimCode:      nil,
+			UploadID:        uploadID,
+			UserID:          userID,
+			Filename:        req.Filename,
+			TotalSize:       req.TotalSize,
+			ChunkSize:       chunkSize, // Use calculated chunk size, not config default
+			TotalChunks:     totalChunks,
+			ChunksReceived:  0,
+			ReceivedBytes:   0,
+			ExpiresInHours:  req.ExpiresInHours,
+			MaxDownloads:    req.MaxDownloads,
+			PasswordHash:    passwordHash,
+			CreatedAt:       time.Now(),
+			LastActivity:    time.Now(),
+			Completed:       false,
+			ClaimCode:       nil,
+			ClientEncrypted: req.ClientEncrypted,
 		}
 
 		// Use transactional quota check to prevent race conditions (P0 fix)
@@ -672,6 +708,41 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
+		// SH-1.4: acquire an assembly slot non-blockingly BEFORE the expensive
+		// precondition checks (filesystem stats per chunk, integrity hashes,
+		// disk-space probe, TryLockForProcessing DB write). Pre-fix code
+		// spawned a goroutine that blocked on the channel send; under sustained
+		// /api/upload/complete spam this piled up unbounded goroutines, each
+		// holding partialUploadCopy in closure. Acquiring up-front also caps
+		// the disk-IO storm a saturated server can be forced to run.
+		//
+		// Capture the channel reference for this request — InitAssemblyWorkers
+		// can swap the underlying channel, so we must release into the same
+		// generation we acquired from.
+		semCh := *currentAssemblySemaphore()
+		slotHandedOff := false
+		select {
+		case semCh <- struct{}{}:
+			// Slot acquired. Hand off to worker once we reach the go func()
+			// below; if any pre-flight check fails before that point the defer
+			// releases the slot.
+			defer func() {
+				if !slotHandedOff {
+					<-semCh
+				}
+			}()
+		default:
+			metrics.ChunkedUploadAssemblySaturated.Inc()
+			slog.Warn("assembly queue saturated, returning 503",
+				"upload_id", uploadID,
+				"capacity", cap(semCh),
+				"client_ip", logIP(getClientIP(r), cfg),
+			)
+			w.Header().Set("Retry-After", "5")
+			sendError(w, "Server is currently assembling other uploads, please retry shortly", "ASSEMBLY_BUSY", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Check for missing chunks
 		missingChunks, err := utils.GetMissingChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks)
 		if err != nil {
@@ -754,19 +825,29 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 
 		// Track assembly for graceful shutdown - re-check shutdown status right before spawning
 		if !uploadTracker.StartAssembly(uploadID) {
+			// Symmetric with the SH-1.4 saturation path: release the
+			// processing lock we just acquired so a future retry (after
+			// shutdown completes) can re-claim cleanly. Pre-fix code left
+			// the row stuck in "processing" until the startup recovery
+			// worker reaped it.
+			if _, err := repos.PartialUploads.ReleaseProcessingLock(ctx, uploadID); err != nil {
+				slog.Warn("failed to release processing lock on shutdown path",
+					"upload_id", uploadID,
+					"error", err,
+				)
+			}
 			sendError(w, "Server is shutting down, cannot start file assembly", "SERVICE_UNAVAILABLE", http.StatusServiceUnavailable)
 			return
 		}
 
-		// Spawn goroutine to assemble file asynchronously with concurrency limit
-		// Copy partialUpload to avoid data races (partialUpload is a pointer)
+		// Spawn goroutine to assemble file asynchronously. The worker owns
+		// the semaphore slot and the tracker entry; both are released here.
+		// Copy partialUpload to avoid data races (partialUpload is a pointer).
 		partialUploadCopy := *partialUpload
+		slotHandedOff = true
 		go func() {
 			defer uploadTracker.FinishAssembly(uploadID)
-
-			// Acquire semaphore slot (blocks if 10 assemblies already running)
-			assemblySemaphore <- struct{}{}
-			defer func() { <-assemblySemaphore }() // Release slot when done
+			defer func() { <-semCh }() // Release into the SAME channel we acquired from.
 
 			AssembleUploadAsync(repos, cfg, &partialUploadCopy, clientIP)
 		}()

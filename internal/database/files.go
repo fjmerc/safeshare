@@ -387,6 +387,8 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 	if err != nil {
 		return 0, fmt.Errorf("failed to query expired files: %w", err)
 	}
+	// Defensive defer — the explicit Close below normally fires first. A second
+	// Close on an already-closed *sql.Rows is a no-op per database/sql.
 	defer rows.Close()
 
 	type expiredFileData struct {
@@ -434,6 +436,17 @@ func DeleteExpiredFiles(db *sql.DB, uploadDir string, onExpired ExpiredFileCallb
 
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("error iterating expired files: %w", err)
+	}
+
+	// SH-3.4: close the read cursor explicitly *before* doing filesystem
+	// deletions and the subsequent batch DELETE. The original `defer rows.Close()`
+	// kept the SQLite read transaction open across os.Remove + batchDeleteFiles
+	// on every cleanup cycle, which can run for seconds on large sets. While the
+	// read tx is open, WAL checkpointing is blocked and the WAL file grows
+	// unbounded — causing a checkpoint stall when the cursor finally closes and
+	// elevating read latency for concurrent requests in the meantime.
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("failed to close expired files cursor: %w", err)
 	}
 
 	// Delete files (file first, then database record)

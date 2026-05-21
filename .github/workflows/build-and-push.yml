@@ -25,9 +25,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.10'
           cache: true
 
       - name: Download dependencies
@@ -92,9 +92,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.10'
           cache: true
 
       - name: Download dependencies
@@ -119,11 +119,108 @@ jobs:
           go tool cover -func=coverage-postgres.out | grep -E 'total:|internal/repository/postgres' || true
 
       - name: Upload PostgreSQL coverage artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: postgres-coverage
           path: coverage-postgres.out
           retention-days: 7
+
+  # MinIO (S3-compatible) integration tests — guards SH-2.2's bounded-heap
+  # streaming decrypt against regression. Runs the `integration` build tag
+  # tests in internal/storage/s3/. Independent of `test-postgres`; both run
+  # in parallel.
+  #
+  # MinIO is launched via `docker run` rather than `services:` because the
+  # official minio/minio image needs `server /data` as its command, and
+  # GitHub Actions service containers don't expose a `command` field. This
+  # matches the local `scripts/test-minio.sh` flow (which also uses an
+  # explicit `mc mb` bucket-creation step after MinIO is healthy).
+  test-minio:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v5
+        with:
+          go-version: '1.25.10'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name safeshare-minio-ci \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            minio/minio:RELEASE.2024-11-07T00-52-20Z \
+            server /data
+
+      - name: Wait for MinIO ready + create test bucket
+        env:
+          MC_HOST_local: http://minioadmin:minioadmin123@localhost:9000
+        run: |
+          # Poll the /minio/health/ready endpoint for up to 60s.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
+              echo "MinIO ready after ${i} attempts"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "MinIO did not become ready in time"
+              docker logs safeshare-minio-ci
+              exit 1
+            fi
+            sleep 2
+          done
+          # Idempotent bucket creation via mc.
+          docker run --rm --network host \
+            -e MC_HOST_local="$MC_HOST_local" \
+            minio/mc:RELEASE.2024-11-05T11-29-45Z \
+            mb -p local/safeshare-test
+
+      - name: Run MinIO integration tests
+        env:
+          MINIO_HOST: localhost
+          MINIO_PORT: 9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin123
+          MINIO_BUCKET: safeshare-test
+          # CI defaults to 1 GB to keep runner-minutes bounded. Bump via
+          # workflow_dispatch input or manual override when validating perf.
+          SH22_LARGE_FILE_SIZE_GB: '1'
+        run: |
+          go test -tags=integration -v -timeout=15m ./internal/storage/s3/... \
+            -cover -coverprofile=coverage-minio.out -covermode=atomic
+
+      - name: Show MinIO test coverage
+        if: always()
+        run: |
+          go tool cover -func=coverage-minio.out | grep -E 'total:|internal/storage/s3' || true
+
+      - name: Upload MinIO coverage artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: minio-coverage
+          path: coverage-minio.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Dump MinIO logs on failure
+        if: failure()
+        run: docker logs safeshare-minio-ci 2>&1 | tail -100
+
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f safeshare-minio-ci 2>/dev/null || true
 
   # Go vulnerability scanning with govulncheck
   security-scan:
@@ -137,9 +234,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v5
         with:
-          go-version: '1.25.8'
+          go-version: '1.25.10'
           cache: true
 
       - name: Download dependencies
@@ -153,7 +250,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload govulncheck SARIF
-        uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v3
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v3
         with:
           sarif_file: govulncheck-results.sarif
           category: govulncheck
@@ -163,7 +260,7 @@ jobs:
         run: govulncheck ./...
 
   build-and-push:
-    needs: [test, test-postgres, security-scan]
+    needs: [test, test-postgres, test-minio, security-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -176,7 +273,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -196,7 +293,7 @@ jobs:
 
       - name: Build and push Docker image
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -209,7 +306,7 @@ jobs:
       # PR-specific: Build local image for vulnerability scanning
       - name: Build local image for PR scanning
         if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           load: true
@@ -218,7 +315,7 @@ jobs:
 
       - name: Run Trivy on PR image
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: 'safeshare:pr-${{ github.event.pull_request.number }}'
           format: 'table'
@@ -241,7 +338,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -275,7 +372,7 @@ jobs:
         run: docker pull "${DOCKERHUB_USERNAME}/safeshare:${IMAGE_TAG}"
 
       - name: Run Trivy vulnerability scanner (SARIF)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
           format: 'sarif'
@@ -284,14 +381,14 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v3
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v3
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'trivy-container'
         if: always()
 
       - name: Run Trivy (table output for logs)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/safeshare:${{ steps.image-tag.outputs.tag }}'
           format: 'table'
@@ -311,7 +408,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
         with:
           generate_release_notes: true
           body: |

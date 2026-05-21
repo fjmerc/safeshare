@@ -607,6 +607,116 @@ func TestUploadCompleteHandler_AllChunksPresent(t *testing.T) {
 	}
 }
 
+// TestUploadCompleteHandler_AssemblySaturated is the SH-1.4 regression test.
+// Before the fix, the handler spawned a goroutine and then blocked it on the
+// assembly semaphore; under sustained /api/upload/complete spam this piled
+// up unbounded goroutines each holding a partialUpload copy in closure (DoS).
+// Post-fix: the slot is acquired non-blockingly on the request goroutine,
+// and a full pool yields 503 + Retry-After plus a clean release of the DB
+// processing lock so the client's retry can re-claim it.
+func TestUploadCompleteHandler_AssemblySaturated(t *testing.T) {
+	// Shrink the pool to 1 slot so we can deterministically saturate it.
+	// Restore default on test exit (matters because the package-level
+	// semaphore is shared across tests in this file).
+	InitAssemblyWorkers(1)
+	t.Cleanup(func() { InitAssemblyWorkers(10) })
+
+	// Hold the lone slot for the duration of the test so the handler hits
+	// the default case of the select.
+	sem := *currentAssemblySemaphore()
+	sem <- struct{}{}
+	t.Cleanup(func() { <-sem })
+
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440099"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "saturated.txt",
+		TotalSize:      2048,
+		ChunkSize:      1024,
+		TotalChunks:    2,
+		ExpiresInHours: 24,
+		MaxDownloads:   0,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	ctx := context.Background()
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create partial upload: %v", err)
+	}
+
+	// All chunks need to be present on disk so the handler doesn't bail out
+	// before reaching the semaphore branch.
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		chunkPath := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		if err := os.WriteFile(chunkPath, bytes.Repeat([]byte("A"), 1024), 0644); err != nil {
+			t.Fatalf("write chunk %d: %v", i, err)
+		}
+	}
+
+	handler := UploadCompleteHandler(repos, cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d (saturated pool)", rr.Code, http.StatusServiceUnavailable)
+	}
+	if got := rr.Header().Get("Retry-After"); got != "5" {
+		t.Errorf("Retry-After = %q, want %q", got, "5")
+	}
+
+	var response map[string]interface{}
+	_ = json.NewDecoder(rr.Body).Decode(&response)
+	if code, _ := response["code"].(string); code != "ASSEMBLY_BUSY" {
+		t.Errorf("response code = %v, want ASSEMBLY_BUSY", response["code"])
+	}
+
+	// Critical post-fix invariant: the DB processing lock must be released
+	// on the 503 path so the client's retry can claim the upload again.
+	pu, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID after 503: %v", err)
+	}
+	if pu == nil {
+		t.Fatalf("partial upload disappeared")
+	}
+	if pu.Status != "uploading" {
+		t.Errorf("after saturated 503, status = %q, want %q (lock leaked)", pu.Status, "uploading")
+	}
+}
+
+// TestInitAssemblyWorkers_DefaultOnZero confirms the boot-time pool sizer
+// falls back to the default capacity rather than constructing a zero-size
+// channel that would 503 every request.
+func TestInitAssemblyWorkers_DefaultOnZero(t *testing.T) {
+	InitAssemblyWorkers(0)
+	t.Cleanup(func() { InitAssemblyWorkers(10) })
+	if got := cap(*currentAssemblySemaphore()); got != 10 {
+		t.Errorf("cap(*currentAssemblySemaphore()) after InitAssemblyWorkers(0) = %d, want 10 (default)", got)
+	}
+	InitAssemblyWorkers(-5)
+	if got := cap(*currentAssemblySemaphore()); got != 10 {
+		t.Errorf("cap(*currentAssemblySemaphore()) after InitAssemblyWorkers(-5) = %d, want 10 (default)", got)
+	}
+	InitAssemblyWorkers(25)
+	if got := cap(*currentAssemblySemaphore()); got != 25 {
+		t.Errorf("cap(*currentAssemblySemaphore()) after InitAssemblyWorkers(25) = %d, want 25", got)
+	}
+}
+
 func TestUploadCompleteHandler_MissingChunks(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)

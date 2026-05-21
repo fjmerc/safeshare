@@ -11,32 +11,35 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
-	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
-	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // serveFileWithRangeSupport handles serving a file with HTTP Range request support.
 // This enables resumable downloads and partial content delivery for large files.
+//
+// Returns commitable=true when the response received the entire file (no Range
+// header, or a Range covering [0, fileSize-1]) AND the stream completed
+// successfully. The caller — ClaimHandler — uses this to decide between
+// CommitDownload (counts toward max_downloads) and CancelDownload (does not).
+// See ADR-012 §6 for the rationale.
 func serveFileWithRangeSupport(
 	w http.ResponseWriter,
 	r *http.Request,
 	file *models.File,
 	filePath string,
 	cfg *config.Config,
-	repos *repository.Repositories,
-) {
-	// Check if file is stream-encrypted (SFSE1 format)
+) (commitable bool) {
+	// Check if file is stream-encrypted (SFSE1 or SFSE2 — same magic, distinguished by version byte).
 	isStreamEnc, err := utils.IsStreamEncrypted(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
 			sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
-			return
+			return false
 		}
 		slog.Error("failed to check file encryption format", "path", filePath, "error", err)
 		sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	// Get the actual file size (decrypted size for encrypted files)
@@ -55,8 +58,7 @@ func serveFileWithRangeSupport(
 
 	// If no Range header, serve the entire file
 	if rangeHeader == "" {
-		serveEntireFile(w, r, file, filePath, cfg, isStreamEnc, fileSize, repos)
-		return
+		return serveEntireFile(w, r, file, filePath, cfg, isStreamEnc, fileSize)
 	}
 
 	// Parse Range header
@@ -72,14 +74,15 @@ func serveFileWithRangeSupport(
 			"client_ip", logIP(getClientIP(r), cfg),
 		)
 		sendErrorResponse(w, r, "Range Not Satisfiable", "The requested byte range is invalid or exceeds the file size.", "RANGE_NOT_SATISFIABLE", http.StatusRequestedRangeNotSatisfiable)
-		return
+		return false
 	}
 
-	// Serve partial content
-	servePartialContent(w, r, file, filePath, cfg, isStreamEnc, httpRange, fileSize)
+	return servePartialContent(w, r, file, filePath, cfg, isStreamEnc, httpRange, fileSize)
 }
 
-// serveEntireFile serves the complete file without Range support (HTTP 200 OK)
+// serveEntireFile serves the complete file without Range support (HTTP 200 OK).
+// Returns commitable=true if the stream completed successfully — a full GET
+// always counts as a download under ADR-012 Policy A.
 func serveEntireFile(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -88,12 +91,14 @@ func serveEntireFile(
 	cfg *config.Config,
 	isStreamEnc bool,
 	fileSize int64,
-	repos *repository.Repositories,
-) {
-	ctx := r.Context()
+) (commitable bool) {
 	var written int64
 
-	// Handle streaming encrypted files
+	// Handle streaming encrypted files (SFSE1 or SFSE2 via version-aware dispatcher).
+	// SH-2.1 / ADR-011 §6: for SFSE2, pass the DB-recorded SHA-256 and plaintext
+	// length so the post-decrypt integrity verify and header-length check actually
+	// run on the full-file download path (start=0 .. end=fileSize-1 satisfies the
+	// dispatcher's "fullRead" condition).
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
 		// Stream decrypt directly to response (no temp file)
 		// Use optimized range decryption for the full file (0 to fileSize-1)
@@ -101,11 +106,11 @@ func serveEntireFile(
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize))
 
 		var err error
-		written, err = utils.DecryptFileStreamingRange(filePath, w, cfg.EncryptionKey, 0, fileSize-1)
+		written, err = utils.DecryptFileStreamingRangeAny(filePath, w, cfg.EncryptionKey, file.EncFileID, file.SHA256Hash, fileSize, 0, fileSize-1)
 		if err != nil {
 			slog.Error("failed to stream decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 			// Can't send error response - headers already sent
-			return
+			return false
 		}
 	} else {
 		// Handle legacy encrypted format or non-encrypted files
@@ -138,7 +143,7 @@ func serveEntireFile(
 			if err != nil {
 				slog.Error("failed to read encrypted file", "path", filePath, "error", err)
 				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
+				return false
 			}
 
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
@@ -150,7 +155,7 @@ func serveEntireFile(
 				time.Sleep(10 * time.Millisecond)
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				sendErrorResponse(w, r, "Decryption Error", "An error occurred while decrypting the file. Please contact the administrator.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
+				return false
 			}
 
 			// Write decrypted data to response
@@ -159,7 +164,7 @@ func serveEntireFile(
 			written = int64(writtenInt)
 			if err != nil {
 				slog.Error("failed to write file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-				return
+				return false
 			}
 		} else {
 			// Non-encrypted file - use streaming to avoid loading entire file into memory
@@ -168,11 +173,11 @@ func serveEntireFile(
 				if os.IsNotExist(err) {
 					slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
 					sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
-					return
+					return false
 				}
 				slog.Error("failed to open file", "path", filePath, "error", err)
 				sendErrorResponse(w, r, "Server Error", "An error occurred while reading the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-				return
+				return false
 			}
 			defer f.Close()
 
@@ -184,7 +189,7 @@ func serveEntireFile(
 			if err != nil {
 				slog.Error("failed to stream file to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				// Headers already sent, can't send error response
-				return
+				return false
 			}
 		}
 	}
@@ -193,27 +198,11 @@ func serveEntireFile(
 	metrics.DownloadsTotal.WithLabelValues("success").Inc()
 	metrics.DownloadSizeBytes.Observe(float64(written))
 
-	// Increment completed downloads counter (only for full file downloads, not ranges)
-	if err := repos.Files.IncrementCompletedDownloads(ctx, file.ID); err != nil {
-		slog.Error("failed to increment completed downloads", "file_id", file.ID, "error", err)
-		// Don't fail the response - file was already successfully sent
-	}
-
-	// Emit webhook event for file download
-	now := time.Now()
-	EmitWebhookEvent(&webhooks.Event{
-		Type:      webhooks.EventFileDownloaded,
-		Timestamp: now,
-		File: webhooks.FileData{
-			ID:           file.ID,
-			ClaimCode:    file.ClaimCode,
-			Filename:     file.OriginalFilename,
-			Size:         file.FileSize,
-			MimeType:     file.MimeType,
-			ExpiresAt:    file.ExpiresAt,
-			DownloadedAt: &now,
-		},
-	})
+	// SH-2.3 / ADR-012: completed_downloads is incremented inside
+	// FileRepository.CommitDownload (which the caller invokes when this function
+	// returns commitable=true), keeping it lock-step with download_count. The
+	// file.downloaded webhook is also emitted by the caller — only after Commit
+	// has succeeded, so a Commit failure doesn't produce a phantom event.
 
 	slog.Info("file downloaded (full)",
 		"claim_code", redactClaimCode(file.ClaimCode),
@@ -222,9 +211,14 @@ func serveEntireFile(
 		"client_ip", logIP(getClientIP(r), cfg),
 		"user_agent", getUserAgent(r),
 	)
+	return true
 }
 
-// servePartialContent serves a byte range from the file (HTTP 206 Partial Content)
+// servePartialContent serves a byte range from the file (HTTP 206 Partial Content).
+//
+// Under ADR-012 Policy A, a partial range commits the download reservation only
+// if it happens to cover the entire file (Range: bytes=0-{fileSize-1} or
+// equivalent). Tail probes, mid-file ranges, and 1-byte probes never commit.
 func servePartialContent(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -234,7 +228,7 @@ func servePartialContent(
 	isStreamEnc bool,
 	httpRange *utils.HTTPRange,
 	fileSize int64,
-) {
+) (commitable bool) {
 	// Set 206 Partial Content headers
 	w.Header().Set("Content-Range", httpRange.ContentRangeHeader(fileSize))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", httpRange.ContentLength()))
@@ -243,14 +237,27 @@ func servePartialContent(
 	var written int64
 	var err error
 
-	// Handle streaming encrypted files (optimized for ranges)
+	// Range that covers the entire file behaves as a full download for accounting.
+	fullCoverage := httpRange.Start == 0 && httpRange.End == fileSize-1
+
+	// Handle streaming encrypted files (SFSE1 or SFSE2 via version-aware dispatcher).
+	// SH-2.1 / ADR-011: pass expectedPlaintextLen so a header-length forgery is
+	// caught even on partial-range reads. SHA-256 is only verified by the V2
+	// reader when the range is in fact full-file; partial reads cannot validate
+	// a whole-file digest so we pass "".
 	if utils.IsEncryptionEnabled(cfg.EncryptionKey) && isStreamEnc {
-		// Use optimized range decryption - only decrypt the chunks we need
-		written, err = utils.DecryptFileStreamingRange(filePath, w, cfg.EncryptionKey, httpRange.Start, httpRange.End)
+		// For ranges that cover the entire file we pass the DB-recorded SHA-256 so the
+		// SFSE2 post-decrypt verify runs (see ADR-011 §6); otherwise we cannot validate
+		// a whole-file digest against a partial read.
+		sha := ""
+		if fullCoverage {
+			sha = file.SHA256Hash
+		}
+		written, err = utils.DecryptFileStreamingRangeAny(filePath, w, cfg.EncryptionKey, file.EncFileID, sha, fileSize, httpRange.Start, httpRange.End)
 		if err != nil {
 			slog.Error("failed to decrypt file range", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 			// Can't send error response - headers already sent
-			return
+			return false
 		}
 	} else {
 		// Handle legacy encrypted format or non-encrypted files
@@ -278,7 +285,7 @@ func servePartialContent(
 			if err != nil {
 				slog.Error("failed to read encrypted file", "path", filePath, "error", err)
 				// Can't send error response - headers already sent
-				return
+				return false
 			}
 
 			decrypted, err := utils.DecryptFile(fileData, cfg.EncryptionKey)
@@ -287,7 +294,7 @@ func servePartialContent(
 				time.Sleep(10 * time.Millisecond)
 				slog.Error("failed to decrypt file", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
 				// Can't send error response - headers already sent
-				return
+				return false
 			}
 
 			// Extract and write the requested range from decrypted data
@@ -296,7 +303,7 @@ func servePartialContent(
 			written = int64(writtenInt)
 			if err != nil {
 				slog.Error("failed to write range to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-				return
+				return false
 			}
 		} else {
 			// Non-encrypted file - use streaming with seek to avoid loading entire file into memory
@@ -304,7 +311,7 @@ func servePartialContent(
 			if err != nil {
 				slog.Error("failed to open file", "path", filePath, "error", err)
 				// Can't send error response - headers already sent
-				return
+				return false
 			}
 			defer f.Close()
 
@@ -312,7 +319,7 @@ func servePartialContent(
 			_, err = f.Seek(httpRange.Start, io.SeekStart)
 			if err != nil {
 				slog.Error("failed to seek in file", "path", filePath, "offset", httpRange.Start, "error", err)
-				return
+				return false
 			}
 
 			// Create a limited reader for the requested range
@@ -322,7 +329,7 @@ func servePartialContent(
 			written, err = io.Copy(w, limitedReader)
 			if err != nil {
 				slog.Error("failed to stream range to response", "claim_code", redactClaimCode(file.ClaimCode), "error", err)
-				return
+				return false
 			}
 		}
 	}
@@ -337,7 +344,9 @@ func servePartialContent(
 		"range_start", httpRange.Start,
 		"range_end", httpRange.End,
 		"bytes_sent", written,
+		"full_coverage", fullCoverage,
 		"client_ip", logIP(getClientIP(r), cfg),
 		"user_agent", getUserAgent(r),
 	)
+	return fullCoverage
 }

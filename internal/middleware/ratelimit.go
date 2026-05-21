@@ -147,6 +147,17 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// Rationale: Single file can have hundreds of chunks
 				limit = rl.config.GetRateLimitUpload() * 10
 				limitType = "chunk"
+			} else if strings.HasPrefix(r.URL.Path, "/api/upload/complete/") {
+				// SH-1.4: rate-limit the complete endpoint so a single IP
+				// cannot generate a DB-write storm via repeated saturation
+				// 503s. Same 10× lenient cap as chunk uploads — a polite
+				// client polling complete on a many-chunk upload after
+				// reconnect should not get throttled, but a malicious client
+				// spamming the endpoint will. The previous "already rate
+				// limited via init" assumption was wrong: a single /init
+				// call grants unbounded /complete attempts.
+				limit = rl.config.GetRateLimitUpload() * 10
+				limitType = "complete"
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
@@ -155,7 +166,6 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				limitType = "regeneration"
 			} else {
 				// No rate limit for other endpoints:
-				// - /api/upload/complete/* (part of init operation, already rate limited)
 				// - health, info, static files
 				next.ServeHTTP(w, r)
 				return
