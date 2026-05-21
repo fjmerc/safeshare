@@ -633,6 +633,31 @@ ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS client_encrypted BOOLEAN NO
 ALTER TABLE files ADD COLUMN IF NOT EXISTS enc_file_id BYTEA;
 `,
 	},
+	{
+		Version:     11,
+		Name:        "011_download_reservations",
+		Description: "Download reservation pattern: two-phase commit for download_count (SH-2.3; see ADR-012)",
+		SQL: `
+-- Denormalised counter of live reservations. Co-located with download_count so
+-- the Reserve guard is a single UPDATE statement instead of UPDATE + COUNT().
+ALTER TABLE files ADD COLUMN IF NOT EXISTS in_flight_reservations INTEGER NOT NULL DEFAULT 0;
+
+-- One row per live reservation. The token is held in the handler goroutine and
+-- never sent over the wire; it exists purely as a closure handle so the right
+-- Commit / Cancel fires from the defer at end-of-stream.
+CREATE TABLE IF NOT EXISTS download_reservations (
+    token      TEXT        PRIMARY KEY,
+    file_id    BIGINT      NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dl_reservations_created_at
+    ON download_reservations(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_dl_reservations_file_id
+    ON download_reservations(file_id);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

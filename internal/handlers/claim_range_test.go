@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -303,7 +304,18 @@ func TestClaimHandler_RangeRequest_AcceptRangesHeader(t *testing.T) {
 	}
 }
 
-// TestClaimHandler_RangeRequest_DownloadCountIncrement tests that range requests count as downloads
+// TestClaimHandler_RangeRequest_DownloadCountIncrement asserts the SH-2.3 /
+// ADR-012 Policy A semantics for download counting on range requests:
+//   - A partial range request (e.g. bytes=0-99) MUST NOT increment
+//     download_count or completed_downloads. It serves the bytes but does not
+//     commit the download reservation.
+//   - A range request that exactly covers the entire file (bytes=0-{N-1})
+//     IS treated as a full download and commits both counters.
+//
+// This is a deliberate behaviour change vs. pre-SH-2.3, where every successful
+// HTTP request incremented download_count regardless of range. The pre-SH-2.3
+// behaviour caused a denial-of-access bug for max_downloads=1 files when any
+// pre-fetcher or probe touched the link first.
 func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -314,7 +326,6 @@ func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 	handler := ClaimHandler(repos, cfg)
 	ctx := context.Background()
 
-	// Create test file
 	testContent := bytes.Repeat([]byte("E"), 1024)
 	storedFilename := "range-count-uuid.bin"
 	filePath := filepath.Join(cfg.UploadDir, storedFilename)
@@ -332,19 +343,34 @@ func TestClaimHandler_RangeRequest_DownloadCountIncrement(t *testing.T) {
 	}
 	repos.Files.Create(ctx, file)
 
-	// Make range request
+	// Partial range: must NOT count.
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/rangecount", nil)
 	req.Header.Set("Range", "bytes=0-99")
 	rr := httptest.NewRecorder()
-
 	handler.ServeHTTP(rr, req)
-
 	testutil.AssertStatusCode(t, rr, http.StatusPartialContent)
 
-	// Verify download count incremented
-	updatedFile, _ := repos.Files.GetByClaimCode(ctx, "rangecount")
-	if updatedFile.DownloadCount != 1 {
-		t.Errorf("download_count = %d, want 1 (range requests should count)", updatedFile.DownloadCount)
+	afterPartial, _ := repos.Files.GetByClaimCode(ctx, "rangecount")
+	if afterPartial.DownloadCount != 0 {
+		t.Errorf("after partial range: download_count = %d, want 0 (ADR-012 Policy A)", afterPartial.DownloadCount)
+	}
+	if afterPartial.CompletedDownloads != 0 {
+		t.Errorf("after partial range: completed_downloads = %d, want 0", afterPartial.CompletedDownloads)
+	}
+
+	// Full-coverage range: MUST count as a download (same as a no-Range GET).
+	fullReq := httptest.NewRequest(http.MethodGet, "/api/claim/rangecount", nil)
+	fullReq.Header.Set("Range", fmt.Sprintf("bytes=0-%d", len(testContent)-1))
+	fullRR := httptest.NewRecorder()
+	handler.ServeHTTP(fullRR, fullReq)
+	testutil.AssertStatusCode(t, fullRR, http.StatusPartialContent)
+
+	afterFull, _ := repos.Files.GetByClaimCode(ctx, "rangecount")
+	if afterFull.DownloadCount != 1 {
+		t.Errorf("after full-coverage range: download_count = %d, want 1", afterFull.DownloadCount)
+	}
+	if afterFull.CompletedDownloads != 1 {
+		t.Errorf("after full-coverage range: completed_downloads = %d, want 1", afterFull.CompletedDownloads)
 	}
 }
 

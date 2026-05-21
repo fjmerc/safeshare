@@ -105,6 +105,7 @@ type Config struct {
 	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
 	AllowPrivateWebhookTargets bool // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
 	AssemblyWorkersMax         int  // Max concurrent chunked-upload assembly workers (SH-1.4). 503 returned beyond this; raise to absorb burstier upload completions.
+	MaxInFlightPerIPPerFile    int  // SH-2.3 bug-hunter M3: max concurrent download reservations per (file, IP). Defence against Slowloris-style reservation exhaustion. 0 disables the cap. Default 3.
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -155,6 +156,7 @@ func Load() (*Config, error) {
 		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
 		AllowPrivateWebhookTargets: getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
 		AssemblyWorkersMax:         getEnvInt("ASSEMBLY_WORKERS_MAX", 10),
+		MaxInFlightPerIPPerFile:    getEnvInt("MAX_INFLIGHT_PER_IP_PER_FILE", 3),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),

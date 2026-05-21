@@ -9,6 +9,8 @@ package mock
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,10 @@ type FileRepository struct {
 	byClaimCode map[string]*models.File // by claim code (separate copy from files map)
 	nextID      int64
 
+	// SH-2.3: reservations side-table mirror. Tokens → (fileID, createdAt).
+	// in_flight counter per file lives implicitly as len(reservations where file_id = X).
+	reservations map[string]mockReservation
+
 	// Error injection for testing error handling
 	// NOTE: Set these BEFORE concurrent access begins
 	CreateError                          error
@@ -37,6 +43,10 @@ type FileRepository struct {
 	IncrementDownloadCountIfUnchangedErr error
 	TryIncrementDownloadWithLimitError   error
 	IncrementCompletedDownloadsError     error
+	ReserveDownloadError                 error
+	CommitDownloadError                  error
+	CancelDownloadError                  error
+	ReapStaleReservationsError           error
 	DeleteError                          error
 	DeleteByClaimCodeError               error
 	DeleteByClaimCodesError              error
@@ -58,12 +68,19 @@ type FileRepository struct {
 	OnTryIncrementDownload func(ctx context.Context, id int64, claimCode string) (bool, error)
 }
 
+// mockReservation is the in-memory mirror of a download_reservations row.
+type mockReservation struct {
+	fileID    int64
+	createdAt time.Time
+}
+
 // NewFileRepository creates a new mock FileRepository with default behavior.
 func NewFileRepository() *FileRepository {
 	return &FileRepository{
-		files:       make(map[int64]*models.File),
-		byClaimCode: make(map[string]*models.File),
-		nextID:      1,
+		files:        make(map[int64]*models.File),
+		byClaimCode:  make(map[string]*models.File),
+		reservations: make(map[string]mockReservation),
+		nextID:       1,
 	}
 }
 
@@ -77,6 +94,7 @@ func (r *FileRepository) Reset() {
 
 	r.files = make(map[int64]*models.File)
 	r.byClaimCode = make(map[string]*models.File)
+	r.reservations = make(map[string]mockReservation)
 	r.nextID = 1
 
 	// Clear error injection
@@ -88,6 +106,10 @@ func (r *FileRepository) Reset() {
 	r.IncrementDownloadCountIfUnchangedErr = nil
 	r.TryIncrementDownloadWithLimitError = nil
 	r.IncrementCompletedDownloadsError = nil
+	r.ReserveDownloadError = nil
+	r.CommitDownloadError = nil
+	r.CancelDownloadError = nil
+	r.ReapStaleReservationsError = nil
 	r.DeleteError = nil
 	r.DeleteByClaimCodeError = nil
 	r.DeleteByClaimCodesError = nil
@@ -419,6 +441,187 @@ func (r *FileRepository) IncrementCompletedDownloads(ctx context.Context, id int
 	}
 
 	return nil
+}
+
+// countInFlight returns the live reservation count for fileID (caller must hold r.mu).
+func (r *FileRepository) countInFlight(fileID int64) int {
+	n := 0
+	for _, res := range r.reservations {
+		if res.fileID == fileID {
+			n++
+		}
+	}
+	return n
+}
+
+// ReserveDownload implements repository.FileRepository.ReserveDownload
+func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, error) {
+	if r.ReserveDownloadError != nil {
+		return "", r.ReserveDownloadError
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+
+	file, exists := r.files[fileID]
+	if !exists {
+		return "", repository.ErrClaimCodeChanged
+	}
+	if file.ClaimCode != expectedClaimCode {
+		return "", repository.ErrClaimCodeChanged
+	}
+
+	// Unlimited cap: fast-path sentinel.
+	if file.MaxDownloads == nil || *file.MaxDownloads == 0 {
+		return repository.ReservationTokenUnlimited, nil
+	}
+
+	inFlight := r.countInFlight(fileID)
+	if file.DownloadCount+inFlight >= *file.MaxDownloads {
+		return "", nil // cap hit
+	}
+
+	token, err := mockReservationToken()
+	if err != nil {
+		return "", err
+	}
+	r.reservations[token] = mockReservation{fileID: fileID, createdAt: time.Now()}
+	return token, nil
+}
+
+// CommitDownload implements repository.FileRepository.CommitDownload
+func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
+	if r.CommitDownloadError != nil {
+		return r.CommitDownloadError
+	}
+	if token == "" {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if token == repository.ReservationTokenUnlimited {
+		if file, ok := r.files[fileID]; ok {
+			file.DownloadCount++
+			file.CompletedDownloads++
+			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+				ccFile.DownloadCount = file.DownloadCount
+				ccFile.CompletedDownloads = file.CompletedDownloads
+			}
+		}
+		return nil
+	}
+
+	res, present := r.reservations[token]
+	if present && res.fileID == fileID {
+		delete(r.reservations, token)
+		if file, ok := r.files[fileID]; ok {
+			file.DownloadCount++
+			file.CompletedDownloads++
+			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+				ccFile.DownloadCount = file.DownloadCount
+				ccFile.CompletedDownloads = file.CompletedDownloads
+			}
+		}
+		return nil
+	}
+
+	// Reaped-mid-stream recovery.
+	// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
+	// Using `download_count >= max_downloads` alone would let a late-committing
+	// reservation jump past a still-live reservation and over-count past the cap
+	// (bug-hunter C1: same-token replay or retry-race could double-credit).
+	file, ok := r.files[fileID]
+	if !ok {
+		return nil
+	}
+	if file.MaxDownloads != nil && *file.MaxDownloads > 0 &&
+		file.DownloadCount+r.countInFlight(fileID) >= *file.MaxDownloads {
+		// cap already taken by another reader; under-count rather than over-count.
+		return nil
+	}
+	file.DownloadCount++
+	file.CompletedDownloads++
+	if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+		ccFile.DownloadCount = file.DownloadCount
+		ccFile.CompletedDownloads = file.CompletedDownloads
+	}
+	return nil
+}
+
+// CancelDownload implements repository.FileRepository.CancelDownload
+func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token string) error {
+	if r.CancelDownloadError != nil {
+		return r.CancelDownloadError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if res, present := r.reservations[token]; present && res.fileID == fileID {
+		delete(r.reservations, token)
+	}
+	return nil
+}
+
+// ReapStaleReservations implements repository.FileRepository.ReapStaleReservations
+func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Duration) (int, error) {
+	if r.ReapStaleReservationsError != nil {
+		return 0, r.ReapStaleReservationsError
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	reaped := 0
+	for token, res := range r.reservations {
+		if res.createdAt.Before(cutoff) {
+			// Find the file backing this reservation so we can keep the file's
+			// implicit in_flight count consistent (mock tracks in_flight as len of
+			// reservation entries; deleting the entry decrements automatically).
+			delete(r.reservations, token)
+			reaped++
+		}
+	}
+	return reaped, nil
+}
+
+// mockReservationToken produces an opaque 32-char hex token for the mock.
+func mockReservationToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
 }
 
 // Delete implements repository.FileRepository.Delete

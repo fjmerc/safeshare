@@ -188,6 +188,13 @@ func run() error {
 	// Make storage backend available to handlers
 	handlers.SetStorageBackend(storageBackend)
 
+	// SH-2.3 bug-hunter M3: install the per-(file, IP) in-flight reservation
+	// cap so a single attacker can't burst-hold many slots concurrently on
+	// `max_downloads=N` files. The global rate limiter caps total requests/IP/hr;
+	// this caps concurrent ones per file. nil tracker (cfg value 0) disables
+	// the cap; the handler still rate-limits via middleware.
+	handlers.SetInFlightTracker(handlers.NewInFlightTracker(cfg.MaxInFlightPerIPPerFile))
+
 	// SH-1.4: size the chunked-upload assembly worker pool from config. The
 	// handler returns 503 with Retry-After once all slots are in use; raise
 	// ASSEMBLY_WORKERS_MAX to absorb burstier upload completions.
@@ -1042,6 +1049,17 @@ func run() error {
 	go func() {
 		defer workerWg.Done()
 		utils.StartPartialUploadCleanupWorker(ctx, repos, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
+	}()
+
+	// Start download-reservation reaper (SH-2.3 / ADR-012). TTL is operator-
+	// tunable via DOWNLOAD_RESERVATION_TTL (default 30m); the 1-minute tick is
+	// fixed so crash-recovery latency is bounded regardless of TTL.
+	reservationTTL := utils.ResolveReservationTTL()
+	slog.Info("download reservation reaper configured", "ttl", utils.ReservationTTLDescription(reservationTTL))
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		utils.StartReservationReaper(ctx, repos, reservationTTL)
 	}()
 
 	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)

@@ -3,7 +3,10 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -387,7 +390,289 @@ func (r *FileRepository) TryIncrementDownloadWithLimit(ctx context.Context, id i
 	return true, nil // Success
 }
 
+// newReservationToken returns 16 random bytes hex-encoded (32 ASCII chars).
+func newReservationToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("failed to generate reservation token: %w", err)
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+// ReserveDownload atomically increments in_flight_reservations and inserts a reservation row.
+// See ADR-012 for the semantics; the guard is `download_count + in_flight_reservations < max_downloads`.
+//
+// Wrapped in withRetry because the transaction uses Serializable isolation; under
+// concurrent claims on a small cap, Postgres will reject one of two racers with
+// serialization_failure (40001) at commit. We re-try with a fresh token on each
+// attempt — the rollback guarantees the previous INSERT did not persist.
+func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, error) {
+	// Fast path: files with no cap don't need a row in download_reservations.
+	// Outside the retry loop — max_downloads doesn't move under us in any race we care about.
+	var maxDL sql.NullInt64
+	if err := r.pool.QueryRow(ctx, `SELECT max_downloads FROM files WHERE id = $1 AND claim_code = $2`, fileID, expectedClaimCode).Scan(&maxDL); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", repository.ErrClaimCodeChanged
+		}
+		return "", fmt.Errorf("failed to read file metadata for reservation: %w", err)
+	}
+	if !maxDL.Valid || maxDL.Int64 == 0 {
+		return repository.ReservationTokenUnlimited, nil
+	}
+
+	return withRetry(ctx, 3, func() (string, error) {
+		token, err := newReservationToken()
+		if err != nil {
+			return "", err
+		}
+
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return "", fmt.Errorf("failed to begin reserve transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		updateQuery := `
+			UPDATE files
+			SET in_flight_reservations = in_flight_reservations + 1
+			WHERE id = $1
+			  AND claim_code = $2
+			  AND (download_count + in_flight_reservations) < max_downloads
+		`
+		res, err := tx.Exec(ctx, updateQuery, fileID, expectedClaimCode)
+		if err != nil {
+			return "", fmt.Errorf("failed to reserve download slot: %w", err)
+		}
+		if res.RowsAffected() == 0 {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT TRUE FROM files WHERE id = $1 AND claim_code = $2`, fileID, expectedClaimCode).Scan(&exists); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return "", repository.ErrClaimCodeChanged
+				}
+				return "", fmt.Errorf("failed to disambiguate reservation failure: %w", err)
+			}
+			return "", nil
+		}
+
+		if _, err := tx.Exec(ctx, `INSERT INTO download_reservations (token, file_id) VALUES ($1, $2)`, token, fileID); err != nil {
+			return "", fmt.Errorf("failed to insert reservation row: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return "", fmt.Errorf("failed to commit reservation: %w", err)
+		}
+		return token, nil
+	})
+}
+
+// CommitDownload finalises a reservation. See ADR-012 §4 for the two-branch semantics.
+//
+// Wrapped in withRetryNoReturn so a serialization_failure under contention is
+// retried rather than bubbling up as a 500 to the user whose download already
+// completed.
+func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
+	if token == "" {
+		return nil
+	}
+	if token == repository.ReservationTokenUnlimited {
+		// No reservation row to delete; just credit the counters. Single-statement
+		// UPDATE; no serialization-failure risk — no retry needed.
+		_, err := r.pool.Exec(ctx, `
+			UPDATE files
+			SET download_count      = download_count + 1,
+			    completed_downloads = completed_downloads + 1
+			WHERE id = $1
+		`, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to credit unlimited download: %w", err)
+		}
+		return nil
+	}
+
+	return withRetryNoReturn(ctx, 3, func() error {
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return fmt.Errorf("failed to begin commit transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		res, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE token = $1 AND file_id = $2`, token, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to delete reservation: %w", err)
+		}
+
+		if res.RowsAffected() == 1 {
+			_, err := tx.Exec(ctx, `
+				UPDATE files
+				SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0),
+				    download_count          = download_count + 1,
+				    completed_downloads     = completed_downloads + 1
+				WHERE id = $1
+			`, fileID)
+			if err != nil {
+				return fmt.Errorf("failed to finalise download counters: %w", err)
+			}
+		} else {
+			// Reaped-mid-stream recovery: try to atomically take a slot now.
+			// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
+			// Using `download_count < max_downloads` alone would let a late-committing
+			// reservation jump past a still-live reservation and over-count past the cap
+			// (bug-hunter C1: same-token replay or retry-race could double-credit).
+			res, err := tx.Exec(ctx, `
+				UPDATE files
+				SET download_count      = download_count + 1,
+				    completed_downloads = completed_downloads + 1
+				WHERE id = $1
+				  AND (max_downloads IS NULL OR max_downloads = 0
+				       OR (download_count + in_flight_reservations) < max_downloads)
+			`, fileID)
+			if err != nil {
+				return fmt.Errorf("failed reaped-recovery increment: %w", err)
+			}
+			if res.RowsAffected() == 0 {
+				slog.Warn("download committed after reaper deleted reservation; cap already taken by another reader — not counting",
+					"file_id", fileID,
+				)
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit download finalisation: %w", err)
+		}
+		return nil
+	})
+}
+
+// CancelDownload releases a reservation without crediting a download.
+func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token string) error {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil
+	}
+
+	return withRetryNoReturn(ctx, 3, func() error {
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return fmt.Errorf("failed to begin cancel transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		res, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE token = $1 AND file_id = $2`, token, fileID)
+		if err != nil {
+			return fmt.Errorf("failed to delete reservation: %w", err)
+		}
+		if res.RowsAffected() == 1 {
+			_, err := tx.Exec(ctx, `
+				UPDATE files
+				SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0)
+				WHERE id = $1
+			`, fileID)
+			if err != nil {
+				return fmt.Errorf("failed to decrement in_flight: %w", err)
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit cancel: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReapStaleReservations deletes rows older than `ttl` and decrements in_flight_reservations accordingly.
+// The cutoff is `NOW() - ($1 * interval '1 second')` evaluated DB-side — see interface doc for rationale.
+func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Duration) (int, error) {
+	return withRetry(ctx, 3, func() (int, error) {
+		return r.reapStaleReservationsOnce(ctx, ttl)
+	})
+}
+
+func (r *FileRepository) reapStaleReservationsOnce(ctx context.Context, ttl time.Duration) (int, error) {
+	// ttl seconds as a float so make_interval / arithmetic stays in the type Postgres
+	// expects; negative values are allowed (tests use them to mean "reap everything
+	// created before now").
+	ttlSecs := ttl.Seconds()
+
+	tx, err := r.pool.BeginTx(ctx, TxOptions())
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin reaper transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT file_id, COUNT(*)
+		FROM download_reservations
+		WHERE created_at < NOW() - ($1 * interval '1 second')
+		GROUP BY file_id
+	`, ttlSecs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query stale reservations: %w", err)
+	}
+
+	type counter struct {
+		fileID int64
+		n      int
+	}
+	var buckets []counter
+	for rows.Next() {
+		var c counter
+		if err := rows.Scan(&c.fileID, &c.n); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan reaper row: %w", err)
+		}
+		buckets = append(buckets, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("reaper row iteration error: %w", err)
+	}
+
+	if len(buckets) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("failed to commit empty reaper tx: %w", err)
+		}
+		return 0, nil
+	}
+
+	// Delete first, then decrement. The two statements are atomic together
+	// inside this Serializable transaction — outside readers (concurrent
+	// ReserveDownload calls) see either the pre-reaper state or the
+	// post-reaper state, never an intermediate state. Doing DELETE first is
+	// belt-and-suspenders for any future refactor that might split the work.
+	delRes, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE created_at < NOW() - ($1 * interval '1 second')`, ttlSecs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete stale reservations: %w", err)
+	}
+	deleted := delRes.RowsAffected()
+
+	total := 0
+	for _, c := range buckets {
+		_, err := tx.Exec(ctx, `
+			UPDATE files
+			SET in_flight_reservations = GREATEST(in_flight_reservations - $1, 0)
+			WHERE id = $2
+		`, c.n, c.fileID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to clamp in_flight for file %d: %w", c.fileID, err)
+		}
+		total += c.n
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit reaper tx: %w", err)
+	}
+
+	if int(deleted) != total {
+		slog.Warn("reaper delete/count mismatch",
+			"deleted", deleted,
+			"counted", total,
+		)
+	}
+	return int(deleted), nil
+}
+
 // IncrementCompletedDownloads increments the completed downloads counter.
+//
+// Deprecated: see FileRepository.IncrementCompletedDownloads.
 func (r *FileRepository) IncrementCompletedDownloads(ctx context.Context, id int64) error {
 	query := `UPDATE files SET completed_downloads = completed_downloads + 1 WHERE id = $1`
 
