@@ -12,6 +12,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -169,7 +170,59 @@ func (es *S3EncryptedStorage) Store(ctx context.Context, filename string, reader
 // layer (it requires DB context); production callers that need defense-in-
 // depth past AAD should use DecryptFileStreamingAny with a path-based
 // source, or call the SH-2.3+ V2-aware wrapper method (not yet implemented).
+//
+// Deprecated: callers that have DB context (the upload handler stored a row
+// in `files`) SHOULD use RetrieveWithExpected, which closes the
+// substitution-attack window documented in ADR-013 / SH-3.5. This legacy
+// method is preserved for admin recovery tools and the health-check probe
+// — callers without a DB row to source expectations from.
 func (es *S3EncryptedStorage) Retrieve(ctx context.Context, filename string) (io.ReadCloser, error) {
+	// Backward-compatible entry: no DB-sourced expectations. AAD + the header
+	// trailer length check inside DecryptSFSEFromReader are the only integrity
+	// guarantees.
+	return es.retrieveWithExpectations(ctx, filename, nil, "", -1)
+}
+
+// RetrieveWithExpected implements storage.IntegrityVerifyingBackend.
+// See ADR-013. The cross-checks fire in this order:
+//
+//  1. PRE-STREAM: expectedEncFileID is compared against the metadata-supplied
+//     enc_file_id. Mismatch → return error before launching the decrypt
+//     goroutine. This catches "swap body + metadata together" attacks.
+//  2. PRE-STREAM: expectedPlaintextLen is compared against the SFSE2 header
+//     trailer (in the V2 path; -1 disables).
+//  3. PER-CHUNK: the cross-checked enc_file_id is used as AAD input. A
+//     body-only swap (metadata kept, ciphertext replaced) fails the AAD
+//     check on chunk 1, before any plaintext is written.
+//  4. POST-DECRYPT: expectedSHA256Hex is verified after the final chunk
+//     (full-file reads only). Belt-and-suspenders against an attacker who
+//     also has the encryption key — but bytes have already flowed by then,
+//     so this is not a substitution-defence for streaming callers; see the
+//     interface docstring's IMPORTANT note.
+//
+// Sentinels: nil / "" / -1 disable the corresponding check; admin tools
+// without DB context use all three.
+func (es *S3EncryptedStorage) RetrieveWithExpected(
+	ctx context.Context,
+	filename string,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+) (io.ReadCloser, error) {
+	return es.retrieveWithExpectations(ctx, filename, expectedEncFileID, expectedSHA256Hex, expectedPlaintextLen)
+}
+
+// retrieveWithExpectations is the shared implementation of Retrieve and
+// RetrieveWithExpected. expectedEncFileID is cross-checked against
+// metadata pre-stream; expectedSHA256Hex and expectedPlaintextLen are
+// forwarded to DecryptSFSEFromReader.
+func (es *S3EncryptedStorage) retrieveWithExpectations(
+	ctx context.Context,
+	filename string,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+) (io.ReadCloser, error) {
 	result, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(es.backend.bucket),
 		Key:    aws.String(filename),
@@ -183,6 +236,31 @@ func (es *S3EncryptedStorage) Retrieve(ctx context.Context, filename string) (io
 	}
 
 	encFileID, _, hasV2Meta := parseSFSE2Metadata(result.Metadata)
+
+	// SH-3.5 / ADR-013 — PRE-STREAM substitution check.
+	// If the caller provided a DB-sourced expectedEncFileID, cross-check it
+	// against the metadata-supplied one BEFORE launching the decrypt
+	// goroutine. A mismatch indicates that the object body + metadata were
+	// substituted for another same-key file's; failing here means zero
+	// plaintext bytes are ever written to the pipe (and therefore to the
+	// caller's HTTP response writer). This is the primary substitution
+	// defence; post-decrypt SHA-256 verify fires too late to prevent
+	// client receipt of attacker-controlled bytes.
+	//
+	// nil expectedEncFileID skips this check (legacy Retrieve + admin
+	// recovery tools that have no DB row to consult).
+	if expectedEncFileID != nil {
+		if !hasV2Meta {
+			_ = result.Body.Close()
+			return nil, storage.NewStorageErrorWithMessage("Retrieve", filename, nil,
+				"SFSE2 object missing required UserMetadata (enc-file-id) — cannot verify against DB expectation")
+		}
+		if !bytes.Equal(expectedEncFileID, encFileID) {
+			_ = result.Body.Close()
+			return nil, storage.NewStorageErrorWithMessage("Retrieve", filename, nil,
+				"SFSE2 object enc_file_id does not match DB expectation (possible substitution)")
+		}
+	}
 
 	// io.Pipe lets us return an io.ReadCloser without buffering the whole
 	// plaintext: a goroutine streams S3 body through the SFSE decryptor,
@@ -201,12 +279,19 @@ func (es *S3EncryptedStorage) Retrieve(ctx context.Context, filename string) (io
 		// Recover from a panic in the decrypt path so the reader-side caller
 		// is unblocked with a clear error instead of waiting forever on pr.
 		// pw.CloseWithError on the deferred panic path supersedes the normal
-		// pw.Close() at the bottom of this function.
+		// pw.Close() at the bottom of this function. Bug-hunter N1: log and
+		// continue instead of re-panicking — a crafted SFSE2 object that
+		// triggered a decrypt panic would otherwise crash the process and
+		// turn this into a DoS vector.
 		var dErr error
 		defer func() {
 			if r := recover(); r != nil {
+				slog.Error("S3 retrieve decrypt panic recovered",
+					"filename", filename,
+					"panic", fmt.Sprintf("%v", r),
+				)
 				_ = pw.CloseWithError(fmt.Errorf("retrieve decrypt panic: %v", r))
-				panic(r) // re-panic so crash handler / logs still see it
+				return
 			}
 			if dErr != nil {
 				_ = pw.CloseWithError(storage.NewStorageError("Retrieve", filename, dErr))
@@ -215,24 +300,26 @@ func (es *S3EncryptedStorage) Retrieve(ctx context.Context, filename string) (io
 			_ = pw.Close()
 		}()
 
-		// V2 reads require an enc_file_id. If metadata is missing it (e.g.
-		// the object was written before SH-2.2, or by a different tool), we
-		// fall back to passing zeros; that will fail AAD validation on a
-		// real V2 file, which is the correct failure mode (don't silently
-		// decrypt with a wrong AAD; surface the metadata absence).
+		// V2 reads require an enc_file_id for per-chunk AAD computation.
+		// If the caller supplied expectedEncFileID it equals metadata
+		// (cross-check above passed) and we use that. Otherwise (legacy
+		// path) we fall back to metadata, or zeros if metadata is absent
+		// — which intentionally fails AAD on a real V2 file (don't
+		// silently decrypt with a wrong AAD; surface the metadata absence).
 		var dispatchEncFileID []byte
-		if hasV2Meta {
+		switch {
+		case expectedEncFileID != nil:
+			dispatchEncFileID = expectedEncFileID
+		case hasV2Meta:
 			dispatchEncFileID = encFileID
-		} else {
+		default:
 			dispatchEncFileID = make([]byte, utils.SFSE2EncFileIDSize)
 		}
 
-		// expectedPlaintextLen / expectedSHA256Hex are -1 / "" because the
-		// wrapper does not have DB context. AAD + the header trailer length
-		// check inside DecryptSFSEFromReader are sufficient defense for the
-		// wrapper layer; production callers that read via path will get the
-		// additional SHA-256 check.
-		_, dErr = utils.DecryptSFSEFromReader(result.Body, pw, es.keyHex, dispatchEncFileID, "", -1, encryptedSize)
+		// SH-3.5: DB-sourced expectedSHA256Hex / expectedPlaintextLen are
+		// passed through to the decrypt core. Empty / -1 sentinels preserve
+		// the legacy Retrieve behaviour.
+		_, dErr = utils.DecryptSFSEFromReader(result.Body, pw, es.keyHex, dispatchEncFileID, expectedSHA256Hex, expectedPlaintextLen, encryptedSize)
 	}()
 	return pr, nil
 }
@@ -250,7 +337,44 @@ func (es *S3EncryptedStorage) Retrieve(ctx context.Context, filename string) (io
 //
 // Range start/end are inclusive plaintext-byte offsets. Returns the number
 // of bytes written to w.
+//
+// Deprecated: callers that have DB context SHOULD use StreamRangeWithExpected,
+// which closes the substitution-attack window documented in ADR-013 / SH-3.5.
+// Preserved for admin recovery tools and the health-check probe.
 func (es *S3EncryptedStorage) StreamRange(ctx context.Context, filename string, start, end int64, w io.Writer) (int64, error) {
+	// Backward-compatible entry: no DB-sourced expectations beyond what's
+	// already cross-checked against UserMetadata / header.
+	return es.streamRangeWithExpectations(ctx, filename, start, end, nil, "", -1, w)
+}
+
+// StreamRangeWithExpected implements storage.IntegrityVerifyingBackend.
+// See the interface docstring for the cross-check ordering and sentinel
+// contract. expectedEncFileID is enforced PRE-STREAM inside streamRangeV2;
+// expectedPlaintextLen is cross-checked against both the SFSE2 header
+// trailer and the S3 UserMetadata. expectedSHA256Hex is verified
+// post-decrypt only on full-file reads (start==0 && end==plaintextLen-1).
+func (es *S3EncryptedStorage) StreamRangeWithExpected(
+	ctx context.Context,
+	filename string,
+	start, end int64,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+	w io.Writer,
+) (int64, error) {
+	return es.streamRangeWithExpectations(ctx, filename, start, end, expectedEncFileID, expectedSHA256Hex, expectedPlaintextLen, w)
+}
+
+// streamRangeWithExpectations is the shared implementation.
+func (es *S3EncryptedStorage) streamRangeWithExpectations(
+	ctx context.Context,
+	filename string,
+	start, end int64,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+	w io.Writer,
+) (int64, error) {
 	if start < 0 || end < start {
 		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
 			fmt.Sprintf("invalid range: start=%d, end=%d", start, end))
@@ -284,15 +408,25 @@ func (es *S3EncryptedStorage) StreamRange(ctx context.Context, filename string, 
 
 	switch hdrBytes[5] {
 	case utils.StreamEncryptionVersion:
-		// V1: chunk_size at bytes 6-9; no plaintext-length trailer. Use a
-		// best-effort fetch from startChunk to end-of-object (S3 returns
-		// what it has).
+		// V1 has no per-chunk AAD and therefore no cryptographic
+		// substitution defence — that's the whole reason SH-2.1
+		// introduced V2. Bug-hunter N2: if the caller passed any
+		// verification expectations (non-sentinel), refuse the read
+		// rather than silently ignoring them — caller asked for
+		// integrity, the V1 path cannot honour the request, return an
+		// honest error pointing at --upgrade-format. The legacy
+		// non-verifying StreamRange (all sentinels) continues to read
+		// V1 objects so admin recovery tools still work.
+		if expectedEncFileID != nil || expectedSHA256Hex != "" || expectedPlaintextLen >= 0 {
+			return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
+				"legacy SFSE1 object cannot honour integrity expectations; run `migrate-encryption --upgrade-format` to convert to SFSE2")
+		}
 		return es.streamRangeV1(ctx, filename, hdrBytes, start, end, w)
 	case utils.StreamEncryptionVersionV2:
 		if len(hdrBytes) < utils.SFSE2HeaderSize {
 			return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil, "object too small to be SFSE2")
 		}
-		return es.streamRangeV2(ctx, filename, hdrResp.Metadata, hdrBytes, start, end, w)
+		return es.streamRangeV2(ctx, filename, hdrResp.Metadata, hdrBytes, start, end, expectedEncFileID, expectedSHA256Hex, expectedPlaintextLen, w)
 	default:
 		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
 			fmt.Sprintf("unsupported SFSE version: %d", hdrBytes[5]))
@@ -323,14 +457,36 @@ func (es *S3EncryptedStorage) streamRangeV1(ctx context.Context, filename string
 }
 
 // streamRangeV2 handles a plaintext Range request for an SFSE2 object.
-// Validates UserMetadata, computes the ciphertext range via
-// ComputeSFSE2CiphertextRange, issues a ranged GetObject, and runs the V2
-// chunk decrypt on the body.
-func (es *S3EncryptedStorage) streamRangeV2(ctx context.Context, filename string, meta map[string]string, hdrBytes []byte, start, end int64, w io.Writer) (int64, error) {
+// Validates UserMetadata, cross-checks against DB-sourced expectations,
+// computes the ciphertext range via ComputeSFSE2CiphertextRange, issues a
+// ranged GetObject, and runs the V2 chunk decrypt on the body.
+//
+// expectedEncFileID is the headline substitution defence: it is compared
+// against the metadata-supplied enc_file_id PRE-STREAM (before any
+// ciphertext fetch or decryption). The cross-checked value is also used
+// as AAD input — so a body-only swap (metadata kept, ciphertext replaced)
+// fails AAD on chunk 1, before any plaintext is written to w.
+//
+// expectedSHA256Hex and expectedPlaintextLen carry DB-sourced
+// expectations (SH-3.5 / ADR-013). nil / "" / -1 mean "no DB context" —
+// the legacy non-verifying behaviour. Production handlers should pass
+// DB values for all three.
+func (es *S3EncryptedStorage) streamRangeV2(ctx context.Context, filename string, meta map[string]string, hdrBytes []byte, start, end int64, expectedEncFileID []byte, expectedSHA256Hex string, expectedPlaintextLen int64, w io.Writer) (int64, error) {
 	encFileID, plaintextLen, ok := parseSFSE2Metadata(meta)
 	if !ok {
 		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
 			"SFSE2 object missing required UserMetadata (enc-file-id / plaintext-len)")
+	}
+	// SH-3.5 / ADR-013 — PRE-STREAM substitution check on enc_file_id.
+	// Cross-check the DB-sourced expectedEncFileID against the metadata
+	// value before any ciphertext is fetched. A mismatch (the body +
+	// metadata were swapped for another file's) returns an error here,
+	// before w is touched. The cross-checked value is then used as
+	// per-chunk AAD input — so a body-only swap (metadata kept) fails
+	// the AAD check on chunk 1, also before any plaintext is written.
+	if expectedEncFileID != nil && !bytes.Equal(expectedEncFileID, encFileID) {
+		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
+			"SFSE2 object enc_file_id does not match DB expectation (possible substitution)")
 	}
 	// Cross-check the metadata's plaintext_len against the header's trailer.
 	// The header is authenticated by per-chunk AAD on every chunk, so a
@@ -342,6 +498,15 @@ func (es *S3EncryptedStorage) streamRangeV2(ctx context.Context, filename string
 	if hdrPlaintextLen != plaintextLen {
 		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
 			fmt.Sprintf("SFSE2 metadata/header plaintext_len mismatch: meta=%d header=%d", plaintextLen, hdrPlaintextLen))
+	}
+	// SH-3.5: cross-check the DB-sourced expected length, when provided,
+	// against what the object itself claims. Same trust-boundary rationale
+	// as the enc_file_id cross-check above; mostly redundant once
+	// expectedEncFileID is enforced (a same-key substitution would have
+	// to also forge the length) but cheap defence-in-depth.
+	if expectedPlaintextLen >= 0 && expectedPlaintextLen != plaintextLen {
+		return 0, storage.NewStorageErrorWithMessage("StreamRange", filename, nil,
+			fmt.Sprintf("SFSE2 object plaintext_len does not match DB expectation: object=%d db=%d (possible substitution)", plaintextLen, expectedPlaintextLen))
 	}
 	chunkSize := int64(uint32(hdrBytes[6]) | uint32(hdrBytes[7])<<8 | uint32(hdrBytes[8])<<16 | uint32(hdrBytes[9])<<24)
 	if chunkSize <= 0 {
@@ -364,7 +529,11 @@ func (es *S3EncryptedStorage) streamRangeV2(ctx context.Context, filename string
 		return 0, err
 	}
 	defer body.Close()
-	return utils.DecryptSFSE2RangeFromReader(body, w, es.keyHex, encFileID, "", chunkSize, plaintextLen, start, end)
+	// SH-3.5: forward expectedSHA256Hex; the V2 range decryptor only verifies
+	// it when the request covers the entire plaintext file
+	// (start == 0 && end == plaintextLen-1). Partial reads can't compute
+	// the full-file hash from a window.
+	return utils.DecryptSFSE2RangeFromReader(body, w, es.keyHex, encFileID, expectedSHA256Hex, chunkSize, plaintextLen, start, end)
 }
 
 // fetchRange issues a ranged GetObject and returns the response body. Caller
@@ -719,3 +888,4 @@ func equalFold(a, b string) bool {
 
 // Verify S3EncryptedStorage implements StorageBackend.
 var _ storage.StorageBackend = (*S3EncryptedStorage)(nil)
+var _ storage.IntegrityVerifyingBackend = (*S3EncryptedStorage)(nil)
