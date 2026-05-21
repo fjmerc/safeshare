@@ -5,7 +5,7 @@
 
 Self-hosted file sharing that gets out of your way. Upload a file, get a link, share it. Files auto-expire when you want them to. No accounts required.
 
-**Version**: 1.5.1
+**Version**: 1.5.4
 
 ![SafeShare Main Interface](docs/screenshots/main.png)
 *Drag-drop upload, QR codes, dark mode, and installable as a PWA*
