@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -20,26 +21,10 @@ import (
 // keyHex must be a 64-character hexadecimal string (32 bytes)
 // Returns: [nonce(12 bytes)][ciphertext][tag(16 bytes)]
 func EncryptFile(plaintext []byte, keyHex string) ([]byte, error) {
-	// Decode hex key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return nil, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode (Galois/Counter Mode provides authentication)
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Generate random nonce (12 bytes for GCM)
@@ -58,26 +43,10 @@ func EncryptFile(plaintext []byte, keyHex string) ([]byte, error) {
 // DecryptFile decrypts data encrypted by EncryptFile
 // keyHex must be the same 64-character hexadecimal string used for encryption
 func DecryptFile(ciphertext []byte, keyHex string) ([]byte, error) {
-	// Decode hex key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hex key: %w", err)
-	}
-
-	if len(key) != 32 {
-		return nil, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
+		return nil, err
 	}
 
 	// Check minimum length (nonce + tag)
@@ -170,25 +139,10 @@ var ErrSFSE2IntegrityCheckFailed = errors.New("SFSE2 integrity check failed")
 // dstPath: path to write encrypted file
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Open source file
@@ -269,25 +223,10 @@ func EncryptFileStreaming(srcPath, dstPath, keyHex string) error {
 // src: source reader (typically HTTP request body)
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Write header: magic + version + chunk_size
@@ -351,25 +290,10 @@ func EncryptFileStreamingFromReader(dst io.Writer, src io.Reader, keyHex string)
 // dstPath: path to write decrypted file
 // keyHex: 64-character hex string (32 bytes for AES-256)
 func DecryptFileStreaming(srcPath, dstPath, keyHex string) error {
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Open source file
@@ -495,25 +419,10 @@ func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, 
 		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
 	}
 
-	// Validate and decode key
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return 0, fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return 0, fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create GCM: %w", err)
+		return 0, err
 	}
 
 	// Open source file
@@ -770,21 +679,10 @@ func EncryptFileStreamingV2FromReader(dst io.Writer, src io.Reader, keyHex strin
 		return fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
 	}
 
-	key, err := hex.DecodeString(keyHex)
+	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
+	gcm, err := newGCMFromKeyHex(keyHex)
 	if err != nil {
-		return fmt.Errorf("invalid hex key: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256, got %d", len(key))
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
+		return err
 	}
 
 	// Write SFSE2 header: magic(5) + version(1) + chunk_size(4 LE) + total_plaintext_len(8 BE).
@@ -1249,10 +1147,30 @@ func decryptSFSE2Core(r io.Reader, w io.Writer, gcm cipher.AEAD, p sfse2RangePar
 	return totalWritten, nil
 }
 
-// newGCMFromKeyHex decodes a hex-encoded 32-byte key and returns an
-// AES-GCM AEAD. Centralises the boilerplate that every SFSE entry point
-// otherwise repeats.
+// aeadCache holds one cipher.AEAD per distinct hex-encoded AES-256 key.
+// Production deployments use a single key for the entire process lifetime,
+// so this is effectively a singleton; sync.Map is used so that future key
+// rotation and multi-key tests both stay lock-free on the hot path.
+//
+// AES-GCM's cipher.AEAD is documented as safe for concurrent use, so no
+// per-call locking is required around Seal/Open.
+//
+// SH-3.1.
+var aeadCache sync.Map // map[string]cipher.AEAD
+
+// newGCMFromKeyHex returns an AES-256-GCM cipher.AEAD for the given hex-
+// encoded 32-byte key. Centralises what every SFSE entry point would
+// otherwise repeat (hex decode, length check, AES key schedule, GCM init).
+//
+// SH-3.1: caches the AEAD per key. First call for a given keyHex builds
+// the AEAD and stores it; subsequent calls return the cached instance in
+// O(1) with no allocation and no AES key schedule. At 100 concurrent
+// Range requests on a streamed video the pre-cache implementation cost
+// ~300 avoidable allocations and visible CPU in the AES key expansion.
 func newGCMFromKeyHex(keyHex string) (cipher.AEAD, error) {
+	if v, ok := aeadCache.Load(keyHex); ok {
+		return v.(cipher.AEAD), nil
+	}
 	key, err := hex.DecodeString(keyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid hex key: %w", err)
@@ -1268,7 +1186,12 @@ func newGCMFromKeyHex(keyHex string) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	return gcm, nil
+	// LoadOrStore lets concurrent first-callers race safely: the first to
+	// publish wins; the others discard their build and use the published
+	// instance. AES-GCM init is deterministic so the discard is wasted CPU
+	// but never wrong.
+	actual, _ := aeadCache.LoadOrStore(keyHex, gcm)
+	return actual.(cipher.AEAD), nil
 }
 
 // sha256Verifier hashes running plaintext bytes and compares to an expected

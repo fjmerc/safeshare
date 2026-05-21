@@ -879,6 +879,8 @@ func (r *FileRepository) DeleteExpired(ctx context.Context, uploadDir string, on
 	if err != nil {
 		return 0, fmt.Errorf("failed to query expired files: %w", err)
 	}
+	// Defensive defer — the explicit Close below normally fires first. pgx.Rows
+	// tolerates a second Close.
 	defer rows.Close()
 
 	type expiredFileData struct {
@@ -904,6 +906,13 @@ func (r *FileRepository) DeleteExpired(ctx context.Context, uploadDir string, on
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("error iterating expired files: %w", err)
 	}
+
+	// SH-3.4: close the read cursor explicitly before doing filesystem deletions
+	// and the subsequent batch DELETE. Without this, the pgx connection backing
+	// this query stays checked out from the pool across all of the file I/O.
+	// (The SQLite path additionally suffers from WAL pinning — see the SQLite
+	// implementation for the longer comment.)
+	rows.Close()
 
 	// Delete files (file first, then database record)
 	var deletedIDs []int64

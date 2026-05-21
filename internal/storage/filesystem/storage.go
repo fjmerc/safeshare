@@ -165,6 +165,55 @@ func (fs *FilesystemStorage) Store(ctx context.Context, filename string, reader 
 	return filename, hash, nil
 }
 
+// RetrieveWithExpected implements storage.IntegrityVerifyingBackend.
+//
+// Filesystem bytes share a trust boundary with the DB row in a normal
+// SafeShare deployment (single host, single container, exclusive ownership
+// of the upload directory): an attacker who can write the file can
+// equivalently rewrite the DB row, so wrapper-layer re-verification adds
+// no defence. This implementation is therefore a pass-through to Retrieve;
+// the parameters exist only so handlers can call the verifying API
+// uniformly without a type-switch on the backend.
+//
+// DEPLOYMENT ASSUMPTION (do not silently violate):
+// Production claim handlers route filesystem reads via path-based
+// utils.DecryptFileStreamingRangeAny with DB-sourced enc_file_id and
+// SHA-256 already in scope — i.e. the substitution defence is provided
+// one layer up, not by this wrapper. If a future deployment uses a
+// SHARED filesystem (NFS, Ceph, S3-FUSE, multi-tenant mount with sidecar
+// write access), the trust-boundary assumption breaks and this
+// pass-through will silently deliver attacker-substituted bytes. In such
+// deployments, the handler MUST either (a) verify expectations against
+// the streamed bytes itself, or (b) the wrapper must be extended to do
+// the cross-check here. See ADR-013 §3.
+func (fs *FilesystemStorage) RetrieveWithExpected(
+	ctx context.Context,
+	filename string,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+) (io.ReadCloser, error) {
+	// Parameters intentionally unused on the filesystem path; see method comment.
+	_, _, _ = expectedEncFileID, expectedSHA256Hex, expectedPlaintextLen
+	return fs.Retrieve(ctx, filename)
+}
+
+// StreamRangeWithExpected implements storage.IntegrityVerifyingBackend.
+// Pass-through to StreamRange; see RetrieveWithExpected for the rationale
+// and the deployment assumption that makes the pass-through safe.
+func (fs *FilesystemStorage) StreamRangeWithExpected(
+	ctx context.Context,
+	filename string,
+	start, end int64,
+	expectedEncFileID []byte,
+	expectedSHA256Hex string,
+	expectedPlaintextLen int64,
+	w io.Writer,
+) (int64, error) {
+	_, _, _ = expectedEncFileID, expectedSHA256Hex, expectedPlaintextLen
+	return fs.StreamRange(ctx, filename, start, end, w)
+}
+
 // Retrieve returns a reader for the stored file.
 func (fs *FilesystemStorage) Retrieve(ctx context.Context, filename string) (io.ReadCloser, error) {
 	filePath, err := fs.validatePath(filename)
@@ -661,3 +710,8 @@ func (fs *FilesystemStorage) GetChunkNumbers(ctx context.Context, uploadID strin
 
 	return chunkNumbers, nil
 }
+
+var (
+	_ storage.StorageBackend            = (*FilesystemStorage)(nil)
+	_ storage.IntegrityVerifyingBackend = (*FilesystemStorage)(nil)
+)

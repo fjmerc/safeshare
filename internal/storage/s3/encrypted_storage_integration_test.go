@@ -617,6 +617,401 @@ func randomBytes(t *testing.T, n int64) []byte {
 	return b
 }
 
+// ----------------------------------------------------------------------------
+// SH-3.5 / ADR-013 — DB-sourced integrity expectations through the S3 wrapper.
+//
+// These tests exercise the new IntegrityVerifyingBackend methods
+// (RetrieveWithExpected, StreamRangeWithExpected) and the substitution-attack
+// detection they enable. With the C1 fix in place, the enc_file_id
+// cross-check provides PRE-STREAM substitution defence: a body+metadata
+// swap is rejected before the decrypt goroutine launches (no plaintext
+// bytes ever flow), and a body-only swap fails on the first chunk's AAD
+// verification (also before any plaintext leaves the wrapper). SHA-256
+// post-decrypt verify remains as belt-and-suspenders.
+// ----------------------------------------------------------------------------
+
+// getStoredEncFileID reads the enc_file_id that the S3 wrapper recorded in
+// UserMetadata when the object was stored. Tests use this as a stand-in for
+// the DB-sourced expected enc_file_id that a production handler would read
+// from `files.enc_file_id`.
+func getStoredEncFileID(t *testing.T, es *S3EncryptedStorage, key string) []byte {
+	t.Helper()
+	ctx := context.Background()
+	resp, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		t.Fatalf("GetObject for enc_file_id: %v", err)
+	}
+	_ = resp.Body.Close()
+	encFileID, _, ok := parseSFSE2Metadata(resp.Metadata)
+	if !ok {
+		t.Fatal("stored object missing SFSE2 metadata")
+	}
+	return encFileID
+}
+
+// TestSubstitutionAttack_BodyAndMetadataSwap_DetectedPreStream — ADR-013 §5
+// mandated test, post-C1. An attacker who substitutes both A's body AND its
+// UserMetadata with B's must be rejected SYNCHRONOUSLY by the enc_file_id
+// cross-check, BEFORE any decrypt goroutine launches and BEFORE any pipe
+// byte is written. This closes the C1 streaming-data-leak window.
+func TestSubstitutionAttack_BodyAndMetadataSwap_DetectedPreStream(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	const size = 4096
+	plaintextA := randomBytes(t, size)
+	plaintextB := randomBytes(t, size)
+	if bytes.Equal(plaintextA, plaintextB) {
+		t.Fatal("random plaintexts collided; rerun")
+	}
+
+	keyA := uniqueKey(t, "victim")
+	keyB := uniqueKey(t, "attacker")
+	defer func() {
+		_ = es.Delete(ctx, keyA)
+		_ = es.Delete(ctx, keyB)
+	}()
+
+	_, hashA, err := es.Store(ctx, keyA, bytes.NewReader(plaintextA), size)
+	if err != nil {
+		t.Fatalf("Store A: %v", err)
+	}
+	if _, _, err := es.Store(ctx, keyB, bytes.NewReader(plaintextB), size); err != nil {
+		t.Fatalf("Store B: %v", err)
+	}
+
+	// Capture DB-side expectations the handler would record for A.
+	encFileIDA := getStoredEncFileID(t, es, keyA)
+
+	// Substitute: overwrite A's S3 object with B's body + B's metadata.
+	rawB, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(keyB),
+	})
+	if err != nil {
+		t.Fatalf("raw GetObject B: %v", err)
+	}
+	bodyB, err := io.ReadAll(rawB.Body)
+	_ = rawB.Body.Close()
+	if err != nil {
+		t.Fatalf("raw read B: %v", err)
+	}
+	if _, err := es.backend.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:   aws.String(es.backend.bucket),
+		Key:      aws.String(keyA),
+		Body:     bytes.NewReader(bodyB),
+		Metadata: rawB.Metadata,
+	}); err != nil {
+		t.Fatalf("substitution PutObject: %v", err)
+	}
+
+	// Sanity-1: legacy Retrieve (nil sentinel) still serves B's bytes —
+	// proves the substitution simulation actually took effect.
+	rc, err := es.Retrieve(ctx, keyA)
+	if err != nil {
+		t.Fatalf("legacy Retrieve on substituted A: unexpected error %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("legacy Retrieve read: %v", err)
+	}
+	if !bytes.Equal(got, plaintextB) {
+		t.Fatalf("substitution didn't take effect (got %d bytes != B's %d)", len(got), size)
+	}
+
+	// The actual test: RetrieveWithExpected fed A's DB-sourced enc_file_id
+	// must reject SYNCHRONOUSLY (the cross-check runs before io.Pipe is
+	// even created). C1 fix: a non-nil err must come back from the OPEN
+	// call, not from a downstream Read — if it came back later, attacker
+	// plaintext would already have been written to the caller's HTTP
+	// response.
+	rc2, err := es.RetrieveWithExpected(ctx, keyA, encFileIDA, hashA, size)
+	if err == nil {
+		_ = rc2.Close()
+		t.Fatalf("RetrieveWithExpected returned (reader, nil) on substituted object; the cross-check must fail PRE-STREAM, before opening a pipe (C1 regression)")
+	}
+	if !contains(err.Error(), "enc_file_id") || !contains(err.Error(), "substitution") {
+		t.Errorf("error did not mention enc_file_id substitution: %v", err)
+	}
+
+	// Sanity-2: StreamRangeWithExpected catches the same attack with the
+	// same pre-stream semantics on the V2 path.
+	var buf bytes.Buffer
+	_, err = es.StreamRangeWithExpected(ctx, keyA, 0, 100, encFileIDA, hashA, size, &buf)
+	if err == nil {
+		t.Fatal("StreamRangeWithExpected on substituted object succeeded; want pre-stream enc_file_id rejection")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("StreamRangeWithExpected wrote %d bytes despite error; pre-stream rejection violated", buf.Len())
+	}
+	if !contains(err.Error(), "enc_file_id") || !contains(err.Error(), "substitution") {
+		t.Errorf("StreamRange error did not mention enc_file_id substitution: %v", err)
+	}
+}
+
+// TestSubstitutionAttack_BodyOnlySwap_FailsOnFirstChunkAAD — covers the
+// alternate substitution flavour: attacker swaps the body but keeps the
+// original UserMetadata. The enc_file_id cross-check then PASSES (metadata
+// still matches DB), but the per-chunk AAD verification fails on chunk 1
+// because the attacker's chunks were authenticated under B's enc_file_id
+// while the wrapper is verifying under A's. No plaintext leaks.
+func TestSubstitutionAttack_BodyOnlySwap_FailsOnFirstChunkAAD(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	const size = 4096
+	plaintextA := randomBytes(t, size)
+	plaintextB := randomBytes(t, size)
+
+	keyA := uniqueKey(t, "victim-body")
+	keyB := uniqueKey(t, "attacker-body")
+	defer func() {
+		_ = es.Delete(ctx, keyA)
+		_ = es.Delete(ctx, keyB)
+	}()
+	_, hashA, err := es.Store(ctx, keyA, bytes.NewReader(plaintextA), size)
+	if err != nil {
+		t.Fatalf("Store A: %v", err)
+	}
+	if _, _, err := es.Store(ctx, keyB, bytes.NewReader(plaintextB), size); err != nil {
+		t.Fatalf("Store B: %v", err)
+	}
+	encFileIDA := getStoredEncFileID(t, es, keyA)
+
+	// Read A's original metadata, B's body. Swap the body but keep A's metadata.
+	rawA, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(keyA),
+	})
+	if err != nil {
+		t.Fatalf("raw GetObject A: %v", err)
+	}
+	originalMetaA := rawA.Metadata
+	_ = rawA.Body.Close()
+	rawB, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(keyB),
+	})
+	if err != nil {
+		t.Fatalf("raw GetObject B: %v", err)
+	}
+	bodyB, err := io.ReadAll(rawB.Body)
+	_ = rawB.Body.Close()
+	if err != nil {
+		t.Fatalf("raw read B: %v", err)
+	}
+	if _, err := es.backend.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:   aws.String(es.backend.bucket),
+		Key:      aws.String(keyA),
+		Body:     bytes.NewReader(bodyB),
+		Metadata: originalMetaA, // metadata UNCHANGED
+	}); err != nil {
+		t.Fatalf("body-only substitution PutObject: %v", err)
+	}
+
+	// enc_file_id cross-check now passes (metadata is genuine A's). The
+	// AAD failure on chunk 1 must surface as a Read error and ZERO
+	// plaintext bytes must reach the caller's pipe-reader buffer.
+	rc, err := es.RetrieveWithExpected(ctx, keyA, encFileIDA, hashA, size)
+	if err != nil {
+		// Acceptable: some backends may surface AAD error synchronously
+		// during ContentLength probe / etc. Both outcomes are fine; the
+		// invariant is "no plaintext flows".
+		return
+	}
+	got, readErr := io.ReadAll(rc)
+	_ = rc.Close()
+	if readErr == nil {
+		t.Fatalf("Body-only substitution undetected: read %d bytes without error", len(got))
+	}
+	if len(got) != 0 {
+		t.Errorf("body-only substitution leaked %d plaintext bytes before AAD failure; want 0", len(got))
+	}
+}
+
+// TestSubstitutionAttack_DetectedByExpectedLength — exercises the fast-fail
+// path where the DB-sourced expectedPlaintextLen disagrees with the SFSE2
+// object's stated length. Mostly redundant now that the enc_file_id
+// cross-check fires first on body+metadata swaps, but worth keeping as
+// belt-and-suspenders coverage (the legacy non-enc_file_id codepath).
+func TestSubstitutionAttack_DetectedByExpectedLength(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	plaintextA := randomBytes(t, 8192)
+	plaintextB := randomBytes(t, 2048)
+
+	keyA := uniqueKey(t, "victim-len")
+	keyB := uniqueKey(t, "attacker-len")
+	defer func() {
+		_ = es.Delete(ctx, keyA)
+		_ = es.Delete(ctx, keyB)
+	}()
+	if _, _, err := es.Store(ctx, keyA, bytes.NewReader(plaintextA), int64(len(plaintextA))); err != nil {
+		t.Fatalf("Store A: %v", err)
+	}
+	if _, _, err := es.Store(ctx, keyB, bytes.NewReader(plaintextB), int64(len(plaintextB))); err != nil {
+		t.Fatalf("Store B: %v", err)
+	}
+
+	rawB, err := es.backend.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(keyB),
+	})
+	if err != nil {
+		t.Fatalf("raw GetObject B: %v", err)
+	}
+	bodyB, err := io.ReadAll(rawB.Body)
+	_ = rawB.Body.Close()
+	if err != nil {
+		t.Fatalf("raw read B: %v", err)
+	}
+	if _, err := es.backend.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:   aws.String(es.backend.bucket),
+		Key:      aws.String(keyA),
+		Body:     bytes.NewReader(bodyB),
+		Metadata: rawB.Metadata,
+	}); err != nil {
+		t.Fatalf("substitution PutObject: %v", err)
+	}
+
+	// Caller passes A's length but no enc_file_id (e.g. transitional code).
+	// The length check fires pre-stream.
+	var buf bytes.Buffer
+	_, err = es.StreamRangeWithExpected(ctx, keyA, 0, 100, nil, "", int64(len(plaintextA)), &buf)
+	if err == nil {
+		t.Fatal("expected length-mismatch error on substituted partial Range, got nil")
+	}
+	if !contains(err.Error(), "substitution") && !contains(err.Error(), "plaintext_len") && !contains(err.Error(), "DB expectation") {
+		t.Errorf("error did not mention substitution / length mismatch: %v", err)
+	}
+}
+
+// TestRetrieveWithExpected_HappyPath — positive coverage for the new method.
+// Passes all three DB-sourced expectations against the genuine object.
+func TestRetrieveWithExpected_HappyPath(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	plaintext := randomBytes(t, 1024)
+	key := uniqueKey(t, "happy-retrieve")
+	defer func() { _ = es.Delete(ctx, key) }()
+
+	_, hash, err := es.Store(ctx, key, bytes.NewReader(plaintext), int64(len(plaintext)))
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	encFileID := getStoredEncFileID(t, es, key)
+
+	rc, err := es.RetrieveWithExpected(ctx, key, encFileID, hash, int64(len(plaintext)))
+	if err != nil {
+		t.Fatalf("RetrieveWithExpected: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Errorf("plaintext mismatch on verified retrieve")
+	}
+}
+
+// TestStreamRangeWithExpected_HappyPath — exercises the verifying Range path
+// across a chunk boundary AND a full-file Range, with DB-sourced
+// expectations matching the object.
+func TestStreamRangeWithExpected_HappyPath(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	size := int64(utils.DefaultChunkSize) + int64(utils.DefaultChunkSize)/2
+	plaintext := randomBytes(t, size)
+	key := uniqueKey(t, "happy-range")
+	defer func() { _ = es.Delete(ctx, key) }()
+	_, hash, err := es.Store(ctx, key, bytes.NewReader(plaintext), size)
+	if err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	encFileID := getStoredEncFileID(t, es, key)
+
+	rangeStart := int64(utils.DefaultChunkSize) - 100
+	rangeEnd := int64(utils.DefaultChunkSize) + 100
+	var buf bytes.Buffer
+	n, err := es.StreamRangeWithExpected(ctx, key, rangeStart, rangeEnd, encFileID, hash, size, &buf)
+	if err != nil {
+		t.Fatalf("StreamRangeWithExpected: %v", err)
+	}
+	want := plaintext[rangeStart : rangeEnd+1]
+	if n != int64(len(want)) {
+		t.Errorf("wrote %d bytes, want %d", n, len(want))
+	}
+	if !bytes.Equal(buf.Bytes(), want) {
+		t.Errorf("range bytes mismatch")
+	}
+
+	// Full-file Range: also exercises the SHA-256 verify branch inside
+	// DecryptSFSE2RangeFromReader (start == 0 && end == plaintextLen-1).
+	var full bytes.Buffer
+	if _, err := es.StreamRangeWithExpected(ctx, key, 0, size-1, encFileID, hash, size, &full); err != nil {
+		t.Fatalf("StreamRangeWithExpected full: %v", err)
+	}
+	if !bytes.Equal(full.Bytes(), plaintext) {
+		t.Errorf("full range mismatch")
+	}
+}
+
+// TestV1ObjectRejectedWhenIntegrityExpectationsRequested — bug-hunter N2.
+// A legacy SFSE1 object cannot honour DB-sourced expectations (no AAD, no
+// length trailer). If the caller passes non-sentinel expectations, the
+// wrapper must refuse rather than silently returning unverified bytes.
+// We construct an SFSE1 object directly via the utils encryptor to bypass
+// the wrapper's V2-emitting Store.
+func TestV1ObjectRejectedWhenIntegrityExpectationsRequested(t *testing.T) {
+	es := newTestStorage(t)
+	ctx := context.Background()
+
+	// Encrypt a tiny plaintext as SFSE1 (legacy format).
+	plaintext := []byte("legacy sfse1 bytes")
+	var ciphertext bytes.Buffer
+	if err := utils.EncryptFileStreamingFromReader(&ciphertext, bytes.NewReader(plaintext), testEncryptionKey); err != nil {
+		t.Fatalf("EncryptFileStreamingFromReader (V1): %v", err)
+	}
+
+	key := uniqueKey(t, "v1-legacy")
+	defer func() { _ = es.Delete(ctx, key) }()
+	if _, err := es.backend.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(es.backend.bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(ciphertext.Bytes()),
+		// No SFSE2 UserMetadata — this is V1.
+	}); err != nil {
+		t.Fatalf("PutObject V1: %v", err)
+	}
+
+	// Caller asks for verification on a V1 object → wrapper must refuse.
+	var buf bytes.Buffer
+	_, err := es.StreamRangeWithExpected(ctx, key, 0, int64(len(plaintext))-1, []byte("dummy-enc-file-id"), "deadbeef", int64(len(plaintext)), &buf)
+	if err == nil {
+		t.Fatal("V1 object with expectations: want error, got nil")
+	}
+	if !contains(err.Error(), "SFSE1") && !contains(err.Error(), "upgrade-format") {
+		t.Errorf("V1 rejection error didn't mention SFSE1 / upgrade-format: %v", err)
+	}
+
+	// Legacy StreamRange (all sentinels) still reads V1 fine.
+	var legacy bytes.Buffer
+	if _, err := es.StreamRange(ctx, key, 0, int64(len(plaintext))-1, &legacy); err != nil {
+		t.Fatalf("legacy StreamRange on V1: %v", err)
+	}
+	if !bytes.Equal(legacy.Bytes(), plaintext) {
+		t.Errorf("V1 legacy round-trip mismatch")
+	}
+}
+
 // deterministicReader produces a streaming bytes source whose contents are
 // reproducible from the seed but never materialized in heap. Used by the
 // large-file heap test to avoid the test process itself blowing past the

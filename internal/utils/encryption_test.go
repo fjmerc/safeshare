@@ -862,3 +862,52 @@ func TestDecryptChunkStream_HappyPath(t *testing.T) {
 		t.Fatalf("plaintext mismatch")
 	}
 }
+
+// TestSH31_AEADCacheReturnsIdenticalInstance verifies that repeated calls to
+// newGCMFromKeyHex with the same key return the *same* cipher.AEAD instance,
+// proving the cache is wired. Without the cache, each call would allocate a
+// fresh AEAD (visible in BenchmarkAEADCacheHit's allocs/op).
+//
+// SH-3.1.
+func TestSH31_AEADCacheReturnsIdenticalInstance(t *testing.T) {
+	keyHex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	first, err := newGCMFromKeyHex(keyHex)
+	if err != nil {
+		t.Fatalf("first build: %v", err)
+	}
+	second, err := newGCMFromKeyHex(keyHex)
+	if err != nil {
+		t.Fatalf("second build: %v", err)
+	}
+	if first != second {
+		t.Errorf("newGCMFromKeyHex returned different AEAD instances on repeated calls; cache not wired")
+	}
+
+	// A different key must build a new instance.
+	otherKey := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	other, err := newGCMFromKeyHex(otherKey)
+	if err != nil {
+		t.Fatalf("third build (different key): %v", err)
+	}
+	if first == other {
+		t.Errorf("newGCMFromKeyHex returned the same instance for two different keys; cache is keyed wrong")
+	}
+}
+
+// BenchmarkAEADCacheHit measures the per-call overhead of newGCMFromKeyHex on
+// the cache-hit path — i.e. the hot path in production where one key is
+// reused for every encrypt/decrypt. Expectation: 0 allocs/op.
+//
+// SH-3.1.
+func BenchmarkAEADCacheHit(b *testing.B) {
+	keyHex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if _, err := newGCMFromKeyHex(keyHex); err != nil {
+		b.Fatalf("warm-up: %v", err)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = newGCMFromKeyHex(keyHex)
+	}
+}

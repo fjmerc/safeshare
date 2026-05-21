@@ -173,6 +173,9 @@ func CreateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// SH-3.2: tell the dispatcher its cached config view is stale.
+		InvalidateWebhookConfigCache()
+
 		slog.Info("webhook config created", "id", config.ID, "url", config.URL)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -326,6 +329,10 @@ func UpdateWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		// SH-3.2: covers the enable/disable toggle path too — the Enabled flag
+		// is mutated through this handler, so the cached snapshot must drop.
+		InvalidateWebhookConfigCache()
+
 		slog.Info("webhook config updated", "id", config.ID, "url", config.URL)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -371,6 +378,9 @@ func DeleteWebhookConfigHandler(db *sql.DB) http.HandlerFunc {
 			})
 			return
 		}
+
+		// SH-3.2: tell the dispatcher its cached config view is stale.
+		InvalidateWebhookConfigCache()
 
 		slog.Info("webhook config deleted", "id", id)
 
