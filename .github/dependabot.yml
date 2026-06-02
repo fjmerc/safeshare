@@ -42,6 +42,23 @@ updates:
       - "sdk"
     open-pull-requests-limit: 5
 
+  # npm - TypeScript SDK
+  - package-ecosystem: "npm"
+    directory: "/sdk/typescript"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "deps(sdk)"
+    labels:
+      - "dependencies"
+      - "javascript"
+      - "sdk"
+    open-pull-requests-limit: 5
+
   # Docker base images
   - package-ecosystem: "docker"
     directory: "/"

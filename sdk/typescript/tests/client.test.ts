@@ -154,12 +154,13 @@ describe("SafeShareClient", () => {
         {
           status: 200,
           body: {
-            filename: "test.txt",
-            size: 1024,
+            original_filename: "test.txt",
+            file_size: 1024,
             mime_type: "text/plain",
             expires_at: "2025-12-31T23:59:59Z",
-            password_protected: false,
-            downloads_remaining: 5,
+            password_required: false,
+            max_downloads: 5,
+            download_count: 0,
           },
         },
       ]);
