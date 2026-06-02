@@ -259,6 +259,33 @@ jobs:
       - name: Run govulncheck (text output for logs)
         run: govulncheck ./...
 
+  # TypeScript SDK unit tests (vitest). The SDK in sdk/typescript is an
+  # independent npm package shipped separately from the Docker image, so this
+  # job runs in parallel and does NOT gate build-and-push.
+  sdk-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
   build-and-push:
     needs: [test, test-postgres, test-minio, security-scan]
     runs-on: ubuntu-latest
