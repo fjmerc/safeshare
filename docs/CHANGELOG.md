@@ -35,6 +35,27 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- Upload progress now shows live transfer speed and estimated time remaining (smoothed over the transfer) for both simple and chunked uploads.
+- A short hint under the SHA-256 checksum on the Pickup tab explains how to use the hash to verify file integrity.
+- Animations and transitions are now disabled for users with the `prefers-reduced-motion` accessibility setting.
+
+### Changed
+
+- The Dropoff (upload) tab is now the default tab on the home page, so the primary action is visible immediately. Deployments that require login for uploads still land anonymous visitors on the Pickup tab.
+- The end-to-end encryption "save your key" warning is more prominent, with stronger contrast in both light and dark themes.
+
+### Fixed
+
+- Login page now follows the selected theme — input fields, labels, and the login card no longer render with hardcoded light-mode colors in dark mode.
+- Info tooltips on the upload form are now keyboard-accessible (focusable, with visible focus outline) instead of hover-only.
+- Tab navigation now implements the full ARIA tabs pattern (`role="tablist"`/`tab`/`tabpanel`, `aria-selected`), and upload/download progress text is announced to screen readers via `aria-live`.
+- Theme toggle buttons now have accessible labels on all pages.
+- The copyright year on the error page updates automatically instead of being hardcoded.
+- Removed a duplicate web app manifest (`site.webmanifest`); all pages now reference the single canonical `assets/manifest.json`.
+- Login and error pages now send `noindex, nofollow` robots hints to keep private deployment pages out of search engines.
+
 ## [1.5.5] - 2026-05-21
 
 ### Added
