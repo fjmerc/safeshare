@@ -18,7 +18,7 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattn/go-sqlite3 v1.14.44
 	github.com/pdfcpu/pdfcpu v0.12.1
 	github.com/pquerna/otp v1.5.0
