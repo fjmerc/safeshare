@@ -191,7 +191,7 @@
             </div>
 
             <div class="table-container">
-                <table class="data-table">
+                <table class="data-table" id="usersTable">
                     <thead>
                         <tr>
                             <th>Username</th>
@@ -230,7 +230,7 @@
             </div>
 
             <div class="table-container">
-                <table class="data-table">
+                <table class="data-table" id="blockedIPsTable">
                     <thead>
                         <tr>
                             <th>IP Address</th>
@@ -273,7 +273,7 @@
 
             <div class="table-container">
                 <h3 style="margin-bottom: 16px; color: var(--text-primary);">Webhook Configurations</h3>
-                <table class="data-table">
+                <table class="data-table" id="webhooksTable">
                     <thead>
                         <tr>
                             <th>ID</th>
@@ -294,9 +294,9 @@
             </div>
 
             <div class="table-container" style="margin-top: 32px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
                     <h3 style="margin: 0; color: var(--text-primary);">Delivery History</h3>
-                    <div style="display: flex; gap: 12px; align-items: center;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" id="autoRefreshDeliveries" style="width: auto;">
                             <span style="font-size: 14px; color: var(--text-secondary);">Auto-refresh (10s)</span>
@@ -324,7 +324,7 @@
                         </button>
                     </div>
                 </div>
-                <table class="data-table">
+                <table class="data-table" id="deliveriesTable">
                     <thead>
                         <tr>
                             <th>Timestamp</th>
@@ -815,7 +815,7 @@
             <!-- SSO Providers Table -->
             <div class="table-container">
                 <h3 style="margin-bottom: 16px; color: var(--text-primary);">SSO Provider Configurations</h3>
-                <table class="data-table">
+                <table class="data-table" id="ssoProvidersTable">
                     <thead>
                         <tr>
                             <th>Name</th>
@@ -838,7 +838,7 @@
             <!-- SSO Links Table -->
             <div class="table-container" style="margin-top: 32px;">
                 <h3 style="margin-bottom: 16px; color: var(--text-primary);">User SSO Links</h3>
-                <table class="data-table">
+                <table class="data-table" id="ssoLinksTable">
                     <thead>
                         <tr>
                             <th>User</th>
@@ -914,7 +914,7 @@
             </div>
 
             <div class="table-container">
-                <table class="data-table">
+                <table class="data-table" id="tokensTable">
                     <thead>
                         <tr>
                             <th style="width: 40px;">
@@ -983,7 +983,7 @@
             </div>
 
             <div class="table-container">
-                <table class="data-table">
+                <table class="data-table" id="backupsTable">
                     <thead>
                         <tr>
                             <th>Filename</th>
