@@ -2370,3 +2370,60 @@ footer .version-info {
         scroll-behavior: auto !important;
     }
 }
+
+/* ============================================
+   Mobile / touch refinements
+   ============================================ */
+
+/* Invisible 44px hit area (WCAG 2.5.5) without enlarging the visual circle */
+.user-menu-trigger {
+    position: relative;
+}
+
+.user-menu-trigger::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 50%;
+}
+
+@media (max-width: 768px) {
+    .btn-small {
+        min-height: 44px;
+        padding: 0.5rem 0.875rem;
+    }
+}
+
+@media (max-width: 640px) {
+    /* Scale transform causes layout shift and sticky hover states on touch screens */
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+        transform: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .tab-button {
+        padding: 0.75rem 0.5rem;
+        font-size: 0.9rem;
+    }
+
+    .progress-stats {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    /* Keep tooltip popups inside the viewport on narrow screens */
+    .tooltip:hover::after,
+    .tooltip:focus-visible::after {
+        left: 0;
+        transform: none;
+        max-width: min(260px, calc(100vw - 24px));
+        white-space: normal;
+    }
+}

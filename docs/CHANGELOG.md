@@ -45,6 +45,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - The Dropoff (upload) tab is now the default tab on the home page, so the primary action is visible immediately. Deployments that require login for uploads still land anonymous visitors on the Pickup tab.
 - The end-to-end encryption "save your key" warning is more prominent, with stronger contrast in both light and dark themes.
+- Mobile/responsive overhaul of the admin dashboard: data tables (Users, Blocked IPs, Webhooks, Deliveries, SSO, API Tokens, Backups) now progressively hide lower-priority columns on tablets and phones instead of forcing horizontal scrolling, action buttons wrap instead of crushing below usable touch size, the tab bar shows edge shadows when more tabs are scrollable off-screen, and modals fit short (landscape phone) viewports.
+- Mobile polish on the main app: expiration quick-select buttons and the user menu now meet the 44px touch-target minimum, tooltips stay inside the viewport on narrow screens, the upload speed/ETA row stacks instead of colliding at small widths, and the drop zone no longer "sticks" in its hover state on touch screens.
 
 ### Fixed
 
@@ -55,6 +57,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - The copyright year on the error page updates automatically instead of being hardcoded.
 - Removed a duplicate web app manifest (`site.webmanifest`); all pages now reference the single canonical `assets/manifest.json`.
 - Login and error pages now send `noindex, nofollow` robots hints to keep private deployment pages out of search engines.
+- Login pages no longer trigger iOS Safari's automatic page zoom when focusing an input (input font size raised to the 16px threshold); the login card and TOTP code input now fit small phone screens without clipping.
 
 ### Security
 

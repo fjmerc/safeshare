@@ -325,7 +325,7 @@ body {
     padding: 12px 16px;
     border: 2px solid var(--border-color);
     border-radius: var(--radius-sm);
-    font-size: 15px;
+    font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
     transition: var(--transition);
     background: var(--bg-white);
 }
@@ -911,7 +911,7 @@ button:disabled {
     padding: 12px 16px;
     border: 2px solid var(--border-color);
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-size: 16px;
     transition: var(--transition);
 }
 
@@ -1674,6 +1674,17 @@ input[type="checkbox"] {
     .theme-toggle-fixed svg {
         width: 18px;
         height: 18px;
+    }
+
+    .login-box {
+        padding: 24px 16px;
+    }
+}
+
+@media (max-height: 680px) {
+    .modal-content {
+        padding: 20px;
+        max-height: 95vh;
     }
 }
 
@@ -2444,4 +2455,144 @@ code {
 pre {
     white-space: pre-wrap;
     word-wrap: break-word;
+}
+
+/* ============================================
+   Mobile responsive tables & tab bar
+   ============================================ */
+
+/* Scroll-shadow affordance: edge shadows appear only when more tabs exist off-screen */
+@media (max-width: 768px) {
+    .tabs {
+        -webkit-overflow-scrolling: touch;
+        background:
+            linear-gradient(to right, var(--bg-white) 30%, transparent),
+            linear-gradient(to left, var(--bg-white) 30%, transparent) 100% 0,
+            radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.25), transparent),
+            radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.25), transparent) 100% 0;
+        background-color: var(--bg-white);
+        background-repeat: no-repeat;
+        background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+        background-attachment: local, local, scroll, scroll;
+    }
+
+    /* Dark theme: black shadows are invisible on a dark surface */
+    [data-theme="dark"] .tabs {
+        background:
+            linear-gradient(to right, var(--bg-white) 30%, transparent),
+            linear-gradient(to left, var(--bg-white) 30%, transparent) 100% 0,
+            radial-gradient(farthest-side at 0 50%, rgba(255, 255, 255, 0.18), transparent),
+            radial-gradient(farthest-side at 100% 50%, rgba(255, 255, 255, 0.18), transparent) 100% 0;
+        background-color: var(--bg-white);
+        background-repeat: no-repeat;
+        background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+        background-attachment: local, local, scroll, scroll;
+    }
+
+    /* Action buttons wrap instead of crushing into sub-touch-target widths */
+    .data-table td.actions,
+    .data-table .actions {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+}
+
+@media (max-width: 480px) {
+    .tab-btn {
+        padding: 12px 14px;
+        font-size: 12px;
+    }
+}
+
+/* Users: hide Created/Last Login at tablet; Email/Files at phone; Role at small phone */
+@media (max-width: 1024px) {
+    #usersTable th:nth-child(6), #usersTable td:nth-child(6),
+    #usersTable th:nth-child(7), #usersTable td:nth-child(7) {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    #usersTable th:nth-child(2), #usersTable td:nth-child(2),
+    #usersTable th:nth-child(5), #usersTable td:nth-child(5) {
+        display: none;
+    }
+
+    /* Blocked IPs: keep IP / Reason / Actions */
+    #blockedIPsTable th:nth-child(3), #blockedIPsTable td:nth-child(3),
+    #blockedIPsTable th:nth-child(4), #blockedIPsTable td:nth-child(4) {
+        display: none;
+    }
+
+    /* Webhooks: keep URL / Enabled / Events / Actions.
+       ID column is display-only; action buttons carry the id in data-* attributes. */
+    #webhooksTable th:nth-child(1), #webhooksTable td:nth-child(1),
+    #webhooksTable th:nth-child(5), #webhooksTable td:nth-child(5),
+    #webhooksTable th:nth-child(6), #webhooksTable td:nth-child(6) {
+        display: none;
+    }
+
+    /* Deliveries: keep Timestamp / Event / Status / Actions */
+    #deliveriesTable th:nth-child(4), #deliveriesTable td:nth-child(4),
+    #deliveriesTable th:nth-child(5), #deliveriesTable td:nth-child(5) {
+        display: none;
+    }
+
+    /* SSO providers: keep Name / Type / Status / Actions */
+    #ssoProvidersTable th:nth-child(3), #ssoProvidersTable td:nth-child(3),
+    #ssoProvidersTable th:nth-child(5), #ssoProvidersTable td:nth-child(5),
+    #ssoProvidersTable th:nth-child(6), #ssoProvidersTable td:nth-child(6) {
+        display: none;
+    }
+
+    /* SSO links: keep User / Provider / Actions */
+    #ssoLinksTable th:nth-child(3), #ssoLinksTable td:nth-child(3),
+    #ssoLinksTable th:nth-child(4), #ssoLinksTable td:nth-child(4),
+    #ssoLinksTable th:nth-child(5), #ssoLinksTable td:nth-child(5) {
+        display: none;
+    }
+
+    /* Backups: keep Filename / Size / Created / Status / Actions */
+    #backupsTable th:nth-child(2), #backupsTable td:nth-child(2),
+    #backupsTable th:nth-child(5), #backupsTable td:nth-child(5) {
+        display: none;
+    }
+}
+
+/* API tokens: trim progressively (11 columns at desktop) */
+@media (max-width: 1024px) {
+    #tokensTable th:nth-child(5), #tokensTable td:nth-child(5),
+    #tokensTable th:nth-child(8), #tokensTable td:nth-child(8),
+    #tokensTable th:nth-child(10), #tokensTable td:nth-child(10) {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    #tokensTable th:nth-child(3), #tokensTable td:nth-child(3),
+    #tokensTable th:nth-child(6), #tokensTable td:nth-child(6),
+    #tokensTable th:nth-child(7), #tokensTable td:nth-child(7) {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    /* Users: hide Status (inferable) but keep Role — the key admin differentiator.
+       Tokens: keep the checkbox column — bulk revoke/extend has no other entry point. */
+    #usersTable th:nth-child(4), #usersTable td:nth-child(4),
+    #blockedIPsTable th:nth-child(2), #blockedIPsTable td:nth-child(2),
+    #webhooksTable th:nth-child(4), #webhooksTable td:nth-child(4),
+    #deliveriesTable th:nth-child(2), #deliveriesTable td:nth-child(2),
+    #ssoProvidersTable th:nth-child(2), #ssoProvidersTable td:nth-child(2),
+    #tokensTable th:nth-child(9), #tokensTable td:nth-child(9),
+    #backupsTable th:nth-child(3), #backupsTable td:nth-child(3),
+    #backupsTable th:nth-child(4), #backupsTable td:nth-child(4) {
+        display: none;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 10px 6px;
+        font-size: 13px;
+    }
 }
