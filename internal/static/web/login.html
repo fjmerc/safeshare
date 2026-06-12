@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Login - SafeShare</title>
+    <meta name="robots" content="noindex, nofollow">
 
     <!-- PWA Manifest -->
     <link rel="manifest" href="/assets/manifest.json">
@@ -18,9 +19,9 @@
             max-width: 400px;
             margin: 50px auto;
             padding: 30px;
-            background: white;
+            background: var(--card-bg);
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: var(--shadow-md);
         }
 
         .login-header {
@@ -42,7 +43,7 @@
 
         .login-header p {
             margin: 0;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 14px;
         }
 
@@ -53,7 +54,7 @@
         .form-group label {
             display: block;
             margin-bottom: 5px;
-            color: #334155;
+            color: var(--text-primary);
             font-weight: 500;
             font-size: 14px;
         }
@@ -61,22 +62,28 @@
         .form-group input {
             width: 100%;
             padding: 10px;
-            border: 1px solid #cbd5e1;
+            background: var(--input-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
             border-radius: 4px;
             font-size: 14px;
             box-sizing: border-box;
         }
 
+        .form-group input::placeholder {
+            color: var(--text-secondary);
+        }
+
         .form-group input:focus {
             outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         }
 
         .btn-login {
             width: 100%;
             padding: 12px;
-            background: #2563eb;
+            background: var(--primary-color);
             color: white;
             border: none;
             border-radius: 4px;
@@ -87,7 +94,7 @@
         }
 
         .btn-login:hover {
-            background: #1d4ed8;
+            background: var(--primary-hover);
         }
 
         .btn-login:disabled {
@@ -112,7 +119,7 @@
         }
 
         .back-link a {
-            color: #2563eb;
+            color: var(--primary-color);
             text-decoration: none;
             font-size: 14px;
         }
@@ -122,34 +129,6 @@
         }
 
         /* Dark mode overrides */
-        [data-theme="dark"] .login-container {
-            background: #1f2937;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
-        }
-
-        [data-theme="dark"] .login-header p {
-            color: #9ca3af;
-        }
-
-        [data-theme="dark"] .form-group label {
-            color: #e5e7eb;
-        }
-
-        [data-theme="dark"] .form-group input {
-            background: #374151;
-            border-color: #4b5563;
-            color: #f9fafb;
-        }
-
-        [data-theme="dark"] .form-group input:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-        }
-
-        [data-theme="dark"] .form-group input::placeholder {
-            color: #6b7280;
-        }
-
         [data-theme="dark"] .info-message {
             background: #1e3a5f;
             border-color: #2563eb;
@@ -160,7 +139,7 @@
         .sso-section {
             margin-top: 24px;
             padding-top: 24px;
-            border-top: 1px solid #e2e8f0;
+            border-top: 1px solid var(--border-color);
         }
 
         .sso-divider {
@@ -174,12 +153,12 @@
         .sso-divider::after {
             content: '';
             flex: 1;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid var(--border-color);
         }
 
         .sso-divider span {
             padding: 0 12px;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 13px;
             font-weight: 500;
         }
@@ -196,7 +175,9 @@
             justify-content: center;
             gap: 10px;
             padding: 12px 16px;
-            border: 1px solid #e2e8f0;
+            color: var(--text-primary);
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
             border-radius: 6px;
             font-size: 14px;
             font-weight: 500;
@@ -235,7 +216,7 @@
         .sso-loading {
             text-align: center;
             padding: 12px;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 14px;
         }
 
@@ -250,23 +231,6 @@
         }
 
         /* Dark mode SSO styles */
-        [data-theme="dark"] .sso-section {
-            border-top-color: #374151;
-        }
-
-        [data-theme="dark"] .sso-divider::before,
-        [data-theme="dark"] .sso-divider::after {
-            border-bottom-color: #374151;
-        }
-
-        [data-theme="dark"] .sso-divider span {
-            color: #9ca3af;
-        }
-
-        [data-theme="dark"] .sso-btn {
-            border-color: #4b5563;
-        }
-
         [data-theme="dark"] .sso-btn:hover {
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
@@ -290,12 +254,12 @@
         .mfa-header h2 {
             margin: 0 0 8px 0;
             font-size: 20px;
-            color: #1e293b;
+            color: var(--text-primary);
         }
 
         .mfa-header p {
             margin: 0;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 14px;
         }
 
@@ -326,7 +290,7 @@
         .mfa-methods {
             margin-top: 20px;
             padding-top: 20px;
-            border-top: 1px solid #e2e8f0;
+            border-top: 1px solid var(--border-color);
         }
 
         .mfa-method-toggle {
@@ -334,9 +298,9 @@
             width: 100%;
             padding: 12px;
             background: transparent;
-            border: 1px solid #e2e8f0;
+            border: 1px solid var(--border-color);
             border-radius: 4px;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 14px;
             cursor: pointer;
             text-align: center;
@@ -344,8 +308,8 @@
         }
 
         .mfa-method-toggle:hover {
-            border-color: #2563eb;
-            color: #2563eb;
+            border-color: var(--primary-color);
+            color: var(--primary-color);
         }
 
         .recovery-input {
@@ -360,20 +324,20 @@
             padding: 8px 0;
             background: none;
             border: none;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 14px;
             cursor: pointer;
             margin-bottom: 16px;
         }
 
         .mfa-back-btn:hover {
-            color: #2563eb;
+            color: var(--primary-color);
         }
 
         .mfa-timer {
             text-align: center;
             margin-top: 16px;
-            color: #64748b;
+            color: var(--text-secondary);
             font-size: 13px;
         }
 
@@ -382,14 +346,6 @@
         }
 
         /* Dark mode MFA styles */
-        [data-theme="dark"] .mfa-header h2 {
-            color: #f1f5f9;
-        }
-
-        [data-theme="dark"] .mfa-header p {
-            color: #9ca3af;
-        }
-
         [data-theme="dark"] .mfa-icon {
             background: #1e3a5f;
         }
@@ -397,33 +353,11 @@
         [data-theme="dark"] .mfa-icon svg {
             color: #60a5fa;
         }
-
-        [data-theme="dark"] .mfa-methods {
-            border-top-color: #374151;
-        }
-
-        [data-theme="dark"] .mfa-method-toggle {
-            border-color: #4b5563;
-            color: #9ca3af;
-        }
-
-        [data-theme="dark"] .mfa-method-toggle:hover {
-            border-color: #3b82f6;
-            color: #60a5fa;
-        }
-
-        [data-theme="dark"] .mfa-back-btn {
-            color: #9ca3af;
-        }
-
-        [data-theme="dark"] .mfa-back-btn:hover {
-            color: #60a5fa;
-        }
     </style>
 </head>
 <body>
     <!-- Theme Toggle -->
-    <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme">
+    <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme" aria-label="Toggle theme">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
             <circle cx="12" cy="12" r="5"></circle>
             <line x1="12" y1="1" x2="12" y2="3"></line>

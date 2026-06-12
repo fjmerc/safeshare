@@ -55,6 +55,8 @@
     const uploadProgress = document.getElementById('uploadProgress');
     const progressFill = document.getElementById('progressFill');
     const progressText = document.getElementById('progressText');
+    const uploadSpeedEl = document.getElementById('uploadSpeed');
+    const uploadETAEl = document.getElementById('uploadETA');
     const newUploadButton = document.getElementById('newUploadButton');
     const themeToggle = document.getElementById('themeToggle');
     const uploadWarningBanner = document.getElementById('uploadWarningBanner');
@@ -217,6 +219,11 @@
             if (pickupButton) pickupButton.classList.add('active');
             if (pickupContent) pickupContent.classList.add('active');
         }
+
+        // Keep aria-selected in sync with the active class in both branches
+        [dropoffButton, pickupButton].forEach(btn => {
+            if (btn) btn.setAttribute('aria-selected', btn.classList.contains('active') ? 'true' : 'false');
+        });
     }
 
     // Handle initial tab based on URL hash
@@ -509,9 +516,10 @@
         const uploadSettingsSection = uploadSettingsToggle?.closest('.settings');
 
         if (uploadSettingsToggle && uploadSettingsSection) {
-            // Restore state from localStorage (default: expanded)
+            // Restore state from localStorage (default: expanded on desktop,
+            // collapsed on small viewports so the Upload button stays above the fold)
             const savedState = localStorage.getItem('uploadSettingsExpanded');
-            const isExpanded = savedState === null ? true : savedState === 'true';
+            const isExpanded = savedState === null ? window.innerWidth > 640 : savedState === 'true';
 
             if (!isExpanded) {
                 uploadSettingsSection.classList.add('collapsed');
@@ -1048,6 +1056,7 @@
         showUploadWarning();
 
         // Show progress
+        resetUploadStats();
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
         setUploadSettingsDisabled(true);
@@ -1063,6 +1072,7 @@
                     const percent = (e.loaded / e.total) * 100;
                     progressFill.style.width = percent + '%';
                     progressText.textContent = `Uploading... ${Math.round(percent)}%`;
+                    updateUploadStats(e.loaded, e.total);
                 }
             });
 
@@ -1123,6 +1133,7 @@
         showUploadWarning();
 
         // Show progress
+        resetUploadStats();
         uploadProgress.classList.remove('hidden');
         uploadButton.disabled = true;
         setUploadSettingsDisabled(true);
@@ -1147,9 +1158,9 @@
                 // Show user-friendly progress (no technical chunk details)
                 const uploaded = formatFileSize(data.uploadedBytes);
                 const total = formatFileSize(data.totalBytes);
-                const timeRemaining = formatTimeRemaining(data.estimatedTimeRemaining);
 
-                progressText.textContent = `Uploading... ${Math.round(percent)}% • ${uploaded} / ${total} • ${timeRemaining} remaining`;
+                progressText.textContent = `Uploading... ${Math.round(percent)}% • ${uploaded} / ${total}`;
+                updateUploadStats(data.uploadedBytes, data.totalBytes);
             });
 
             // Register error event
@@ -1439,11 +1450,48 @@
         uploadSection.classList.remove('hidden');
     }
 
-    // Reset progress
+    // Upload speed/ETA tracking (exponential moving average over progress events)
+    let uploadStatsState = null;
+
+    function updateUploadStats(loadedBytes, totalBytes) {
+        if (!uploadSpeedEl || !uploadETAEl) return;
+        const now = Date.now();
+        if (!uploadStatsState) {
+            uploadStatsState = { lastTime: now, lastLoaded: loadedBytes, speed: 0 };
+            return;
+        }
+        const elapsed = (now - uploadStatsState.lastTime) / 1000;
+        if (elapsed < 0.5) return;
+
+        const instantSpeed = (loadedBytes - uploadStatsState.lastLoaded) / elapsed;
+        uploadStatsState.lastTime = now;
+        uploadStatsState.lastLoaded = loadedBytes;
+
+        // Progress can move backwards on connection resets/retries; skip those samples
+        if (instantSpeed < 0) return;
+
+        uploadStatsState.speed = uploadStatsState.speed > 0
+            ? uploadStatsState.speed * 0.7 + instantSpeed * 0.3
+            : instantSpeed;
+
+        if (uploadStatsState.speed > 0) {
+            uploadSpeedEl.textContent = `${formatFileSize(uploadStatsState.speed)}/s`;
+            const remainingSeconds = (totalBytes - loadedBytes) / uploadStatsState.speed;
+            uploadETAEl.textContent = `${formatTimeRemaining(remainingSeconds)} remaining`;
+        }
+    }
+
+    function resetUploadStats() {
+        uploadStatsState = null;
+        if (uploadSpeedEl) uploadSpeedEl.textContent = '';
+        if (uploadETAEl) uploadETAEl.textContent = '';
+    }
+
     function resetProgress() {
         uploadProgress.classList.add('hidden');
         progressFill.style.width = '0%';
         progressText.textContent = 'Uploading...';
+        resetUploadStats();
         uploadButton.disabled = false;
         setUploadSettingsDisabled(false);
         setDropZoneDisabled(false);
@@ -1750,7 +1798,7 @@
 
     // Format time remaining (seconds to human-readable)
     function formatTimeRemaining(seconds) {
-        if (!seconds || seconds < 0 || !isFinite(seconds)) {
+        if (seconds == null || seconds < 0 || !isFinite(seconds)) {
             return 'calculating...';
         }
 
@@ -1814,8 +1862,12 @@
         // Update tab buttons
         document.querySelectorAll('.tab-button').forEach(btn => {
             btn.classList.remove('active');
+            if (btn.dataset.tab) {
+                btn.setAttribute('aria-selected', 'false');
+            }
         });
         e.target.classList.add('active');
+        e.target.setAttribute('aria-selected', 'true');
 
         // Update tab content
         document.querySelectorAll('.tab-content').forEach(content => {

@@ -27,7 +27,7 @@
     </div>
 
     <!-- Theme Toggle - Fixed Position -->
-    <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme">
+    <button id="themeToggle" class="theme-toggle-fixed" title="Toggle theme" aria-label="Toggle theme">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
             <circle cx="12" cy="12" r="5"></circle>
             <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -88,11 +88,11 @@
         </header>
 
         <!-- Tab Navigation -->
-        <div class="tabs">
-            <button class="tab-button" data-tab="dropoff">
+        <div class="tabs" role="tablist" aria-label="File sharing actions">
+            <button class="tab-button active" id="dropoffTabButton" data-tab="dropoff" role="tab" aria-selected="true" aria-controls="dropoffTab">
                 Dropoff
             </button>
-            <button class="tab-button active" data-tab="pickup">
+            <button class="tab-button" id="pickupTabButton" data-tab="pickup" role="tab" aria-selected="false" aria-controls="pickupTab">
                 Pickup
             </button>
             <button class="tab-button login-to-upload hidden" id="loginToUploadBtn">
@@ -101,7 +101,7 @@
         </div>
 
         <!-- Dropoff Tab Content -->
-        <section id="dropoffTab" class="tab-content">
+        <section id="dropoffTab" class="tab-content active" role="tabpanel" aria-labelledby="dropoffTabButton">
             <!-- Upload Section -->
             <div id="uploadSection" class="upload-section">
                 <div class="card">
@@ -143,7 +143,7 @@
                             <div class="form-group">
                                 <label for="expirationHours">
                                     Expires in (hours):
-                                    <span class="tooltip" data-tooltip="File will be automatically deleted after this time">i</span>
+                                    <span class="tooltip" tabindex="0" aria-label="File will be automatically deleted after this time" data-tooltip="File will be automatically deleted after this time">i</span>
                                 </label>
                                 <input type="number" id="expirationHours" name="expiration-hours" min="0.1" step="0.1" value="24">
                                 <div class="quick-select">
@@ -167,7 +167,7 @@
                             <div class="form-group">
                                 <label for="maxDownloads">
                                     Max downloads (optional):
-                                    <span class="tooltip" data-tooltip="Limit how many times the file can be downloaded">i</span>
+                                    <span class="tooltip" tabindex="0" aria-label="Limit how many times the file can be downloaded" data-tooltip="Limit how many times the file can be downloaded">i</span>
                                 </label>
                                 <input type="number" id="maxDownloads" name="max-downloads" min="1" max="1000" placeholder="Unlimited">
                                 <div class="quick-select">
@@ -181,7 +181,7 @@
                             <div class="form-group">
                                 <label for="uploadPassword">
                                     Password (optional):
-                                    <span class="tooltip" data-tooltip="Require a password to download this file">i</span>
+                                    <span class="tooltip" tabindex="0" aria-label="Require a password to download this file" data-tooltip="Require a password to download this file">i</span>
                                 </label>
                                 <div class="password-wrapper">
                                     <input type="password" id="uploadPassword" name="upload-password" placeholder="Leave blank for no password" maxlength="128" autocomplete="new-password">
@@ -224,11 +224,17 @@
                         </div>
                     </form>
 
-                    <div id="uploadProgress" class="upload-progress hidden">
+                    <div id="uploadProgress" class="progress-container hidden">
+                        <div class="progress-header">
+                            <span id="progressText" aria-live="polite">Uploading...</span>
+                        </div>
                         <div class="progress-bar">
                             <div id="progressFill" class="progress-fill"></div>
                         </div>
-                        <p id="progressText">Uploading...</p>
+                        <div class="progress-stats">
+                            <span id="uploadSpeed"></span>
+                            <span id="uploadETA"></span>
+                        </div>
                     </div>
 
                     <button id="uploadButton" class="btn-primary" disabled>Upload File</button>
@@ -315,7 +321,7 @@
         </section>
 
         <!-- Pickup Tab Content -->
-        <section id="pickupTab" class="tab-content active">
+        <section id="pickupTab" class="tab-content" role="tabpanel" aria-labelledby="pickupTabButton">
             <div class="card">
                 <h2>Enter Claim Code</h2>
                 <p class="subtitle">Enter the claim code you received to download the file</p>
@@ -366,6 +372,7 @@
                                     </svg>
                                 </button>
                             </div>
+                            <p class="sha256-hint">Verify this hash matches the one your sender shared to confirm the file wasn't altered.</p>
                         </div>
                     </div>
 
@@ -380,7 +387,7 @@
                         <div class="form-group hidden" id="passwordPrompt">
                             <label for="downloadPassword">
                                 🔒 Password Required:
-                                <span class="tooltip" data-tooltip="This file is password protected">i</span>
+                                <span class="tooltip" tabindex="0" aria-label="This file is password protected" data-tooltip="This file is password protected">i</span>
                             </label>
                             <div class="password-wrapper">
                                 <input type="password" id="downloadPassword" name="download-password" placeholder="Enter password" maxlength="128" autocomplete="current-password">
@@ -415,7 +422,7 @@
                     <!-- Download Progress (hidden by default) -->
                     <div id="downloadProgress" class="progress-container hidden">
                         <div class="progress-header">
-                            <span id="downloadProgressText">Downloading...</span>
+                            <span id="downloadProgressText" aria-live="polite">Downloading...</span>
                             <div style="display: flex; gap: 0.5rem;">
                                 <button id="pauseDownloadButton" class="btn-small btn-neutral">⏸ Pause</button>
                                 <button id="cancelDownloadButton" class="btn-small btn-danger-outline">✖ Cancel</button>
