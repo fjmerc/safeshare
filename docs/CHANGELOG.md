@@ -56,6 +56,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Removed a duplicate web app manifest (`site.webmanifest`); all pages now reference the single canonical `assets/manifest.json`.
 - Login and error pages now send `noindex, nofollow` robots hints to keep private deployment pages out of search engines.
 
+### Security
+
+- Bump Go toolchain from 1.25.10 to 1.25.11 to address Go standard library vulnerabilities GO-2026-5039 (unescaped arbitrary inputs in `net/textproto` MIME header errors, reachable via the S3 storage backend's HTTP responses) and GO-2026-5037 (`crypto/x509` certificate verification issue, reachable via WebAuthn login/registration and SSO account linking).
+
 ## [1.5.5] - 2026-05-21
 
 ### Added
