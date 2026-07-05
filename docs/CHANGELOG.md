@@ -55,6 +55,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Fixed
 
+- Adaptive upload concurrency no longer freezes at its initial value on slow uplinks (below ~10 Mbps). The latency ceiling now calibrates to the observed link speed instead of assuming a fast connection, so chunked uploads can ramp up parallelism on high-latency links while still backing off under real congestion.
 - Login page now follows the selected theme — input fields, labels, and the login card no longer render with hardcoded light-mode colors in dark mode.
 - Info tooltips on the upload form are now keyboard-accessible (focusable, with visible focus outline) instead of hover-only.
 - Tab navigation now implements the full ARIA tabs pattern (`role="tablist"`/`tab`/`tabpanel`, `aria-selected`), and upload/download progress text is announced to screen readers via `aria-live`.
