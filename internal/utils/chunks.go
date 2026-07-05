@@ -320,7 +320,11 @@ func AssembleChunksEncrypted(uploadDir, uploadID string, totalChunks int, totalS
 		uploadID:    uploadID,
 		totalChunks: totalChunks,
 	}
-	defer chunkReader.Close()
+	defer func() {
+		if err := chunkReader.Close(); err != nil {
+			slog.Warn("failed to close chunk reader after assembly", "upload_id", uploadID, "error", err)
+		}
+	}()
 
 	// Hash and count plaintext as the encryptor pulls it through
 	hasher := sha256.New()
