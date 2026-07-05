@@ -309,36 +309,84 @@ class ChunkedUploader {
     }
 
     /**
-     * Upload all chunks with parallel processing
+     * Upload all chunks with a sliding-window worker pool.
+     *
+     * Keeps `options.concurrency` chunks in flight at all times instead of
+     * uploading fixed batches (where the slowest chunk stalls the whole batch).
+     * Workers re-read `options.concurrency` between chunks, so adaptive
+     * concurrency adjustments take effect mid-upload: the pool shrinks by
+     * letting excess workers exit and grows by spawning new ones.
+     *
      * @returns {Promise<void>}
      */
     async uploadAllChunks() {
-        const chunks = [];
+        const pending = [];
         for (let i = 0; i < this.totalChunks; i++) {
             // Skip already uploaded chunks (for resume)
             if (!this.uploadedChunks.has(i)) {
-                chunks.push(i);
+                pending.push(i);
             }
         }
 
-        // Upload chunks with concurrency control
-        const concurrency = this.options.concurrency;
-        const batches = [];
-
-        for (let i = 0; i < chunks.length; i += concurrency) {
-            const batch = chunks.slice(i, i + concurrency);
-            batches.push(batch);
+        if (pending.length === 0) {
+            return;
         }
 
-        for (const batch of batches) {
-            if (this.isPaused) {
-                this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                throw new Error('Upload cancelled');
-            }
+        let nextIndex = 0;
+        let activeWorkers = 0;
+        let firstError = null;
 
-            // Upload batch in parallel
-            await Promise.all(batch.map(chunkNumber => this.uploadChunk(chunkNumber)));
-        }
+        await new Promise((resolve, reject) => {
+            const settle = () => {
+                if (activeWorkers > 0) return;
+                if (firstError) {
+                    reject(firstError);
+                } else if (this.isPaused && nextIndex < pending.length) {
+                    this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
+                    reject(new Error('Upload cancelled'));
+                } else {
+                    resolve();
+                }
+            };
+
+            const spawnWorkers = () => {
+                while (activeWorkers < this.options.concurrency &&
+                       nextIndex < pending.length &&
+                       !firstError && !this.isPaused) {
+                    worker();
+                }
+            };
+
+            const worker = async () => {
+                // Runs synchronously until the first await, so the counter is
+                // accurate inside spawnWorkers' loop.
+                activeWorkers++;
+                try {
+                    while (!firstError && !this.isPaused) {
+                        // Shrink pool if adaptive concurrency was lowered
+                        if (activeWorkers > this.options.concurrency) break;
+                        if (nextIndex >= pending.length) break;
+                        const chunkNumber = pending[nextIndex++];
+                        await this.uploadChunk(chunkNumber);
+                        // Grow pool if adaptive concurrency was raised
+                        spawnWorkers();
+                    }
+                } catch (error) {
+                    if (!firstError) {
+                        firstError = error;
+                    }
+                } finally {
+                    activeWorkers--;
+                    settle();
+                }
+            };
+
+            spawnWorkers();
+            // If pause was requested before any worker started, no worker
+            // will ever call settle() — resolve/reject here instead of
+            // leaving the promise pending forever.
+            settle();
+        });
     }
 
     /**

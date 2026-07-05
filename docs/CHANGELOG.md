@@ -41,6 +41,11 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - A short hint under the SHA-256 checksum on the Pickup tab explains how to use the hash to verify file integrity.
 - Animations and transitions are now disabled for users with the `prefers-reduced-motion` accessibility setting.
 
+### Performance
+
+- Chunked uploads now use a sliding-window worker pool instead of a batch-barrier strategy, keeping multiple chunks in flight continuously and eliminating the head-of-line blocking stall that occurred whenever any single chunk in a batch was slow.
+- Assembly of chunked uploads with encryption now completes in a single streaming pass (read chunks → hash → encrypt → write) instead of four separate disk passes, significantly reducing post-upload processing time on spinning storage.
+
 ### Changed
 
 - The Dropoff (upload) tab is now the default tab on the home page, so the primary action is visible immediately. Deployments that require login for uploads still land anonymous visitors on the Pickup tab.

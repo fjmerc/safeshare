@@ -88,50 +88,15 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 	storedFilename := uuid.New().String() + filepath.Ext(partialUpload.Filename)
 	finalPath := filepath.Join(cfg.UploadDir, storedFilename)
 
-	// Assemble chunks into final file (also computes SHA256 hash)
-	slog.Info("assembling chunks into final file",
-		"upload_id", uploadID,
-		"total_chunks", partialUpload.TotalChunks,
-		"filename", partialUpload.Filename,
-	)
-
-	totalBytesWritten, sha256Hash, err := utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
-	if err != nil {
-		slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
-		os.Remove(finalPath) // Clean up partial final file if it exists
-		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err)); setErr != nil {
-			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-		}
-		return
-	}
-
-	// Verify assembled file size matches expected
-	if totalBytesWritten != partialUpload.TotalSize {
-		slog.Error("assembled file size mismatch",
-			"upload_id", uploadID,
-			"expected", partialUpload.TotalSize,
-			"actual", totalBytesWritten,
-		)
-		os.Remove(finalPath)
-		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten)); setErr != nil {
-			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-		}
-		return
-	}
-
-	slog.Info("chunk assembly complete",
-		"upload_id", uploadID,
-		"total_bytes", totalBytesWritten,
-	)
-
-	// Detect MIME type from assembled plaintext file BEFORE encryption
-	// (must happen before encryption since encrypted data has no recognizable MIME type)
+	// Detect MIME type from the first chunk BEFORE assembly. The first 512
+	// bytes of chunk 0 are identical to the assembled file's first 512 bytes,
+	// and detecting up front lets the encrypted path below skip writing a
+	// plaintext copy of the file entirely.
 	mimeType := "application/octet-stream"
 	{
-		file, err := os.Open(finalPath)
+		chunkFile, err := os.Open(utils.GetChunkPath(cfg.UploadDir, uploadID, 0))
 		if err != nil {
-			slog.Error("failed to open file for MIME detection", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
+			slog.Error("failed to open first chunk for MIME detection", "error", err, "upload_id", uploadID)
 			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err)); setErr != nil {
 				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
 			}
@@ -139,12 +104,11 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		}
 
 		buffer := make([]byte, 512)
-		n, err := file.Read(buffer)
-		file.Close()
+		n, err := chunkFile.Read(buffer)
+		chunkFile.Close()
 
 		if err != nil && err != io.EOF {
-			slog.Error("failed to read file for MIME detection", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
+			slog.Error("failed to read first chunk for MIME detection", "error", err, "upload_id", uploadID)
 			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err)); setErr != nil {
 				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
 			}
@@ -157,92 +121,165 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		}
 	}
 
-	// Strip metadata from assembled plaintext file (before encryption)
-	if cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(mimeType) {
-		if err := privacy.StripFileMetadata(finalPath, mimeType); err != nil {
-			slog.Warn("failed to strip metadata in chunked upload",
-				"error", err,
-				"upload_id", uploadID,
-				"mime_type", mimeType,
-			)
-			// Non-fatal: continue with original file
-		} else {
-			// Recompute hash and size after stripping
-			newHash, err := computeFileHash(finalPath)
-			if err != nil {
-				slog.Warn("failed to recompute hash after stripping", "error", err, "upload_id", uploadID)
-			} else {
-				sha256Hash = newHash
-			}
-			info, err := os.Stat(finalPath)
-			if err != nil {
-				slog.Warn("failed to stat file after stripping", "error", err, "upload_id", uploadID)
-			} else {
-				totalBytesWritten = info.Size()
-			}
-			slog.Info("metadata stripped from chunked upload",
-				"upload_id", uploadID,
-				"mime_type", mimeType,
-				"file_size", totalBytesWritten,
-			)
-		}
-	}
+	encryptionEnabled := utils.IsEncryptionEnabled(cfg.EncryptionKey)
+	needsStrip := cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(mimeType)
 
-	// Encrypt if encryption is enabled (SFSE2)
+	var totalBytesWritten int64
+	var sha256Hash string
 	var encFileID []byte
-	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-		slog.Debug("encrypting assembled file using SFSE2 streaming encryption", "upload_id", uploadID)
 
+	if encryptionEnabled && !needsStrip {
+		// Fast path: stream chunks through SHA-256 + SFSE2 encryption directly
+		// into the final file. One read of the chunks, one write of the
+		// ciphertext — no intermediate plaintext file (2 disk passes instead
+		// of 4, and plaintext never touches the disk unchunked).
 		var err error
 		encFileID, err = utils.GenerateEncFileID()
 		if err != nil {
 			slog.Error("failed to generate enc_file_id", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
 			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate enc_file_id: %v", err)); setErr != nil {
 				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
 			}
 			return
 		}
 
-		// Encrypt to temporary file, then replace original.
-		tempEncryptedPath := finalPath + ".encrypted.tmp"
-
-		if err := utils.EncryptFileStreamingV2(finalPath, tempEncryptedPath, cfg.EncryptionKey, encFileID); err != nil {
-			slog.Error("failed to encrypt file (SFSE2)", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath)
-			os.Remove(tempEncryptedPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err)); setErr != nil {
+		totalBytesWritten, sha256Hash, err = utils.AssembleChunksEncrypted(
+			cfg.UploadDir, uploadID, partialUpload.TotalChunks, partialUpload.TotalSize,
+			finalPath, cfg.EncryptionKey, encFileID,
+		)
+		if err != nil {
+			slog.Error("failed to assemble+encrypt chunks", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath) // defensive: AssembleChunksEncrypted removes on error, but be safe
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err)); setErr != nil {
 				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
 			}
 			return
 		}
-
-		// Get file sizes for logging
-		originalInfo, _ := os.Stat(finalPath)
-		encryptedInfo, _ := os.Stat(tempEncryptedPath)
-
-		// Replace original with encrypted version
-		if err := os.Remove(finalPath); err != nil {
-			slog.Error("failed to remove original file", "error", err, "upload_id", uploadID)
-			os.Remove(tempEncryptedPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err)); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
-			return
-		}
-		if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
-			slog.Error("failed to rename encrypted file", "error", err, "upload_id", uploadID)
-			os.Remove(tempEncryptedPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err)); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
-			return
-		}
-
-		slog.Debug("file encrypted with SFSE2 streaming encryption",
+	} else {
+		// Multi-pass path: metadata stripping needs a plaintext file on disk,
+		// and unencrypted deployments store the assembled file as-is.
+		slog.Info("assembling chunks into final file",
 			"upload_id", uploadID,
-			"original_size", originalInfo.Size(),
-			"encrypted_size", encryptedInfo.Size())
+			"total_chunks", partialUpload.TotalChunks,
+			"filename", partialUpload.Filename,
+		)
+
+		var err error
+		totalBytesWritten, sha256Hash, err = utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
+		if err != nil {
+			slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath) // Clean up partial final file if it exists
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
+			return
+		}
+
+		// Verify assembled file size matches expected
+		if totalBytesWritten != partialUpload.TotalSize {
+			slog.Error("assembled file size mismatch",
+				"upload_id", uploadID,
+				"expected", partialUpload.TotalSize,
+				"actual", totalBytesWritten,
+			)
+			os.Remove(finalPath)
+			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten)); setErr != nil {
+				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			}
+			return
+		}
+
+		slog.Info("chunk assembly complete",
+			"upload_id", uploadID,
+			"total_bytes", totalBytesWritten,
+		)
+
+		// Strip metadata from assembled plaintext file (before encryption)
+		if needsStrip {
+			if err := privacy.StripFileMetadata(finalPath, mimeType); err != nil {
+				slog.Warn("failed to strip metadata in chunked upload",
+					"error", err,
+					"upload_id", uploadID,
+					"mime_type", mimeType,
+				)
+				// Non-fatal: continue with original file
+			} else {
+				// Recompute hash and size after stripping
+				newHash, err := computeFileHash(finalPath)
+				if err != nil {
+					slog.Warn("failed to recompute hash after stripping", "error", err, "upload_id", uploadID)
+				} else {
+					sha256Hash = newHash
+				}
+				info, err := os.Stat(finalPath)
+				if err != nil {
+					slog.Warn("failed to stat file after stripping", "error", err, "upload_id", uploadID)
+				} else {
+					totalBytesWritten = info.Size()
+				}
+				slog.Info("metadata stripped from chunked upload",
+					"upload_id", uploadID,
+					"mime_type", mimeType,
+					"file_size", totalBytesWritten,
+				)
+			}
+		}
+
+		// Encrypt if encryption is enabled (SFSE2)
+		if encryptionEnabled {
+			slog.Debug("encrypting assembled file using SFSE2 streaming encryption", "upload_id", uploadID)
+
+			var err error
+			encFileID, err = utils.GenerateEncFileID()
+			if err != nil {
+				slog.Error("failed to generate enc_file_id", "error", err, "upload_id", uploadID)
+				os.Remove(finalPath)
+				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate enc_file_id: %v", err)); setErr != nil {
+					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+				}
+				return
+			}
+
+			// Encrypt to temporary file, then replace original.
+			tempEncryptedPath := finalPath + ".encrypted.tmp"
+
+			if err := utils.EncryptFileStreamingV2(finalPath, tempEncryptedPath, cfg.EncryptionKey, encFileID); err != nil {
+				slog.Error("failed to encrypt file (SFSE2)", "error", err, "upload_id", uploadID)
+				os.Remove(finalPath)
+				os.Remove(tempEncryptedPath)
+				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err)); setErr != nil {
+					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+				}
+				return
+			}
+
+			// Get file sizes for logging
+			originalInfo, _ := os.Stat(finalPath)
+			encryptedInfo, _ := os.Stat(tempEncryptedPath)
+
+			// Replace original with encrypted version
+			if err := os.Remove(finalPath); err != nil {
+				slog.Error("failed to remove original file", "error", err, "upload_id", uploadID)
+				os.Remove(tempEncryptedPath)
+				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err)); setErr != nil {
+					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+				}
+				return
+			}
+			if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
+				slog.Error("failed to rename encrypted file", "error", err, "upload_id", uploadID)
+				os.Remove(tempEncryptedPath)
+				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err)); setErr != nil {
+					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+				}
+				return
+			}
+
+			slog.Debug("file encrypted with SFSE2 streaming encryption",
+				"upload_id", uploadID,
+				"original_size", originalInfo.Size(),
+				"encrypted_size", encryptedInfo.Size())
+		}
 	}
 
 	// Calculate expiration time
