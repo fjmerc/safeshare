@@ -225,6 +225,158 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 	return totalBytesWritten, sha256Hash, nil
 }
 
+// chunkSequenceReader streams the chunks of a partial upload in ascending
+// order as one concatenated plaintext stream, opening one chunk file at a
+// time (a MultiReader would need every chunk open at once — thousands of
+// fds for large uploads).
+type chunkSequenceReader struct {
+	uploadDir   string
+	uploadID    string
+	totalChunks int
+	nextChunk   int
+	current     *os.File
+}
+
+func (r *chunkSequenceReader) Read(p []byte) (int, error) {
+	for {
+		if r.current == nil {
+			if r.nextChunk >= r.totalChunks {
+				return 0, io.EOF
+			}
+			f, err := os.Open(GetChunkPath(r.uploadDir, r.uploadID, r.nextChunk))
+			if err != nil {
+				return 0, fmt.Errorf("failed to open chunk %d: %w", r.nextChunk, err)
+			}
+			r.current = f
+			r.nextChunk++
+		}
+
+		n, err := r.current.Read(p)
+		if err == io.EOF {
+			r.current.Close()
+			r.current = nil
+			if n > 0 {
+				return n, nil
+			}
+			continue // advance to next chunk
+		}
+		return n, err
+	}
+}
+
+func (r *chunkSequenceReader) Close() error {
+	if r.current != nil {
+		err := r.current.Close()
+		r.current = nil
+		return err
+	}
+	return nil
+}
+
+// countingReader counts bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// AssembleChunksEncrypted streams all chunks in order through SFSE2
+// encryption directly into outputPath, computing the plaintext SHA-256 in
+// the same pass. Compared to AssembleChunks followed by
+// EncryptFileStreamingV2 (read chunks, write plaintext, read plaintext,
+// write ciphertext = 4 full-file disk passes), this does a single read of
+// the chunks and a single write of the encrypted file.
+//
+// totalSize must be the exact plaintext size; the SFSE2 writer enforces it
+// and fails on any mismatch. Returns plaintext bytes processed and the
+// hex-encoded plaintext SHA-256. On error the partially written output file
+// is removed; chunks are never modified, so the operation is retryable.
+func AssembleChunksEncrypted(uploadDir, uploadID string, totalChunks int, totalSize int64, outputPath, keyHex string, encFileID []byte) (int64, string, error) {
+	startTime := time.Now()
+
+	slog.Info("assembling chunks with single-pass encryption",
+		"upload_id", uploadID,
+		"total_chunks", totalChunks,
+		"total_size", totalSize,
+		"output_path", outputPath,
+	)
+
+	// Verify all chunks exist before starting assembly
+	missing, err := GetMissingChunks(uploadDir, uploadID, totalChunks)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to check for missing chunks: %w", err)
+	}
+	if len(missing) > 0 {
+		return 0, "", fmt.Errorf("cannot assemble: %d chunks missing (first missing: %d)", len(missing), missing[0])
+	}
+
+	chunkReader := &chunkSequenceReader{
+		uploadDir:   uploadDir,
+		uploadID:    uploadID,
+		totalChunks: totalChunks,
+	}
+	defer chunkReader.Close()
+
+	// Hash and count plaintext as the encryptor pulls it through
+	hasher := sha256.New()
+	counted := &countingReader{r: io.TeeReader(chunkReader, hasher)}
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to create output file: %w", err)
+	}
+	// Deferred cleanup (matching EncryptFileStreamingV2) so even a panic in
+	// the encryptor can't leak the fd or leave partial ciphertext behind.
+	var succeeded bool
+	defer func() {
+		outFile.Close()
+		if !succeeded {
+			os.Remove(outputPath)
+		}
+	}()
+
+	// Small bufio buffer coalesces the SFSE2 header writes; the ~10MB
+	// encrypted chunk writes bypass the buffer entirely.
+	bufferedWriter := bufio.NewWriterSize(outFile, 64*1024)
+
+	if err := EncryptFileStreamingV2FromReader(bufferedWriter, counted, keyHex, encFileID, totalSize); err != nil {
+		return 0, "", fmt.Errorf("failed to encrypt during assembly: %w", err)
+	}
+
+	if err := bufferedWriter.Flush(); err != nil {
+		return 0, "", fmt.Errorf("failed to flush output file: %w", err)
+	}
+
+	// NOTE: Deliberately NOT calling outFile.Sync(), matching AssembleChunks:
+	// chunks stay intact until after the DB record is created, so a crash
+	// here is recoverable by retrying the complete operation.
+	if err := outFile.Close(); err != nil {
+		return 0, "", fmt.Errorf("failed to close output file: %w", err)
+	}
+	succeeded = true
+
+	sha256Hash := hex.EncodeToString(hasher.Sum(nil))
+
+	duration := time.Since(startTime)
+	throughputMBps := float64(counted.n) / duration.Seconds() / (1024 * 1024)
+
+	slog.Info("single-pass encrypted assembly complete",
+		"upload_id", uploadID,
+		"total_chunks", totalChunks,
+		"plaintext_bytes", counted.n,
+		"duration_ms", duration.Milliseconds(),
+		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
+		"sha256_hash", sha256Hash[:16]+"...",
+	)
+
+	return counted.n, sha256Hash, nil
+}
+
 // DeleteChunks deletes all chunks and the chunks directory for an upload
 func DeleteChunks(uploadDir, uploadID string) error {
 	chunksDir := GetUploadChunksDir(uploadDir, uploadID)
