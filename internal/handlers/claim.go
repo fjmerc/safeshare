@@ -218,6 +218,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// Serve file with Range support (handles both full and partial downloads).
 		// Returns commitable=true only when the request received the entire file
 		// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
+		extendTransferDeadline(w, cfg, file.FileSize)
 		commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg)
 
 		// SH-2.3 code-reviewer M1/M2: set `finalised = true` after the explicit

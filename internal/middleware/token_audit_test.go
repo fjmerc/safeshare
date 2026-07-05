@@ -420,3 +420,11 @@ func TestAPITokenAuditLog_MultipleRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusCapturingWriter_Unwrap(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &statusCapturingWriter{ResponseWriter: rr}
+	if got := w.Unwrap(); got != http.ResponseWriter(rr) {
+		t.Error("Unwrap() did not return the underlying ResponseWriter")
+	}
+}

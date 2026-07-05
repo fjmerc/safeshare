@@ -34,6 +34,12 @@ func (w *statusCapturingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer; without it
+// per-request deadline extensions (and Flush/Hijack upgrades) silently fail.
+func (w *statusCapturingWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // APITokenAuditLog middleware logs API token usage after the request completes.
 // It should be applied to routes that support API token authentication.
 // This middleware captures the HTTP response status code and logs it along with
