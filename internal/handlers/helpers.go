@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -13,6 +15,58 @@ import (
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
+
+// slowLinkFloorBytesPerSecond is the slowest client transfer rate the server
+// waits for before abandoning a request: 64 KiB/s (~0.5 Mbps), below typical
+// worst-case mobile/satellite links. Clients slower than this hit the deadline.
+const slowLinkFloorBytesPerSecond = 64 * 1024
+
+// transferDeadlineMargin absorbs per-request overhead that is independent of
+// transfer size (TLS setup, proxy buffering, server-side hashing).
+const transferDeadlineMargin = 60 * time.Second
+
+// maxTransferDeadline bounds how long a single transfer request may hold a
+// connection. Transfers that legitimately need longer (huge file on a very
+// slow link) can resume via HTTP Range requests or chunk retries.
+const maxTransferDeadline = 6 * time.Hour
+
+// extendTransferDeadline lengthens this request's read and write deadlines in
+// proportion to the expected transfer size. The server-wide READ_TIMEOUT /
+// WRITE_TIMEOUT (120s default) start ticking when the connection begins
+// reading the request — before the handler runs — so they silently abort
+// slow-but-healthy transfers mid-body: a 20MB chunk on a ~1.5 Mbps uplink or
+// a multi-minute download never fits inside them. The configured timeouts are
+// kept as a floor so this never shortens a deadline the operator chose, and
+// header reads (Slowloris surface) still complete under the original
+// ReadTimeout because handlers only run after headers are parsed.
+func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferBytes int64) {
+	if transferBytes < 0 {
+		transferBytes = 0
+	}
+	// Cap in integer seconds before converting to time.Duration: a huge
+	// transferBytes (e.g. a forged Content-Length) would otherwise overflow
+	// the nanosecond multiply and wrap the deadline.
+	seconds := transferBytes / slowLinkFloorBytesPerSecond
+	if maxSeconds := int64(maxTransferDeadline / time.Second); seconds > maxSeconds {
+		seconds = maxSeconds
+	}
+	d := transferDeadlineMargin + time.Duration(seconds)*time.Second
+	if configured := time.Duration(max(cfg.ReadTimeoutSeconds, cfg.WriteTimeoutSeconds)) * time.Second; d < configured {
+		d = configured
+	}
+	if d > maxTransferDeadline {
+		d = maxTransferDeadline
+	}
+
+	deadline := time.Now().Add(d)
+	rc := http.NewResponseController(w)
+	if err := rc.SetReadDeadline(deadline); err != nil {
+		slog.Debug("failed to extend read deadline", "error", err)
+	}
+	if err := rc.SetWriteDeadline(deadline); err != nil {
+		slog.Debug("failed to extend write deadline", "error", err)
+	}
+}
 
 // buildDownloadURL constructs the full download URL for a claim code
 // Priority order: DOWNLOAD_URL > PUBLIC_URL > auto-detect from request headers

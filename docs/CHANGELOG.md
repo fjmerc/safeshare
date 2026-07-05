@@ -55,6 +55,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Fixed
 
+- Large uploads and downloads on slow connections are no longer cut off by the server's 120-second request timeout — transfer deadlines now scale with the transfer size (down to a 0.5 Mbps client floor, capped at 6 hours), while the configured `READ_TIMEOUT`/`WRITE_TIMEOUT` still apply everywhere else.
+- Assembly status polling after a chunked upload no longer times out prematurely: the polling budget now scales with file size (a flat 5-minute cap previously reported failure for large files whose assembly was still succeeding), and brief network blips no longer consume it.
+- Upload concurrency auto-tuning no longer anchors its congestion baseline to the first chunk alone, which could freeze parallelism for the whole upload when the first chunk was an outlier.
 - Adaptive upload concurrency no longer freezes at its initial value on slow uplinks (below ~10 Mbps). The latency ceiling now calibrates to the observed link speed instead of assuming a fast connection, so chunked uploads can ramp up parallelism on high-latency links while still backing off under real congestion.
 - Login page now follows the selected theme — input fields, labels, and the login card no longer render with hardcoded light-mode colors in dark mode.
 - Info tooltips on the upload form are now keyboard-accessible (focusable, with visible focus outline) instead of hover-only.
