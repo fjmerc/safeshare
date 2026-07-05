@@ -67,6 +67,7 @@ class ChunkedUploader {
             maxConcurrency: 20,
             adjustmentThreshold: 5,   // Adjust after 5 consecutive successes/failures
             latencyThreshold: 8000,   // Initial value, recalculated in init() based on chunk size
+            staticLatencyThreshold: 8000, // Chunk-size-based floor for the recalibrated threshold
             latencyDegradationLimit: 0.5  // Don't increase if latency >50% worse than baseline
         };
 
@@ -170,7 +171,8 @@ class ChunkedUploader {
             // Formula: (chunkSize / 1.25MB/s) * 2x overhead
             // Assumes minimum 10 Mbps connection (1.25 MB/s) with 2x safety margin
             const chunkSizeMB = this.chunkSize / (1024 * 1024);
-            this.networkMetrics.latencyThreshold = Math.round((chunkSizeMB / 1.25) * 1000 * 2);
+            this.networkMetrics.staticLatencyThreshold = Math.round((chunkSizeMB / 1.25) * 1000 * 2);
+            this.networkMetrics.latencyThreshold = this.networkMetrics.staticLatencyThreshold;
 
             console.log(`Adaptive latency threshold: ${this.networkMetrics.latencyThreshold}ms for ${chunkSizeMB.toFixed(1)}MB chunks (${(this.networkMetrics.latencyThreshold / 1000).toFixed(1)}s)`);
 
@@ -603,6 +605,17 @@ class ChunkedUploader {
      */
     async resume() {
         this.isPaused = false;
+
+        // Network conditions may have changed while paused (interface switch,
+        // congestion cleared). Discard pre-pause latency data so calibration
+        // restarts fresh instead of anchoring to a stale window.
+        this.networkMetrics.recentLatencies = [];
+        this.networkMetrics.avgLatency = 0;
+        this.networkMetrics.baselineLatency = null;
+        this.networkMetrics.latencyThreshold = this.networkMetrics.staticLatencyThreshold;
+        this.networkMetrics.consecutiveSuccesses = 0;
+        this.networkMetrics.consecutiveFailures = 0;
+
         this.emit('resumed', {
             uploadedChunks: this.uploadedChunks.size,
             totalChunks: this.totalChunks
@@ -867,6 +880,23 @@ class ChunkedUploader {
         this.networkMetrics.avgLatency =
             this.networkMetrics.recentLatencies.reduce((a, b) => a + b, 0) /
             this.networkMetrics.recentLatencies.length;
+
+        // Recalibrate the latency ceiling to the observed link speed. The
+        // static threshold assumes a >=10 Mbps uplink; on slower links every
+        // chunk exceeds it and Guard 1 would freeze the controller for the
+        // whole upload. min(recent) approximates the link's best uncongested
+        // latency, so 2x that is a realistic ceiling. max() keeps the static
+        // value as a floor so fast links behave exactly as before.
+        // Note: if fast early samples slide out of the 10-sample window the
+        // ceiling can rise; Guards 2/3 (baseline-relative + trend) remain the
+        // primary congestion detectors. Below 3 samples the static threshold
+        // applies unchanged.
+        if (this.networkMetrics.recentLatencies.length >= 3) {
+            this.networkMetrics.latencyThreshold = Math.max(
+                this.networkMetrics.staticLatencyThreshold,
+                Math.min(...this.networkMetrics.recentLatencies) * 2
+            );
+        }
 
         // Check if we should adjust concurrency after N consecutive successes
         if (this.networkMetrics.consecutiveSuccesses >= this.networkMetrics.adjustmentThreshold) {
