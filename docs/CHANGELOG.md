@@ -33,6 +33,12 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- TypeScript SDK: type declarations are now correctly resolved by consumers (the `exports` map listed `types` last, so bundlers and `tsc` never picked up the `.d.ts`), and the SDK typechecks and builds cleanly again. SDK CI now runs `typecheck` and `build` in addition to tests.
+
 ## [1.5.6] - 2026-07-06
 
 ### Added
