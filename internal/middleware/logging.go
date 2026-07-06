@@ -31,6 +31,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer; without it
+// per-request deadline extensions (and Flush/Hijack upgrades) silently fail.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // claimCodeRegex matches claim codes in URLs (e.g., /api/claim/ABC123xyz or /api/claim/ABC-123-xyz/info)
 var claimCodeRegex = regexp.MustCompile(`(/api/claim/)([^/\s]+)`)
 

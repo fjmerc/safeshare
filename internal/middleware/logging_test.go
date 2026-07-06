@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoggingMiddleware_BasicRequest(t *testing.T) {
@@ -281,5 +282,36 @@ func TestRedactPathClaimCodes(t *testing.T) {
 				t.Errorf("redactPathClaimCodes(%q) = %q, validation failed", tt.input, output)
 			}
 		})
+	}
+}
+
+// Deadline extension for slow-link transfers depends on http.ResponseController
+// reaching the real *http.response through every wrapper in the middleware
+// chain. A wrapper without Unwrap() makes SetReadDeadline/SetWriteDeadline
+// return ErrNotSupported and silently reverts transfers to the server-wide
+// timeouts, so this exercises a real HTTP server, not a ResponseRecorder.
+func TestLoggingMiddleware_SupportsResponseControllerDeadlines(t *testing.T) {
+	errCh := make(chan error, 2)
+	handler := LoggingMiddleware(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		deadline := time.Now().Add(time.Minute)
+		errCh <- rc.SetReadDeadline(deadline)
+		errCh <- rc.SetWriteDeadline(deadline)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Errorf("ResponseController deadline through LoggingMiddleware failed: %v", err)
+		}
 	}
 }

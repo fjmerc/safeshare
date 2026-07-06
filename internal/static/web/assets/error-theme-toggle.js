@@ -29,4 +29,10 @@
     }
 
     themeToggle.addEventListener('click', toggleTheme);
+
+    // Keep the footer copyright year current (CSP disallows inline scripts)
+    const yearEl = document.getElementById('copyrightYear');
+    if (yearEl) {
+        yearEl.textContent = new Date().getFullYear();
+    }
 })();

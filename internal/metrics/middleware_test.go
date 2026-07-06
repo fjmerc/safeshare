@@ -196,3 +196,11 @@ func TestMiddleware_CapturesStatusCode(t *testing.T) {
 		})
 	}
 }
+
+func TestResponseWriter_Unwrap(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &responseWriter{ResponseWriter: rr}
+	if got := w.Unwrap(); got != http.ResponseWriter(rr) {
+		t.Error("Unwrap() did not return the underlying ResponseWriter")
+	}
+}

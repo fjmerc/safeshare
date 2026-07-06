@@ -62,11 +62,12 @@ class ChunkedUploader {
             consecutiveFailures: 0,
             recentLatencies: [],      // Keep last 10 latencies
             avgLatency: 0,
-            baselineLatency: null,    // First successful upload latency as baseline
+            baselineLatency: null,    // Median of first 3 chunk latencies (Guard 2 anchor)
             minConcurrency: 2,
             maxConcurrency: 20,
             adjustmentThreshold: 5,   // Adjust after 5 consecutive successes/failures
             latencyThreshold: 8000,   // Initial value, recalculated in init() based on chunk size
+            staticLatencyThreshold: 8000, // Chunk-size-based floor for the recalibrated threshold
             latencyDegradationLimit: 0.5  // Don't increase if latency >50% worse than baseline
         };
 
@@ -170,7 +171,8 @@ class ChunkedUploader {
             // Formula: (chunkSize / 1.25MB/s) * 2x overhead
             // Assumes minimum 10 Mbps connection (1.25 MB/s) with 2x safety margin
             const chunkSizeMB = this.chunkSize / (1024 * 1024);
-            this.networkMetrics.latencyThreshold = Math.round((chunkSizeMB / 1.25) * 1000 * 2);
+            this.networkMetrics.staticLatencyThreshold = Math.round((chunkSizeMB / 1.25) * 1000 * 2);
+            this.networkMetrics.latencyThreshold = this.networkMetrics.staticLatencyThreshold;
 
             console.log(`Adaptive latency threshold: ${this.networkMetrics.latencyThreshold}ms for ${chunkSizeMB.toFixed(1)}MB chunks (${(this.networkMetrics.latencyThreshold / 1000).toFixed(1)}s)`);
 
@@ -309,36 +311,84 @@ class ChunkedUploader {
     }
 
     /**
-     * Upload all chunks with parallel processing
+     * Upload all chunks with a sliding-window worker pool.
+     *
+     * Keeps `options.concurrency` chunks in flight at all times instead of
+     * uploading fixed batches (where the slowest chunk stalls the whole batch).
+     * Workers re-read `options.concurrency` between chunks, so adaptive
+     * concurrency adjustments take effect mid-upload: the pool shrinks by
+     * letting excess workers exit and grows by spawning new ones.
+     *
      * @returns {Promise<void>}
      */
     async uploadAllChunks() {
-        const chunks = [];
+        const pending = [];
         for (let i = 0; i < this.totalChunks; i++) {
             // Skip already uploaded chunks (for resume)
             if (!this.uploadedChunks.has(i)) {
-                chunks.push(i);
+                pending.push(i);
             }
         }
 
-        // Upload chunks with concurrency control
-        const concurrency = this.options.concurrency;
-        const batches = [];
-
-        for (let i = 0; i < chunks.length; i += concurrency) {
-            const batch = chunks.slice(i, i + concurrency);
-            batches.push(batch);
+        if (pending.length === 0) {
+            return;
         }
 
-        for (const batch of batches) {
-            if (this.isPaused) {
-                this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                throw new Error('Upload cancelled');
-            }
+        let nextIndex = 0;
+        let activeWorkers = 0;
+        let firstError = null;
 
-            // Upload batch in parallel
-            await Promise.all(batch.map(chunkNumber => this.uploadChunk(chunkNumber)));
-        }
+        await new Promise((resolve, reject) => {
+            const settle = () => {
+                if (activeWorkers > 0) return;
+                if (firstError) {
+                    reject(firstError);
+                } else if (this.isPaused && nextIndex < pending.length) {
+                    this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
+                    reject(new Error('Upload cancelled'));
+                } else {
+                    resolve();
+                }
+            };
+
+            const spawnWorkers = () => {
+                while (activeWorkers < this.options.concurrency &&
+                       nextIndex < pending.length &&
+                       !firstError && !this.isPaused) {
+                    worker();
+                }
+            };
+
+            const worker = async () => {
+                // Runs synchronously until the first await, so the counter is
+                // accurate inside spawnWorkers' loop.
+                activeWorkers++;
+                try {
+                    while (!firstError && !this.isPaused) {
+                        // Shrink pool if adaptive concurrency was lowered
+                        if (activeWorkers > this.options.concurrency) break;
+                        if (nextIndex >= pending.length) break;
+                        const chunkNumber = pending[nextIndex++];
+                        await this.uploadChunk(chunkNumber);
+                        // Grow pool if adaptive concurrency was raised
+                        spawnWorkers();
+                    }
+                } catch (error) {
+                    if (!firstError) {
+                        firstError = error;
+                    }
+                } finally {
+                    activeWorkers--;
+                    settle();
+                }
+            };
+
+            spawnWorkers();
+            // If pause was requested before any worker started, no worker
+            // will ever call settle() — resolve/reject here instead of
+            // leaving the promise pending forever.
+            settle();
+        });
     }
 
     /**
@@ -453,10 +503,24 @@ class ChunkedUploader {
     /**
      * Poll status endpoint until file assembly is complete
      * @param {number} pollInterval - Polling interval in milliseconds (default: 2000ms / 2 seconds)
-     * @param {number} maxAttempts - Maximum number of polling attempts (default: 150 = 5 minutes)
+     * @param {number} maxAttempts - Maximum number of polling attempts. Defaults
+     *   to a budget scaled by file size (floor 150 = 5 minutes, plus one 2s
+     *   attempt per 5MB), because assembly time grows with file size: a 20GB
+     *   assembly on a slow disk (sequential read + hash + encryption + optional
+     *   AV scan) can legitimately exceed a flat 5-minute cap even though the
+     *   server is healthy and will finish.
      * @returns {Promise<Object>} - Final upload result with claim_code and download_url
      */
-    async pollStatus(pollInterval = 2000, maxAttempts = 150) {
+    async pollStatus(pollInterval = 2000, maxAttempts = null) {
+        if (maxAttempts === null) {
+            maxAttempts = Math.max(150, Math.ceil(this.file.size / (5 * 1024 * 1024)));
+        }
+        // Transient poll failures get their own budget so a few network blips
+        // don't consume the assembly-progress budget. Resets on any successful
+        // poll; ~30 consecutive failures with capped backoff means the server
+        // has been unreachable for minutes and we give up.
+        const maxConsecutiveErrors = 30;
+        let consecutiveErrors = 0;
         let attempts = 0;
         const startTime = Date.now();
 
@@ -506,6 +570,7 @@ class ChunkedUploader {
 
                 // Status is still "processing" or "uploading" - continue polling
                 // Wait before next poll
+                consecutiveErrors = 0;
                 await this.sleep(pollInterval);
                 attempts++;
 
@@ -516,25 +581,27 @@ class ChunkedUploader {
                     throw error;
                 }
 
-                // For network errors, retry with exponential backoff
-                attempts++;
-                if (attempts >= maxAttempts) {
+                // For network errors, retry with exponential backoff against a
+                // separate budget (doesn't consume assembly-progress attempts)
+                consecutiveErrors++;
+                if (consecutiveErrors >= maxConsecutiveErrors) {
                     this.emit('error', {
                         stage: 'assembly_polling',
-                        error: `Polling failed after ${maxAttempts} attempts: ${error.message}`
+                        error: `Polling failed after ${maxConsecutiveErrors} consecutive errors: ${error.message}`
                     });
-                    throw new Error(`Assembly status polling timed out after ${maxAttempts} attempts`);
+                    throw new Error(`Assembly status polling failed after ${maxConsecutiveErrors} consecutive errors`);
                 }
 
                 // Exponential backoff for network errors (up to 10 seconds)
-                const backoffDelay = Math.min(pollInterval * Math.pow(1.5, attempts), 10000);
-                console.warn(`Status polling attempt ${attempts} failed, retrying in ${backoffDelay}ms...`, error.message);
+                const backoffDelay = Math.min(pollInterval * Math.pow(1.5, consecutiveErrors), 10000);
+                console.warn(`Status polling attempt failed (${consecutiveErrors}/${maxConsecutiveErrors} consecutive), retrying in ${backoffDelay}ms...`, error.message);
                 await this.sleep(backoffDelay);
             }
         }
 
         // Max attempts reached without completion
-        throw new Error(`Assembly polling timed out after ${maxAttempts} attempts (${(maxAttempts * pollInterval) / 60000} minutes)`);
+        const elapsedMinutes = Math.round((Date.now() - startTime) / 60000);
+        throw new Error(`Assembly polling timed out after ${maxAttempts} attempts (${elapsedMinutes} minutes elapsed)`);
     }
 
     /**
@@ -555,6 +622,17 @@ class ChunkedUploader {
      */
     async resume() {
         this.isPaused = false;
+
+        // Network conditions may have changed while paused (interface switch,
+        // congestion cleared). Discard pre-pause latency data so calibration
+        // restarts fresh instead of anchoring to a stale window.
+        this.networkMetrics.recentLatencies = [];
+        this.networkMetrics.avgLatency = 0;
+        this.networkMetrics.baselineLatency = null;
+        this.networkMetrics.latencyThreshold = this.networkMetrics.staticLatencyThreshold;
+        this.networkMetrics.consecutiveSuccesses = 0;
+        this.networkMetrics.consecutiveFailures = 0;
+
         this.emit('resumed', {
             uploadedChunks: this.uploadedChunks.size,
             totalChunks: this.totalChunks
@@ -803,22 +881,44 @@ class ChunkedUploader {
         this.networkMetrics.consecutiveSuccesses++;
         this.networkMetrics.consecutiveFailures = 0;
 
-        // Set baseline latency from first successful upload
-        if (this.networkMetrics.baselineLatency === null) {
-            this.networkMetrics.baselineLatency = latency;
-            console.log('Baseline latency established:', latency + 'ms');
-        }
-
         // Track latency (keep last 10)
         this.networkMetrics.recentLatencies.push(latency);
         if (this.networkMetrics.recentLatencies.length > 10) {
             this.networkMetrics.recentLatencies.shift();
         }
 
+        // Anchor the degradation baseline (Guard 2) to the median of the first
+        // three samples rather than the first chunk alone: chunk #1 is often an
+        // outlier (cold connection/TLS warmup makes it slow; an idle server
+        // makes it anomalously fast), and a too-fast anchor would make the
+        // 1.5x degradation guard freeze concurrency for the entire upload.
+        if (this.networkMetrics.baselineLatency === null && this.networkMetrics.recentLatencies.length >= 3) {
+            const firstThree = this.networkMetrics.recentLatencies.slice(0, 3).sort((a, b) => a - b);
+            this.networkMetrics.baselineLatency = firstThree[1];
+            console.log('Baseline latency established (median of first 3 chunks):', firstThree[1] + 'ms');
+        }
+
         // Calculate average latency
         this.networkMetrics.avgLatency =
             this.networkMetrics.recentLatencies.reduce((a, b) => a + b, 0) /
             this.networkMetrics.recentLatencies.length;
+
+        // Recalibrate the latency ceiling to the observed link speed. The
+        // static threshold assumes a >=10 Mbps uplink; on slower links every
+        // chunk exceeds it and Guard 1 would freeze the controller for the
+        // whole upload. min(recent) approximates the link's best uncongested
+        // latency, so 2x that is a realistic ceiling. max() keeps the static
+        // value as a floor so fast links behave exactly as before.
+        // Note: if fast early samples slide out of the 10-sample window the
+        // ceiling can rise; Guards 2/3 (baseline-relative + trend) remain the
+        // primary congestion detectors. Below 3 samples the static threshold
+        // applies unchanged.
+        if (this.networkMetrics.recentLatencies.length >= 3) {
+            this.networkMetrics.latencyThreshold = Math.max(
+                this.networkMetrics.staticLatencyThreshold,
+                Math.min(...this.networkMetrics.recentLatencies) * 2
+            );
+        }
 
         // Check if we should adjust concurrency after N consecutive successes
         if (this.networkMetrics.consecutiveSuccesses >= this.networkMetrics.adjustmentThreshold) {
@@ -831,12 +931,15 @@ class ChunkedUploader {
                 return;
             }
 
-            // Guard 2: Don't increase if latency has degraded significantly from baseline
-            const latencyIncrease = (this.networkMetrics.avgLatency - this.networkMetrics.baselineLatency) / this.networkMetrics.baselineLatency;
-            if (latencyIncrease > this.networkMetrics.latencyDegradationLimit) {
-                console.log(`Skipping concurrency increase: latency degraded ${Math.round(latencyIncrease * 100)}% from baseline (limit: ${this.networkMetrics.latencyDegradationLimit * 100}%)`);
-                this.networkMetrics.consecutiveSuccesses = 0;
-                return;
+            // Guard 2: Don't increase if latency has degraded significantly from
+            // baseline (skipped until the median-of-3 baseline is anchored)
+            if (this.networkMetrics.baselineLatency !== null) {
+                const latencyIncrease = (this.networkMetrics.avgLatency - this.networkMetrics.baselineLatency) / this.networkMetrics.baselineLatency;
+                if (latencyIncrease > this.networkMetrics.latencyDegradationLimit) {
+                    console.log(`Skipping concurrency increase: latency degraded ${Math.round(latencyIncrease * 100)}% from baseline (limit: ${this.networkMetrics.latencyDegradationLimit * 100}%)`);
+                    this.networkMetrics.consecutiveSuccesses = 0;
+                    return;
+                }
             }
 
             // Guard 3: Don't increase if latency is trending worse

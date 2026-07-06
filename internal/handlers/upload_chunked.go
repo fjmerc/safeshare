@@ -405,6 +405,7 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		// Parse multipart form with the requested chunk size (not config default)
 		maxChunkSize := partialUpload.ChunkSize + 1024 // requested chunk size + 1KB overhead
+		extendTransferDeadline(w, cfg, maxChunkSize)
 		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
 		if err := r.ParseMultipartForm(maxChunkSize); err != nil {
 			sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)

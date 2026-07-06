@@ -2,6 +2,8 @@ package utils
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,6 +245,107 @@ func TestAssembleChunks_MissingChunks(t *testing.T) {
 	// Should fail due to missing chunk
 	if err == nil {
 		t.Error("AssembleChunks should fail when chunks are missing")
+	}
+}
+
+func TestAssembleChunksEncrypted(t *testing.T) {
+	tmpDir := t.TempDir()
+	uploadID := "test-assembly-enc"
+	totalChunks := 3
+
+	chunk0 := bytes.Repeat([]byte("A"), 1024)
+	chunk1 := bytes.Repeat([]byte("B"), 1024)
+	chunk2 := bytes.Repeat([]byte("C"), 512)
+
+	SaveChunk(tmpDir, uploadID, 0, chunk0)
+	SaveChunk(tmpDir, uploadID, 1, chunk1)
+	SaveChunk(tmpDir, uploadID, 2, chunk2)
+
+	plaintext := append(append(append([]byte{}, chunk0...), chunk1...), chunk2...)
+	totalSize := int64(len(plaintext))
+
+	encFileID, err := GenerateEncFileID()
+	if err != nil {
+		t.Fatalf("GenerateEncFileID failed: %v", err)
+	}
+
+	outputPath := filepath.Join(tmpDir, "assembled.enc")
+	totalBytes, sha256Hash, err := AssembleChunksEncrypted(
+		tmpDir, uploadID, totalChunks, totalSize, outputPath, testKeyV2, encFileID)
+	if err != nil {
+		t.Fatalf("AssembleChunksEncrypted failed: %v", err)
+	}
+
+	if totalBytes != totalSize {
+		t.Errorf("totalBytes = %d, want %d", totalBytes, totalSize)
+	}
+
+	expectedHash := sha256.Sum256(plaintext)
+	if sha256Hash != hex.EncodeToString(expectedHash[:]) {
+		t.Errorf("sha256Hash = %s, want %s", sha256Hash, hex.EncodeToString(expectedHash[:]))
+	}
+
+	// Round-trip: decrypt verifies SFSE2 format, AAD binding, and plaintext SHA-256
+	plainPath := filepath.Join(tmpDir, "roundtrip.dat")
+	if err := DecryptFileStreamingV2(outputPath, plainPath, testKeyV2, encFileID, sha256Hash, totalSize); err != nil {
+		t.Fatalf("decrypt round-trip failed: %v", err)
+	}
+
+	got, err := os.ReadFile(plainPath)
+	if err != nil {
+		t.Fatalf("failed to read decrypted file: %v", err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Error("decrypted data does not match original chunk data")
+	}
+}
+
+func TestAssembleChunksEncrypted_MissingChunks(t *testing.T) {
+	tmpDir := t.TempDir()
+	uploadID := "test-assembly-enc-missing"
+	totalChunks := 3
+
+	SaveChunk(tmpDir, uploadID, 0, []byte("chunk 0"))
+	SaveChunk(tmpDir, uploadID, 2, []byte("chunk 2"))
+	// Chunk 1 is missing
+
+	encFileID, err := GenerateEncFileID()
+	if err != nil {
+		t.Fatalf("GenerateEncFileID failed: %v", err)
+	}
+
+	outputPath := filepath.Join(tmpDir, "assembled.enc")
+	_, _, err = AssembleChunksEncrypted(
+		tmpDir, uploadID, totalChunks, 14, outputPath, testKeyV2, encFileID)
+	if err == nil {
+		t.Error("AssembleChunksEncrypted should fail when chunks are missing")
+	}
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Error("output file should not exist after missing-chunk failure")
+	}
+}
+
+func TestAssembleChunksEncrypted_SizeMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	uploadID := "test-assembly-enc-size"
+	totalChunks := 2
+
+	SaveChunk(tmpDir, uploadID, 0, bytes.Repeat([]byte("X"), 100))
+	SaveChunk(tmpDir, uploadID, 1, bytes.Repeat([]byte("Y"), 100))
+
+	encFileID, err := GenerateEncFileID()
+	if err != nil {
+		t.Fatalf("GenerateEncFileID failed: %v", err)
+	}
+
+	outputPath := filepath.Join(tmpDir, "assembled.enc")
+	_, _, err = AssembleChunksEncrypted(
+		tmpDir, uploadID, totalChunks, 999, outputPath, testKeyV2, encFileID)
+	if err == nil {
+		t.Error("AssembleChunksEncrypted should fail when declared size does not match chunk data")
+	}
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Error("partial output file should be removed after size-mismatch failure")
 	}
 }
 

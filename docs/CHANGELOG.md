@@ -33,7 +33,44 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
-## [Unreleased]
+## [1.5.6] - 2026-07-06
+
+### Added
+
+- Upload progress now shows live transfer speed and estimated time remaining (smoothed over the transfer) for both simple and chunked uploads.
+- A short hint under the SHA-256 checksum on the Pickup tab explains how to use the hash to verify file integrity.
+- Animations and transitions are now disabled for users with the `prefers-reduced-motion` accessibility setting.
+
+### Performance
+
+- Chunked uploads now use a sliding-window worker pool instead of a batch-barrier strategy, keeping multiple chunks in flight continuously and eliminating the head-of-line blocking stall that occurred whenever any single chunk in a batch was slow.
+- Assembly of chunked uploads with encryption now completes in a single streaming pass (read chunks → hash → encrypt → write) instead of four separate disk passes, significantly reducing post-upload processing time on spinning storage.
+
+### Changed
+
+- The Dropoff (upload) tab is now the default tab on the home page, so the primary action is visible immediately. Deployments that require login for uploads still land anonymous visitors on the Pickup tab.
+- The end-to-end encryption "save your key" warning is more prominent, with stronger contrast in both light and dark themes.
+- Mobile/responsive overhaul of the admin dashboard: data tables (Users, Blocked IPs, Webhooks, Deliveries, SSO, API Tokens, Backups) now progressively hide lower-priority columns on tablets and phones instead of forcing horizontal scrolling, action buttons wrap instead of crushing below usable touch size, the tab bar shows edge shadows when more tabs are scrollable off-screen, and modals fit short (landscape phone) viewports.
+- Mobile polish on the main app: expiration quick-select buttons and the user menu now meet the 44px touch-target minimum, tooltips stay inside the viewport on narrow screens, the upload speed/ETA row stacks instead of colliding at small widths, and the drop zone no longer "sticks" in its hover state on touch screens.
+
+### Fixed
+
+- Large uploads and downloads on slow connections are no longer cut off by the server's 120-second request timeout — transfer deadlines now scale with the transfer size (down to a 0.5 Mbps client floor, capped at 6 hours), while the configured `READ_TIMEOUT`/`WRITE_TIMEOUT` still apply everywhere else.
+- Assembly status polling after a chunked upload no longer times out prematurely: the polling budget now scales with file size (a flat 5-minute cap previously reported failure for large files whose assembly was still succeeding), and brief network blips no longer consume it.
+- Upload concurrency auto-tuning no longer anchors its congestion baseline to the first chunk alone, which could freeze parallelism for the whole upload when the first chunk was an outlier.
+- Adaptive upload concurrency no longer freezes at its initial value on slow uplinks (below ~10 Mbps). The latency ceiling now calibrates to the observed link speed instead of assuming a fast connection, so chunked uploads can ramp up parallelism on high-latency links while still backing off under real congestion.
+- Login page now follows the selected theme — input fields, labels, and the login card no longer render with hardcoded light-mode colors in dark mode.
+- Info tooltips on the upload form are now keyboard-accessible (focusable, with visible focus outline) instead of hover-only.
+- Tab navigation now implements the full ARIA tabs pattern (`role="tablist"`/`tab`/`tabpanel`, `aria-selected`), and upload/download progress text is announced to screen readers via `aria-live`.
+- Theme toggle buttons now have accessible labels on all pages.
+- The copyright year on the error page updates automatically instead of being hardcoded.
+- Removed a duplicate web app manifest (`site.webmanifest`); all pages now reference the single canonical `assets/manifest.json`.
+- Login and error pages now send `noindex, nofollow` robots hints to keep private deployment pages out of search engines.
+- Login pages no longer trigger iOS Safari's automatic page zoom when focusing an input (input font size raised to the 16px threshold); the login card and TOTP code input now fit small phone screens without clipping.
+
+### Security
+
+- Bump Go toolchain from 1.25.10 to 1.25.11 to address Go standard library vulnerabilities GO-2026-5039 (unescaped arbitrary inputs in `net/textproto` MIME header errors, reachable via the S3 storage backend's HTTP responses) and GO-2026-5037 (`crypto/x509` certificate verification issue, reachable via WebAuthn login/registration and SSO account linking).
 
 ## [1.5.5] - 2026-05-21
 

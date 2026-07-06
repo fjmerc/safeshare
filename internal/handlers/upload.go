@@ -124,6 +124,16 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 
 // validateAndGetUploadedFile validates the request and retrieves the uploaded file
 func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *config.Config) (multipart.File, *multipart.FileHeader, error) {
+	// Content-Length is -1 for chunked transfer encoding and is client-
+	// controlled, so clamp to the configured maximum: an upload can never
+	// legitimately exceed it (MaxBytesReader below enforces that), and a
+	// forged huge Content-Length must not buy a longer deadline.
+	expectedBytes := r.ContentLength
+	if expectedBytes <= 0 || expectedBytes > cfg.GetMaxFileSize() {
+		expectedBytes = cfg.GetMaxFileSize()
+	}
+	extendTransferDeadline(w, cfg, expectedBytes)
+
 	// Parse multipart form with size limit
 	r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
 	if err := r.ParseMultipartForm(cfg.GetMaxFileSize()); err != nil {
