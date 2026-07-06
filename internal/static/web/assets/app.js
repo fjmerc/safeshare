@@ -1184,6 +1184,7 @@
             // Register cancelled event
             uploader.on('cancelled', (data) => {
                 console.log('Chunked upload cancelled:', data);
+                showToast('Upload cancelled', 'info', 3000);
                 resetProgress();
             });
 
@@ -1220,9 +1221,9 @@
             console.log('Chunked upload successful:', result);
 
         } catch (error) {
-            console.error('Chunked upload error:', error);
-            // Don't show error toast for user-initiated cancellation
+            // Don't show error toast (or log an error) for user-initiated cancellation
             if (error.message !== 'Upload cancelled') {
+                console.error('Chunked upload error:', error);
                 // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
                 let errorMessage;
                 if (error.message && error.message.includes('Failed to fetch')) {
