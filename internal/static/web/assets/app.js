@@ -80,9 +80,6 @@
     const downloadETA = document.getElementById('downloadETA');
     const pauseDownloadButton = document.getElementById('pauseDownloadButton');
     const cancelDownloadButton = document.getElementById('cancelDownloadButton');
-    const resumePrompt = document.getElementById('resumePrompt');
-    const resumeDownloadButton = document.getElementById('resumeDownloadButton');
-    const startFreshButton = document.getElementById('startFreshButton');
 
     // DOM Elements - User Menu
     const userMenu = document.getElementById('userMenu');
@@ -133,6 +130,7 @@
         handleInitialTab();
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
+        clearLegacyDownloadProgress(); // Remove download_* keys from the removed cross-refresh resume feature
 
         // Handle file received via Web Share Target API
         await handleShareTarget();
@@ -142,6 +140,20 @@
         if (e2eFragment) {
             handleEncryptedDownload(e2eFragment);
         }
+    }
+
+    // One-time cleanup of localStorage entries written by the removed
+    // "resume after refresh" download feature (it stored only a byte count,
+    // so resuming from it always produced a truncated file).
+    function clearLegacyDownloadProgress() {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('download_')) {
+                keys.push(key);
+            }
+        }
+        keys.forEach(key => localStorage.removeItem(key));
     }
 
     // Fetch server configuration
@@ -618,22 +630,6 @@
                     currentDownloader = null;
                     showToast('Download cancelled', 'info', 2000);
                 }
-            });
-        }
-
-        // Pickup Tab - Resume download button
-        if (resumeDownloadButton) {
-            resumeDownloadButton.addEventListener('click', () => {
-                resumePrompt.classList.add('hidden');
-                handleDownload(false); // Resume from saved progress
-            });
-        }
-
-        // Pickup Tab - Start fresh button
-        if (startFreshButton) {
-            startFreshButton.addEventListener('click', () => {
-                resumePrompt.classList.add('hidden');
-                handleDownload(true); // Force new download
             });
         }
 
@@ -2007,40 +2003,14 @@
         }
 
         // Check for resumable download
-        checkForResumableDownload(data);
-
         // Show file info section
         fileInfoSection.classList.remove('hidden');
         retrieveButton.disabled = false;
         retrieveButton.textContent = 'Retrieve File';
     }
 
-    // Check if there's a saved download progress for this file
-    function checkForResumableDownload(fileInfo) {
-        // Create temporary downloader to check for saved progress
-        const tempDownloader = new ResumableDownloader(
-            fileInfo.download_url,
-            fileInfo.filename,
-            fileInfo.file_size
-        );
-
-        const savedProgress = tempDownloader.checkForResume();
-
-        if (savedProgress && savedProgress.downloadedBytes > 0) {
-            const percentage = Math.round((savedProgress.downloadedBytes / savedProgress.fileSize) * 100);
-            console.log(`Found resumable download: ${percentage}% complete`);
-
-            // Show resume prompt
-            resumePrompt.classList.remove('hidden');
-            resumePrompt.querySelector('p').textContent =
-                `📥 A previous download was interrupted at ${percentage}%. Would you like to resume where you left off?`;
-        } else {
-            resumePrompt.classList.add('hidden');
-        }
-    }
-
     // Handle download
-    async function handleDownload(forceNew = false) {
+    async function handleDownload() {
         if (!currentFileInfo) return;
 
         // If E2E encrypted, require key before downloading
@@ -2130,11 +2100,6 @@
             );
 
             // Set up event listeners
-            currentDownloader.on('resume', (data) => {
-                console.log('Resuming download from', formatFileSize(data.downloadedBytes));
-                showToast(`Resuming from ${Math.round(data.percentage)}%`, 'info', 2000);
-            });
-
             currentDownloader.on('progress', (progress) => {
                 // Update progress bar
                 downloadProgressFill.style.width = `${progress.percentage}%`;
@@ -2151,7 +2116,8 @@
             });
 
             currentDownloader.on('complete', (data) => {
-                // Note: Browser download is already triggered by downloadWithProgress()
+                // Note: The browser save is triggered by downloadWithProgress()
+                // (initial path) or the pause-button handler (resume path).
                 // This event handler only handles UI updates
 
                 // Reset UI
@@ -2176,11 +2142,11 @@
             });
 
             currentDownloader.on('paused', () => {
-                showToast('Download paused - progress saved', 'info', 2000);
+                showToast('Download paused - resume to continue', 'info', 2000);
             });
 
             // Start download
-            await currentDownloader.downloadWithProgress(forceNew);
+            await currentDownloader.downloadWithProgress();
 
         } catch (error) {
             console.error('Download failed:', error);

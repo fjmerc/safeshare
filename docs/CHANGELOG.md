@@ -37,6 +37,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Fixed
 
+- Resumable downloads: pausing and resuming a download produced a corrupted file containing only the bytes received after the resume. Received data is now retained across pause/resume so the assembled file is always complete, and resumed responses are validated against the requested byte offset (`Content-Range`) to guard against misbehaving proxies. Passwords for protected files are no longer forwarded on cross-origin redirects.
+- Resumable downloads: the "resume after page refresh" prompt was removed — it could never work (downloaded bytes only exist in page memory) and always produced a corrupted file. Pause/resume within the page session still works. Stale resume state from previous versions is cleaned from browser storage automatically.
+- Resumable downloads: cancelling a paused download no longer emits a spurious "paused" event, and pausing now releases the network connection immediately.
 - TypeScript SDK: type declarations are now correctly resolved by consumers (the `exports` map listed `types` last, so bundlers and `tsc` never picked up the `.d.ts`), and the SDK typechecks and builds cleanly again. SDK CI now runs `typecheck` and `build` in addition to tests.
 
 ## [1.5.6] - 2026-07-06
