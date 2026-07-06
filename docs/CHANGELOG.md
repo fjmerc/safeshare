@@ -37,6 +37,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Fixed
 
+- Chunked uploads: cancelling an upload no longer shows a spurious "Upload failed" message (cancellation was internally treated as a network failure and retried with backoff before surfacing as an error). Cancel now aborts all in-flight chunk requests immediately instead of letting them keep transferring in the background, takes effect during retry waits and file-assembly polling, and a cancelled upload can no longer be resumed.
+
 - Resumable downloads: pausing and resuming a download produced a corrupted file containing only the bytes received after the resume. Received data is now retained across pause/resume so the assembled file is always complete, and resumed responses are validated against the requested byte offset (`Content-Range`) to guard against misbehaving proxies. Passwords for protected files are no longer forwarded on cross-origin redirects.
 - Resumable downloads: the "resume after page refresh" prompt was removed — it could never work (downloaded bytes only exist in page memory) and always produced a corrupted file. Pause/resume within the page session still works. Stale resume state from previous versions is cleaned from browser storage automatically.
 - Resumable downloads: cancelling a paused download no longer emits a spurious "paused" event, and pausing now releases the network connection immediately.

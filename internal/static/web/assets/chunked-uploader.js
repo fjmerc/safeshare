@@ -45,6 +45,8 @@ class ChunkedUploader {
         this.uploadedChunks = new Set();
         this.isPaused = false;
         this.isCompleted = false;
+        this.isCompleting = false;
+        this.completionPromise = null;
 
         // Progress tracking
         this.startTime = null;
@@ -55,6 +57,11 @@ class ChunkedUploader {
 
         // Storage key for resume capability
         this.storageKey = null;
+
+        // Aborts in-flight init/chunk/complete/status fetches on pause() or
+        // abort(). Recreated by uploadAllChunks() so resume() gets a fresh
+        // signal.
+        this.abortController = new AbortController();
 
         // Network metrics for adaptive concurrency
         this.networkMetrics = {
@@ -142,6 +149,7 @@ class ChunkedUploader {
         try {
             const response = await fetch('/api/upload/init', {
                 method: 'POST',
+                signal: this.abortController.signal,
                 headers: {
                     'Content-Type': 'application/json'
                 },
@@ -189,6 +197,9 @@ class ChunkedUploader {
             });
 
         } catch (error) {
+            if (this._isCancellation(error)) {
+                throw this._cancellationError();
+            }
             this.emit('error', { stage: 'init', error: error.message });
             throw error;
         }
@@ -207,7 +218,7 @@ class ChunkedUploader {
             try {
                 // Check if paused
                 if (this.isPaused) {
-                    throw new Error('Upload cancelled');
+                    throw this._cancellationError();
                 }
 
                 // Calculate chunk boundaries
@@ -228,7 +239,8 @@ class ChunkedUploader {
                 // Upload chunk (HTTP/2 handles connection reuse automatically)
                 const response = await fetch(`/api/upload/chunk/${this.uploadId}/${chunkNumber}`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: this.abortController ? this.abortController.signal : undefined
                 });
 
                 if (!response.ok) {
@@ -269,6 +281,12 @@ class ChunkedUploader {
                 return; // Success
 
             } catch (error) {
+                // Cancellation is not a failure: don't count it against the
+                // network metrics, don't retry, don't emit 'error'.
+                if (this._isCancellation(error)) {
+                    throw error;
+                }
+
                 attempt++;
 
                 // Track failure for adaptive concurrency (before retrying)
@@ -330,6 +348,11 @@ class ChunkedUploader {
             }
         }
 
+        // Fresh controller per (re)start so a resume() after pause() isn't
+        // stuck with an already-aborted signal. Before the early return so
+        // complete()/pollStatus() stay cancellable when nothing is pending.
+        this.abortController = new AbortController();
+
         if (pending.length === 0) {
             return;
         }
@@ -343,9 +366,13 @@ class ChunkedUploader {
                 if (activeWorkers > 0) return;
                 if (firstError) {
                     reject(firstError);
-                } else if (this.isPaused && nextIndex < pending.length) {
-                    this.emit('paused', { uploadedChunks: this.uploadedChunks.size, totalChunks: this.totalChunks });
-                    reject(new Error('Upload cancelled'));
+                } else if (this.isPaused && this.uploadedChunks.size < this.totalChunks) {
+                    // Compare uploaded (not dispatched) chunks: in-flight
+                    // chunks aborted by pause() were dispatched but never
+                    // finished, and resolving here would let complete() run
+                    // against missing chunks. pause()/abort() emit their own
+                    // events, so no 'paused' emit here.
+                    reject(this._cancellationError());
                 } else {
                     resolve();
                 }
@@ -374,7 +401,9 @@ class ChunkedUploader {
                         spawnWorkers();
                     }
                 } catch (error) {
-                    if (!firstError) {
+                    // Cancellation isn't a real error — settle() rejects with
+                    // a single normalized 'Upload cancelled' instead.
+                    if (!firstError && !this._isCancellation(error)) {
                         firstError = error;
                     }
                 } finally {
@@ -408,7 +437,8 @@ class ChunkedUploader {
             // Store promise for duplicate calls to wait on
             this.completionPromise = (async () => {
                 const response = await fetch(`/api/upload/complete/${this.uploadId}`, {
-                    method: 'POST'
+                    method: 'POST',
+                    signal: this.abortController ? this.abortController.signal : undefined
                 });
 
                 // Handle error responses (4xx, 5xx)
@@ -472,6 +502,11 @@ class ChunkedUploader {
             return await this.completionPromise;
 
         } catch (error) {
+            if (this._isCancellation(error)) {
+                // Normalize so callers filtering on 'Upload cancelled' don't
+                // surface an AbortError message as a failure.
+                throw this._cancellationError();
+            }
             this.emit('error', { stage: 'complete', error: error.message });
             throw error;
         } finally {
@@ -485,7 +520,9 @@ class ChunkedUploader {
      */
     async getStatus() {
         try {
-            const response = await fetch(`/api/upload/status/${this.uploadId}`);
+            const response = await fetch(`/api/upload/status/${this.uploadId}`, {
+                signal: this.abortController ? this.abortController.signal : undefined
+            });
 
             if (!response.ok) {
                 const error = await response.json();
@@ -495,7 +532,9 @@ class ChunkedUploader {
             return await response.json();
 
         } catch (error) {
-            this.emit('error', { stage: 'status', error: error.message });
+            if (!this._isCancellation(error)) {
+                this.emit('error', { stage: 'status', error: error.message });
+            }
             throw error;
         }
     }
@@ -575,6 +614,11 @@ class ChunkedUploader {
                 attempts++;
 
             } catch (error) {
+                // User cancelled — stop polling, don't retry as a network blip
+                if (this._isCancellation(error)) {
+                    throw error;
+                }
+
                 // If this is a known error (failed status), rethrow immediately
                 if (error.message.includes('assembly failed') || error.message.includes('missing claim_code')) {
                     this.emit('error', { stage: 'assembly', error: error.message });
@@ -609,6 +653,11 @@ class ChunkedUploader {
      */
     pause() {
         this.isPaused = true;
+        // Stop in-flight chunk requests instead of letting them keep
+        // transferring; aborted chunks are re-uploaded on resume.
+        if (this.abortController) {
+            this.abortController.abort();
+        }
         this.saveState();
         this.emit('paused', {
             uploadedChunks: this.uploadedChunks.size,
@@ -621,6 +670,10 @@ class ChunkedUploader {
      * @returns {Promise<void>}
      */
     async resume() {
+        // A cancelled upload is gone for good (abort() sets isCompleted and
+        // clears the saved state) — don't let resume restart it.
+        if (this.isCompleted) return;
+
         this.isPaused = false;
 
         // Network conditions may have changed while paused (interface switch,
@@ -647,8 +700,18 @@ class ChunkedUploader {
      * Stops all in-progress uploads and clears state
      */
     abort() {
+        // No-op when the upload already finished (cancel landed just after
+        // the final status poll returned 'completed' — the file exists and
+        // results are already shown) or was already aborted.
+        if (this.isCompleted) return;
+
         this.isPaused = true; // Stop new chunk uploads
         this.isCompleted = true; // Prevent resume
+
+        // Abort in-flight chunk/status requests immediately
+        if (this.abortController) {
+            this.abortController.abort();
+        }
 
         // Clear localStorage state
         if (this.storageKey) {
@@ -657,11 +720,6 @@ class ChunkedUploader {
             } catch (e) {
                 console.warn('Failed to clear upload state from localStorage:', e);
             }
-        }
-
-        // Show toast notification
-        if (typeof window.showToast === 'function') {
-            window.showToast('Upload cancelled', 'info', 3000);
         }
 
         this.emit('cancelled', {
@@ -854,10 +912,22 @@ class ChunkedUploader {
     }
 
     /**
-     * Calculate SHA256 hash of entire file for end-to-end verification
-     * For large files, this uses chunked reading to avoid memory issues
-     * @returns {Promise<string>} - Hex-encoded SHA256 hash
+     * Error representing a user-initiated cancel/pause. Marked so retry
+     * loops and error handlers can tell it apart from real failures.
      */
+    _cancellationError() {
+        const error = new Error('Upload cancelled');
+        error.isCancellation = true;
+        return error;
+    }
+
+    /**
+     * True for our own cancellation errors and for fetch() AbortErrors
+     * produced when pause()/abort() aborts the shared AbortController.
+     */
+    _isCancellation(error) {
+        return error.isCancellation === true || error.name === 'AbortError';
+    }
 
     /**
      * Custom error class that includes retry recommendations
@@ -869,10 +939,6 @@ class ChunkedUploader {
         error.retryAfter = retryAfter;
         return error;
     }
-
-    /**
-     * Parse error response and extract retry information
-     */
 
     /**
      * Track successful chunk upload and adjust concurrency
@@ -1039,6 +1105,10 @@ class ChunkedUploader {
             });
         }
     }
+
+    /**
+     * Parse error response and extract retry information
+     */
     async parseErrorResponse(response) {
         try {
             const error = await response.json();
@@ -1060,12 +1130,29 @@ class ChunkedUploader {
     }
 
     /**
-     * Sleep utility
+     * Sleep utility. Rejects with a cancellation error if pause()/abort()
+     * fires mid-sleep, so retry backoffs and poll intervals don't delay
+     * cancellation by up to their full duration.
      * @param {number} ms - Milliseconds to sleep
      * @returns {Promise<void>}
      */
     sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+        const signal = this.abortController ? this.abortController.signal : null;
+        return new Promise((resolve, reject) => {
+            if (signal && signal.aborted) {
+                reject(this._cancellationError());
+                return;
+            }
+            const onAbort = () => {
+                clearTimeout(id);
+                reject(this._cancellationError());
+            };
+            const id = setTimeout(() => {
+                if (signal) signal.removeEventListener('abort', onAbort);
+                resolve();
+            }, ms);
+            if (signal) signal.addEventListener('abort', onAbort, { once: true });
+        });
     }
 
     /**
