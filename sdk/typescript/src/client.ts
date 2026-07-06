@@ -42,10 +42,10 @@ const CLAIM_CODE_PATTERN = /^[a-zA-Z0-9_-]{8,32}$/;
 const UPLOAD_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const FILENAME_MAX_LENGTH = 255;
 
-// Pagination limits
-const MAX_PER_PAGE = 100;
-const MIN_PAGE = 1;
-const MIN_PER_PAGE = 1;
+// Derived from the fetch signature so the SDK typechecks against whichever
+// fetch globals the consumer's @types/node (or DOM lib) provides —
+// HeadersInit/BodyInit themselves are not global in all @types/node versions.
+type FetchRequestBody = NonNullable<Parameters<typeof fetch>[1]>["body"];
 
 /**
  * SafeShare API Client
@@ -131,16 +131,6 @@ export class SafeShareClient {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private validatePagination(page: number, perPage: number): void {
-    if (!Number.isInteger(page) || page < MIN_PAGE) {
-      throw new ValidationError("page must be a positive integer");
-    }
-    if (!Number.isInteger(perPage) || perPage < MIN_PER_PAGE || perPage > MAX_PER_PAGE) {
-      throw new ValidationError(`perPage must be an integer between ${MIN_PER_PAGE} and ${MAX_PER_PAGE}`);
-    }
-  }
-
   private validateTokenId(tokenId: number): void {
     if (!Number.isInteger(tokenId) || tokenId < 1) {
       throw new ValidationError("tokenId must be a positive integer");
@@ -163,8 +153,8 @@ export class SafeShareClient {
   // HTTP Helper Methods
   // ===========================================================================
 
-  private getHeaders(): HeadersInit {
-    const headers: HeadersInit = {};
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
     if (this.apiToken) {
       headers["Authorization"] = `Bearer ${this.apiToken}`;
     }
@@ -175,8 +165,8 @@ export class SafeShareClient {
     method: string,
     path: string,
     options: {
-      body?: BodyInit;
-      headers?: HeadersInit;
+      body?: FetchRequestBody;
+      headers?: Record<string, string>;
       timeout?: number;
     } = {}
   ): Promise<T> {
