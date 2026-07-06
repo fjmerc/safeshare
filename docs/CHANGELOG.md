@@ -33,7 +33,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
-## [Unreleased]
+## [1.5.6] - 2026-07-06
 
 ### Added
 
