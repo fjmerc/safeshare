@@ -1026,8 +1026,9 @@ HTTP 2xx → mark success
 ### Security Features
 
 1. **HMAC Signature Verification** (SafeShare format):
-   - `X-Webhook-Signature` header contains SHA-256 HMAC of payload
-   - Webhook endpoint must verify signature to prevent spoofing
+   - `X-SafeShare-Signature-V2` contains SHA-256 HMAC of `<timestamp>.<payload>`; `X-SafeShare-Timestamp` carries the signing time
+   - Receivers should verify V2 and reject timestamps outside a tolerance window (prevents replay)
+   - `X-SafeShare-Signature` (HMAC of payload only) kept for legacy receivers
 
 2. **Service Token Masking**:
    - Secrets and service tokens masked in list responses

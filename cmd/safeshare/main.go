@@ -49,6 +49,10 @@ func run() error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Apply proxy trust settings process-wide so helpers without config
+	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
+	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+
 	slog.Info("starting safeshare",
 		"port", cfg.Port,
 		"max_file_size", cfg.GetMaxFileSize(),

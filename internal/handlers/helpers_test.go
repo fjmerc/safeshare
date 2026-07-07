@@ -14,11 +14,12 @@ import (
 
 func TestBuildDownloadURL(t *testing.T) {
 	tests := []struct {
-		name      string
-		cfg       *config.Config
-		claimCode string
-		headers   map[string]string
-		want      string
+		name       string
+		cfg        *config.Config
+		claimCode  string
+		headers    map[string]string
+		remoteAddr string
+		want       string
 	}{
 		{
 			name: "uses DOWNLOAD_URL when configured",
@@ -49,7 +50,22 @@ func TestBuildDownloadURL(t *testing.T) {
 				"X-Forwarded-Proto": "https",
 				"X-Forwarded-Host":  "proxy.example.com",
 			},
-			want: "https://proxy.example.com/api/claim/test123",
+			remoteAddr: "10.0.0.5:41000", // trusted proxy
+			want:       "https://proxy.example.com/api/claim/test123",
+		},
+		{
+			name: "ignores forwarded headers from untrusted source",
+			cfg: &config.Config{
+				DownloadURL: "",
+				PublicURL:   "",
+			},
+			claimCode: "test123",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "https",
+				"X-Forwarded-Host":  "evil.example.com",
+			},
+			remoteAddr: "203.0.113.5:41000", // untrusted public IP
+			want:       "http://localhost:8080/api/claim/test123",
 		},
 		{
 			name: "falls back to Host header",
@@ -90,6 +106,9 @@ func TestBuildDownloadURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
 
 			// Add custom headers
 			for key, val := range tt.headers {
@@ -106,24 +125,27 @@ func TestBuildDownloadURL(t *testing.T) {
 
 func TestGetScheme(t *testing.T) {
 	tests := []struct {
-		name    string
-		headers map[string]string
-		useTLS  bool
-		want    string
+		name       string
+		headers    map[string]string
+		remoteAddr string
+		useTLS     bool
+		want       string
 	}{
 		{
 			name: "X-Forwarded-Proto https",
 			headers: map[string]string{
 				"X-Forwarded-Proto": "https",
 			},
-			want: "https",
+			remoteAddr: "10.0.0.5:41000",
+			want:       "https",
 		},
 		{
 			name: "X-Forwarded-Proto http",
 			headers: map[string]string{
 				"X-Forwarded-Proto": "http",
 			},
-			want: "http",
+			remoteAddr: "10.0.0.5:41000",
+			want:       "http",
 		},
 		{
 			name:   "TLS connection",
@@ -139,14 +161,26 @@ func TestGetScheme(t *testing.T) {
 			headers: map[string]string{
 				"X-Forwarded-Proto": "http",
 			},
-			useTLS: true,
-			want:   "http",
+			remoteAddr: "10.0.0.5:41000",
+			useTLS:     true,
+			want:       "http",
+		},
+		{
+			name: "ignores X-Forwarded-Proto from untrusted source",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "https",
+			},
+			remoteAddr: "203.0.113.5:41000",
+			want:       "http",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
 
 			// Add headers
 			for key, val := range tt.headers {
@@ -168,18 +202,20 @@ func TestGetScheme(t *testing.T) {
 
 func TestGetHost(t *testing.T) {
 	tests := []struct {
-		name    string
-		headers map[string]string
-		host    string
-		want    string
+		name       string
+		headers    map[string]string
+		host       string
+		remoteAddr string
+		want       string
 	}{
 		{
 			name: "X-Forwarded-Host present",
 			headers: map[string]string{
 				"X-Forwarded-Host": "proxy.example.com",
 			},
-			host: "localhost:8080",
-			want: "proxy.example.com",
+			host:       "localhost:8080",
+			remoteAddr: "10.0.0.5:41000",
+			want:       "proxy.example.com",
 		},
 		{
 			name: "falls back to Host header",
@@ -191,14 +227,27 @@ func TestGetHost(t *testing.T) {
 			headers: map[string]string{
 				"X-Forwarded-Host": "proxy.example.com:443",
 			},
-			host: "localhost:8080",
-			want: "proxy.example.com:443",
+			host:       "localhost:8080",
+			remoteAddr: "10.0.0.5:41000",
+			want:       "proxy.example.com:443",
+		},
+		{
+			name: "ignores X-Forwarded-Host from untrusted source",
+			headers: map[string]string{
+				"X-Forwarded-Host": "evil.example.com",
+			},
+			host:       "localhost:8080",
+			remoteAddr: "203.0.113.5:41000",
+			want:       "localhost:8080",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "http://"+tt.host+"/", nil)
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
 
 			// Add headers
 			for key, val := range tt.headers {

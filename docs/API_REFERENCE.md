@@ -1608,7 +1608,11 @@ Retrieve details of a specific webhook delivery.
 }
 ```
 
-**HMAC Signature**: Sent in `X-Webhook-Signature` header using SHA-256 HMAC of the JSON payload.
+**HMAC Signatures**: Each delivery includes:
+- `X-SafeShare-Signature-V2`: SHA-256 HMAC of `<timestamp>.<payload>` (recommended — replay-resistant)
+- `X-SafeShare-Timestamp`: Unix timestamp (seconds) when the delivery was signed
+- `X-SafeShare-Signature`: legacy SHA-256 HMAC of the payload only (kept for backward compatibility)
+- `X-SafeShare-Signature-Algorithm`: `sha256` (applies to both signatures — both are HMAC-SHA256; they differ only in the signed message)
 
 #### Gotify Format
 
@@ -1668,30 +1672,46 @@ Headers:
 
 **HMAC Signature Verification** (SafeShare format):
 
+Verify the timestamped signature (`X-SafeShare-Signature-V2`) and reject
+deliveries whose timestamp is outside a tolerance window (5 minutes
+recommended). This prevents an attacker who captured a delivery from
+replaying it later.
+
 ```python
 import hmac
 import hashlib
+import time
 
-def verify_webhook(secret, payload, signature):
+TOLERANCE_SECONDS = 300  # 5 minutes
+
+def verify_webhook(secret, payload, timestamp, signature):
+    # Reject replayed deliveries outside the tolerance window
+    if abs(time.time() - int(timestamp)) > TOLERANCE_SECONDS:
+        return False
     expected = hmac.new(
         secret.encode('utf-8'),
-        payload.encode('utf-8'),
+        f"{timestamp}.{payload}".encode('utf-8'),
         hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 # Example usage
 secret = "your-webhook-secret-key"
-payload = request.body  # Raw JSON string
-signature = request.headers.get('X-Webhook-Signature')
+payload = request.body  # Raw JSON string, exactly as received
+timestamp = request.headers.get('X-SafeShare-Timestamp')
+signature = request.headers.get('X-SafeShare-Signature-V2')
 
-if verify_webhook(secret, payload, signature):
+if timestamp and signature and verify_webhook(secret, payload, timestamp, signature):
     # Process webhook
     pass
 else:
     # Reject webhook
     return 403
 ```
+
+**Legacy verification**: older receivers that verify `X-SafeShare-Signature`
+(HMAC of the payload only, no timestamp) continue to work, but should migrate
+to the V2 signature since the legacy scheme does not protect against replay.
 
 **Retry Logic**:
 - Exponential backoff: 1s, 2s, 4s, 8s, 16s
