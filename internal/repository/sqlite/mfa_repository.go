@@ -32,6 +32,12 @@ const (
 	maxRecoveryCodes   = 20   // Maximum number of recovery codes per user
 )
 
+// timingPadHash pads UseRecoveryCode to a constant number of bcrypt compares
+// so timing doesn't leak how many recovery codes a user has provisioned.
+// Error is unreachable: GenerateFromPassword fails only for invalid cost,
+// and bcrypt.DefaultCost is always valid.
+var timingPadHash, _ = bcrypt.GenerateFromPassword([]byte("safeshare-recovery-timing-pad"), bcrypt.DefaultCost)
+
 // parseTimestampUTC parses a timestamp string trying multiple formats.
 // SQLite may return timestamps in different formats depending on how they were stored
 // and how the Go driver handles them.
@@ -368,19 +374,30 @@ func (r *MFARepository) UseRecoveryCode(ctx context.Context, userID int64, code 
 		return fmt.Errorf("error iterating recovery codes: %w", err)
 	}
 
-	// Now check each code hash (rows is closed, safe to UPDATE)
+	// Now check each code hash (rows is closed, safe to UPDATE).
+	// Always run exactly maxRecoveryCodes bcrypt compares regardless of how
+	// many codes the user has or where a match occurs, so response timing
+	// does not reveal recovery-code provisioning or match position.
+	matchedID := int64(-1)
 	for _, c := range candidates {
-		if err := bcrypt.CompareHashAndPassword([]byte(c.hash), []byte(code)); err == nil {
-			// Match found - mark as used
-			_, err := r.db.ExecContext(ctx,
-				"UPDATE user_mfa_recovery_codes SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
-				c.id,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to mark code as used: %w", err)
-			}
-			return nil
+		if err := bcrypt.CompareHashAndPassword([]byte(c.hash), []byte(code)); err == nil && matchedID < 0 {
+			matchedID = c.id
 		}
+	}
+	for i := len(candidates); i < maxRecoveryCodes; i++ {
+		_ = bcrypt.CompareHashAndPassword(timingPadHash, []byte(code))
+	}
+
+	if matchedID >= 0 {
+		// Match found - mark as used
+		_, err := r.db.ExecContext(ctx,
+			"UPDATE user_mfa_recovery_codes SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
+			matchedID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to mark code as used: %w", err)
+		}
+		return nil
 	}
 
 	return repository.ErrInvalidRecoveryCode

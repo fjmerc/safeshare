@@ -28,12 +28,20 @@ const (
 	// mfaChallengeExpiryMinutes is how long an MFA challenge is valid
 	mfaChallengeExpiryMinutes = 5
 
-	// mfaLoginVerificationMinTime prevents timing attacks on MFA verification
-	// This covers ALL operations in the verification path
-	mfaLoginVerificationMinTime = 200 * time.Millisecond
+	// mfaLoginVerificationMinTime prevents timing attacks on MFA verification.
+	// This covers ALL operations in the verification path: fast paths (TOTP
+	// validation, early errors) are padded up to the floor. The recovery-code
+	// branch runs a constant number of bcrypt compares (see sqlite
+	// MFARepository.UseRecoveryCode) so its duration reveals nothing beyond
+	// which branch was requested.
+	mfaLoginVerificationMinTime = 500 * time.Millisecond
 
 	// mfaMaxVerifyAttempts limits brute force attacks
 	mfaMaxVerifyAttempts = 5
+
+	// mfaTimingDummySecret feeds the synthetic bcrypt compare on the TOTP
+	// branch so it incurs bcrypt-scale work like the recovery-code branch
+	mfaTimingDummySecret = "safeshare-mfa-timing-equalizer"
 
 	// maxTotalChallenges prevents memory exhaustion (DoS protection)
 	maxTotalChallenges = 10000
@@ -44,6 +52,13 @@ const (
 
 // ErrTooManyChallenges is returned when the challenge store is at capacity
 var ErrTooManyChallenges = errors.New("too many pending MFA challenges")
+
+// mfaTimingDummyHash is a bcrypt hash used for synthetic compares on the
+// TOTP branch, equalizing its cost profile with the recovery-code branch
+// (which loops bcrypt.CompareHashAndPassword over stored codes).
+// Error is unreachable: GenerateFromPassword fails only for invalid cost,
+// and bcrypt.DefaultCost is always valid.
+var mfaTimingDummyHash, _ = bcrypt.GenerateFromPassword([]byte(mfaTimingDummySecret), bcrypt.DefaultCost)
 
 // MFALoginChallenge represents a pending MFA login challenge
 type MFALoginChallenge struct {
@@ -589,6 +604,11 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 			}
 
 			valid = totp.Validate(req.Code, secret)
+
+			// Synthetic bcrypt compare so the TOTP branch (microseconds)
+			// takes bcrypt-scale time like the recovery branch, preventing
+			// attackers from distinguishing which path a code took
+			_ = bcrypt.CompareHashAndPassword(mfaTimingDummyHash, []byte(req.Code))
 		}
 
 		if !valid {
