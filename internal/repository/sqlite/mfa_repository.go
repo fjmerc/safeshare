@@ -385,7 +385,7 @@ func (r *MFARepository) UseRecoveryCode(ctx context.Context, userID int64, code 
 		}
 	}
 	for i := len(candidates); i < maxRecoveryCodes; i++ {
-		bcrypt.CompareHashAndPassword(timingPadHash, []byte(code))
+		_ = bcrypt.CompareHashAndPassword(timingPadHash, []byte(code))
 	}
 
 	if matchedID >= 0 {
