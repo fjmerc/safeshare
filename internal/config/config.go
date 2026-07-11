@@ -52,6 +52,12 @@ type ClamAVConfig struct {
 	Port        int    // ClamAV daemon port (default: 3310)
 	Timeout     int    // Scan timeout in seconds (default: 30)
 	MaxFileSize int64  // Maximum file size to scan in bytes, 0 = unlimited (default: 104857600 = 100MB)
+	// BlockUntilClean fails downloads closed until a definitive clean verdict
+	// exists. When true (the default), files with a pending/error/unknown scan
+	// status are not downloadable (only scan_status=clean passes). Set
+	// MALWARE_SCAN_BLOCK_UNTIL_CLEAN=false for deployments that treat scanning
+	// as advisory and prefer availability over a scan-error bypass window.
+	BlockUntilClean bool
 }
 
 // MFAConfig holds Multi-Factor Authentication configuration.
@@ -181,10 +187,11 @@ func Load() (*Config, error) {
 
 		// ClamAV malware scanning configuration
 		ClamAV: &ClamAVConfig{
-			Host:        getEnv("CLAMAV_HOST", "clamav"),
-			Port:        getEnvInt("CLAMAV_PORT", 3310),
-			Timeout:     getEnvInt("CLAMAV_TIMEOUT", 30),
-			MaxFileSize: getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+			Host:            getEnv("CLAMAV_HOST", "clamav"),
+			Port:            getEnvInt("CLAMAV_PORT", 3310),
+			Timeout:         getEnvInt("CLAMAV_TIMEOUT", 30),
+			MaxFileSize:     getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+			BlockUntilClean: getEnvBool("MALWARE_SCAN_BLOCK_UNTIL_CLEAN", true),
 		},
 
 		// Mutable fields (lowercase, accessed via getters/setters)

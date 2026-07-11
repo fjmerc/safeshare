@@ -35,38 +35,12 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at
 	`
 
-	var passwordHash *string
-	if file.PasswordHash != "" {
-		passwordHash = &file.PasswordHash
-	}
-
-	var sha256Hash *string
-	if file.SHA256Hash != "" {
-		sha256Hash = &file.SHA256Hash
-	}
-
-	err := r.pool.QueryRow(
-		ctx,
-		query,
-		file.ClaimCode,
-		file.OriginalFilename,
-		file.StoredFilename,
-		file.FileSize,
-		file.MimeType,
-		file.ExpiresAt,
-		file.MaxDownloads,
-		file.UploaderIP,
-		passwordHash,
-		file.UserID,
-		sha256Hash,
-		file.ClientEncrypted,
-		nullableBytea(file.EncFileID),
-	).Scan(&file.ID, &file.CreatedAt)
+	err := r.pool.QueryRow(ctx, query, fileInsertArgs(file)...).Scan(&file.ID, &file.CreatedAt)
 
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -110,38 +84,12 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			INSERT INTO files (
 				claim_code, original_filename, stored_filename, file_size,
 				mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-				client_encrypted, enc_file_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			RETURNING id, created_at
 		`
 
-		var passwordHash *string
-		if file.PasswordHash != "" {
-			passwordHash = &file.PasswordHash
-		}
-
-		var sha256Hash *string
-		if file.SHA256Hash != "" {
-			sha256Hash = &file.SHA256Hash
-		}
-
-		err = tx.QueryRow(
-			ctx,
-			insertQuery,
-			file.ClaimCode,
-			file.OriginalFilename,
-			file.StoredFilename,
-			file.FileSize,
-			file.MimeType,
-			file.ExpiresAt,
-			file.MaxDownloads,
-			file.UploaderIP,
-			passwordHash,
-			file.UserID,
-			sha256Hash,
-			file.ClientEncrypted,
-			nullableBytea(file.EncFileID),
-		).Scan(&file.ID, &file.CreatedAt)
+		err = tx.QueryRow(ctx, insertQuery, fileInsertArgs(file)...).Scan(&file.ID, &file.CreatedAt)
 
 		if err != nil {
 			if isUniqueViolation(err) {

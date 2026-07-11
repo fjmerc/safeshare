@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // validateStoredFilename validates that a stored filename is safe to use in file paths.
@@ -122,4 +124,50 @@ func nullableBlob(b []byte) interface{} {
 		return nil
 	}
 	return b
+}
+
+// nullableString maps an empty Go string to SQL NULL and passes everything else
+// through. Used for the scan_status/scan_result columns where NULL means
+// "legacy/unscanned" and must be distinguished from an empty verdict.
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// scannedAtValue returns the current time (RFC3339) when a definitive scan
+// status is being persisted at insert time, or SQL NULL when the file was not
+// scanned. Kept consistent with UpdateScanStatus's RFC3339 write format so the
+// SELECT path parses it uniformly.
+func scannedAtValue(scanStatus string) interface{} {
+	if scanStatus == "" {
+		return nil
+	}
+	return time.Now().Format(time.RFC3339)
+}
+
+// fileInsertArgs returns the ordered arguments for the files INSERT statement,
+// shared by Create and CreateWithQuotaCheck so the two INSERT sites cannot
+// silently diverge (a scan_status column added to one but not the other is the
+// exact class of bug this consolidates against).
+func fileInsertArgs(file *models.File) []interface{} {
+	return []interface{}{
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		file.ExpiresAt.Format(time.RFC3339),
+		file.MaxDownloads,
+		file.UploaderIP,
+		file.PasswordHash,
+		file.UserID,
+		file.SHA256Hash,
+		file.ClientEncrypted,
+		nullableBlob(file.EncFileID),
+		nullableString(file.ScanStatus),
+		nullableString(file.ScanResult),
+		scannedAtValue(file.ScanStatus),
+	}
 }

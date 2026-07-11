@@ -13,6 +13,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/google/uuid"
@@ -123,12 +124,16 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 
 	encryptionEnabled := utils.IsEncryptionEnabled(cfg.EncryptionKey)
 	needsStrip := cfg.IsStripMetadata() && privacy.SupportsMetadataStripping(mimeType)
+	scanEnabled := cfg.Features.IsMalwareScanEnabled()
 
 	var totalBytesWritten int64
 	var sha256Hash string
 	var encFileID []byte
+	var scan *scanVerdict
 
-	if encryptionEnabled && !needsStrip {
+	// The fast path encrypts during assembly and never stages plaintext, so it
+	// cannot be used when malware scanning is enabled (we must scan plaintext).
+	if encryptionEnabled && !needsStrip && !scanEnabled {
 		// Fast path: stream chunks through SHA-256 + SFSE2 encryption directly
 		// into the final file. One read of the chunks, one write of the
 		// ciphertext — no intermediate plaintext file (2 disk passes instead
@@ -225,8 +230,20 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			}
 		}
 
-		// Encrypt if encryption is enabled (SFSE2)
-		if encryptionEnabled {
+		// Scan the assembled PLAINTEXT before encryption. Scanning after
+		// encryption would feed AES-GCM ciphertext to clamd, which never matches
+		// signatures (the file would always read as "clean"). Runs synchronously
+		// in this worker goroutine, so the verdict is known before the claim
+		// code is created below — no download-before-verdict race.
+		if scanEnabled {
+			v := scanPlaintextFile(newConfiguredScanner(cfg), finalPath)
+			scan = &v
+		}
+
+		// Encrypt if encryption is enabled (SFSE2). Skip encryption for an
+		// infected file: it is recorded then deleted, so there is nothing worth
+		// encrypting.
+		if encryptionEnabled && (scan == nil || scan.Status != scanning.ScanStatusInfected) {
 			slog.Debug("encrypting assembled file using SFSE2 streaming encryption", "upload_id", uploadID)
 
 			var err error
@@ -311,6 +328,13 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		EncFileID:        encFileID,
 	}
 
+	// Persist the scan verdict at creation time so the download gate has a
+	// definitive status before the claim code is retrievable (no scan race).
+	if scan != nil {
+		fileRecord.ScanStatus = scan.Status
+		fileRecord.ScanResult = scan.VirusName
+	}
+
 	if err := repos.Files.Create(ctx, fileRecord); err != nil {
 		os.Remove(finalPath) // Clean up on error
 		slog.Error("failed to create file record", "error", err, "upload_id", uploadID)
@@ -346,9 +370,15 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		},
 	})
 
-	// Trigger async malware scan (no-op if feature is disabled).
-	// triggerAsyncScan is defined in upload.go (same package).
-	triggerAsyncScan(fileRecord.ID, finalPath, claimCode, partialUpload.Filename, totalBytesWritten, mimeType, expiresAt, cfg, repos)
+	// Malware scanning (when enabled) already ran synchronously on the plaintext
+	// above, and its verdict is persisted on the record. Infected files are
+	// recorded (so the download gate reports them) then purged from disk and
+	// announced via webhook. scanPlaintextFile/handleInfectedFile live in
+	// upload.go (same package).
+	if scan != nil && scan.Status == scanning.ScanStatusInfected {
+		handleInfectedFile(fileRecord.ID, claimCode, partialUpload.Filename, totalBytesWritten,
+			mimeType, expiresAt, scan.VirusName, finalPath)
+	}
 
 	slog.Info("async assembly completed successfully",
 		"upload_id", uploadID,

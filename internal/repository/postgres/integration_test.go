@@ -185,6 +185,45 @@ func TestFileRepository_Create(t *testing.T) {
 	}
 }
 
+// TestFileRepository_Create_PersistsScanVerdict guards the malware-scan
+// integrity fix: the synchronous scanner sets ScanStatus/ScanResult on the
+// record before Create, so the INSERT must persist them (a NULL scan_status
+// would silently defeat the download gate on Postgres deployments).
+func TestFileRepository_Create_PersistsScanVerdict(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	file := &models.File{
+		ClaimCode:        "scanverdict",
+		OriginalFilename: "infected.txt",
+		StoredFilename:   "stored-scan.dat",
+		FileSize:         2048,
+		MimeType:         "text/plain",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		UploaderIP:       "192.168.1.1",
+		ScanStatus:       "infected",
+		ScanResult:       "Eicar-Test-Signature",
+	}
+
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, err := repos.Files.GetByClaimCode(ctx, "scanverdict")
+	if err != nil {
+		t.Fatalf("GetByClaimCode() error = %v", err)
+	}
+	if got.ScanStatus != "infected" {
+		t.Errorf("ScanStatus = %q, want %q", got.ScanStatus, "infected")
+	}
+	if got.ScanResult != "Eicar-Test-Signature" {
+		t.Errorf("ScanResult = %q, want %q", got.ScanResult, "Eicar-Test-Signature")
+	}
+	if got.ScannedAt == nil {
+		t.Error("ScannedAt should be set when a verdict is persisted")
+	}
+}
+
 func TestFileRepository_Create_DuplicateClaimCode(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()

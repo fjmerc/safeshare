@@ -30,13 +30,23 @@ type Scanner interface {
 }
 
 // ScanResult holds the outcome of a single file scan.
+//
+// Exactly one of Clean/Infected is true for a definitive verdict. When clamd
+// returns an unrecognised reply (e.g. "INSTREAM size limit exceeded. ERROR"),
+// BOTH are false: the scan is inconclusive and MUST be treated as not-clean by
+// callers. Never infer "clean" from the absence of Infected.
 type ScanResult struct {
-	// Clean is true when clamd confirmed no threats were found.
+	// Clean is true only when clamd affirmatively confirmed no threats.
 	Clean bool
 	// Infected is true when clamd identified a known threat.
 	Infected bool
 	// VirusName is the threat name reported by clamd, empty if not infected.
 	VirusName string
+	// Unknown is true when clamd returned an unrecognised/error reply and no
+	// verdict could be determined. Callers must fail closed on this.
+	Unknown bool
+	// RawResponse is the raw clamd reply, retained for diagnostics on Unknown.
+	RawResponse string
 	// Duration is the wall-clock time taken for the scan.
 	Duration time.Duration
 }
@@ -209,13 +219,14 @@ func (s *ClamAVScanner) readResponse(conn net.Conn) (string, error) {
 //
 //	"stream: OK"                   - file is clean
 //	"stream: <VirusName> FOUND"    - file is infected
+//
+// Any other reply is inconclusive and reported as Unknown (fail closed).
+// Historically the default branch reported Clean=true, which silently passed
+// genuinely-failed scans (e.g. "INSTREAM size limit exceeded. ERROR") as safe.
 func parseResponse(response string) *ScanResult {
-	result := &ScanResult{}
+	result := &ScanResult{RawResponse: response}
 
 	switch {
-	case strings.HasSuffix(response, "OK"):
-		result.Clean = true
-
 	case strings.HasSuffix(response, "FOUND"):
 		result.Infected = true
 		// Extract virus name: response is "stream: <VirusName> FOUND"
@@ -223,13 +234,15 @@ func parseResponse(response string) *ScanResult {
 		trimmed = strings.TrimSuffix(trimmed, " FOUND")
 		result.VirusName = trimmed
 
+	case strings.HasSuffix(response, " OK") || response == "OK":
+		result.Clean = true
+
 	default:
-		// Unexpected response - treat as clean but log the anomaly so
-		// operators can investigate clamd configuration issues.
-		slog.Warn("clamav: unexpected response format",
+		// Unrecognised reply: fail closed. Do NOT mark clean.
+		slog.Warn("clamav: unexpected response format, treating as inconclusive",
 			"response", response,
 		)
-		result.Clean = true
+		result.Unknown = true
 	}
 
 	return result

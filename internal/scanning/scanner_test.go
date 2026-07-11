@@ -160,46 +160,49 @@ func TestScanFile_MissingFile(t *testing.T) {
 // TestParseResponse covers all three clamd response variants.
 func TestParseResponse(t *testing.T) {
 	tests := []struct {
-		name      string
-		response  string
-		wantClean bool
-		wantInf   bool
-		wantVirus string
+		name        string
+		response    string
+		wantClean   bool
+		wantInf     bool
+		wantUnknown bool
+		wantVirus   string
 	}{
 		{
 			name:      "clean response",
 			response:  "stream: OK",
 			wantClean: true,
-			wantInf:   false,
-			wantVirus: "",
 		},
 		{
 			name:      "infected response",
 			response:  "stream: Eicar-Test-Signature FOUND",
-			wantClean: false,
 			wantInf:   true,
 			wantVirus: "Eicar-Test-Signature",
 		},
 		{
 			name:      "infected response with compound virus name",
 			response:  "stream: Win.Trojan.Agent-12345 FOUND",
-			wantClean: false,
 			wantInf:   true,
 			wantVirus: "Win.Trojan.Agent-12345",
 		},
 		{
-			name:      "unexpected response defaults to clean",
-			response:  "stream: ERROR",
-			wantClean: true,
-			wantInf:   false,
-			wantVirus: "",
+			name:        "clamd error reply fails closed (not clean)",
+			response:    "stream: INSTREAM size limit exceeded. ERROR",
+			wantUnknown: true,
 		},
 		{
-			name:      "empty response defaults to clean",
-			response:  "",
-			wantClean: true,
-			wantInf:   false,
-			wantVirus: "",
+			name:        "bare ERROR fails closed",
+			response:    "stream: ERROR",
+			wantUnknown: true,
+		},
+		{
+			name:        "empty response fails closed",
+			response:    "",
+			wantUnknown: true,
+		},
+		{
+			name:        "substring OK without boundary fails closed",
+			response:    "stream: SOMETHINGOK",
+			wantUnknown: true,
 		},
 	}
 
@@ -212,6 +215,9 @@ func TestParseResponse(t *testing.T) {
 			}
 			if result.Infected != tt.wantInf {
 				t.Errorf("Infected = %v, want %v", result.Infected, tt.wantInf)
+			}
+			if result.Unknown != tt.wantUnknown {
+				t.Errorf("Unknown = %v, want %v", result.Unknown, tt.wantUnknown)
 			}
 			if result.VirusName != tt.wantVirus {
 				t.Errorf("VirusName = %q, want %q", result.VirusName, tt.wantVirus)

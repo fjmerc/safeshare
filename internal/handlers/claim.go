@@ -77,6 +77,35 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			return
 		}
 
+		// Fail-closed scan gate (defence in depth). With scanning enabled and
+		// MALWARE_SCAN_BLOCK_UNTIL_CLEAN set, only an affirmative clean verdict is
+		// downloadable. Scanning now runs synchronously before the claim code is
+		// created, so records normally already carry a definitive verdict here;
+		// this backstops any record that does not (e.g. rows created before
+		// scanning was enabled).
+		if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.BlockUntilClean && file.ScanStatus != scanning.ScanStatusClean {
+			if file.ScanStatus == scanning.ScanStatusPending {
+				w.Header().Set("Retry-After", "5")
+				slog.Warn("download blocked: scan pending",
+					"claim_code", redactClaimCode(claimCode),
+					"client_ip", logIP(getClientIP(r), cfg),
+				)
+				sendErrorResponse(w, r, "Scan In Progress",
+					"This file is still being scanned for malware. Please retry shortly.",
+					"SCAN_PENDING", http.StatusTooEarly)
+				return
+			}
+			slog.Warn("download blocked: scan not clean",
+				"scan_status", file.ScanStatus,
+				"claim_code", redactClaimCode(claimCode),
+				"client_ip", logIP(getClientIP(r), cfg),
+			)
+			sendErrorResponse(w, r, "File Unavailable",
+				"This file is not available for download because it could not be confirmed safe.",
+				"SCAN_NOT_CLEAN", http.StatusForbidden)
+			return
+		}
+
 		// Check password if file is password-protected.
 		// SH-1.5: accept the password via three channels, in priority order:
 		//   1. X-File-Password header — preferred; never lands in proxy logs,

@@ -16,6 +16,17 @@ var (
 		[]string{"status"},
 	)
 
+	// MalwareScansTotal counts malware scans by verdict
+	// (clean, infected, error). error covers both scanner I/O failures and
+	// inconclusive clamd replies, which are failed closed.
+	MalwareScansTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "safeshare_malware_scans_total",
+			Help: "Total number of malware scans by verdict",
+		},
+		[]string{"verdict"},
+	)
+
 	// DownloadsTotal counts total file downloads by status (success, failure, password_failed)
 	DownloadsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{

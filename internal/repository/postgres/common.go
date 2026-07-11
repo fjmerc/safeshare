@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -263,6 +264,58 @@ func nullableBytea(b []byte) interface{} {
 		return nil
 	}
 	return b
+}
+
+// nullableString maps an empty Go string to SQL NULL and passes everything else
+// through. Used for the scan_status/scan_result columns where NULL means
+// "legacy/unscanned" and must be distinguished from an empty verdict.
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// scannedAtValue returns the current time when a definitive scan status is being
+// persisted at insert time, or SQL NULL when the file was not scanned. Mirrors
+// UpdateScanStatus, which stamps scanned_at for any recorded verdict.
+func scannedAtValue(scanStatus string) interface{} {
+	if scanStatus == "" {
+		return nil
+	}
+	return time.Now()
+}
+
+// fileInsertArgs returns the ordered arguments for the files INSERT statement,
+// shared by Create and CreateWithQuotaCheck so the two INSERT sites cannot
+// silently diverge. Empty password/sha256 are mapped to NULL via pointers.
+func fileInsertArgs(file *models.File) []interface{} {
+	var passwordHash *string
+	if file.PasswordHash != "" {
+		passwordHash = &file.PasswordHash
+	}
+	var sha256Hash *string
+	if file.SHA256Hash != "" {
+		sha256Hash = &file.SHA256Hash
+	}
+	return []interface{}{
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		file.ExpiresAt,
+		file.MaxDownloads,
+		file.UploaderIP,
+		passwordHash,
+		file.UserID,
+		sha256Hash,
+		file.ClientEncrypted,
+		nullableBytea(file.EncFileID),
+		nullableString(file.ScanStatus),
+		nullableString(file.ScanResult),
+		scannedAtValue(file.ScanStatus),
+	}
 }
 
 // parseBlockedExtensions converts a comma-separated string to a slice of extensions.

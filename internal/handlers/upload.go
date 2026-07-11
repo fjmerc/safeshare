@@ -46,7 +46,8 @@ type fileProcessingResult struct {
 	written          int64
 	sha256Hash       string
 	detectedMimeType string
-	encFileID        []byte // 16-byte SFSE2 file identity (nil when encryption disabled or legacy SFSE1 path used)
+	encFileID        []byte       // 16-byte SFSE2 file identity (nil when encryption disabled or legacy SFSE1 path used)
+	scan             *scanVerdict // plaintext malware-scan verdict; nil when scanning is disabled
 }
 
 // UploadHandler handles file upload requests
@@ -331,7 +332,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 
 	// Stream file to disk with hashing and optional encryption
 	filePath := filepath.Join(cfg.UploadDir, storedFilename)
-	written, sha256Hash, encFileID, err := streamFileToStorage(w, fullReader, header, filePath, cfg)
+	written, sha256Hash, encFileID, scan, err := streamFileToStorage(w, fullReader, header, filePath, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +344,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 		sha256Hash:       sha256Hash,
 		detectedMimeType: detectedMimeType,
 		encFileID:        encFileID,
+		scan:             scan,
 	}, nil
 }
 
@@ -374,9 +376,19 @@ func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, h
 }
 
 // streamFileToStorage streams file to disk with hashing and optional encryption.
-// Returns (written, sha256Hash, encFileID, err). encFileID is non-nil and 16 bytes
-// when encryption is enabled (SFSE2); nil when encryption is disabled.
-func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, []byte, error) {
+// Returns (written, sha256Hash, encFileID, scan, err). encFileID is non-nil and
+// 16 bytes when encryption is enabled (SFSE2); nil when encryption is disabled.
+// scan is non-nil only when malware scanning is enabled, in which case the
+// PLAINTEXT is scanned before storage (see streamScanAndStore).
+func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, []byte, *scanVerdict, error) {
+	encEnabled := utils.IsEncryptionEnabled(cfg.EncryptionKey)
+
+	// When malware scanning is enabled we must scan the plaintext, which the
+	// streaming-encrypt path never exposes. Use the scan-and-store path instead.
+	if cfg.Features.IsMalwareScanEnabled() {
+		return streamScanAndStore(w, reader, header, filePath, cfg, encEnabled)
+	}
+
 	// Setup SHA256 hashing during streaming
 	hasher := sha256.New()
 	hashedReader := io.TeeReader(reader, hasher)
@@ -387,7 +399,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	if err != nil {
 		slog.Error("failed to create temp file", "path", tempPath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", nil, err
+		return 0, "", nil, nil, err
 	}
 
 	// Track success for cleanup
@@ -402,18 +414,18 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	// Stream file with optional encryption
 	var written int64
 	var encFileID []byte
-	if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+	if encEnabled {
 		encFileID, err = utils.GenerateEncFileID()
 		if err != nil {
 			slog.Error("failed to generate enc_file_id", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return 0, "", nil, err
+			return 0, "", nil, nil, err
 		}
 		err = utils.EncryptFileStreamingV2FromReader(tempFile, hashedReader, cfg.EncryptionKey, encFileID, header.Size)
 		if err != nil {
 			slog.Error("failed to encrypt file stream (SFSE2)", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return 0, "", nil, err
+			return 0, "", nil, nil, err
 		}
 		written = header.Size
 		slog.Debug("file encrypted with SFSE2 streaming encryption",
@@ -425,7 +437,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 		if err != nil {
 			slog.Error("failed to write file stream", "error", err)
 			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return 0, "", nil, err
+			return 0, "", nil, nil, err
 		}
 		slog.Debug("file written without encryption", "size", written)
 	}
@@ -437,17 +449,95 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	if err := tempFile.Close(); err != nil {
 		slog.Error("failed to close temp file", "path", tempPath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", nil, err
+		return 0, "", nil, nil, err
 	}
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
 		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-		return 0, "", nil, err
+		return 0, "", nil, nil, err
 	}
 
 	succeeded = true
-	return written, sha256Hash, encFileID, nil
+	return written, sha256Hash, encFileID, nil, nil
+}
+
+// streamScanAndStore is the malware-scan-enabled storage path. It writes the
+// upload's PLAINTEXT to a temp file, scans that plaintext with clamd, then (when
+// encryption is enabled) encrypts the plaintext into the final path and removes
+// the plaintext temp. Scanning plaintext — not ciphertext — is what makes the
+// scan meaningful. The verdict is returned so the caller can persist it BEFORE
+// the claim code becomes retrievable, eliminating the download-before-verdict
+// race. Note: like the chunked-assembly path, this briefly stages plaintext on
+// disk (filePath+".plain.tmp") even in encrypted deployments; it is always
+// removed before the function returns.
+func streamScanAndStore(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config, encEnabled bool) (int64, string, []byte, *scanVerdict, error) {
+	hasher := sha256.New()
+	hashedReader := io.TeeReader(reader, hasher)
+
+	plaintextTemp := filePath + ".plain.tmp"
+	ptFile, err := os.Create(plaintextTemp)
+	if err != nil {
+		slog.Error("failed to create plaintext temp", "path", plaintextTemp, "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", nil, nil, err
+	}
+
+	// Guarantee the plaintext temp never lingers at rest. On the encrypted path
+	// it is removed after encryption; on the plaintext path it is renamed into
+	// place (marking removed) and this becomes a no-op.
+	plaintextRemoved := false
+	removePlaintext := func() {
+		if !plaintextRemoved {
+			os.Remove(plaintextTemp)
+			plaintextRemoved = true
+		}
+	}
+	defer removePlaintext()
+
+	written, err := io.Copy(ptFile, hashedReader)
+	if err != nil {
+		ptFile.Close()
+		slog.Error("failed to write plaintext temp", "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", nil, nil, err
+	}
+	if err := ptFile.Close(); err != nil {
+		slog.Error("failed to close plaintext temp", "error", err)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", nil, nil, err
+	}
+
+	sha256Hash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Scan the plaintext synchronously before it becomes retrievable.
+	verdict := scanPlaintextFile(newConfiguredScanner(cfg), plaintextTemp)
+
+	var encFileID []byte
+	if encEnabled {
+		encFileID, err = utils.GenerateEncFileID()
+		if err != nil {
+			slog.Error("failed to generate enc_file_id", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", nil, nil, err
+		}
+		if err := utils.EncryptFileStreamingV2(plaintextTemp, filePath, cfg.EncryptionKey, encFileID); err != nil {
+			slog.Error("failed to encrypt file (SFSE2)", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", nil, nil, err
+		}
+		removePlaintext()
+		slog.Debug("file encrypted with SFSE2 after plaintext scan", "size", written)
+	} else {
+		if err := os.Rename(plaintextTemp, filePath); err != nil {
+			slog.Error("failed to rename plaintext temp", "temp", plaintextTemp, "final", filePath, "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return 0, "", nil, nil, err
+		}
+		plaintextRemoved = true // renamed into place; nothing to clean up
+	}
+
+	return written, sha256Hash, encFileID, &verdict, nil
 }
 
 // createRecordAndRespond creates database record and sends response
@@ -485,13 +575,27 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		EncFileID:        result.encFileID,
 	}
 
+	// Persist the scan verdict at creation time so the download gate has a
+	// definitive status before the claim code is retrievable (no scan race).
+	if result.scan != nil {
+		fileRecord.ScanStatus = result.scan.Status
+		fileRecord.ScanResult = result.scan.VirusName
+	}
+
 	// Create database record with quota check if needed
 	if err := createFileRecord(ctx, w, repos, cfg, fileRecord, result.filePath, quotaConfigured, clientIP); err != nil {
 		return
 	}
 
 	// Send success response and record metrics
-	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP, repos)
+	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP)
+
+	// Infected files are recorded (so the download gate can report them) then
+	// purged from disk and announced via webhook, mirroring prior behavior.
+	if result.scan != nil && result.scan.Status == scanning.ScanStatusInfected {
+		handleInfectedFile(fileRecord.ID, claimCode, sanitizedFilename, result.written,
+			result.detectedMimeType, expiresAt, result.scan.VirusName, result.filePath)
+	}
 }
 
 // createFileRecord creates the database record with optional quota check
@@ -524,8 +628,10 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 	return nil
 }
 
-// sendSuccessResponse sends the upload success response, records metrics, and triggers async scanning.
-func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string, repos *repository.Repositories) {
+// sendSuccessResponse sends the upload success response and records metrics.
+// Malware scanning (when enabled) already ran synchronously before this call,
+// and its verdict is persisted on fileRecord.
+func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
 	downloadURL := buildDownloadURL(r, cfg, claimCode)
 
 	response := models.UploadResponse{
@@ -559,9 +665,6 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 			ExpiresAt: fileRecord.ExpiresAt,
 		},
 	})
-
-	// Trigger async malware scan (no-op if feature is disabled)
-	triggerAsyncScan(fileRecord.ID, result.filePath, claimCode, sanitizedFilename, result.written, result.detectedMimeType, fileRecord.ExpiresAt, cfg, repos)
 
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),
@@ -710,88 +813,80 @@ func computeFileHash(filePath string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// triggerAsyncScan starts a background malware scan if the feature is enabled.
-// It runs in a separate goroutine so it does not block the upload response.
-func triggerAsyncScan(fileID int64, filePath string, claimCode string, filename string, fileSize int64, mimeType string, expiresAt time.Time, cfg *config.Config, repos *repository.Repositories) {
-	if !cfg.Features.IsMalwareScanEnabled() {
-		return
+// scanVerdict is the classified outcome of a pre-storage plaintext scan.
+type scanVerdict struct {
+	Status    string // one of scanning.ScanStatus* (clean, infected, error)
+	VirusName string // threat name (infected) or a generic detail (error)
+}
+
+// newConfiguredScanner builds a ClamAV scanner from config. Declared as a var
+// so tests can substitute a fake scanning.Scanner without a live clamd.
+var newConfiguredScanner = func(cfg *config.Config) scanning.Scanner {
+	return scanning.NewClamAVScanner(
+		cfg.ClamAV.Host,
+		cfg.ClamAV.Port,
+		time.Duration(cfg.ClamAV.Timeout)*time.Second,
+		cfg.ClamAV.MaxFileSize,
+	)
+}
+
+// scanPlaintextFile scans the PLAINTEXT file at path and classifies the result
+// into a persistable scan status. It NEVER reports clean for an inconclusive
+// scan: I/O or protocol failures and unrecognised clamd replies map to
+// ScanStatusError so callers can fail closed. This must run before the file is
+// encrypted (AES-GCM ciphertext never matches ClamAV signatures) and before its
+// claim code becomes retrievable (so there is no download-before-verdict race).
+func scanPlaintextFile(scanner scanning.Scanner, path string) scanVerdict {
+	result, err := scanner.ScanFile(path)
+	if err != nil {
+		slog.Error("malware scan failed", "error", err, "path", path)
+		metrics.MalwareScansTotal.WithLabelValues("error").Inc()
+		return scanVerdict{Status: scanning.ScanStatusError, VirusName: "scan failed"}
 	}
-
-	// Set initial scan status to pending before launching the goroutine so
-	// the DB reflects the intent even if the goroutine has not yet started.
-	ctx := context.Background()
-	if err := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusPending, ""); err != nil {
-		slog.Error("failed to set scan status to pending", "error", err, "file_id", fileID)
-		return
+	switch {
+	case result.Infected:
+		metrics.MalwareScansTotal.WithLabelValues("infected").Inc()
+		return scanVerdict{Status: scanning.ScanStatusInfected, VirusName: result.VirusName}
+	case result.Clean:
+		metrics.MalwareScansTotal.WithLabelValues("clean").Inc()
+		return scanVerdict{Status: scanning.ScanStatusClean}
+	default:
+		// Inconclusive/unknown reply — fail closed.
+		slog.Warn("malware scan inconclusive, failing closed",
+			"path", path, "response", result.RawResponse)
+		metrics.MalwareScansTotal.WithLabelValues("error").Inc()
+		return scanVerdict{Status: scanning.ScanStatusError, VirusName: "inconclusive scan result"}
 	}
+}
 
-	go func() {
-		scanner := scanning.NewClamAVScanner(
-			cfg.ClamAV.Host,
-			cfg.ClamAV.Port,
-			time.Duration(cfg.ClamAV.Timeout)*time.Second,
-			cfg.ClamAV.MaxFileSize,
-		)
+// handleInfectedFile emits the infection webhook and deletes the stored file
+// from disk. Called after the file record is created (so the webhook carries a
+// real file ID); the download gate blocks the record via its infected status.
+func handleInfectedFile(fileID int64, claimCode, filename string, size int64, mimeType string, expiresAt time.Time, virusName, storedPath string) {
+	slog.Warn("malware detected in uploaded file",
+		"virus_name", virusName,
+		"file_id", fileID,
+		"claim_code", redactClaimCode(claimCode),
+	)
 
-		result, err := scanner.ScanFile(filePath)
-		if err != nil {
-			slog.Error("malware scan failed",
-				"error", err,
-				"file_id", fileID,
-				"claim_code", redactClaimCode(claimCode),
-			)
-			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusError, err.Error()); updateErr != nil {
-				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-			}
-			return
-		}
+	scanStatus := scanning.ScanStatusInfected
+	vn := virusName
+	EmitWebhookEvent(&webhooks.Event{
+		Type:      webhooks.EventFileInfected,
+		Timestamp: time.Now(),
+		File: webhooks.FileData{
+			ID:         fileID,
+			ClaimCode:  claimCode,
+			Filename:   filename,
+			Size:       size,
+			MimeType:   mimeType,
+			ExpiresAt:  expiresAt,
+			ScanStatus: &scanStatus,
+			ScanResult: &vn,
+		},
+	})
 
-		if result.Infected {
-			slog.Warn("malware detected in uploaded file",
-				"virus_name", result.VirusName,
-				"file_id", fileID,
-				"claim_code", redactClaimCode(claimCode),
-				"scan_duration", result.Duration,
-			)
-
-			// Update status to infected
-			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusInfected, result.VirusName); updateErr != nil {
-				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-			}
-
-			// Emit webhook
-			scanStatus := scanning.ScanStatusInfected
-			virusName := result.VirusName
-			EmitWebhookEvent(&webhooks.Event{
-				Type:      webhooks.EventFileInfected,
-				Timestamp: time.Now(),
-				File: webhooks.FileData{
-					ID:         fileID,
-					ClaimCode:  claimCode,
-					Filename:   filename,
-					Size:       fileSize,
-					MimeType:   mimeType,
-					ExpiresAt:  expiresAt,
-					ScanStatus: &scanStatus,
-					ScanResult: &virusName,
-				},
-			})
-
-			// Delete the infected file from disk
-			if err := os.Remove(filePath); err != nil {
-				slog.Error("failed to remove infected file", "error", err, "file_id", fileID)
-			}
-			return
-		}
-
-		// File is clean
-		slog.Info("malware scan completed: clean",
-			"file_id", fileID,
-			"claim_code", redactClaimCode(claimCode),
-			"scan_duration", result.Duration,
-		)
-		if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusClean, ""); updateErr != nil {
-			slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-		}
-	}()
+	if err := os.Remove(storedPath); err != nil {
+		slog.Error("failed to remove infected file", "error", err, "file_id", fileID)
+	}
 }
