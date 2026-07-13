@@ -83,7 +83,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// created, so records normally already carry a definitive verdict here;
 		// this backstops any record that does not (e.g. rows created before
 		// scanning was enabled).
-		if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.BlockUntilClean && file.ScanStatus != scanning.ScanStatusClean {
+		if cfg.Features.IsMalwareScanEnabled() && cfg.Features.IsMalwareScanBlockUntilClean() && file.ScanStatus != scanning.ScanStatusClean {
 			if file.ScanStatus == scanning.ScanStatusPending {
 				w.Header().Set("Retry-After", "5")
 				slog.Warn("download blocked: scan pending",

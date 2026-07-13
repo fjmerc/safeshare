@@ -39,6 +39,7 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 		       COALESCE(feature_sso, 0), COALESCE(feature_mfa, 0),
 		       COALESCE(feature_webhooks, 0), COALESCE(feature_api_tokens, 0),
 		       COALESCE(feature_malware_scan, 0), COALESCE(feature_backups, 0),
+		       COALESCE(feature_malware_scan_block_until_clean, 1),
 		       COALESCE(mfa_required, 0), COALESCE(mfa_issuer, 'SafeShare'),
 		       COALESCE(mfa_totp_enabled, 1), COALESCE(mfa_webauthn_enabled, 1),
 		       COALESCE(mfa_recovery_codes_count, 10), COALESCE(mfa_challenge_expiry_minutes, 5),
@@ -51,6 +52,7 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 	var blockedExtsStr string
 	var featurePG, featureS3, featureSSO, featureMFA int
 	var featureWebhooks, featureAPITokens, featureMalware, featureBackups int
+	var featureBlockUntilClean int
 	var mfaRequired, mfaTOTPEnabled, mfaWebAuthnEnabled int
 	var ssoAutoProvision int
 
@@ -64,6 +66,7 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 		&blockedExtsStr,
 		&featurePG, &featureS3, &featureSSO, &featureMFA,
 		&featureWebhooks, &featureAPITokens, &featureMalware, &featureBackups,
+		&featureBlockUntilClean,
 		&mfaRequired, &s.MFAIssuer,
 		&mfaTOTPEnabled, &mfaWebAuthnEnabled,
 		&s.MFARecoveryCodesCount, &s.MFAChallengeExpiryMinutes,
@@ -91,6 +94,7 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 	s.FeatureAPITokens = featureAPITokens != 0
 	s.FeatureMalwareScan = featureMalware != 0
 	s.FeatureBackups = featureBackups != 0
+	s.FeatureMalwareScanBlockUntilClean = featureBlockUntilClean != 0
 
 	// Convert int to bool for MFA config
 	s.MFARequired = mfaRequired != 0
@@ -277,27 +281,32 @@ func (r *SettingsRepository) UpdateBlockedExtensions(ctx context.Context, extens
 }
 
 // GetFeatureFlags retrieves all feature flags from the database.
-// Returns a FeatureFlags struct with all flags set to false if no settings exist.
+// Returns a FeatureFlags struct with all flags set to false if no settings
+// exist, except MalwareScanBlockUntilClean which defaults to true (fail-closed).
 func (r *SettingsRepository) GetFeatureFlags(ctx context.Context) (*repository.FeatureFlags, error) {
 	query := `
 		SELECT COALESCE(feature_postgresql, 0), COALESCE(feature_s3_storage, 0),
 		       COALESCE(feature_sso, 0), COALESCE(feature_mfa, 0),
 		       COALESCE(feature_webhooks, 0), COALESCE(feature_api_tokens, 0),
-		       COALESCE(feature_malware_scan, 0), COALESCE(feature_backups, 0)
+		       COALESCE(feature_malware_scan, 0), COALESCE(feature_backups, 0),
+		       COALESCE(feature_malware_scan_block_until_clean, 1)
 		FROM settings WHERE id = 1
 	`
 
 	var featurePG, featureS3, featureSSO, featureMFA int
 	var featureWebhooks, featureAPITokens, featureMalware, featureBackups int
+	var featureBlockUntilClean int
 
 	err := r.db.QueryRowContext(ctx, query).Scan(
 		&featurePG, &featureS3, &featureSSO, &featureMFA,
 		&featureWebhooks, &featureAPITokens, &featureMalware, &featureBackups,
+		&featureBlockUntilClean,
 	)
 
 	if err == sql.ErrNoRows {
-		// No settings exist yet - return all flags as false
-		return &repository.FeatureFlags{}, nil
+		// No settings exist yet - all features off, but the block-until-clean
+		// gate stays on (fail-closed default)
+		return &repository.FeatureFlags{MalwareScanBlockUntilClean: true}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feature flags: %w", err)
@@ -312,6 +321,8 @@ func (r *SettingsRepository) GetFeatureFlags(ctx context.Context) (*repository.F
 		EnableAPITokens:   featureAPITokens != 0,
 		EnableMalwareScan: featureMalware != 0,
 		EnableBackups:     featureBackups != 0,
+
+		MalwareScanBlockUntilClean: featureBlockUntilClean != 0,
 	}, nil
 }
 
@@ -327,8 +338,9 @@ func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repo
 		INSERT INTO settings (
 			id, feature_postgresql, feature_s3_storage, feature_sso, feature_mfa,
 			feature_webhooks, feature_api_tokens, feature_malware_scan, feature_backups,
+			feature_malware_scan_block_until_clean,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			feature_postgresql = excluded.feature_postgresql,
 			feature_s3_storage = excluded.feature_s3_storage,
@@ -338,6 +350,7 @@ func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repo
 			feature_api_tokens = excluded.feature_api_tokens,
 			feature_malware_scan = excluded.feature_malware_scan,
 			feature_backups = excluded.feature_backups,
+			feature_malware_scan_block_until_clean = excluded.feature_malware_scan_block_until_clean,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
@@ -350,6 +363,7 @@ func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repo
 		boolToInt(flags.EnableAPITokens),
 		boolToInt(flags.EnableMalwareScan),
 		boolToInt(flags.EnableBackups),
+		boolToInt(flags.MalwareScanBlockUntilClean),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update feature flags: %w", err)

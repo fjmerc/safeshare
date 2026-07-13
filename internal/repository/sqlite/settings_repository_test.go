@@ -39,6 +39,7 @@ func setupSettingsTestDB(t *testing.T) *sql.DB {
 			feature_api_tokens INTEGER NOT NULL DEFAULT 0,
 			feature_malware_scan INTEGER NOT NULL DEFAULT 0,
 			feature_backups INTEGER NOT NULL DEFAULT 0,
+			feature_malware_scan_block_until_clean INTEGER NOT NULL DEFAULT 1,
 			mfa_required INTEGER NOT NULL DEFAULT 0,
 			mfa_issuer TEXT NOT NULL DEFAULT 'SafeShare',
 			mfa_totp_enabled INTEGER NOT NULL DEFAULT 1,

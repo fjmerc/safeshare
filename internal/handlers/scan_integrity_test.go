@@ -231,7 +231,7 @@ func TestClaimHandler_ScanGate(t *testing.T) {
 			db := testutil.SetupTestDB(t)
 			cfg := testutil.SetupTestConfig(t)
 			cfg.Features.SetMalwareScanEnabled(true)
-			cfg.ClamAV.BlockUntilClean = true
+			cfg.Features.SetMalwareScanBlockUntilClean(true)
 
 			repos, err := sqlite.NewRepositories(cfg, db)
 			if err != nil {

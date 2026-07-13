@@ -22,6 +22,10 @@ type Settings struct {
 	FeatureMalwareScan bool
 	FeatureBackups     bool
 
+	// FeatureMalwareScanBlockUntilClean blocks downloads until a clean scan
+	// verdict exists. Defaults to true (fail-closed) when unset.
+	FeatureMalwareScanBlockUntilClean bool
+
 	// MFA configuration
 	MFARequired               bool
 	MFAIssuer                 string
@@ -66,7 +70,9 @@ type SettingsRepository interface {
 	UpdateBlockedExtensions(ctx context.Context, extensions []string) error
 
 	// GetFeatureFlags retrieves all feature flags from the database.
-	// Returns a FeatureFlags struct. If no settings exist, all flags are false.
+	// Returns a FeatureFlags struct. If no settings exist, all flags are
+	// false except MalwareScanBlockUntilClean, which defaults to true
+	// (fail-closed).
 	GetFeatureFlags(ctx context.Context) (*FeatureFlags, error)
 
 	// UpdateFeatureFlags saves all feature flags to the database.
@@ -97,6 +103,10 @@ type FeatureFlags struct {
 	EnableAPITokens   bool
 	EnableMalwareScan bool
 	EnableBackups     bool
+
+	// MalwareScanBlockUntilClean blocks downloads until a clean scan verdict
+	// exists. Defaults to true (fail-closed) when no settings row exists.
+	MalwareScanBlockUntilClean bool
 }
 
 // MFAConfig represents persisted MFA configuration settings.

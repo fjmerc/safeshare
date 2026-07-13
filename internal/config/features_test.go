@@ -114,20 +114,24 @@ func TestFeatureFlags_GetAll(t *testing.T) {
 	if data.EnableBackups {
 		t.Error("GetAll() EnableBackups should be false")
 	}
+	if !data.MalwareScanBlockUntilClean {
+		t.Error("GetAll() MalwareScanBlockUntilClean should default to true (fail-closed)")
+	}
 }
 
 func TestFeatureFlags_SetAll(t *testing.T) {
 	f := NewFeatureFlags()
 
 	data := FeatureFlagsData{
-		EnablePostgreSQL:  true,
-		EnableS3Storage:   true,
-		EnableSSO:         false,
-		EnableMFA:         true,
-		EnableWebhooks:    false,
-		EnableAPITokens:   true,
-		EnableMalwareScan: true,
-		EnableBackups:     false,
+		EnablePostgreSQL:           true,
+		EnableS3Storage:            true,
+		EnableSSO:                  false,
+		EnableMFA:                  true,
+		EnableWebhooks:             false,
+		EnableAPITokens:            true,
+		EnableMalwareScan:          true,
+		EnableBackups:              false,
+		MalwareScanBlockUntilClean: true,
 	}
 
 	f.SetAll(data)
@@ -155,6 +159,15 @@ func TestFeatureFlags_SetAll(t *testing.T) {
 	}
 	if f.IsBackupsEnabled() {
 		t.Error("Backups should be disabled")
+	}
+	if !f.IsMalwareScanBlockUntilClean() {
+		t.Error("MalwareScanBlockUntilClean should be enabled")
+	}
+
+	data.MalwareScanBlockUntilClean = false
+	f.SetAll(data)
+	if f.IsMalwareScanBlockUntilClean() {
+		t.Error("MalwareScanBlockUntilClean should be disabled after SetAll with false")
 	}
 }
 
@@ -277,6 +290,9 @@ func TestLoadFeatureFlags(t *testing.T) {
 		f.IsMalwareScanEnabled() || f.IsBackupsEnabled() {
 		t.Error("All feature flags should be false when no env vars are set")
 	}
+	if !f.IsMalwareScanBlockUntilClean() {
+		t.Error("Block-until-clean gate should default to true (fail-closed) when no env vars are set")
+	}
 
 	// Test with env vars set
 	os.Setenv("FEATURE_POSTGRESQL", "true")
@@ -287,6 +303,7 @@ func TestLoadFeatureFlags(t *testing.T) {
 	os.Setenv("FEATURE_API_TOKENS", "false")
 	os.Setenv("FEATURE_MALWARE_SCAN", "0")
 	os.Setenv("FEATURE_BACKUPS", "no")
+	os.Setenv("MALWARE_SCAN_BLOCK_UNTIL_CLEAN", "false")
 	defer clearFeatureEnvVars()
 
 	f = loadFeatureFlags()
@@ -315,6 +332,9 @@ func TestLoadFeatureFlags(t *testing.T) {
 	if f.IsBackupsEnabled() {
 		t.Error("Backups should be disabled (FEATURE_BACKUPS=no)")
 	}
+	if f.IsMalwareScanBlockUntilClean() {
+		t.Error("Block-until-clean gate should be disabled (MALWARE_SCAN_BLOCK_UNTIL_CLEAN=false)")
+	}
 }
 
 func TestFeatureFlagsData_JSONTags(t *testing.T) {
@@ -323,14 +343,15 @@ func TestFeatureFlagsData_JSONTags(t *testing.T) {
 	f := NewFeatureFlags()
 
 	data := FeatureFlagsData{
-		EnablePostgreSQL:  true,
-		EnableS3Storage:   true,
-		EnableSSO:         true,
-		EnableMFA:         true,
-		EnableWebhooks:    true,
-		EnableAPITokens:   true,
-		EnableMalwareScan: true,
-		EnableBackups:     true,
+		EnablePostgreSQL:           true,
+		EnableS3Storage:            true,
+		EnableSSO:                  true,
+		EnableMFA:                  true,
+		EnableWebhooks:             true,
+		EnableAPITokens:            true,
+		EnableMalwareScan:          true,
+		EnableBackups:              true,
+		MalwareScanBlockUntilClean: true,
 	}
 
 	f.SetAll(data)
@@ -352,6 +373,7 @@ func clearFeatureEnvVars() {
 		"FEATURE_API_TOKENS",
 		"FEATURE_MALWARE_SCAN",
 		"FEATURE_BACKUPS",
+		"MALWARE_SCAN_BLOCK_UNTIL_CLEAN",
 	}
 	for _, v := range vars {
 		os.Unsetenv(v)

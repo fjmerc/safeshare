@@ -19,6 +19,10 @@ type featureFlagsRequest struct {
 	EnableAPITokens   *bool `json:"enable_api_tokens,omitempty"`
 	EnableMalwareScan *bool `json:"enable_malware_scan,omitempty"`
 	EnableBackups     *bool `json:"enable_backups,omitempty"`
+
+	// MalwareScanBlockUntilClean toggles the fail-closed download gate for
+	// files without a clean scan verdict (default: true).
+	MalwareScanBlockUntilClean *bool `json:"malware_scan_block_until_clean,omitempty"`
 }
 
 // AdminGetFeatureFlagsHandler returns the current state of all feature flags.
@@ -112,6 +116,9 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 		if req.EnableBackups != nil {
 			currentFlags.EnableBackups = *req.EnableBackups
 		}
+		if req.MalwareScanBlockUntilClean != nil {
+			currentFlags.MalwareScanBlockUntilClean = *req.MalwareScanBlockUntilClean
+		}
 
 		// Persist to database
 		if err := repos.Settings.UpdateFeatureFlags(ctx, currentFlags); err != nil {
@@ -135,6 +142,8 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 			EnableAPITokens:   currentFlags.EnableAPITokens,
 			EnableMalwareScan: currentFlags.EnableMalwareScan,
 			EnableBackups:     currentFlags.EnableBackups,
+
+			MalwareScanBlockUntilClean: currentFlags.MalwareScanBlockUntilClean,
 		})
 
 		// Sync MFA and SSO enabled state with their config structs
@@ -163,6 +172,7 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 			"api_tokens", currentFlags.EnableAPITokens,
 			"malware_scan", currentFlags.EnableMalwareScan,
 			"backups", currentFlags.EnableBackups,
+			"malware_scan_block_until_clean", currentFlags.MalwareScanBlockUntilClean,
 		)
 
 		// Return updated flags with any warnings

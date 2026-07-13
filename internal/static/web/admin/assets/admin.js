@@ -3486,6 +3486,8 @@ async function loadEnterpriseConfig() {
         setCheckbox('featureAPITokens', flags.enable_api_tokens);
         setCheckbox('featureBackups', flags.enable_backups);
         setCheckbox('featureMalwareScan', flags.enable_malware_scan);
+        // Fail-closed: if the field is ever missing from the response, render as enabled
+        setCheckbox('featureMalwareScanBlockUntilClean', flags.malware_scan_block_until_clean ?? true);
 
         // Update status display
         updateEnterpriseStatusDisplay(flags);
@@ -3631,8 +3633,10 @@ async function saveFeatureFlags() {
         enable_sso: document.getElementById('featureSSO')?.checked || false,
         enable_webhooks: document.getElementById('featureWebhooks')?.checked || false,
         enable_api_tokens: document.getElementById('featureAPITokens')?.checked || false,
-        enable_backups: document.getElementById('featureBackups')?.checked || false
-        // Malware scanning is configured via FEATURE_MALWARE_SCAN env var (requires ClamAV sidecar)
+        enable_backups: document.getElementById('featureBackups')?.checked || false,
+        // Malware scanning is configured via FEATURE_MALWARE_SCAN env var (requires ClamAV sidecar).
+        // The block-until-clean gate is fail-closed: default to true if the checkbox is missing.
+        malware_scan_block_until_clean: document.getElementById('featureMalwareScanBlockUntilClean')?.checked ?? true
     };
 
     try {

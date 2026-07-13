@@ -658,6 +658,18 @@ CREATE INDEX IF NOT EXISTS idx_dl_reservations_file_id
     ON download_reservations(file_id);
 `,
 	},
+	{
+		Version:     12,
+		Name:        "012_malware_scan_block_until_clean",
+		Description: "Admin-toggleable fail-closed download gate (W-B, Finding 1)",
+		SQL: `
+-- DEFAULT TRUE is deliberate: this is a fail-closed security control.
+-- Existing deployments with a settings row must keep blocking downloads of
+-- files without a clean scan verdict; DEFAULT FALSE would silently flip
+-- them to fail-open on upgrade.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS feature_malware_scan_block_until_clean BOOLEAN NOT NULL DEFAULT TRUE;
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

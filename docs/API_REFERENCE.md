@@ -636,9 +636,11 @@ curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
 **Malware scanning** (when the feature and a ClamAV instance are enabled): files
 are scanned synchronously before their claim code becomes retrievable. A file
 detected as infected is blocked with `410 Gone` (`FILE_QUARANTINED`). Unless
-`MALWARE_SCAN_BLOCK_UNTIL_CLEAN=false` is set, downloads are additionally
-refused for any file not affirmatively confirmed clean (including files
-uploaded before scanning was enabled):
+the block-until-clean gate is disabled (admin Enterprise Features page, or
+`MALWARE_SCAN_BLOCK_UNTIL_CLEAN=false` as the initial default before any
+settings are saved), downloads are additionally refused for any file not
+affirmatively confirmed clean (including files uploaded before scanning was
+enabled):
 - 425 Too Early (`SCAN_PENDING`): scan still in progress; a `Retry-After` header
   indicates when to retry.
 - 403 Forbidden (`SCAN_NOT_CLEAN`): scan could not confirm the file is safe

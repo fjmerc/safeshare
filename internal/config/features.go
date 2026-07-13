@@ -29,14 +29,22 @@ type FeatureFlags struct {
 
 	// Security
 	enableMalwareScan bool // Enable malware scanning integration (Phase 4)
+	// malwareScanBlockUntilClean fails downloads closed until a definitive
+	// clean verdict exists. Defaults to true (fail-closed); only applies when
+	// malware scanning is enabled.
+	malwareScanBlockUntilClean bool
 
 	// Operations
 	enableBackups bool // Enable automated backup functionality (Phase 4)
 }
 
-// NewFeatureFlags creates a new FeatureFlags instance with all flags disabled.
+// NewFeatureFlags creates a new FeatureFlags instance with all features
+// disabled. malwareScanBlockUntilClean defaults to true because it is a
+// fail-closed security control, not a feature toggle.
 func NewFeatureFlags() *FeatureFlags {
-	return &FeatureFlags{}
+	return &FeatureFlags{
+		malwareScanBlockUntilClean: true,
+	}
 }
 
 // Getters - thread-safe read access
@@ -88,6 +96,14 @@ func (f *FeatureFlags) IsMalwareScanEnabled() bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.enableMalwareScan
+}
+
+// IsMalwareScanBlockUntilClean returns whether downloads are blocked until
+// a file has a definitive clean scan verdict (fail-closed download gate).
+func (f *FeatureFlags) IsMalwareScanBlockUntilClean() bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.malwareScanBlockUntilClean
 }
 
 // IsBackupsEnabled returns whether automated backups are enabled.
@@ -148,6 +164,14 @@ func (f *FeatureFlags) SetMalwareScanEnabled(enabled bool) {
 	f.enableMalwareScan = enabled
 }
 
+// SetMalwareScanBlockUntilClean enables or disables the fail-closed
+// download gate for files without a clean scan verdict.
+func (f *FeatureFlags) SetMalwareScanBlockUntilClean(enabled bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.malwareScanBlockUntilClean = enabled
+}
+
 // SetBackupsEnabled enables or disables automated backups.
 func (f *FeatureFlags) SetBackupsEnabled(enabled bool) {
 	f.mu.Lock()
@@ -168,6 +192,10 @@ type FeatureFlagsData struct {
 	EnableAPITokens   bool `json:"enable_api_tokens"`
 	EnableMalwareScan bool `json:"enable_malware_scan"`
 	EnableBackups     bool `json:"enable_backups"`
+
+	// MalwareScanBlockUntilClean is a sub-setting of malware scanning: when
+	// true (the default), downloads are blocked until a clean verdict exists.
+	MalwareScanBlockUntilClean bool `json:"malware_scan_block_until_clean"`
 }
 
 // GetAll returns a snapshot of all feature flags.
@@ -184,6 +212,8 @@ func (f *FeatureFlags) GetAll() FeatureFlagsData {
 		EnableAPITokens:   f.enableAPITokens,
 		EnableMalwareScan: f.enableMalwareScan,
 		EnableBackups:     f.enableBackups,
+
+		MalwareScanBlockUntilClean: f.malwareScanBlockUntilClean,
 	}
 }
 
@@ -200,6 +230,7 @@ func (f *FeatureFlags) SetAll(data FeatureFlagsData) {
 	f.enableAPITokens = data.EnableAPITokens
 	f.enableMalwareScan = data.EnableMalwareScan
 	f.enableBackups = data.EnableBackups
+	f.malwareScanBlockUntilClean = data.MalwareScanBlockUntilClean
 }
 
 // loadFeatureFlags creates a FeatureFlags instance initialized from environment variables.
@@ -212,8 +243,11 @@ func (f *FeatureFlags) SetAll(data FeatureFlagsData) {
 //   - FEATURE_API_TOKENS: Enable API token authentication (default: false)
 //   - FEATURE_MALWARE_SCAN: Enable malware scanning (default: false)
 //   - FEATURE_BACKUPS: Enable automated backups (default: false)
+//   - MALWARE_SCAN_BLOCK_UNTIL_CLEAN: Block downloads until a clean scan
+//     verdict exists (default: true, fail-closed)
 //
-// All flags default to false for safety.
+// All feature flags default to false for safety; the block-until-clean
+// gate defaults to true for the same reason (fail-closed).
 func loadFeatureFlags() *FeatureFlags {
 	f := NewFeatureFlags()
 
@@ -226,6 +260,7 @@ func loadFeatureFlags() *FeatureFlags {
 	f.enableAPITokens = getEnvBoolFeature("FEATURE_API_TOKENS", false)
 	f.enableMalwareScan = getEnvBoolFeature("FEATURE_MALWARE_SCAN", false)
 	f.enableBackups = getEnvBoolFeature("FEATURE_BACKUPS", false)
+	f.malwareScanBlockUntilClean = getEnvBoolFeature("MALWARE_SCAN_BLOCK_UNTIL_CLEAN", true)
 
 	return f
 }

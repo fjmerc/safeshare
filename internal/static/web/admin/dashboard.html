@@ -610,6 +610,14 @@
                             </label>
                             <small>Requires ClamAV sidecar container. Configured via <code>FEATURE_MALWARE_SCAN</code> environment variable.</small>
                         </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="featureMalwareScanBlockUntilClean" name="malware_scan_block_until_clean">
+                                <span>Block Downloads Until Scan Is Clean</span>
+                            </label>
+                            <small>Fail-closed download gate: files without a clean malware verdict (pending, error, or unscanned) are not downloadable. Only applies when malware scanning is enabled. Disabling this treats scanning as advisory.</small>
+                        </div>
                         <div class="button-group">
                             <button type="submit" class="btn-primary">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

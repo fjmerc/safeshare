@@ -514,10 +514,115 @@ func TestAdminGetFeatureFlagsHandler_DefaultFlags(t *testing.T) {
 
 	flags := response["feature_flags"].(map[string]interface{})
 
-	// All flags should be false by default
+	// All feature flags should be false by default; the block-until-clean
+	// gate is the exception (fail-closed, defaults to true)
 	for key, value := range flags {
-		if v, ok := value.(bool); ok && v {
+		v, ok := value.(bool)
+		if !ok {
+			continue
+		}
+		if key == "malware_scan_block_until_clean" {
+			if !v {
+				t.Errorf("flag %s should default to true (fail-closed)", key)
+			}
+			continue
+		}
+		if v {
 			t.Errorf("flag %s should be false by default", key)
 		}
+	}
+}
+
+func TestAdminUpdateFeatureFlagsHandler_BlockUntilClean_Toggle(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	if !cfg.Features.IsMalwareScanBlockUntilClean() {
+		t.Fatal("block-until-clean should default to true")
+	}
+
+	handler := AdminUpdateFeatureFlagsHandler(repos, cfg)
+
+	// Disable the gate (advisory scanning)
+	body, _ := json.Marshal(map[string]interface{}{
+		"malware_scan_block_until_clean": false,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if cfg.Features.IsMalwareScanBlockUntilClean() {
+		t.Error("block-until-clean should be disabled after update")
+	}
+
+	// Verify persisted to database
+	dbFlags, err := repos.Settings.GetFeatureFlags(req.Context())
+	if err != nil {
+		t.Fatalf("failed to read flags back: %v", err)
+	}
+	if dbFlags.MalwareScanBlockUntilClean {
+		t.Error("block-until-clean should be persisted as false")
+	}
+
+	// Re-enable the gate
+	body, _ = json.Marshal(map[string]interface{}{
+		"malware_scan_block_until_clean": true,
+	})
+	req = httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !cfg.Features.IsMalwareScanBlockUntilClean() {
+		t.Error("block-until-clean should be re-enabled after update")
+	}
+}
+
+func TestAdminUpdateFeatureFlagsHandler_BlockUntilClean_PartialUpdatePreservesDefault(t *testing.T) {
+	// Regression guard: on a fresh database (no settings row), a partial
+	// update that does not mention the block-until-clean gate must not
+	// silently persist it as false (fail-open).
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	handler := AdminUpdateFeatureFlagsHandler(repos, cfg)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"enable_webhooks": true,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/features", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	if !cfg.Features.IsMalwareScanBlockUntilClean() {
+		t.Error("block-until-clean should remain true after unrelated partial update")
+	}
+
+	dbFlags, err := repos.Settings.GetFeatureFlags(req.Context())
+	if err != nil {
+		t.Fatalf("failed to read flags back: %v", err)
+	}
+	if !dbFlags.MalwareScanBlockUntilClean {
+		t.Error("block-until-clean should be persisted as true after unrelated partial update")
 	}
 }

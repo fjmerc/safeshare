@@ -109,6 +109,8 @@ func run() error {
 			EnableAPITokens:   dbSettings.FeatureAPITokens,
 			EnableMalwareScan: dbSettings.FeatureMalwareScan,
 			EnableBackups:     dbSettings.FeatureBackups,
+
+			MalwareScanBlockUntilClean: dbSettings.FeatureMalwareScanBlockUntilClean,
 		})
 
 		// Load MFA configuration from database (syncs with feature flag)
