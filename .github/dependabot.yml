@@ -57,6 +57,12 @@ updates:
       - "dependencies"
       - "javascript"
       - "sdk"
+    ignore:
+      # tsup vendors rollup-plugin-dts pre-bundled against TypeScript 5.x and
+      # calls compiler internals removed in TS 7, so `dts: true` builds crash.
+      # Revisit once tsup ships TS 7 support.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 
   # Docker base images
