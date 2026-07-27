@@ -93,11 +93,13 @@ func buildDownloadURL(r *http.Request, cfg *config.Config, claimCode string) str
 	return scheme + "://" + host + "/api/claim/" + claimCode
 }
 
-// getScheme returns the scheme (http/https) respecting reverse proxy headers
+// getScheme returns the scheme (http/https), honoring X-Forwarded-Proto only
+// when the request comes from a trusted proxy (finding: header spoofing)
 func getScheme(r *http.Request) string {
-	// Check X-Forwarded-Proto first (set by reverse proxies)
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		return proto
+	if utils.TrustsProxyHeaders(r) {
+		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+			return proto
+		}
 	}
 
 	// Check if TLS is terminated at this server
@@ -108,11 +110,13 @@ func getScheme(r *http.Request) string {
 	return "http"
 }
 
-// getHost returns the host respecting reverse proxy headers
+// getHost returns the host, honoring X-Forwarded-Host only when the request
+// comes from a trusted proxy (prevents forged hosts in download URLs)
 func getHost(r *http.Request) string {
-	// Check X-Forwarded-Host first (set by reverse proxies)
-	if host := r.Header.Get("X-Forwarded-Host"); host != "" {
-		return host
+	if utils.TrustsProxyHeaders(r) {
+		if host := r.Header.Get("X-Forwarded-Host"); host != "" {
+			return host
+		}
 	}
 
 	// Fall back to Host header
@@ -124,11 +128,10 @@ func getClientIPWithConfig(r *http.Request, cfg *config.Config) string {
 	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
 }
 
-// getClientIP returns the client IP address with default trusted proxy settings
-// This function uses auto mode with RFC1918 + localhost ranges for backward compatibility
+// getClientIP returns the client IP address using the process-wide proxy
+// trust settings configured at startup (TRUST_PROXY_HEADERS / TRUSTED_PROXY_IPS)
 func getClientIP(r *http.Request) string {
-	// Use auto mode with standard private IP ranges
-	return utils.GetClientIPWithTrust(r, "auto", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
+	return utils.GetClientIP(r)
 }
 
 // logIP returns the IP for logging purposes, respecting anonymous mode.

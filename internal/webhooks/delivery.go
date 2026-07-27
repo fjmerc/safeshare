@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,17 @@ func ComputeHMACSignature(payload, secret string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ComputeTimestampedHMACSignature computes HMAC-SHA256 over
+// "<timestamp>.<payload>" (Stripe/GitHub pattern). Binding the timestamp
+// into the signature lets receivers reject replayed deliveries.
+func ComputeTimestampedHMACSignature(timestamp, payload, secret string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(timestamp))
+	h.Write([]byte("."))
+	h.Write([]byte(payload))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // DeliverWebhook delivers a webhook to the specified URL with HMAC signature
 func DeliverWebhook(url, secret, payload string, timeoutSeconds int) DeliveryResult {
 	return DeliverWebhookWithConfig(nil, url, secret, payload, timeoutSeconds)
@@ -81,8 +93,12 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 		finalURL = constructURLWithToken(url, config.ServiceToken, config.Format)
 	}
 
-	// Compute HMAC signature
+	// Compute HMAC signatures. The timestamped signature is the primary
+	// (replay-resistant) one; the legacy body-only signature is kept so
+	// existing receivers keep working during migration.
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	signature := ComputeHMACSignature(payload, secret)
+	timestampedSignature := ComputeTimestampedHMACSignature(timestamp, payload, secret)
 
 	// Per-call client (shared transport for pooling + SSRF guards). The
 	// previous shared *http.Client mutated its Timeout field per call, which
@@ -104,6 +120,8 @@ func DeliverWebhookWithConfig(config *Config, url, secret, payload string, timeo
 	req.Header.Set("User-Agent", "SafeShare-Webhook/1.0")
 	req.Header.Set("X-SafeShare-Signature", signature)
 	req.Header.Set("X-SafeShare-Signature-Algorithm", "sha256")
+	req.Header.Set("X-SafeShare-Timestamp", timestamp)
+	req.Header.Set("X-SafeShare-Signature-V2", timestampedSignature)
 
 	// Add service-specific auth headers (for ntfy)
 	if config != nil && config.ServiceToken != "" {

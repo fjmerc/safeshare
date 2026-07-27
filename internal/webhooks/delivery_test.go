@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -51,6 +52,62 @@ func computeExpectedHMAC(payload, secret string) string {
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(payload))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func TestComputeTimestampedHMACSignature(t *testing.T) {
+	payload := `{"event":"file.uploaded"}`
+	secret := "test-secret"
+	timestamp := "1720000000"
+
+	got := ComputeTimestampedHMACSignature(timestamp, payload, secret)
+	want := computeExpectedHMAC(timestamp+"."+payload, secret)
+
+	if got != want {
+		t.Errorf("ComputeTimestampedHMACSignature() = %v, want %v", got, want)
+	}
+
+	// Different timestamps must yield different signatures (replay resistance)
+	other := ComputeTimestampedHMACSignature("1720000001", payload, secret)
+	if other == got {
+		t.Error("expected different signatures for different timestamps")
+	}
+}
+
+func TestDeliverWebhook_TimestampedSignature(t *testing.T) {
+	payload := `{"event":"test"}`
+	secret := "test-secret"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timestamp := r.Header.Get("X-SafeShare-Timestamp")
+		if timestamp == "" {
+			t.Error("Expected X-SafeShare-Timestamp header")
+		}
+		ts, err := strconv.ParseInt(timestamp, 10, 64)
+		if err != nil {
+			t.Errorf("X-SafeShare-Timestamp is not a unix timestamp: %v", err)
+		}
+		if delta := time.Since(time.Unix(ts, 0)); delta < -time.Minute || delta > time.Minute {
+			t.Errorf("X-SafeShare-Timestamp too far from now: %v", delta)
+		}
+
+		v2 := r.Header.Get("X-SafeShare-Signature-V2")
+		if want := computeExpectedHMAC(timestamp+"."+payload, secret); v2 != want {
+			t.Errorf("X-SafeShare-Signature-V2 = %v, want %v", v2, want)
+		}
+
+		// Legacy body-only signature must still be present for old receivers
+		if legacy := r.Header.Get("X-SafeShare-Signature"); legacy != computeExpectedHMAC(payload, secret) {
+			t.Errorf("legacy X-SafeShare-Signature mismatch: %v", legacy)
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	result := DeliverWebhook(server.URL, secret, payload, 5)
+	if !result.Success {
+		t.Errorf("Expected success, got failure: %v", result.Error)
+	}
 }
 
 func TestCalculateRetryDelay(t *testing.T) {

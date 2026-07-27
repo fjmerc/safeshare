@@ -33,6 +33,27 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ---
 
+## [Unreleased]
+
+## [1.5.7] - 2026-07-27
+
+### Security
+
+- Proxy headers (`X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host`, `X-Forwarded-Proto`) are now honored only when the request comes from a trusted proxy, in all code paths. Previously some rate-limiting, audit-logging, and URL-generation paths trusted these headers from any private-network source regardless of the `TRUST_PROXY_HEADERS` / `TRUSTED_PROXY_IPS` settings, allowing clients on adjacent private networks (e.g. other containers) to spoof their IP or forge the host used in generated download URLs.
+- Webhook deliveries now include a replay-resistant signature: `X-SafeShare-Timestamp` plus `X-SafeShare-Signature-V2` (HMAC-SHA256 of `<timestamp>.<payload>`). Receivers should verify V2 and reject stale timestamps; the legacy body-only `X-SafeShare-Signature` header is still sent for backward compatibility. See docs/API_REFERENCE.md for a verification example.
+- MFA login verification now enforces a 500ms minimum response time (up from 200ms) and performs equal-cost work on the TOTP and recovery-code paths, closing a timing side channel that could reveal which verification method a request used. Recovery-code checking additionally runs a constant number of hash comparisons, so response timing no longer reveals how many recovery codes an account has provisioned.
+- Updated `golang.org/x/text` to v0.40.0 and the Go toolchain to 1.25.12, resolving two vulnerabilities reachable from SafeShare: GO-2026-5970 (reached via PDF metadata stripping) and GO-2026-5856, an Encrypted Client Hello privacy leak in the standard library's `crypto/tls`.
+- TypeScript SDK: `esbuild` is pinned to 0.28.1, resolving GHSA-g7r4-m6w7-qqqr (arbitrary file read via the esbuild development server). This affects the SDK's build tooling only — it is a development dependency and was never part of the published package or the server.
+
+### Fixed
+
+- Chunked uploads: cancelling an upload no longer shows a spurious "Upload failed" message (cancellation was internally treated as a network failure and retried with backoff before surfacing as an error). Cancel now aborts all in-flight chunk requests immediately instead of letting them keep transferring in the background, takes effect during retry waits and file-assembly polling, and a cancelled upload can no longer be resumed.
+
+- Resumable downloads: pausing and resuming a download produced a corrupted file containing only the bytes received after the resume. Received data is now retained across pause/resume so the assembled file is always complete, and resumed responses are validated against the requested byte offset (`Content-Range`) to guard against misbehaving proxies. Passwords for protected files are no longer forwarded on cross-origin redirects.
+- Resumable downloads: the "resume after page refresh" prompt was removed — it could never work (downloaded bytes only exist in page memory) and always produced a corrupted file. Pause/resume within the page session still works. Stale resume state from previous versions is cleaned from browser storage automatically.
+- Resumable downloads: cancelling a paused download no longer emits a spurious "paused" event, and pausing now releases the network connection immediately.
+- TypeScript SDK: type declarations are now correctly resolved by consumers (the `exports` map listed `types` last, so bundlers and `tsc` never picked up the `.d.ts`), and the SDK typechecks and builds cleanly again. SDK CI now runs `typecheck` and `build` in addition to tests.
+
 ## [1.5.6] - 2026-07-06
 
 ### Added
