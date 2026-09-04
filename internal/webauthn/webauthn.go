@@ -240,7 +240,7 @@ func (s *Service) BeginRegistration(user *WebAuthnUser) (*protocol.CredentialCre
 		// Exclude existing credentials to prevent re-registration
 		gowebauthn.WithExclusions(exclusions),
 		// Request credential properties extension to get transport info
-		gowebauthn.WithExtensions(map[string]any{"credProps": true}),
+		gowebauthn.WithExtensions(gowebauthn.WithExtensionCredProps()),
 		// Allow all authenticator attachment types (platform + cross-platform)
 		gowebauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			AuthenticatorAttachment: "",                                      // Allow any
