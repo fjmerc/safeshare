@@ -1,11 +1,9 @@
 module github.com/fjmerc/safeshare
 
-go 1.25.0
+go 1.26.0
 
 // Local SDK for contract testing - validates SDK can parse real server responses
 replace github.com/fjmerc/safeshare/sdk/go => ./sdk/go
-
-toolchain go1.25.14
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.45.1
@@ -23,7 +21,7 @@ require (
 	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.24.1
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/oauth2 v0.36.0
 	modernc.org/sqlite v1.58.0
 )
