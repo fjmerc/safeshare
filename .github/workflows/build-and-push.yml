@@ -72,11 +72,37 @@ jobs:
           fi
           echo "Coverage check passed: ${COVERAGE}% >= ${THRESHOLD}%"
 
+  # Race detection runs as its own job so it can have a realistic time budget
+  # and actually fail the build. It used to be a step in `test` with a 5-minute
+  # timeout, `|| echo` and continue-on-error: internal/handlers needs ~20+ min
+  # under -race (bcrypt/MFA timing tests), so it always timed out and races were
+  # never reported. handlers gets its own matrix leg to keep wall-clock down.
+  race:
+    name: race (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: handlers
+            packages: ./internal/handlers
+          - name: core
+            packages: ./internal/middleware ./internal/database ./internal/utils ./internal/repository/sqlite
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Run race detection
-        run: |
-          echo "Running race detection on critical packages..."
-          go test ./internal/handlers ./internal/middleware ./internal/database ./internal/utils -race -timeout=5m || echo "Race detection completed with warnings"
-        continue-on-error: true
+        run: go test -race -timeout=45m ${{ matrix.packages }}
 
   # PostgreSQL integration tests run separately to avoid slowing down the main test suite
   test-postgres:
@@ -305,7 +331,7 @@ jobs:
         run: npm test
 
   build-and-push:
-    needs: [test, test-postgres, test-minio, security-scan]
+    needs: [test, race, test-postgres, test-minio, security-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
