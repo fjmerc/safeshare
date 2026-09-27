@@ -35,6 +35,14 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+
+- Docker images are now built with Go 1.27.1 (pinned patch release instead of the floating `1.27` tag).
+
+### Fixed
+
+- The self-hosted MinIO example in the architecture docs referenced the `minio/minio` Docker image, which is no longer published; it now uses the `pgsty/minio` community build.
+
 ## [1.5.7] - 2026-07-27
 
 ### Security

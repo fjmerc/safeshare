@@ -1412,10 +1412,14 @@ S3_USE_PATH_STYLE=true  # Required for MinIO
 
 **MinIO Self-Hosted Setup**:
 
+Upstream MinIO no longer publishes Docker images, so this example uses the
+`pgsty/minio` community build (the same image SafeShare's CI tests against).
+Any S3-compatible storage works.
+
 ```yaml
 # docker-compose.yml
 minio:
-  image: minio/minio
+  image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
   command: server /data --console-address ":9001"
   environment:
     MINIO_ROOT_USER: minioadmin

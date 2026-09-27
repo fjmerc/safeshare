@@ -24,10 +24,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
+      # CI takes its Go version from go.mod's toolchain directive; fail if the
+      # Dockerfile builder image drifts, so we test what we ship.
+      - name: Check Dockerfile Go matches go.mod toolchain
+        run: |
+          want=$(sed -n 's/^toolchain go//p' go.mod)
+          got=$(sed -n 's/^FROM golang:\([0-9.]*\)-alpine.*/\1/p' Dockerfile)
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error::Dockerfile golang:${got} != go.mod toolchain go${want}"
+            exit 1
+          fi
+
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -36,7 +47,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v7
         with:
-          version: v2.11.3
+          version: v2.14.0
 
       - name: Run tests with coverage
         run: |
@@ -92,9 +103,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -149,9 +160,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -235,16 +246,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.8'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
         run: go mod download
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Run govulncheck (SARIF output)
         run: govulncheck -format sarif ./... > govulncheck-results.sarif

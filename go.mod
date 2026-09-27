@@ -2,6 +2,8 @@ module github.com/fjmerc/safeshare
 
 go 1.26.0
 
+toolchain go1.27.1
+
 // Local SDK for contract testing - validates SDK can parse real server responses
 replace github.com/fjmerc/safeshare/sdk/go => ./sdk/go
 
