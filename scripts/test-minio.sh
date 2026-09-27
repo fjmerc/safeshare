@@ -120,7 +120,7 @@ if docker run --rm \
     -e MINIO_BUCKET="$MINIO_BUCKET" \
     -e SH22_LARGE_FILE_SIZE_GB="$LARGE_FILE_SIZE_GB" \
     -e GOFLAGS="-buildvcs=false" \
-    golang:1.25 $TEST_CMD; then
+    golang:1.26 $TEST_CMD; then
     echo -e "\n${GREEN}========================================${NC}"
     echo -e "${GREEN}All MinIO integration tests passed!${NC}"
     echo -e "${GREEN}========================================${NC}"
@@ -136,7 +136,7 @@ docker run --rm \
     -v "$PROJECT_ROOT":/app \
     -v safeshare-gomodcache:/go/pkg/mod \
     -w /app \
-    golang:1.25 go tool cover -func=/app/coverage-minio.out | grep -E "^total:|internal/storage/s3"
+    golang:1.26 go tool cover -func=/app/coverage-minio.out | grep -E "^total:|internal/storage/s3"
 
 if [ "$GENERATE_HTML_REPORT" = true ]; then
     echo -e "\n${BLUE}Step 4: Generating HTML coverage report...${NC}"
@@ -144,7 +144,7 @@ if [ "$GENERATE_HTML_REPORT" = true ]; then
         -v "$PROJECT_ROOT":/app \
         -v safeshare-gomodcache:/go/pkg/mod \
         -w /app \
-        golang:1.25 go tool cover -html=/app/coverage-minio.out -o /app/coverage-minio.html
+        golang:1.26 go tool cover -html=/app/coverage-minio.out -o /app/coverage-minio.html
     echo -e "${GREEN}HTML report generated: coverage-minio.html${NC}"
 fi
 

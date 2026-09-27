@@ -27,7 +27,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.8'
           cache: true
 
       - name: Download dependencies
@@ -94,7 +94,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.8'
           cache: true
 
       - name: Download dependencies
@@ -130,8 +130,12 @@ jobs:
   # tests in internal/storage/s3/. Independent of `test-postgres`; both run
   # in parallel.
   #
+  # Upstream stopped publishing minio/minio images to Docker Hub, so this
+  # uses the pgsty/minio community build (same binary, bundles mc), pinned
+  # by digest.
+  #
   # MinIO is launched via `docker run` rather than `services:` because the
-  # official minio/minio image needs `server /data` as its command, and
+  # MinIO image needs `server /data` as its command, and
   # GitHub Actions service containers don't expose a `command` field. This
   # matches the local `scripts/test-minio.sh` flow (which also uses an
   # explicit `mc mb` bucket-creation step after MinIO is healthy).
@@ -147,7 +151,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.8'
           cache: true
 
       - name: Download dependencies
@@ -160,12 +164,10 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin123 \
-            minio/minio:RELEASE.2024-11-07T00-52-20Z \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 \
             server /data
 
       - name: Wait for MinIO ready + create test bucket
-        env:
-          MC_HOST_local: http://minioadmin:minioadmin123@localhost:9000
         run: |
           # Poll the /minio/health/ready endpoint for up to 60s.
           for i in $(seq 1 30); do
@@ -180,11 +182,10 @@ jobs:
             fi
             sleep 2
           done
-          # Idempotent bucket creation via mc.
-          docker run --rm --network host \
-            -e MC_HOST_local="$MC_HOST_local" \
-            minio/mc:RELEASE.2024-11-05T11-29-45Z \
-            mb -p local/safeshare-test
+          # Idempotent bucket creation via the mc binary bundled in the
+          # MinIO image (upstream minio/mc is no longer on Docker Hub).
+          docker exec -e MC_HOST_local=http://minioadmin:minioadmin123@127.0.0.1:9000 \
+            safeshare-minio-ci mc mb -p local/safeshare-test
 
       - name: Run MinIO integration tests
         env:
@@ -236,7 +237,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.8'
           cache: true
 
       - name: Download dependencies
