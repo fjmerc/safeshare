@@ -1011,3 +1011,493 @@ func TestFileRepository_GetAllForAdmin_BoundsValidation(t *testing.T) {
 		t.Errorf("GetAllForAdmin() with limit=0 should return empty, got %d", len(files))
 	}
 }
+
+// --- ADR-014 download-session tests -----------------------------------------
+//
+// These exercise the SQLite implementation of the Reserve/Lookup/Commit/
+// Touch/Complete/Cancel/Reap session API directly, independent of the HTTP
+// handler layer (see internal/handlers/claim_session_test.go for the
+// end-to-end behaviour).
+
+func createSessionTestFile(t *testing.T, repo *FileRepository, claimCode string, maxDL int) *models.File {
+	t.Helper()
+	file := &models.File{
+		ClaimCode:        claimCode,
+		OriginalFilename: "session-test.bin",
+		StoredFilename:   "session-test-stored.bin",
+		FileSize:         4096,
+		MimeType:         "application/octet-stream",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		MaxDownloads:     &maxDL,
+		UploaderIP:       "127.0.0.1",
+	}
+	if err := repo.Create(context.Background(), file); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return file
+}
+
+// TestFileRepository_CommitDownloadSession_Idempotent — a second commit call
+// against an already-committed session must report AlreadyCommitted and must
+// not touch the counters again.
+func TestFileRepository_CommitDownloadSession_Idempotent(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesidem", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+
+	result, err := repo.CommitDownloadSession(ctx, file.ID, token)
+	if err != nil {
+		t.Fatalf("first CommitDownloadSession: %v", err)
+	}
+	if result != repository.DownloadCommitCredited {
+		t.Fatalf("first CommitDownloadSession result = %v, want Credited", result)
+	}
+
+	result, err = repo.CommitDownloadSession(ctx, file.ID, token)
+	if err != nil {
+		t.Fatalf("second CommitDownloadSession: %v", err)
+	}
+	if result != repository.DownloadCommitAlreadyCommitted {
+		t.Errorf("second CommitDownloadSession result = %v, want AlreadyCommitted", result)
+	}
+
+	got, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.DownloadCount != 1 {
+		t.Errorf("download_count = %d, want 1 (idempotent)", got.DownloadCount)
+	}
+}
+
+// TestFileRepository_CancelDownload_NoOpAfterCommit — Cancel after a
+// successful Commit must not touch counters or resurrect the row.
+func TestFileRepository_CancelDownload_NoOpAfterCommit(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sescancel", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+
+	if err := repo.CancelDownload(ctx, file.ID, token); err != nil {
+		t.Fatalf("CancelDownload after commit: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.DownloadCount != 1 {
+		t.Errorf("download_count = %d, want 1 (Cancel-after-Commit must be a no-op)", got.DownloadCount)
+	}
+
+	// The slot must still be genuinely taken — a fresh Reserve on this
+	// max_downloads=1 file must be denied.
+	tok2, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil {
+		t.Fatalf("second ReserveDownload: %v", err)
+	}
+	if tok2 != "" {
+		t.Errorf("second Reserve succeeded (token=%q); Cancel-after-Commit released the slot", tok2)
+	}
+}
+
+// TestFileRepository_CancelDownload_CreditsUncountedBytes verifies the
+// probe-budget accounting: cancelling an uncommitted session with bytes
+// already served must add those bytes to files.uncounted_bytes.
+func TestFileRepository_CancelDownload_CreditsUncountedBytes(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesuncounted", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if err := repo.TouchDownloadSession(ctx, file.ID, token, 37); err != nil {
+		t.Fatalf("TouchDownloadSession: %v", err)
+	}
+	if err := repo.CancelDownload(ctx, file.ID, token); err != nil {
+		t.Fatalf("CancelDownload: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.UncountedBytes != 37 {
+		t.Errorf("uncounted_bytes = %d, want 37", got.UncountedBytes)
+	}
+	if got.DownloadCount != 0 {
+		t.Errorf("download_count = %d, want 0", got.DownloadCount)
+	}
+
+	// A second cancel of the same (already-deleted) token must be a
+	// harmless no-op — uncounted_bytes must not be double-credited.
+	if err := repo.CancelDownload(ctx, file.ID, token); err != nil {
+		t.Fatalf("second CancelDownload: %v", err)
+	}
+	got, _ = repo.GetByID(ctx, file.ID)
+	if got.UncountedBytes != 37 {
+		t.Errorf("after double-cancel: uncounted_bytes = %d, want still 37", got.UncountedBytes)
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_LeaseRenewalPreventsReap — T5.
+// A session whose lease is renewed via TouchDownloadSession shortly before a
+// reap must survive; the same session, left untouched, would be reaped by the
+// same leaseTTL.
+func TestFileRepository_ReapDownloadSessions_LeaseRenewalPreventsReap(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "seslease", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+
+	// Cross a whole-second boundary so the renewed last_seen_at is
+	// distinguishable from created_at at SQLite's DATETIME (second)
+	// granularity, then renew the lease exactly as the HTTP heartbeat would.
+	time.Sleep(1100 * time.Millisecond)
+	if err := repo.TouchDownloadSession(ctx, file.ID, token, 512); err != nil {
+		t.Fatalf("TouchDownloadSession: %v", err)
+	}
+
+	// A 1-second lease TTL would reap the row based on created_at, but the
+	// renewed last_seen_at must keep it alive.
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, 1*time.Second, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 0 {
+		t.Errorf("cancelled = %d, want 0 (lease was renewed)", cancelled)
+	}
+
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("session was reaped despite lease renewal")
+	}
+	if sess.BytesServed != 512 {
+		t.Errorf("BytesServed = %d, want 512", sess.BytesServed)
+	}
+
+	// The slot must still be held.
+	tok2, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil {
+		t.Fatalf("second ReserveDownload: %v", err)
+	}
+	if tok2 != "" {
+		t.Errorf("second Reserve succeeded (token=%q); lease-renewed slot leaked", tok2)
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost — the
+// complement of lease renewal: an uncommitted session that stops renewing
+// gets reaped, and a subsequent commit attempt against the same token — with
+// the cap already spent by another reader — reports SlotLost rather than
+// over-crediting.
+func TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesstalled", 1)
+
+	orphanToken, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || orphanToken == "" {
+		t.Fatalf("ReserveDownload (orphan): token=%q err=%v", orphanToken, err)
+	}
+
+	// Negative TTL == "reap everything created before now" (same convention
+	// as the ADR-012 reservation reaper tests).
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled < 1 {
+		t.Fatalf("cancelled = %d, want >= 1", cancelled)
+	}
+
+	// Another reader takes the now-free slot for real.
+	otherToken, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || otherToken == "" {
+		t.Fatalf("ReserveDownload (other): token=%q err=%v", otherToken, err)
+	}
+	if result, err := repo.CommitDownloadSession(ctx, file.ID, otherToken); err != nil || result != repository.DownloadCommitCredited {
+		t.Fatalf("CommitDownloadSession (other): result=%v err=%v", result, err)
+	}
+
+	// The orphaned token's late commit must now report SlotLost, not credit.
+	result, err := repo.CommitDownloadSession(ctx, file.ID, orphanToken)
+	if err != nil {
+		t.Fatalf("CommitDownloadSession (orphan, late): %v", err)
+	}
+	if result != repository.DownloadCommitSlotLost {
+		t.Errorf("orphan late-commit result = %v, want SlotLost", result)
+	}
+
+	got, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.DownloadCount != 1 {
+		t.Errorf("download_count = %d, want 1 (orphan must not over-credit past the cap)", got.DownloadCount)
+	}
+}
+
+// TestFileRepository_LookupDownloadSession_ExpiredByMaxAge verifies the "no
+// oracle" contract at the repository layer: a session older than maxAge is
+// reported as absent (nil, nil), not as an error or a stale-but-present row.
+func TestFileRepository_LookupDownloadSession_ExpiredByMaxAge(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesexpired", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+
+	// A 1-nanosecond maxAge is exceeded by the time this call reaches the
+	// DB, regardless of how fresh the row actually is.
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 1*time.Nanosecond)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess != nil {
+		t.Error("LookupDownloadSession returned a session past maxAge; want nil (no oracle)")
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange
+// — an idle, already-committed session is deleted by the reaper as pure
+// record cleanup: no counter changes, since the download was already
+// credited at commit time.
+func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesidle", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	before, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (before): %v", err)
+	}
+
+	// Negative idle TTL: "idle past everything created before now" — reaps
+	// the committed row immediately via the idle-cutoff branch.
+	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 0 {
+		t.Errorf("cancelled = %d, want 0 (this is the committed/idle path, not the lease path)", cancelled)
+	}
+	if expired < 1 {
+		t.Fatalf("expired = %d, want >= 1", expired)
+	}
+
+	after, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (after): %v", err)
+	}
+	if after.DownloadCount != before.DownloadCount || after.CompletedDownloads != before.CompletedDownloads {
+		t.Errorf("counters changed after idle-expiry reap: before dc=%d completed=%d, after dc=%d completed=%d",
+			before.DownloadCount, before.CompletedDownloads, after.DownloadCount, after.CompletedDownloads)
+	}
+
+	// The row itself is gone — a resume attempt with this token now finds
+	// nothing (falls back to "new download" at the handler layer).
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess != nil {
+		t.Error("session row still present after idle-expiry reap")
+	}
+}
+
+// TestFileRepository_LookupDownloadSession_RejectsCompleted — bug-hunter
+// finding (HIGH, blocking): without this, a committed-and-fully-delivered
+// session's token could be replayed indefinitely (bounded only by
+// idleTTL/maxAge, up to SessionMaxAge) to redeliver the whole file to anyone
+// holding the token. Lookup must treat a completed session exactly like "not
+// found".
+func TestFileRepository_LookupDownloadSession_RejectsCompleted(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sescompleted", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess != nil {
+		t.Error("LookupDownloadSession resolved a completed session; want nil (no replay oracle)")
+	}
+}
+
+// TestFileRepository_ReserveSessionBytes_BoundedByLimit — bug-hunter finding
+// (HIGH, blocking), part 2: even for a committed-but-not-yet-completed
+// session (a large download still streaming, or one paused mid-transfer),
+// ReserveSessionBytes must bound the cumulative bytes a replayed token can
+// claim to `limit` (~2x the file size), so a token can't be curled forever to
+// redeliver the file piecemeal while it's technically still "in flight".
+func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesreplaybound", 100) // generous cap: isolate the byte bound, not max_downloads
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if result, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil || result != repository.DownloadCommitCredited {
+		t.Fatalf("CommitDownloadSession: result=%v err=%v", result, err)
+	}
+	// Committed but not completed (no CompleteDownloadSession call) — the
+	// state a large in-flight download is in while its token gets replayed.
+
+	const rangeLen = 500
+	limit := repository.SessionByteLimit(file.FileSize)
+	maxGrantable := int(limit / rangeLen)
+
+	grantedCount := 0
+	const attempts = 30
+	for i := 0; i < attempts; i++ {
+		granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, rangeLen, limit)
+		if err != nil {
+			t.Fatalf("ReserveSessionBytes attempt %d: %v", i, err)
+		}
+		if granted {
+			grantedCount++
+		}
+	}
+	if grantedCount != maxGrantable {
+		t.Errorf("grantedCount = %d, want exactly %d (limit=%d, rangeLen=%d, attempts=%d)", grantedCount, maxGrantable, limit, rangeLen, attempts)
+	}
+
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("session not found")
+	}
+	if sess.BytesReserved > limit {
+		t.Errorf("BytesReserved = %d, want <= %d", sess.BytesReserved, limit)
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_RefundsPerRowNotAggregate — bug-hunter
+// finding (LOW): the abandoned-session refund must be computed per row
+// (MAX(0, probe_bytes_granted - bytes_served) per row, then summed), not by
+// summing granted and served separately and clamping the aggregate
+// difference. A session that over-served relative to its own grant must
+// never let its negative "excess" cancel out a refund genuinely owed by a
+// different session on the same file.
+func TestFileRepository_ReapDownloadSessions_RefundsPerRowNotAggregate(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesreapperrow", 100)
+	// fileSize=4096 (createSessionTestFile) => P=256 (ProbeThreshold),
+	// budget=1024 — both reserves below fit inside the budget, so each is
+	// granted the full P=256.
+
+	tokenA, grantedA, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || tokenA == "" {
+		t.Fatalf("ReserveDownload A: token=%q err=%v", tokenA, err)
+	}
+	if grantedA != 256 {
+		t.Fatalf("grantedA = %d, want 256 (test assumes an empty budget)", grantedA)
+	}
+	// Session A over-serves relative to its own grant.
+	if err := repo.TouchDownloadSession(ctx, file.ID, tokenA, 300); err != nil {
+		t.Fatalf("TouchDownloadSession A: %v", err)
+	}
+
+	tokenB, grantedB, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || tokenB == "" {
+		t.Fatalf("ReserveDownload B: token=%q err=%v", tokenB, err)
+	}
+	if grantedB != 256 {
+		t.Fatalf("grantedB = %d, want 256", grantedB)
+	}
+	if err := repo.TouchDownloadSession(ctx, file.ID, tokenB, 5); err != nil {
+		t.Fatalf("TouchDownloadSession B: %v", err)
+	}
+
+	before, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (before): %v", err)
+	}
+	if before.UncountedBytes != 512 { // 256 + 256, both charged at Reserve time
+		t.Fatalf("uncounted_bytes before reap = %d, want 512", before.UncountedBytes)
+	}
+
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 2 {
+		t.Fatalf("cancelled = %d, want 2", cancelled)
+	}
+
+	after, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (after): %v", err)
+	}
+	// Per-row refund: A owes max(0, 256-300)=0 (over-served, never negative);
+	// B owes max(0, 256-5)=251. Total refund = 251, so uncounted_bytes should
+	// drop from 512 to 261. A buggy aggregate computation — (256+256) -
+	// (300+5) = 207 clamped (still positive) — would instead leave it at
+	// 512-207=305, which this assertion catches.
+	if after.UncountedBytes != 261 {
+		t.Errorf("uncounted_bytes after reap = %d, want 261 (per-row refund, not aggregate: A over-served so owes 0, B owes 251)", after.UncountedBytes)
+	}
+}

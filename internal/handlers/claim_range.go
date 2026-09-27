@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -30,9 +32,16 @@ func serveFileWithRangeSupport(
 	cfg *config.Config,
 ) (commitable bool) {
 	// Check if file is stream-encrypted (SFSE1 or SFSE2 — same magic, distinguished by version byte).
+	//
+	// IsStreamEncrypted wraps the underlying os.Open error with fmt.Errorf's
+	// %w, so this must use errors.Is(err, fs.ErrNotExist) rather than
+	// os.IsNotExist(err) — os.IsNotExist predates error wrapping and only
+	// recognises a raw *PathError, not one wrapped in another error. Using it
+	// here silently misrouted a missing on-disk file (deleted, race with
+	// cleanup) to the generic 500 branch instead of this 404 one.
 	isStreamEnc, err := utils.IsStreamEncrypted(filePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			slog.Error("file not found on disk", "path", filePath, "claim_code", redactClaimCode(file.ClaimCode))
 			sendErrorResponse(w, r, "File Not Found", "The file could not be found on the server. It may have been deleted. Please contact the administrator.", "NOT_FOUND", http.StatusNotFound)
 			return false

@@ -435,6 +435,54 @@ curl -O "http://localhost:8080/api/claim/ABC123?password=MySecretPass123"
 
 ---
 
+## 🎯 Download Limit Enforcement
+
+### Overview
+`max_downloads` on a shared file is enforced via a resumable download-session
+pattern (ADR-014, amending ADR-012). A recipient's download only counts once
+they have actually received the file, and a download that is split across
+several HTTP requests — a paused/resumed browser download, a retried
+connection — still counts exactly once, by presenting an `X-Download-Session`
+bearer token issued on the first response.
+
+### Bounded, accepted leakage
+Small "probe" requests (e.g. a link-preview crawler fetching a few bytes, or
+a browser range-checking a resumable download before starting) are free and
+do not consume a download, up to a small per-file byte budget
+(`B = 4 * clamp(file_size / 16, 1, 64 KiB)`). This is an intentional,
+bounded trade-off: without it, any HTTP client probe would burn the only
+download of a `max_downloads=1` file (the original SH-2.3/ADR-012 bug this
+design replaces). Once a file's cumulative "free" probe bytes reach `B`,
+every subsequent tokenless byte on that file counts immediately — so the
+maximum a client can ever extract from a single-use file without spending its
+one download is `B` bytes (at most 256 KiB for very large files, far less for
+small ones), never the whole file. A `max_downloads=1` file therefore cannot
+be fully exfiltrated by staying under the per-request threshold; it can only
+leak a small, capped prefix before either the recipient's real download or an
+attacker's own probing spends the file's only credit.
+
+### Session tokens are bearer credentials
+The `X-Download-Session` token is a 256-bit `crypto/rand` value; only its
+SHA-256 hash is stored server-side, and only a short, non-reversible prefix
+of that hash is ever written to logs. Presenting a valid token for a file is
+sufficient to resume (or, for an uncommitted session, credit) that download
+— treat it with the same care as the claim code itself. An unrecognised,
+foreign (issued for a different file), or expired token is silently treated
+as a fresh download attempt rather than rejected with a distinguishing error,
+so a guessed or replayed token can't be used to probe for the existence of
+other sessions.
+
+### Abandoned session cleanup
+A background reaper releases sessions that stop making progress: an
+uncommitted (not-yet-credited) session is released after a short lease
+timeout (`DOWNLOAD_RESERVATION_TTL`, default 5 minutes) if no bytes have been
+received recently, while a committed session's resumability window is bounded
+separately (`DOWNLOAD_SESSION_IDLE_TTL`, default 1 hour; hard cap 24 hours)
+since the download has already been credited and reaping it is pure
+bookkeeping cleanup, not a security control. A genuinely slow-but-active
+transfer renews its own lease as bytes flow, so transfer duration alone never
+causes a released slot or a double-delivered file.
+
 ## 📊 Enhanced Audit Logging
 
 ### Overview

@@ -1055,15 +1055,21 @@ func run() error {
 		utils.StartPartialUploadCleanupWorker(ctx, repos, cfg.UploadDir, cfg.PartialUploadExpiryHours, 6*time.Hour)
 	}()
 
-	// Start download-reservation reaper (SH-2.3 / ADR-012). TTL is operator-
-	// tunable via DOWNLOAD_RESERVATION_TTL (default 30m); the 1-minute tick is
-	// fixed so crash-recovery latency is bounded regardless of TTL.
+	// Start download-session reaper (ADR-014, amending SH-2.3 / ADR-012). The
+	// lease TTL (uncommitted sessions) is operator-tunable via
+	// DOWNLOAD_RESERVATION_TTL (default 5m); the idle TTL (committed sessions)
+	// via DOWNLOAD_SESSION_IDLE_TTL (default 1h). The 1-minute tick is fixed so
+	// crash-recovery latency is bounded regardless of either TTL.
 	reservationTTL := utils.ResolveReservationTTL()
-	slog.Info("download reservation reaper configured", "ttl", utils.ReservationTTLDescription(reservationTTL))
+	sessionIdleTTL := utils.ResolveSessionIdleTTL()
+	slog.Info("download session reaper configured",
+		"lease_ttl", utils.ReservationTTLDescription(reservationTTL),
+		"idle_ttl", utils.SessionIdleTTLDescription(sessionIdleTTL),
+	)
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartReservationReaper(ctx, repos, reservationTTL)
+		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL)
 	}()
 
 	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)

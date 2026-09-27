@@ -940,7 +940,7 @@ SafeShare v2.8.0 introduces an event-driven webhook notification system for real
 
 **Event Types** (`internal/webhooks/models.go`):
 - `file.uploaded` - File successfully uploaded and ready for download
-- `file.downloaded` - File downloaded by user (tracks each download)
+- `file.downloaded` - File downloaded by user (tracks each download). For a file with `max_downloads` set, this fires only once *every byte of the file has actually been delivered* — possibly across several resumed Range requests (ADR-014). That is a separate event from the download being credited toward `max_downloads`, which can happen earlier, on the request that crosses the internal commit threshold; a capped file can reach its download limit (`file.expired` below) before the `file.downloaded` webhook for that download has fired.
 - `file.deleted` - File deleted by user or admin
 - `file.expired` - File expired due to time limit or download limit reached
 
