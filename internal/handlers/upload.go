@@ -160,8 +160,11 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 		return nil, nil, err
 	}
 
-	// Validate file extension
-	allowed, blockedExt, err := utils.IsFileAllowed(header.Filename, cfg.GetBlockedExtensions())
+	// Validate file extension against the sanitized name, since that is the name
+	// the file is stored and served under. Checking the raw name let
+	// "payload.exe " through: its extension is ".exe ", and sanitizing
+	// afterwards trimmed the space. Same order as the chunked init handler.
+	allowed, blockedExt, err := utils.IsFileAllowed(utils.SanitizeFilename(header.Filename), cfg.GetBlockedExtensions())
 	if err != nil {
 		slog.Error("failed to validate file extension", "error", err)
 		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
@@ -314,7 +317,7 @@ func generateUniqueClaimCode(ctx context.Context, w http.ResponseWriter, repos *
 // processAndStoreFile handles MIME detection, streaming, hashing, and storage
 func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *multipart.FileHeader, cfg *config.Config) (*fileProcessingResult, error) {
 	// Generate unique filename for storage
-	storedFilename := uuid.New().String() + filepath.Ext(header.Filename)
+	storedFilename := uuid.New().String() + filepath.Ext(utils.SanitizeFilename(header.Filename))
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {

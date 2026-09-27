@@ -28,6 +28,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,6 +60,9 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 		}
 		handlers.UploadHandler(repos, cfg).ServeHTTP(w, r)
 	})
+
+	// Public config (the SDK reads the chunk threshold before uploading)
+	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
 
 	// Claim info endpoint (GET /api/claim/{code}/info)
 	mux.HandleFunc("/api/claim/", func(w http.ResponseWriter, r *http.Request) {
@@ -669,4 +674,47 @@ func TestListFilesContract(t *testing.T) {
 			t.Errorf("CompletedDownloads after 1 download = %d, want 1", foundFile.CompletedDownloads)
 		}
 	})
+}
+
+// TestSDKUploadContract uploads through the SDK itself. The SDK used to send
+// "download_limit" (the server reads "max_downloads", so limits were silently
+// dropped) and decode filename/size/limit from field names the server never
+// sends. The older upload contract test posted raw HTTP and missed both.
+func TestSDKUploadContract(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	client := createSDKClient(t, server.URL)
+	ctx := context.Background()
+
+	content := []byte("SDK upload contract content")
+	path := filepath.Join(t.TempDir(), "sdk_upload.txt")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	limit := 3
+	result, err := client.Upload(ctx, path, &safeshare.UploadOptions{DownloadLimit: &limit})
+	if err != nil {
+		t.Fatalf("SDK Upload failed: %v", err)
+	}
+
+	if result.Filename != "sdk_upload.txt" {
+		t.Errorf("Filename = %q, want %q", result.Filename, "sdk_upload.txt")
+	}
+	if result.Size != int64(len(content)) {
+		t.Errorf("Size = %d, want %d", result.Size, len(content))
+	}
+	if result.DownloadLimit == nil || *result.DownloadLimit != limit {
+		t.Errorf("DownloadLimit = %v, want %d", result.DownloadLimit, limit)
+	}
+
+	// The limit must actually be applied server-side.
+	info, err := client.GetFileInfo(ctx, result.ClaimCode)
+	if err != nil {
+		t.Fatalf("GetFileInfo failed: %v", err)
+	}
+	if info.DownloadsRemaining == nil || *info.DownloadsRemaining != limit {
+		t.Errorf("DownloadsRemaining = %v, want %d (server ignored the limit)", info.DownloadsRemaining, limit)
+	}
 }

@@ -19,6 +19,11 @@ import (
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
+// reservationFinalizeTimeout bounds the Commit/Cancel of a download
+// reservation, which runs detached from the (possibly cancelled) request context.
+// Long enough to cover beginImmediateTx's SQLITE_BUSY retries.
+const reservationFinalizeTimeout = 30 * time.Second
+
 // ClaimHandler handles file download requests using claim codes
 func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -236,15 +241,24 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// actually succeeded — that's the signal the webhook + audit block below
 		// uses to decide whether the counters have moved. We must NOT collapse it
 		// into `finalised`, or a failed Commit would still fire file.downloaded.
+		//
+		// Commit/Cancel run on a context detached from the request: when the client
+		// disconnects, r.Context() is already cancelled, the transaction can't begin,
+		// and the slot would stay reserved until the reaper sweeps it (~30 min). That
+		// let anyone holding the link lock a max_downloads=1 file by aborting
+		// requests, and lost the count when the client closed right after the last byte.
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), reservationFinalizeTimeout)
+		defer cancelFinalize()
+
 		committed := false
 		if commitable {
-			if err := repos.Files.CommitDownload(ctx, file.ID, token); err != nil {
+			if err := repos.Files.CommitDownload(finalizeCtx, file.ID, token); err != nil {
 				slog.Error("failed to commit download", "file_id", file.ID, "reservation_token", token, "error", err)
 			} else {
 				committed = true
 			}
 		} else {
-			if err := repos.Files.CancelDownload(ctx, file.ID, token); err != nil {
+			if err := repos.Files.CancelDownload(finalizeCtx, file.ID, token); err != nil {
 				slog.Error("failed to cancel reservation", "file_id", file.ID, "reservation_token", token, "error", err)
 			}
 		}
@@ -274,7 +288,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			})
 
 			if file.MaxDownloads != nil {
-				fresh, err := repos.Files.GetByID(ctx, file.ID)
+				fresh, err := repos.Files.GetByID(finalizeCtx, file.ID)
 				switch {
 				case err != nil:
 					slog.Warn("failed to re-read file after commit; falling back to pre-Reserve snapshot for webhook decision",

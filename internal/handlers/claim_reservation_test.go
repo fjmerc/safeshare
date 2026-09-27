@@ -677,3 +677,65 @@ func TestReservation_ReaperRespectsTTLForFreshReservations(t *testing.T) {
 // errCommitInjected is the sentinel error used by TestReservation_CommitFailureHoldsSlot
 // to inject a Commit failure into the mock repository.
 var errCommitInjected = errors.New("injected commit failure for M1 regression test")
+
+// cancelOnWriteRecorder cancels the request context on the first body write,
+// simulating a client that disconnects while the response is being streamed.
+type cancelOnWriteRecorder struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnWriteRecorder) Write(p []byte) (int, error) {
+	c.cancel()
+	return c.ResponseRecorder.Write(p)
+}
+
+// TestReservation_FinalizeSurvivesCancelledRequestContext is a regression test:
+// Commit/Cancel used the request context, which is already cancelled after a
+// client disconnect. Cancel then failed and held the slot until the reaper ran
+// (~30 min), and Commit failed so a delivered download was never counted.
+func TestReservation_FinalizeSurvivesCancelledRequestContext(t *testing.T) {
+	t.Run("aborted partial range releases the slot", func(t *testing.T) {
+		repos, handler, code, file, cleanup := setupReservationTest(t)
+		defer cleanup()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil).WithContext(ctx)
+		req.Header.Set("Range", "bytes=0-99")
+		rr := &cancelOnWriteRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+		handler.ServeHTTP(rr, req)
+
+		got, _ := repos.Files.GetByID(context.Background(), file.ID)
+		if got.DownloadCount != 0 {
+			t.Errorf("download_count = %d, want 0", got.DownloadCount)
+		}
+
+		// The slot must be free straight away, not after the reaper TTL.
+		fullReq := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil)
+		fullRR := httptest.NewRecorder()
+		handler.ServeHTTP(fullRR, fullReq)
+		if fullRR.Code != http.StatusOK {
+			t.Fatalf("follow-up full download: got status %d, want 200 (slot leaked)", fullRR.Code)
+		}
+	})
+
+	t.Run("delivered download is counted after disconnect", func(t *testing.T) {
+		repos, handler, code, file, cleanup := setupReservationTest(t)
+		defer cleanup()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil).WithContext(ctx)
+		rr := &cancelOnWriteRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+		handler.ServeHTTP(rr, req)
+
+		if rr.Body.Len() != int(file.FileSize) {
+			t.Fatalf("delivered %d bytes, want %d", rr.Body.Len(), file.FileSize)
+		}
+		got, _ := repos.Files.GetByID(context.Background(), file.ID)
+		if got.DownloadCount != 1 {
+			t.Errorf("download_count = %d, want 1 (commit lost to cancelled context)", got.DownloadCount)
+		}
+	})
+}
