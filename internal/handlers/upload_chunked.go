@@ -140,6 +140,19 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			return
 		}
 
+		// ADR-015: when the operator has opted into rejecting uploads that
+		// cannot be scanned at all (E2E ciphertext, or larger than the
+		// scanner's size limit), fail fast before allocating an upload
+		// session for it.
+		if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.RejectUnscannable && isUnscannable(cfg, req.TotalSize, req.ClientEncrypted) {
+			sendSmartError(w,
+				"This file cannot be scanned for malware (it is end-to-end encrypted or exceeds the scan size limit) and this server rejects unscannable uploads",
+				"UNSCANNABLE_UPLOAD",
+				http.StatusUnprocessableEntity,
+			)
+			return
+		}
+
 		// Calculate optimal chunk size based on file size
 		// Falls back to configured chunk size if dynamic sizing is disabled
 		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
@@ -975,6 +988,7 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			ClaimCode:          partialUpload.ClaimCode,
 			Status:             partialUpload.Status,
 			ErrorMessage:       partialUpload.ErrorMessage,
+			ErrorCode:          partialUpload.ErrorCode,
 			DownloadURL:        downloadURL,
 			FileSize:           partialUpload.TotalSize,
 			MaxDownloads:       partialUpload.MaxDownloads,

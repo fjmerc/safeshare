@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
 // validateStoredFilename validates that a stored filename is safe to use in file paths.
@@ -45,12 +46,26 @@ func validateStoredFilename(filename string) error {
 // CreateFile inserts a new file record into the database
 // Note: ExpiresAt is formatted as RFC3339 to ensure SQLite datetime() can parse it.
 // Go's time.Time when passed directly includes monotonic clock that SQLite cannot parse.
+//
+// Used by cmd/import-file (bulk CLI import, bypassing the HTTP upload path and
+// therefore ADR-015's synchronous scan). scan_status is always set to
+// "not_scanned" here — never NULL, and not conditioned on whether malware
+// scanning happens to be enabled right now (bug-hunter finding, L2): the CLI
+// shares no process with the running server and has no reliable way to read
+// its live, DB-backed feature-flag state (FEATURE_MALWARE_SCAN can be
+// toggled at runtime via the admin API, independent of this process's own
+// environment), and a NULL here would be indistinguishable from a legacy,
+// pre-ADR-015 row. "not_scanned" is unconditionally true instead: a
+// CLI-imported file's content is, honestly, never inspected by this path,
+// regardless of server configuration — see docs/CHANGELOG.md and
+// cmd/import-file/README.md.
 func CreateFile(db *sql.DB, file *models.File) error {
 	query := `
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			scan_status, scan_result
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
@@ -69,6 +84,8 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		file.PasswordHash,
 		file.UserID,
 		file.SHA256Hash,
+		scanning.ScanStatusNotScanned,
+		"imported via CLI",
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)

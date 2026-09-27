@@ -1324,6 +1324,18 @@ Test results:
 | `FILE_TOO_LARGE` | 413 | Exceeds MAX_FILE_SIZE |
 | `QUOTA_EXCEEDED` | 507 | Storage quota exceeded |
 | `INSUFFICIENT_STORAGE` | 507 | Not enough disk space |
+| `UNSCANNABLE_UPLOAD` | 422 | (`POST /api/upload/init`, ADR-015) File cannot be scanned (E2E encrypted or exceeds the scan size limit) and this server requires scannable uploads |
+
+### Assembly failure (`status: "failed"`)
+
+When `FEATURE_MALWARE_SCAN=true`, chunk assembly (`GET /api/upload/status/:upload_id`) now includes a synchronous malware scan of the reassembled content before encryption/storage (ADR-015). A failed assembly's `error_code` field gives the machine-readable reason, in addition to the human-readable `error_message`:
+
+| `error_code` | Meaning |
+|---|---|
+| `MALWARE_DETECTED` | The file was scanned and found infected. No claim code is ever issued; not retryable with the same content. |
+| `SCAN_UNAVAILABLE` | The malware scanner could not be reached after 3 retries (5s/15s/45s backoff). Retryable — re-submit `/complete` once the scanner recovers, or set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to proceed unverified instead of failing. |
+
+`error_code` may be absent (`null`/omitted) for assembly failures unrelated to scanning (e.g. a disk error).
 
 ## Backward Compatibility
 

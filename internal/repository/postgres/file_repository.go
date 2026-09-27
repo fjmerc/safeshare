@@ -37,8 +37,8 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at
 	`
 
@@ -50,6 +50,18 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 	var sha256Hash *string
 	if file.SHA256Hash != "" {
 		sha256Hash = &file.SHA256Hash
+	}
+
+	// ADR-015: the synchronous scan verdict is known before the record is
+	// ever created, so it's persisted at insert time rather than via a later
+	// UpdateScanStatus call. nil leaves the columns NULL (scanning disabled,
+	// or a legacy caller that doesn't set them).
+	var scanStatus, scanResult *string
+	if file.ScanStatus != "" {
+		scanStatus = &file.ScanStatus
+	}
+	if file.ScanResult != "" {
+		scanResult = &file.ScanResult
 	}
 
 	err := r.pool.QueryRow(
@@ -68,6 +80,9 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		sha256Hash,
 		file.ClientEncrypted,
 		nullableBytea(file.EncFileID),
+		scanStatus,
+		scanResult,
+		file.ScannedAt,
 	).Scan(&file.ID, &file.CreatedAt)
 
 	if err != nil {
@@ -91,12 +106,16 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 
 		// Check quota within transaction
 		var currentUsage int64
+		// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+		// are already inserted with file_size=0, but exclude them explicitly
+		// too, so a future insert bug can't silently reintroduce quota inflation.
 		query := `
 			SELECT
 				COALESCE(SUM(file_size), 0) +
 				COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
 			FROM files
 			WHERE expires_at > NOW()
+			AND (scan_status IS NULL OR scan_status != 'infected')
 		`
 		if err := tx.QueryRow(ctx, query).Scan(&currentUsage); err != nil {
 			return fmt.Errorf("failed to get current usage: %w", err)
@@ -112,8 +131,8 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			INSERT INTO files (
 				claim_code, original_filename, stored_filename, file_size,
 				mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-				client_encrypted, enc_file_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			RETURNING id, created_at
 		`
 
@@ -125,6 +144,16 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		var sha256Hash *string
 		if file.SHA256Hash != "" {
 			sha256Hash = &file.SHA256Hash
+		}
+
+		// ADR-015: see Create's comment above — the scan verdict is known
+		// before the record is created.
+		var scanStatus, scanResult *string
+		if file.ScanStatus != "" {
+			scanStatus = &file.ScanStatus
+		}
+		if file.ScanResult != "" {
+			scanResult = &file.ScanResult
 		}
 
 		err = tx.QueryRow(
@@ -143,6 +172,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			sha256Hash,
 			file.ClientEncrypted,
 			nullableBytea(file.EncFileID),
+			scanStatus,
+			scanResult,
+			file.ScannedAt,
 		).Scan(&file.ID, &file.CreatedAt)
 
 		if err != nil {
@@ -1358,12 +1390,14 @@ func (r *FileRepository) batchDeleteFiles(ctx context.Context, fileIDs []int64) 
 
 // GetTotalUsage returns the total storage used by active files and partial uploads.
 func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): see CreateWithQuotaCheck.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
 		FROM files
 		WHERE expires_at > NOW()
+		AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 
 	var totalUsage int64
@@ -1377,8 +1411,11 @@ func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
 
 // GetStats returns statistics about file storage.
 func (r *FileRepository) GetStats(ctx context.Context, uploadDir string) (*repository.FileStats, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+	// count toward the file total but never toward storageUsed — see
+	// CreateWithQuotaCheck.
 	query := `
-		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN scan_status IS NULL OR scan_status != 'infected' THEN file_size ELSE 0 END), 0)
 		FROM files
 		WHERE expires_at > NOW()
 	`

@@ -6194,7 +6194,7 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	}
 
 	// Test SetAssemblyFailed
-	err = repos.PartialUploads.SetAssemblyFailed(ctx, upload.UploadID, "test failure reason")
+	err = repos.PartialUploads.SetAssemblyFailed(ctx, upload.UploadID, "test failure reason", "")
 	if err != nil {
 		t.Fatalf("SetAssemblyFailed() error = %v", err)
 	}
@@ -6206,6 +6206,44 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	}
 	if retrieved.Status != "failed" {
 		t.Errorf("Status = %q, want %q", retrieved.Status, "failed")
+	}
+	if retrieved.ErrorCode != nil {
+		t.Errorf("ErrorCode = %v, want nil for empty error code", *retrieved.ErrorCode)
+	}
+}
+
+// TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode verifies the
+// ADR-015 machine-readable error_code column round-trips through
+// SetAssemblyFailed/GetByUploadID against PostgreSQL.
+func TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	upload := &models.PartialUpload{
+		UploadID:       fmt.Sprintf("assembly-failed-code-%d", time.Now().UnixNano()),
+		Filename:       "failed-file.bin",
+		TotalSize:      1024,
+		ChunkSize:      256,
+		TotalChunks:    4,
+		ExpiresInHours: 24,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, upload); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	err := repos.PartialUploads.SetAssemblyFailed(ctx, upload.UploadID, "Upload rejected: malware detected (Eicar-Test-Signature)", "MALWARE_DETECTED")
+	if err != nil {
+		t.Fatalf("SetAssemblyFailed() error = %v", err)
+	}
+
+	retrieved, err := repos.PartialUploads.GetByUploadID(ctx, upload.UploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID() error = %v", err)
+	}
+	if retrieved.ErrorCode == nil || *retrieved.ErrorCode != "MALWARE_DETECTED" {
+		t.Errorf("ErrorCode = %v, want %q", retrieved.ErrorCode, "MALWARE_DETECTED")
 	}
 }
 

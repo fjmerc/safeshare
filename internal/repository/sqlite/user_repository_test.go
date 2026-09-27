@@ -75,6 +75,9 @@ func setupUserTestDB(t *testing.T) *sql.DB {
 			password_hash TEXT,
 			user_id INTEGER,
 			sha256_hash TEXT,
+			scan_status TEXT DEFAULT NULL,
+			scan_result TEXT DEFAULT NULL,
+			scanned_at TEXT DEFAULT NULL,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 		)
 	`)
@@ -1050,4 +1053,48 @@ func TestUserRepository_ImplementsInterface(t *testing.T) {
 	defer db.Close()
 
 	var _ repository.UserRepository = NewUserRepository(db)
+}
+
+// TestUserRepository_InfectedRowsHiddenFromOwner checks that an owner can't
+// see, rename or delete the audit row of their own infected upload
+// (ADR-015): the row is evidence, and downloads of it are already blocked.
+func TestUserRepository_InfectedRowsHiddenFromOwner(t *testing.T) {
+	db := setupUserTestDB(t)
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	user, err := repo.Create(ctx, "testuser", "test@example.com", "hashedpassword", "user", false)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	expiresAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	result, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, user_id, uploader_ip, scan_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "infectedcode", "evil.bin", "quarantined-x", 0, "application/octet-stream", expiresAt, user.ID, "127.0.0.1", "infected")
+	if err != nil {
+		t.Fatalf("failed to insert infected row: %v", err)
+	}
+	fileID, _ := result.LastInsertId()
+
+	files, total, err := repo.GetFiles(ctx, user.ID, 50, 0)
+	if err != nil {
+		t.Fatalf("GetFiles failed: %v", err)
+	}
+	if total != 0 || len(files) != 0 {
+		t.Errorf("GetFiles returned %d rows (total %d), want the infected row hidden", len(files), total)
+	}
+
+	if _, err := repo.DeleteFile(ctx, fileID, user.ID); err != repository.ErrNotFound {
+		t.Errorf("DeleteFile on infected row: got %v, want ErrNotFound", err)
+	}
+	if _, err := repo.DeleteFileByClaimCode(ctx, "infectedcode", user.ID); err != repository.ErrNotFound {
+		t.Errorf("DeleteFileByClaimCode on infected row: got %v, want ErrNotFound", err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM files WHERE id = ?", fileID).Scan(&count); err != nil || count != 1 {
+		t.Errorf("infected audit row was removed (count=%d, err=%v)", count, err)
+	}
 }

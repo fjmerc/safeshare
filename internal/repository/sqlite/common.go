@@ -123,3 +123,23 @@ func nullableBlob(b []byte) interface{} {
 	}
 	return b
 }
+
+// nullableString converts an empty string to SQL NULL; anything else passes
+// through unchanged. Used for optional TEXT columns like scan_status/
+// scan_result, where "" means "not applicable" rather than a real value.
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// nullableTimeRFC3339 formats a nullable *time.Time for a SQLite DATETIME
+// column: nil becomes SQL NULL, matching the RFC3339 string format used
+// elsewhere in this package (see e.g. FileRepository.Create's expires_at).
+func nullableTimeRFC3339(t *time.Time) interface{} {
+	if t == nil {
+		return nil
+	}
+	return t.Format(time.RFC3339)
+}

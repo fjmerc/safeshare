@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -197,14 +198,23 @@ func handleResponse(resp *http.Response, target interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		// Try to decode error message
+		// Try to decode error message and machine-readable code
 		var errResp struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
 			errResp.Error = resp.Status
 		}
-		return newAPIError(resp.StatusCode, errResp.Error)
+		apiErr := newAPIError(resp.StatusCode, errResp.Error, errResp.Code)
+		// ADR-015: SCAN_PENDING/SCAN_UNAVAILABLE responses carry a
+		// Retry-After header telling the caller how long to wait.
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
+				apiErr.RetryAfter = time.Duration(seconds) * time.Second
+			}
+		}
+		return apiErr
 	}
 
 	if target != nil {

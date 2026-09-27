@@ -93,16 +93,89 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			return // Error already sent to client
 		}
 
+		// ADR-015: when the operator has opted into rejecting uploads that
+		// cannot be scanned at all (E2E ciphertext, or larger than the scanner's
+		// size limit), fail fast before doing any other work.
+		if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.RejectUnscannable && isUnscannable(cfg, header.Size, params.clientEncrypted) {
+			sendSmartError(w,
+				"This file cannot be scanned for malware (it is end-to-end encrypted or exceeds the scan size limit) and this server rejects unscannable uploads",
+				"UNSCANNABLE_UPLOAD", http.StatusUnprocessableEntity)
+			return
+		}
+
 		// Generate unique claim code
 		claimCode, err := generateUniqueClaimCode(ctx, w, repos)
 		if err != nil {
 			return // Error already sent to client
 		}
 
+		// ADR-015: scan the ORIGINAL uploaded bytes synchronously, before the
+		// file is encrypted/stored and before the claim code is ever handed to
+		// the client. The deadline is re-applied here so the scan (plus the
+		// encryption/storage that follows it) gets the same size-proportional
+		// budget as the initial upload did, plus the full CLAMAV_SCAN_TIMEOUT:
+		// if the read deadline passed mid-scan, net/http would cancel the
+		// request context and abort a slow-but-legitimate scan.
+		var scanBudget time.Duration
+		if cfg.Features.IsMalwareScanEnabled() {
+			scanBudget = time.Duration(cfg.ClamAV.ScanTimeout)*time.Second + 30*time.Second
+		}
+		extendTransferDeadlineWithExtra(w, cfg, header.Size, scanBudget)
+		verdict, scanErr := scanUpload(ctx, cfg, file, header.Size, params.clientEncrypted)
+		if scanErr != nil {
+			if !cfg.ClamAV.AllowUnverified {
+				slog.Error("malware scan failed; rejecting upload (fail closed)",
+					"error", scanErr,
+					"filename", header.Filename,
+					"client_ip", logIP(getClientIP(r), cfg),
+				)
+				w.Header().Set("Retry-After", "30")
+				sendSmartError(w, "Malware scanning is temporarily unavailable, please try again shortly", "SCAN_UNAVAILABLE", http.StatusServiceUnavailable)
+				return
+			}
+			slog.Warn("malware scan failed; proceeding unverified (MALWARE_SCAN_ALLOW_UNVERIFIED)",
+				"error", scanErr,
+				"filename", header.Filename,
+			)
+			verdict = scanVerdict{status: scanning.ScanStatusError, result: scanErr.Error()}
+		}
+
+		if verdict.status == scanning.ScanStatusInfected {
+			recordInfectedUpload(ctx, repos, cfg, r, claimCode, header, params, verdict)
+			sendSmartError(w, fmt.Sprintf("Malware detected: %s", verdict.result), "MALWARE_DETECTED", http.StatusUnprocessableEntity)
+			return
+		}
+
+		// Rewind past the bytes scanUpload consumed so processAndStoreFile sees
+		// the whole file from the start again.
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			slog.Error("failed to rewind upload after scan", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+
 		// Process and store file
 		result, err := processAndStoreFile(w, file, header, cfg)
 		if err != nil {
 			return // Error already sent to client
+		}
+
+		// TOCTOU defense in depth (bug-hunter finding): what was actually
+		// stored must be exactly what was scanned. The plain upload path
+		// reads both from the same multipart.File handle, so this should
+		// never actually fire, but it costs nothing to verify and closes the
+		// same class of bug on this path as the chunked one, should the
+		// assumption ever stop holding (e.g. a future change re-reads from a
+		// path instead of the handle). Compared BEFORE metadata stripping,
+		// which intentionally changes the bytes.
+		if verdict.hash != "" && verdict.hash != result.sha256Hash {
+			os.Remove(result.filePath)
+			slog.Error("stored content does not match scanned content; rejecting upload",
+				"claim_code", redactClaimCode(claimCode),
+				"filename", header.Filename,
+			)
+			sendSmartError(w, "Upload could not be verified and was rejected", "INTEGRITY_MISMATCH", http.StatusInternalServerError)
+			return
 		}
 
 		// Strip metadata if enabled and supported
@@ -118,8 +191,98 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 		}
 
 		// Create database record and handle response
-		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured)
+		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured, verdict)
 	}
+}
+
+// isUnscannable reports whether an upload's content cannot be scanned at
+// all: end-to-end encrypted (opaque ciphertext to the server) or larger than
+// the configured scan size limit.
+func isUnscannable(cfg *config.Config, size int64, clientEncrypted bool) bool {
+	if clientEncrypted {
+		return true
+	}
+	return cfg.ClamAV.MaxFileSize > 0 && size > cfg.ClamAV.MaxFileSize
+}
+
+// recordInfectedUpload writes a best-effort audit row for a rejected,
+// infected upload: no file is ever written to disk and the claim code is
+// never returned to the client. Insert failures are logged, not surfaced —
+// the caller's 422 response to the client does not depend on this succeeding.
+//
+// Bug-hunter finding (post-ADR-015 review): the audit row must NOT be able
+// to inflate quota/storage accounting. FileSize is recorded as 0 (the
+// uploader's declared size never touched disk — it's logged and put on the
+// webhook payload instead, for anyone who wants it), and the row gets a
+// bounded expiry independent of what the uploader requested — in particular
+// never "never expire" (expires_in_hours=0) — so repeated EICAR uploads
+// can't permanently pin quota-counted rows. Defense in depth: the storage
+// queries themselves (CreateWithQuotaCheck/GetTotalUsage/GetStats in both
+// sqlite and postgres) additionally exclude scan_status='infected' rows.
+func recordInfectedUpload(ctx context.Context, repos *repository.Repositories, cfg *config.Config, r *http.Request, claimCode string, header *multipart.FileHeader, params *uploadParams, verdict scanVerdict) {
+	clientIP := getClientIP(r)
+
+	var userID *int64
+	if user := middleware.GetUserFromContext(r); user != nil {
+		userID = &user.ID
+	}
+
+	// Bounded regardless of what the uploader asked for (params.neverExpire /
+	// params.expiresInMinutes are deliberately ignored here) — this is an
+	// audit record, not the file the uploader wanted.
+	auditExpiresAt := time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours()) * time.Hour)
+
+	now := time.Now()
+	sanitizedFilename := utils.SanitizeFilename(header.Filename)
+	fileRecord := &models.File{
+		ClaimCode:        claimCode,
+		OriginalFilename: sanitizedFilename,
+		// Placeholder to satisfy the NOT NULL column; no file is ever written
+		// for an infected upload, and claim.go's scanGate blocks download by
+		// scan_status before this path would ever be opened.
+		StoredFilename: "quarantined-" + uuid.New().String(),
+		// Never the uploader's declared size — see the doc comment above.
+		FileSize:        0,
+		MimeType:        "application/octet-stream",
+		ExpiresAt:       auditExpiresAt,
+		MaxDownloads:    params.maxDownloads,
+		UploaderIP:      storeIP(clientIP, cfg),
+		PasswordHash:    params.passwordHash,
+		UserID:          userID,
+		ClientEncrypted: params.clientEncrypted,
+		ScanStatus:      verdict.status,
+		ScanResult:      verdict.result,
+		ScannedAt:       &now,
+	}
+
+	if err := repos.Files.Create(ctx, fileRecord); err != nil {
+		metrics.MalwareAuditRecordFailuresTotal.Inc()
+		slog.Error("failed to record infected upload audit row", "error", err, "claim_code", redactClaimCode(claimCode))
+	}
+
+	scanStatus := verdict.status
+	scanResult := verdict.result
+	EmitWebhookEvent(&webhooks.Event{
+		Type:      webhooks.EventFileInfected,
+		Timestamp: now,
+		File: webhooks.FileData{
+			ID:         fileRecord.ID,
+			ClaimCode:  claimCode,
+			Filename:   sanitizedFilename,
+			Size:       header.Size, // declared size; nothing was actually stored
+			ExpiresAt:  auditExpiresAt,
+			ScanStatus: &scanStatus,
+			ScanResult: &scanResult,
+		},
+	})
+
+	slog.Warn("malware detected in upload; rejected before storage",
+		"virus_name", verdict.result,
+		"claim_code", redactClaimCode(claimCode),
+		"filename", sanitizedFilename,
+		"declared_size", header.Size,
+		"client_ip", logIP(clientIP, cfg),
+	)
 }
 
 // validateAndGetUploadedFile validates the request and retrieves the uploaded file
@@ -453,8 +616,12 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	return written, sha256Hash, encFileID, nil
 }
 
-// createRecordAndRespond creates database record and sends response
-func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, header *multipart.FileHeader, params *uploadParams, claimCode string, result *fileProcessingResult, quotaConfigured bool) {
+// createRecordAndRespond creates database record and sends response.
+// verdict carries the ADR-015 synchronous scan outcome (already known not to
+// be "infected" by the time this is called — see UploadHandler) and is
+// persisted onto the file record; a zero verdict (scanning disabled) leaves
+// the scan columns NULL.
+func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, header *multipart.FileHeader, params *uploadParams, claimCode string, result *fileProcessingResult, quotaConfigured bool, verdict scanVerdict) {
 	clientIP := getClientIP(r)
 
 	// Get user ID if authenticated
@@ -487,6 +654,12 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		ClientEncrypted:  params.clientEncrypted,
 		EncFileID:        result.encFileID,
 	}
+	if verdict.status != "" {
+		now := time.Now()
+		fileRecord.ScanStatus = verdict.status
+		fileRecord.ScanResult = verdict.result
+		fileRecord.ScannedAt = &now
+	}
 
 	// Create database record with quota check if needed
 	if err := createFileRecord(ctx, w, repos, cfg, fileRecord, result.filePath, quotaConfigured, clientIP); err != nil {
@@ -494,7 +667,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	// Send success response and record metrics
-	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP, repos)
+	sendSuccessResponse(w, r, cfg, fileRecord, claimCode, result, sanitizedFilename, header, params.passwordHash, clientIP)
 }
 
 // createFileRecord creates the database record with optional quota check
@@ -527,8 +700,10 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 	return nil
 }
 
-// sendSuccessResponse sends the upload success response, records metrics, and triggers async scanning.
-func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string, repos *repository.Repositories) {
+// sendSuccessResponse sends the upload success response and records metrics.
+// The malware scan already ran synchronously (ADR-015) before this is
+// called; fileRecord.ScanStatus already reflects its outcome.
+func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
 	downloadURL := buildDownloadURL(r, cfg, claimCode)
 
 	response := models.UploadResponse{
@@ -563,9 +738,6 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		},
 	})
 
-	// Trigger async malware scan (no-op if feature is disabled)
-	triggerAsyncScan(fileRecord.ID, result.filePath, claimCode, sanitizedFilename, result.written, result.detectedMimeType, fileRecord.ExpiresAt, cfg, repos)
-
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),
 		"filename", header.Filename,
@@ -574,6 +746,7 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"expires_at", fileRecord.ExpiresAt,
 		"max_downloads", fileRecord.MaxDownloads,
 		"password_protected", passwordHash != "",
+		"scan_status", fileRecord.ScanStatus,
 		"client_ip", logIP(clientIP, cfg),
 		"user_agent", getUserAgent(r),
 	)
@@ -711,90 +884,4 @@ func computeFileHash(filePath string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-// triggerAsyncScan starts a background malware scan if the feature is enabled.
-// It runs in a separate goroutine so it does not block the upload response.
-func triggerAsyncScan(fileID int64, filePath string, claimCode string, filename string, fileSize int64, mimeType string, expiresAt time.Time, cfg *config.Config, repos *repository.Repositories) {
-	if !cfg.Features.IsMalwareScanEnabled() {
-		return
-	}
-
-	// Set initial scan status to pending before launching the goroutine so
-	// the DB reflects the intent even if the goroutine has not yet started.
-	ctx := context.Background()
-	if err := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusPending, ""); err != nil {
-		slog.Error("failed to set scan status to pending", "error", err, "file_id", fileID)
-		return
-	}
-
-	go func() {
-		scanner := scanning.NewClamAVScanner(
-			cfg.ClamAV.Host,
-			cfg.ClamAV.Port,
-			time.Duration(cfg.ClamAV.Timeout)*time.Second,
-			cfg.ClamAV.MaxFileSize,
-		)
-
-		result, err := scanner.ScanFile(filePath)
-		if err != nil {
-			slog.Error("malware scan failed",
-				"error", err,
-				"file_id", fileID,
-				"claim_code", redactClaimCode(claimCode),
-			)
-			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusError, err.Error()); updateErr != nil {
-				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-			}
-			return
-		}
-
-		if result.Infected {
-			slog.Warn("malware detected in uploaded file",
-				"virus_name", result.VirusName,
-				"file_id", fileID,
-				"claim_code", redactClaimCode(claimCode),
-				"scan_duration", result.Duration,
-			)
-
-			// Update status to infected
-			if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusInfected, result.VirusName); updateErr != nil {
-				slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-			}
-
-			// Emit webhook
-			scanStatus := scanning.ScanStatusInfected
-			virusName := result.VirusName
-			EmitWebhookEvent(&webhooks.Event{
-				Type:      webhooks.EventFileInfected,
-				Timestamp: time.Now(),
-				File: webhooks.FileData{
-					ID:         fileID,
-					ClaimCode:  claimCode,
-					Filename:   filename,
-					Size:       fileSize,
-					MimeType:   mimeType,
-					ExpiresAt:  expiresAt,
-					ScanStatus: &scanStatus,
-					ScanResult: &virusName,
-				},
-			})
-
-			// Delete the infected file from disk
-			if err := os.Remove(filePath); err != nil {
-				slog.Error("failed to remove infected file", "error", err, "file_id", fileID)
-			}
-			return
-		}
-
-		// File is clean
-		slog.Info("malware scan completed: clean",
-			"file_id", fileID,
-			"claim_code", redactClaimCode(claimCode),
-			"scan_duration", result.Duration,
-		)
-		if updateErr := repos.Files.UpdateScanStatus(ctx, fileID, scanning.ScanStatusClean, ""); updateErr != nil {
-			slog.Error("failed to update scan status", "error", updateErr, "file_id", fileID)
-		}
-	}()
 }

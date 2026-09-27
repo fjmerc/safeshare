@@ -9,16 +9,80 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
+
+// scanGateResult is the outcome of scanGate: whether a download may proceed,
+// and if not, the response to send.
+type scanGateResult struct {
+	blocked    bool
+	title      string
+	message    string
+	code       string
+	statusCode int
+	retryAfter int // seconds; 0 means no Retry-After header
+}
+
+// scanGate enforces ADR-015's fail-closed download policy, gated on the
+// file's OWN scan_status rather than the server's current
+// MALWARE_SCAN_ENABLED flag — a file scanned (or left unscanned) under a
+// different server configuration must still be judged by what its own row
+// says, not by whether scanning happens to be on right now.
+//
+//   - infected: always blocked (410) — never overridden by AllowUnverified.
+//   - pending: blocked (423, Retry-After) unless AllowUnverified.
+//   - error: blocked (403) unless AllowUnverified.
+//   - "", clean, not_scanned, skipped, or any other value: allowed. A NULL/
+//     empty status covers scanning-disabled and pre-ADR-015 legacy files;
+//     not_scanned covers E2E/oversized content that was deliberately never
+//     inspected (see scanUpload) — neither is grounds to block on its own.
+func scanGate(file *models.File, cfg *config.Config) scanGateResult {
+	switch file.ScanStatus {
+	case scanning.ScanStatusInfected:
+		return scanGateResult{
+			blocked:    true,
+			title:      "File Quarantined",
+			message:    "This file was detected as malware and is not available for download.",
+			code:       "FILE_QUARANTINED",
+			statusCode: http.StatusGone,
+		}
+	case scanning.ScanStatusPending:
+		if cfg.ClamAV.AllowUnverified {
+			return scanGateResult{}
+		}
+		return scanGateResult{
+			blocked:    true,
+			title:      "Scan In Progress",
+			message:    "This file is still being scanned for malware. Please try again shortly.",
+			code:       "SCAN_PENDING",
+			statusCode: http.StatusLocked,
+			retryAfter: 15,
+		}
+	case scanning.ScanStatusError:
+		if cfg.ClamAV.AllowUnverified {
+			return scanGateResult{}
+		}
+		return scanGateResult{
+			blocked:    true,
+			title:      "File Unavailable",
+			message:    "This file is unavailable — it could not be verified as safe.",
+			code:       "SCAN_FAILED",
+			statusCode: http.StatusForbidden,
+		}
+	default:
+		return scanGateResult{}
+	}
+}
 
 // reservationFinalizeTimeout bounds the Commit/Cancel/Complete of a download
 // session, which runs detached from the (possibly cancelled) request context.
@@ -84,16 +148,22 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			return
 		}
 
-		// Block download of infected files
-		if file.ScanStatus == scanning.ScanStatusInfected {
-			slog.Warn("download blocked: file infected",
+		// ADR-015: gate the download on this file's own scan verdict before
+		// any password check, in-flight tracking, or reservation/session
+		// work — a blocked request must never reserve or commit a download
+		// slot.
+		if gate := scanGate(file, cfg); gate.blocked {
+			slog.Warn("download blocked by scan gate",
+				"reason", gate.code,
 				"claim_code", redactClaimCode(claimCode),
-				"virus_name", file.ScanResult,
+				"scan_status", file.ScanStatus,
+				"scan_result", file.ScanResult,
 				"client_ip", logIP(getClientIP(r), cfg),
 			)
-			sendErrorResponse(w, r, "File Quarantined",
-				"This file was detected as malware and is not available for download.",
-				"FILE_QUARANTINED", http.StatusGone)
+			if gate.retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(gate.retryAfter))
+			}
+			sendErrorResponse(w, r, gate.title, gate.message, gate.code, gate.statusCode)
 			return
 		}
 
@@ -357,6 +427,11 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, claimCode)
 
+		// ADR-015: report the scan gate's verdict so clients can show a
+		// meaningful state (e.g. "still being scanned") instead of a bare
+		// 423/403/410 the next time they try to actually download.
+		gate := scanGate(file, cfg)
+
 		// Return file info as JSON
 		response := map[string]interface{}{
 			"claim_code":             file.ClaimCode,
@@ -373,6 +448,8 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"download_url":           downloadURL,
 			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
 			"client_encrypted":       file.ClientEncrypted,
+			"scan_status":            file.ScanStatus,
+			"download_available":     !gate.blocked,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

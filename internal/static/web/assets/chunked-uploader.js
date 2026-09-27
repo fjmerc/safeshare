@@ -203,8 +203,7 @@ class ChunkedUploader {
             if (this._isCancellation(error)) {
                 throw this._cancellationError();
             }
-            this.emit('error', { stage: 'init', error: error.message });
-            throw error;
+            throw this._reportError(error, { stage: 'init', error: error.message, code: error.code || null });
         }
     }
 
@@ -301,25 +300,17 @@ class ChunkedUploader {
                 // won't succeed on retry; neither will a rate limit that
                 // lasts longer than we're willing to wait.
                 if (error.retryRecommended === false || this._retryAfterTooLong(error)) {
-                    this.emit('error', {
-                        stage: 'chunk_upload',
-                        chunkNumber,
-                        error: error.message,
-                        code: error.code,
-                        retryRecommended: false
-                    });
-                    throw new Error(`Chunk ${chunkNumber} upload failed (non-retryable error: ${error.code}): ${error.message}`);
+                    throw this._reportError(
+                        new Error(`Chunk ${chunkNumber} upload failed (non-retryable error: ${error.code}): ${error.message}`),
+                        { stage: 'chunk_upload', chunkNumber, error: error.message, code: error.code, retryRecommended: false }
+                    );
                 }
 
                 if (attempt >= maxAttempts) {
-                    this.emit('error', {
-                        stage: 'chunk_upload',
-                        chunkNumber,
-                        error: error.message,
-                        code: error.code,
-                        attempts: attempt
-                    });
-                    throw new Error(`Failed to upload chunk ${chunkNumber} after ${maxAttempts} attempts: ${error.message}`);
+                    throw this._reportError(
+                        new Error(`Failed to upload chunk ${chunkNumber} after ${maxAttempts} attempts: ${error.message}`),
+                        { stage: 'chunk_upload', chunkNumber, error: error.message, code: error.code, attempts: attempt }
+                    );
                 }
 
                 const delay = this._retryDelay(attempt, error.retryAfter);
@@ -488,8 +479,7 @@ class ChunkedUploader {
                 // surface an AbortError message as a failure.
                 throw this._cancellationError();
             }
-            this.emit('error', { stage: 'complete', error: error.message });
-            throw error;
+            throw this._reportError(error, { stage: 'complete', error: error.message, code: error.code || null });
         } finally {
             this.isCompleting = false;
         }
@@ -555,7 +545,11 @@ class ChunkedUploader {
                     attempts: attempts + 1,
                     maxAttempts: maxAttempts,
                     elapsedSeconds: elapsed,
-                    message: `Processing file... (${elapsed}s elapsed)`
+                    // ADR-015: assembly now includes a synchronous malware
+                    // scan before the file is stored, so this can legitimately
+                    // take a while on a large file — say so rather than leave
+                    // "Processing" looking stuck.
+                    message: `Processing and scanning... (${elapsed}s elapsed)`
                 });
 
                 // Check status field
@@ -583,6 +577,11 @@ class ChunkedUploader {
                     // Assembly failed - throw error
                     const error = new Error(status.error_message || 'File assembly failed');
                     error.terminal = true;
+                    // ADR-015: machine-readable reason (e.g. MALWARE_DETECTED,
+                    // SCAN_UNAVAILABLE), when the server sent one, so the UI
+                    // can show a purpose-specific message instead of the raw
+                    // error_message text.
+                    error.code = status.error_code || null;
                     throw error;
                 }
 
@@ -603,19 +602,17 @@ class ChunkedUploader {
                 // server's actual failure messages, so real failures were
                 // retried as network errors.
                 if (error.terminal) {
-                    this.emit('error', { stage: 'assembly', error: error.message });
-                    throw error;
+                    throw this._reportError(error, { stage: 'assembly', error: error.message, code: error.code || null });
                 }
 
                 // For network errors, retry with exponential backoff against a
                 // separate budget (doesn't consume assembly-progress attempts)
                 consecutiveErrors++;
                 if (consecutiveErrors >= maxConsecutiveErrors) {
-                    this.emit('error', {
-                        stage: 'assembly_polling',
-                        error: `Polling failed after ${maxConsecutiveErrors} consecutive errors: ${error.message}`
-                    });
-                    throw new Error(`Assembly status polling failed after ${maxConsecutiveErrors} consecutive errors`);
+                    throw this._reportError(
+                        new Error(`Assembly status polling failed after ${maxConsecutiveErrors} consecutive errors`),
+                        { stage: 'assembly_polling', error: `Polling failed after ${maxConsecutiveErrors} consecutive errors: ${error.message}` }
+                    );
                 }
 
                 // Exponential backoff for network errors (up to 10 seconds)
@@ -915,6 +912,20 @@ class ChunkedUploader {
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
         return hashHex;
+    }
+
+    /**
+     * Emit 'error' for a failure and mark the error as reported, so outer
+     * layers (complete()'s catch, the page's own catch) don't report the same
+     * failure again — one failure used to produce up to three toasts.
+     * @returns {Error} the same error, for `throw this._reportError(...)`
+     */
+    _reportError(error, data) {
+        if (!error.reported) {
+            this.emit('error', data);
+            error.reported = true;
+        }
+        return error;
     }
 
     /**
