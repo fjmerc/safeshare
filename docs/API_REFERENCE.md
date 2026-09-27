@@ -627,6 +627,16 @@ curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
 - Returned when Range header is present
 - Headers include `Content-Range`
 
+**Files with `max_downloads` set** also include:
+- `X-Download-Session`: an opaque bearer token for this download session.
+  Resumable clients (pause/resume, retry) should send it back as an
+  `X-Download-Session` request header on follow-up Range requests for the
+  same file so the resumed download is recognised as a continuation and
+  counts once, not once per request. See `docs/HTTP_RANGE_SUPPORT.md` for the
+  full counting semantics (ADR-014).
+- `Cache-Control: private, no-store`: the response depends on per-recipient
+  session state and must not be cached.
+
 **Error Responses**:
 - 401 Unauthorized: Password required or incorrect
 - 404 Not Found: Invalid claim code or file expired
@@ -1391,7 +1401,7 @@ Create a new webhook endpoint.
 
 **Supported Event Types**:
 - `file.uploaded` - File successfully uploaded
-- `file.downloaded` - File downloaded by user
+- `file.downloaded` - File downloaded by user. For files with `max_downloads` set, this fires once the download is fully complete (all bytes delivered, possibly across several resumed requests) — the download can already have been counted toward `max_downloads` earlier, so `file.expired` may fire before `file.downloaded` for the same download.
 - `file.deleted` - File deleted by user or admin
 - `file.expired` - File expired (time-based or download limit)
 

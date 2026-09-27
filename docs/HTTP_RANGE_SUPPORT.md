@@ -45,6 +45,16 @@ SafeShare supports all RFC 7233 range formats:
 **416 Range Not Satisfiable responses**:
 - `Content-Range: bytes */total` - Indicates available file size
 
+**Capped-download responses** (`max_downloads` set; see ADR-014):
+- `X-Download-Session` - Opaque bearer token identifying this download's
+  session. A resumable download client (including SafeShare's own web UI)
+  should send this back as an `X-Download-Session` request header on any
+  follow-up Range request for the same file, so a pause/resume is recognised
+  as the same download instead of a separate, independently-counted request.
+  Not present on files with no download cap.
+- `Cache-Control: private, no-store` - The response depends on per-recipient
+  session state, so it must never be cached by a browser or CDN.
+
 ## Implementation Details
 
 ### Architecture
@@ -202,13 +212,28 @@ curl -v -r 5000-1000 "http://localhost:8080/api/claim/$CLAIM_CODE"
 
 ### Download Counting
 
-**Important**: Each HTTP request (including range requests) increments the download counter. This means:
+**As of ADR-014**, a download only counts against `max_downloads` when the
+recipient has actually received the file, not on every individual HTTP
+request:
 
-- Full download (no Range): 1 download counted
-- Resume (2 range requests): 2 downloads counted
-- Parallel download manager (10 ranges): 10 downloads counted
+- Full download (no Range): 1 download counted, immediately.
+- Resume across several Range requests, presenting the returned
+  `X-Download-Session` token on each follow-up request: 1 download counted
+  total, regardless of how many requests it took.
+- A small "probe" Range request (e.g. a link-preview crawler fetching a few
+  bytes) below a per-file threshold: free, and does not consume a slot.
+  Repeated small probes are bounded by a per-file budget — once enough
+  uncounted probe bytes accumulate, subsequent probes start counting.
+- A parallel download manager fetching several ranges *without* reusing the
+  session token: only the request(s) that push past the probe threshold (or
+  cover the whole file) count; once the file's `max_downloads` cap is
+  reached, further requests are denied with `410 Gone` rather than being
+  served and separately counted.
 
-**Recommendation**: For files with strict download limits, inform users that resume/parallel downloads may consume multiple download credits.
+**Recommendation**: resumable download clients should always capture and
+resend `X-Download-Session` (SafeShare's own web UI already does this) so a
+paused/resumed download reliably counts once. See ADR-014 for the full
+threshold/budget design and the SafeShare SDKs for reference client behavior.
 
 ### Rate Limiting
 
@@ -248,9 +273,14 @@ If `Accept-Ranges` is missing, the file may not support Range requests (rare).
 
 ### Download Counts Increasing Rapidly
 
-**Cause**: Download manager using multiple parallel connections
+**Cause**: A download manager or client using multiple parallel connections
+*without* reusing the `X-Download-Session` token — each range that pushes
+past the free-probe threshold on its own is treated as a separate download
+attempt.
 
 **Solution**:
+- Use a client that captures and resends `X-Download-Session` (SafeShare's
+  own web UI does this automatically)
 - Increase `max_downloads` when uploading
 - Or use `max_downloads: null` for unlimited downloads
 
