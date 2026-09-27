@@ -646,3 +646,73 @@ func TestDetectMimeType(t *testing.T) {
 		})
 	}
 }
+
+// TestSaveChunk_AtomicAndTempFilesIgnored checks that SaveChunk leaves no temp
+// file behind and that stray temp files (e.g. from an interrupted write) are
+// never counted, sized or listed as chunks.
+func TestSaveChunk_AtomicAndTempFilesIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	uploadID := "test-upload-atomic"
+
+	if err := SaveChunk(tmpDir, uploadID, 0, []byte("first")); err != nil {
+		t.Fatalf("SaveChunk failed: %v", err)
+	}
+	// Overwrite replaces the content in full.
+	if err := SaveChunk(tmpDir, uploadID, 0, []byte("second!")); err != nil {
+		t.Fatalf("SaveChunk overwrite failed: %v", err)
+	}
+	got, err := os.ReadFile(GetChunkPath(tmpDir, uploadID, 0))
+	if err != nil || string(got) != "second!" {
+		t.Fatalf("chunk content = %q, %v; want %q", got, err, "second!")
+	}
+
+	chunksDir := GetUploadChunksDir(tmpDir, uploadID)
+	entries, _ := os.ReadDir(chunksDir)
+	if len(entries) != 1 {
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("chunks dir has %v, want only chunk_0", names)
+	}
+
+	// Simulate leftovers from an interrupted write (and an old-style
+	// name that Sscanf("chunk_%d") would have accepted).
+	for _, name := range []string{".chunk_1.tmp-123", "chunk_2.tmp-456"} {
+		if err := os.WriteFile(filepath.Join(chunksDir, name), []byte("partial"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if count, _ := GetChunkCount(tmpDir, uploadID); count != 1 {
+		t.Errorf("GetChunkCount = %d, want 1", count)
+	}
+	if size, _ := GetUploadChunksSize(tmpDir, uploadID); size != int64(len("second!")) {
+		t.Errorf("GetUploadChunksSize = %d, want %d", size, len("second!"))
+	}
+	if nums, _ := GetChunkNumbers(tmpDir, uploadID); len(nums) != 1 || nums[0] != 0 {
+		t.Errorf("GetChunkNumbers = %v, want [0]", nums)
+	}
+}
+
+func TestParseChunkFileName(t *testing.T) {
+	cases := map[string]struct {
+		n  int
+		ok bool
+	}{
+		"chunk_0":         {0, true},
+		"chunk_42":        {42, true},
+		"chunk_":          {0, false},
+		"chunk_-1":        {0, false},
+		"chunk_3.tmp-99":  {0, false},
+		".chunk_3.tmp-99": {0, false},
+		"chunk_1a":        {0, false},
+		"other_1":         {0, false},
+	}
+	for name, want := range cases {
+		n, ok := parseChunkFileName(name)
+		if ok != want.ok || (ok && n != want.n) {
+			t.Errorf("parseChunkFileName(%q) = %d, %v; want %d, %v", name, n, ok, want.n, want.ok)
+		}
+	}
+}

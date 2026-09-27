@@ -1317,7 +1317,9 @@ Test results:
 | `UPLOAD_COMPLETED` | 409 | Upload already completed |
 | `CHUNK_TOO_LARGE` | 413 | Chunk exceeds size limit |
 | `CHUNK_SIZE_MISMATCH` | 400 | Chunk size doesn't match expected |
-| `CHUNK_CORRUPTION` | 409 | Chunk exists with different size |
+| `UPLOAD_NOT_ACCEPTING` | 409 | Upload is being assembled (or assembly failed); chunks can no longer be written |
+| `CHUNK_CONFLICT` | 409 | Chunk was already uploaded with different content |
+| `MISSING_CHUNKS` | 400 | `/complete` called before all chunks arrived (`missing_chunks` lists them) |
 | `TOO_MANY_CHUNKS` | 400 | More than 10,000 chunks |
 | `FILE_TOO_LARGE` | 413 | Exceeds MAX_FILE_SIZE |
 | `QUOTA_EXCEEDED` | 507 | Storage quota exceeded |
