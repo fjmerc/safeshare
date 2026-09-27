@@ -383,6 +383,59 @@ describe("SafeShareClient", () => {
     });
   });
 
+  describe("upload", () => {
+    it("should send max_downloads and map the server's upload response", async () => {
+      const { mkdtempSync, writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const dir = mkdtempSync(join(tmpdir(), "safeshare-sdk-"));
+      const filePath = join(dir, "report.txt");
+      writeFileSync(filePath, "hello");
+
+      const mockFetch = createMockFetch([
+        {
+          status: 200,
+          body: {
+            max_file_size: 1073741824,
+            chunked_upload_threshold: 104857600,
+            chunk_size: 5242880,
+            max_expiration_hours: 168,
+            registration_enabled: true,
+          },
+        },
+        {
+          status: 201,
+          body: {
+            claim_code: "abc123xyz789",
+            original_filename: "report.txt",
+            file_size: 5,
+            expires_at: "2026-10-01T00:00:00Z",
+            max_downloads: 3,
+            download_url: "https://share.example.com/api/claim/abc123xyz789",
+            completed_downloads: 0,
+          },
+        },
+      ]);
+
+      const client = new SafeShareClient({
+        baseUrl: "https://share.example.com",
+        fetch: mockFetch,
+      });
+
+      const result = await client.upload(filePath, { downloadLimit: 3 });
+
+      const init = mockFetch.mock.calls[1][1] as RequestInit;
+      const form = init.body as FormData;
+      expect(form.get("max_downloads")).toBe("3");
+      expect(form.get("download_limit")).toBeNull();
+
+      expect(result.filename).toBe("report.txt");
+      expect(result.size).toBe(5);
+      expect(result.downloadLimit).toBe(3);
+      expect(result.passwordProtected).toBe(false);
+    });
+  });
+
   describe("error handling", () => {
     it("should throw RateLimitError with retryAfter", async () => {
       const mockFetch = createMockFetch([

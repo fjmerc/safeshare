@@ -131,6 +131,9 @@
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
         clearLegacyDownloadProgress(); // Remove download_* keys from the removed cross-refresh resume feature
+        if (typeof ChunkedUploader !== 'undefined') {
+            ChunkedUploader.scrubSavedPasswords(); // Older versions stored upload passwords in plaintext
+        }
 
         // Handle file received via Web Share Target API
         await handleShareTarget();

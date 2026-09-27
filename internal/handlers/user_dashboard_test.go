@@ -1679,3 +1679,69 @@ func TestUserRegenerateClaimCodeHandler_NotOwner(t *testing.T) {
 		t.Error("file should still exist with original claim code")
 	}
 }
+
+// TestUserRenameFileHandlers_BlockedExtension checks that renaming can't be
+// used to give an uploaded file a blocked extension.
+func TestUserRenameFileHandlers_BlockedExtension(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	passwordHash, _ := utils.HashPassword("password123")
+	user, err := repos.Users.Create(ctx, "testuser", "test@example.com", passwordHash, "user", false)
+	if err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	file := testutil.SampleFile()
+	file.UserID = &user.ID
+	file.ClaimCode = "test-rename-blocked"
+	file.OriginalFilename = "harmless.txt"
+	if err := repos.Files.Create(ctx, file); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	createdFile, _ := repos.Files.GetByClaimCode(ctx, file.ClaimCode)
+
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		path    string
+		body    map[string]interface{}
+	}{
+		{
+			name:    "by file ID",
+			handler: UserRenameFileHandler(repos, cfg),
+			path:    "/api/user/files/rename",
+			body:    map[string]interface{}{"file_id": createdFile.ID, "new_filename": "harmless.exe "},
+		},
+		{
+			name:    "by claim code",
+			handler: UserRenameFileByClaimCodeHandler(repos, cfg),
+			path:    "/api/user/files/" + createdFile.ClaimCode + "/rename",
+			body:    map[string]interface{}{"filename": "harmless.exe"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(tc.body)
+			req := httptest.NewRequest(http.MethodPut, tc.path, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(context.WithValue(req.Context(), middleware.ContextKeyUser, user))
+
+			rr := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+			updated, _ := repos.Files.GetByClaimCode(ctx, createdFile.ClaimCode)
+			if updated.OriginalFilename != "harmless.txt" {
+				t.Errorf("file was renamed to %q, want it unchanged", updated.OriginalFilename)
+			}
+		})
+	}
+}

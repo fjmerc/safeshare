@@ -625,3 +625,54 @@ func BenchmarkRateLimiter_Parallel(b *testing.B) {
 		}
 	})
 }
+
+// TestRateLimiter_SeparateBucketsPerLimitType is a regression test: all limit
+// types used to share one timestamp slice per IP, so the chunks of one large
+// upload exhausted the upload and download limits for the rest of the hour.
+func TestRateLimiter_SeparateBucketsPerLimitType(t *testing.T) {
+	cfg := &mockConfigProvider{
+		uploadLimit:   10,
+		downloadLimit: 5,
+	}
+
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	do := func(method, path string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	// One init plus 60 chunks: well over the upload (10) and download (5)
+	// limits, but within the chunk limit (10 × 10 = 100).
+	if code := do(http.MethodPost, "/api/upload/init"); code != http.StatusOK {
+		t.Fatalf("init: got status %d, want 200", code)
+	}
+	for i := 0; i < 60; i++ {
+		if code := do(http.MethodPost, "/api/upload/chunk/abc/"+string(rune('0'+i%10))); code != http.StatusOK {
+			t.Fatalf("chunk %d: got status %d, want 200", i, code)
+		}
+	}
+
+	// Chunk traffic must not consume the upload or download buckets.
+	if code := do(http.MethodPost, "/api/upload/init"); code != http.StatusOK {
+		t.Errorf("second init after chunks: got status %d, want 200", code)
+	}
+	for i := 1; i <= 5; i++ {
+		if code := do(http.MethodGet, "/api/claim/code123"); code != http.StatusOK {
+			t.Errorf("download %d after chunks: got status %d, want 200", i, code)
+		}
+	}
+
+	// The download bucket still enforces its own limit.
+	if code := do(http.MethodGet, "/api/claim/code123"); code != http.StatusTooManyRequests {
+		t.Errorf("download over limit: got status %d, want 429", code)
+	}
+}

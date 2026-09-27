@@ -1251,3 +1251,36 @@ func BenchmarkUploadHandler(b *testing.B) {
 		handler.ServeHTTP(rr, req)
 	}
 }
+
+// TestUploadHandler_BlockedExtensionAfterSanitize is a regression test: the
+// extension check used to run on the raw filename, so names whose blocked
+// extension only appears after sanitizing (trailing space or dot) got through.
+func TestUploadHandler_BlockedExtensionAfterSanitize(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	handler := UploadHandler(repos, cfg)
+
+	for _, filename := range []string{"payload.exe ", "payload.exe.", "payload.exe . "} {
+		t.Run(filename, func(t *testing.T) {
+			body, contentType := testutil.CreateMultipartForm(t, []byte("malicious content"), filename, nil)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/upload", body)
+			req.Header.Set("Content-Type", contentType)
+
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			testutil.AssertStatusCode(t, rr, http.StatusBadRequest)
+
+			var errResp models.ErrorResponse
+			json.Unmarshal(rr.Body.Bytes(), &errResp)
+			if errResp.Code != "BLOCKED_EXTENSION" {
+				t.Errorf("error code = %q, want BLOCKED_EXTENSION", errResp.Code)
+			}
+		})
+	}
+}

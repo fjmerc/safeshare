@@ -35,12 +35,21 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- Blocked file extensions could be bypassed on single-request uploads with a name like `payload.exe ` (trailing space or dot): the extension check ran before the filename was cleaned up, and the file was then stored and served as `payload.exe`. The check now runs on the final stored name. Renaming a file from the user dashboard can also no longer give it a blocked extension.
+- Download limits: when a client disconnected mid-download, the download slot stayed reserved for up to 30 minutes, so a single-use link (`max_downloads=1`) returned "Download Limit Reached" to its recipient in the meantime, and anyone with the link could hold it locked by repeatedly aborting downloads. A completed download whose client closed the connection right after the last byte was also not counted. The slot is now released (or the download counted) regardless of the client connection.
+- Chunked uploads no longer store the upload password in the browser's `localStorage`. Passwords left there by earlier versions are removed automatically.
+
 ### Changed
 
 - Docker images are now built with Go 1.27.1 (pinned patch release instead of the floating `1.27` tag).
 
 ### Fixed
 
+- Rate limiting: all request types from one IP shared a single counter, so the chunks of one large upload counted against the upload and download limits. With default settings a 1 GB upload blocked new uploads and downloads from that IP for an hour, and uploads of roughly 2 GB or more failed partway through. Each limit now has its own counter.
+- Chunked uploads: a brief network interruption while the server was assembling the file reset the upload page. For end-to-end encrypted uploads the share link was then shown without its decryption key, leaving the file unrecoverable. Transient status-check failures are now retried silently, and genuine assembly failures are reported immediately instead of after several minutes of retries.
+- Go and TypeScript SDKs: the download limit set on upload (`DownloadLimit` / `downloadLimit`) was silently ignored by the server because the SDKs sent it under the wrong field name, so files uploaded with a limit could be downloaded without limit. Upload results also returned an empty filename, zero size, no download limit and `PasswordProtected=false`; these are now populated correctly.
 - The self-hosted MinIO example in the architecture docs referenced the `minio/minio` Docker image, which is no longer published; it now uses the `pgsty/minio` community build.
 
 ## [1.5.7] - 2026-07-27

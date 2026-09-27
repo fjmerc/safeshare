@@ -244,13 +244,14 @@ type ClientConfig struct {
 }
 
 // apiUploadResponse is the raw API response for uploads.
+// Server returns models.UploadResponse / models.UploadCompleteResponse.
 type apiUploadResponse struct {
 	ClaimCode         string  `json:"claim_code"`
-	Filename          string  `json:"filename"`
-	Size              int64   `json:"size"`
+	Filename          string  `json:"original_filename"`
+	Size              int64   `json:"file_size"`
 	MimeType          string  `json:"mime_type"`
 	ExpiresAt         *string `json:"expires_at"`
-	DownloadLimit     *int    `json:"download_limit"`
+	DownloadLimit     *int    `json:"max_downloads"`
 	PasswordProtected bool    `json:"password_protected"`
 	UserID            *int    `json:"user_id,omitempty"`
 }
@@ -337,4 +338,13 @@ type apiTokenCreatedResponse struct {
 // apiTokenListResponse is the raw API response for listing tokens.
 type apiTokenListResponse struct {
 	Tokens []apiTokenInfoResponse `json:"tokens"`
+}
+
+// downloadLimitOrNil normalizes a server download limit. Chunked-upload
+// responses encode "unlimited" as 0 rather than null.
+func downloadLimitOrNil(limit *int) *int {
+	if limit == nil || *limit <= 0 {
+		return nil
+	}
+	return limit
 }

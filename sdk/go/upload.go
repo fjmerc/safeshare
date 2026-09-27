@@ -108,7 +108,7 @@ func (c *Client) uploadSimple(ctx context.Context, filePath string, fileSize int
 		writer.WriteField("expires_in_hours", strconv.Itoa(*opts.ExpiresInHours))
 	}
 	if opts.DownloadLimit != nil {
-		writer.WriteField("download_limit", strconv.Itoa(*opts.DownloadLimit))
+		writer.WriteField("max_downloads", strconv.Itoa(*opts.DownloadLimit))
 	}
 	if opts.Password != "" {
 		writer.WriteField("password", opts.Password)
@@ -135,8 +135,8 @@ func (c *Client) uploadSimple(ctx context.Context, filePath string, fileSize int
 		Size:              apiResp.Size,
 		MimeType:          apiResp.MimeType,
 		ExpiresAt:         parseTime(apiResp.ExpiresAt),
-		DownloadLimit:     apiResp.DownloadLimit,
-		PasswordProtected: apiResp.PasswordProtected,
+		DownloadLimit:     downloadLimitOrNil(apiResp.DownloadLimit),
+		PasswordProtected: opts.Password != "", // Server does not echo this; we know it from the request
 		UserID:            apiResp.UserID,
 	}, nil
 }
@@ -154,7 +154,7 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 		initBody["expires_in_hours"] = *opts.ExpiresInHours
 	}
 	if opts.DownloadLimit != nil {
-		initBody["download_limit"] = *opts.DownloadLimit
+		initBody["max_downloads"] = *opts.DownloadLimit
 	}
 	if opts.Password != "" {
 		initBody["password"] = opts.Password
@@ -307,8 +307,8 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 		Size:              apiResp.Size,
 		MimeType:          apiResp.MimeType,
 		ExpiresAt:         parseTime(apiResp.ExpiresAt),
-		DownloadLimit:     apiResp.DownloadLimit,
-		PasswordProtected: apiResp.PasswordProtected,
+		DownloadLimit:     downloadLimitOrNil(apiResp.DownloadLimit),
+		PasswordProtected: opts.Password != "",
 		UserID:            apiResp.UserID,
 	}, nil
 }
@@ -369,8 +369,8 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 				Size:              fileSize,
 				MimeType:          "", // Not available in status response
 				ExpiresAt:         &status.ExpiresAt,
-				DownloadLimit:     status.MaxDownloads,
-				PasswordProtected: false, // Not available in status response
+				DownloadLimit:     downloadLimitOrNil(status.MaxDownloads),
+				PasswordProtected: opts.Password != "",
 			}, nil
 
 		case "failed":

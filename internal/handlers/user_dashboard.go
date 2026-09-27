@@ -278,6 +278,17 @@ func UserRenameFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
+		// Renaming must not be a way around the blocked-extension list
+		allowed, blockedExt, extErr := utils.IsFileAllowed(sanitizedFilename, cfg.GetBlockedExtensions())
+		if extErr != nil || !allowed {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
+			})
+			return
+		}
+
 		// Update filename in repository
 		err := repos.Users.UpdateFileName(ctx, req.FileID, user.ID, sanitizedFilename)
 		if err != nil {
@@ -582,6 +593,17 @@ func UserRenameFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
 				"error": "Invalid filename",
+			})
+			return
+		}
+
+		// Renaming must not be a way around the blocked-extension list
+		allowed, blockedExt, extErr := utils.IsFileAllowed(sanitizedFilename, cfg.GetBlockedExtensions())
+		if extErr != nil || !allowed {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("File extension '%s' is not allowed for security reasons", blockedExt),
 			})
 			return
 		}

@@ -515,28 +515,23 @@ class ChunkedUploader {
     }
 
     /**
-     * Check upload status
+     * Check upload status. Does not emit 'error': a failed status check is
+     * usually a transient blip that pollStatus() retries, and emitting here made
+     * the page reset mid-assembly (dropping the E2E key from the share link).
+     * Callers emit 'error' once they decide the failure is final.
      * @returns {Promise<Object>} - Upload status
      */
     async getStatus() {
-        try {
-            const response = await fetch(`/api/upload/status/${this.uploadId}`, {
-                signal: this.abortController ? this.abortController.signal : undefined
-            });
+        const response = await fetch(`/api/upload/status/${this.uploadId}`, {
+            signal: this.abortController ? this.abortController.signal : undefined
+        });
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to get status');
-            }
-
-            return await response.json();
-
-        } catch (error) {
-            if (!this._isCancellation(error)) {
-                this.emit('error', { stage: 'status', error: error.message });
-            }
-            throw error;
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || 'Failed to get status');
         }
+
+        return await response.json();
     }
 
     /**
@@ -586,7 +581,9 @@ class ChunkedUploader {
                 if (status.status === 'completed') {
                     // Assembly complete - return result
                     if (!status.claim_code || !status.download_url) {
-                        throw new Error('Assembly completed but missing claim_code or download_url');
+                        const error = new Error('Assembly completed but missing claim_code or download_url');
+                        error.terminal = true;
+                        throw error;
                     }
 
                     // Build complete response matching expected format
@@ -603,8 +600,9 @@ class ChunkedUploader {
 
                 if (status.status === 'failed') {
                     // Assembly failed - throw error
-                    const errorMsg = status.error_message || 'File assembly failed';
-                    throw new Error(errorMsg);
+                    const error = new Error(status.error_message || 'File assembly failed');
+                    error.terminal = true;
+                    throw error;
                 }
 
                 // Status is still "processing" or "uploading" - continue polling
@@ -619,8 +617,11 @@ class ChunkedUploader {
                     throw error;
                 }
 
-                // If this is a known error (failed status), rethrow immediately
-                if (error.message.includes('assembly failed') || error.message.includes('missing claim_code')) {
+                // Server reported a final outcome (failed status, bad completion):
+                // rethrow immediately. Matching on message text missed the
+                // server's actual failure messages, so real failures were
+                // retried as network errors.
+                if (error.terminal) {
                     this.emit('error', { stage: 'assembly', error: error.message });
                     throw error;
                 }
@@ -776,6 +777,10 @@ class ChunkedUploader {
     saveState() {
         if (!this.storageKey) return;
 
+        // Never persist the upload password: it is only needed for /init, and
+        // localStorage is plaintext that outlives failed uploads.
+        const { password, ...persistedOptions } = this.options;
+
         const state = {
             uploadId: this.uploadId,
             filename: this.file.name,
@@ -785,7 +790,7 @@ class ChunkedUploader {
             uploadedChunks: Array.from(this.uploadedChunks),
             uploadedBytes: this.uploadedBytes,
             startTime: this.startTime,
-            options: this.options,
+            options: persistedOptions,
             isPaused: this.isPaused
         };
 
@@ -855,6 +860,26 @@ class ChunkedUploader {
             localStorage.removeItem(this.storageKey);
         } catch (e) {
             console.warn('Failed to clear upload state from localStorage:', e);
+        }
+    }
+
+    /**
+     * Remove passwords from upload states saved by earlier versions, which
+     * persisted the full options object (including the password) in plaintext.
+     */
+    static scrubSavedPasswords() {
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key || !key.startsWith('chunked_upload_')) continue;
+                const state = JSON.parse(localStorage.getItem(key) || 'null');
+                if (state && state.options && 'password' in state.options) {
+                    delete state.options.password;
+                    localStorage.setItem(key, JSON.stringify(state));
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to scrub saved upload passwords:', e);
         }
     }
 
