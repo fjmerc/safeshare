@@ -87,5 +87,6 @@ type UploadCompleteResponse struct {
 // UploadCompleteErrorResponse represents an error response with missing chunks
 type UploadCompleteErrorResponse struct {
 	Error         string `json:"error"`
+	Code          string `json:"code"`
 	MissingChunks []int  `json:"missing_chunks,omitempty"`
 }

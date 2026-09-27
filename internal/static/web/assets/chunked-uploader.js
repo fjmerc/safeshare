@@ -34,8 +34,11 @@ class ChunkedUploader {
             password: options.password || '',
             clientEncrypted: !!options.clientEncrypted,
             concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
-            retryAttempts: options.retryAttempts || 3,
+            // 6 attempts with jittered 1s→30s backoff ride out ~30-60s of
+            // network trouble (Wi-Fi handoff, brief outage) per chunk.
+            retryAttempts: options.retryAttempts || 6,
             retryDelay: options.retryDelay || 1000, // Initial retry delay in ms
+            maxRetryDelay: options.maxRetryDelay || 30000,
         };
 
         // Upload state
@@ -294,8 +297,10 @@ class ChunkedUploader {
                     this._trackUploadFailure();
                 }
 
-                // Check if retry is recommended by server
-                if (error.retryRecommended === false) {
+                // Client errors (bad request, upload gone/expired, too large)
+                // won't succeed on retry; neither will a rate limit that
+                // lasts longer than we're willing to wait.
+                if (error.retryRecommended === false || this._retryAfterTooLong(error)) {
                     this.emit('error', {
                         stage: 'chunk_upload',
                         chunkNumber,
@@ -317,12 +322,9 @@ class ChunkedUploader {
                     throw new Error(`Failed to upload chunk ${chunkNumber} after ${maxAttempts} attempts: ${error.message}`);
                 }
 
-                // Use server-provided retry_after if available, otherwise exponential backoff
-                const delay = error.retryAfter
-                    ? error.retryAfter * 1000  // Convert seconds to milliseconds
-                    : this.options.retryDelay * Math.pow(2, attempt - 1);
-
+                const delay = this._retryDelay(attempt, error.retryAfter);
                 console.warn(`Chunk ${chunkNumber} upload failed (attempt ${attempt}/${maxAttempts}, code: ${error.code || 'UNKNOWN'}), retrying in ${delay}ms...`);
+                await this._waitForOnline();
                 await this.sleep(delay);
             }
         }
@@ -436,28 +438,7 @@ class ChunkedUploader {
         try {
             // Store promise for duplicate calls to wait on
             this.completionPromise = (async () => {
-                const response = await fetch(`/api/upload/complete/${this.uploadId}`, {
-                    method: 'POST',
-                    signal: this.abortController ? this.abortController.signal : undefined
-                });
-
-                // Handle error responses (4xx, 5xx)
-                if (!response.ok && response.status !== 202) {
-                    const error = await response.json();
-
-                    // Handle missing chunks
-                    if (error.missing_chunks) {
-                        this.emit('error', {
-                            stage: 'complete',
-                            error: error.error,
-                            missing_chunks: error.missing_chunks
-                        });
-                        throw new Error(`Missing ${error.missing_chunks.length} chunks: ${error.missing_chunks.join(', ')}`);
-                    }
-
-                    throw new Error(error.error || 'Failed to complete upload');
-                }
-
+                const response = await this._postComplete();
                 const data = await response.json();
 
                 // Check if response is HTTP 202 (Accepted) or has status "processing"
@@ -955,6 +936,118 @@ class ChunkedUploader {
     }
 
     /**
+     * POST /complete, retrying transient failures. The endpoint is safe to
+     * repeat: once the server has started assembling it answers 202/200 again.
+     * Handles 503 ASSEMBLY_BUSY (honoring Retry-After), 5xx from proxies, and
+     * network drops, and re-uploads any chunks the server reports missing.
+     * Giving up here used to throw away a fully uploaded file (and, for E2E
+     * uploads, the only copy of its key).
+     * @returns {Promise<Response>} - A 2xx response
+     */
+    async _postComplete() {
+        const maxAttempts = 8;
+        let reuploadedMissing = false;
+
+        for (let attempt = 1; ; attempt++) {
+            let error;
+            try {
+                const response = await fetch(`/api/upload/complete/${this.uploadId}`, {
+                    method: 'POST',
+                    signal: this.abortController ? this.abortController.signal : undefined
+                });
+                if (response.ok) {
+                    return response;
+                }
+                error = await this.parseErrorResponse(response);
+            } catch (fetchError) {
+                if (this._isCancellation(fetchError)) {
+                    throw fetchError;
+                }
+                error = fetchError; // network failure: retryable
+            }
+
+            if (error.missingChunks && error.missingChunks.length > 0 && !reuploadedMissing) {
+                // Chunks the server doesn't have (e.g. lost to a failed write):
+                // upload them again once, then retry completion.
+                reuploadedMissing = true;
+                console.warn(`Server is missing ${error.missingChunks.length} chunk(s); re-uploading before completing`);
+                error.missingChunks.forEach(chunk => {
+                    if (this.uploadedChunks.delete(chunk)) {
+                        const start = chunk * this.chunkSize;
+                        this.uploadedBytes -= Math.min(this.chunkSize, this.file.size - start);
+                    }
+                });
+                await this.uploadAllChunks();
+                continue; // the repair uses one of the maxAttempts; 7 remain for completion
+            }
+
+            if (error.retryRecommended === false || this._retryAfterTooLong(error) || attempt >= maxAttempts) {
+                throw error;
+            }
+
+            const delay = this._retryDelay(attempt, error.retryAfter);
+            console.warn(`Completing upload failed (attempt ${attempt}/${maxAttempts}, code: ${error.code || 'NETWORK_ERROR'}), retrying in ${delay}ms...`);
+            await this._waitForOnline();
+            await this.sleep(delay);
+        }
+    }
+
+    /**
+     * Whether an HTTP status is worth retrying: timeouts, rate limits and
+     * server/proxy errors. Other 4xx responses won't change on retry, nor will
+     * 501/505/507 (not implemented, bad HTTP version, out of storage).
+     */
+    static isRetryableStatus(status) {
+        if (status === 408 || status === 425 || status === 429) return true;
+        return status >= 500 && status !== 501 && status !== 505 && status !== 507;
+    }
+
+    /**
+     * Backoff before retry `attempt` (1-based). Honors a server-provided delay;
+     * otherwise exponential from options.retryDelay with "equal jitter" (a
+     * random delay between half and all of the backoff), so parallel chunk
+     * workers don't retry in lockstep and no retry fires almost immediately.
+     */
+    _retryDelay(attempt, retryAfterSeconds) {
+        const cap = this.options.maxRetryDelay;
+        if (retryAfterSeconds) {
+            return Math.min(retryAfterSeconds * 1000, cap);
+        }
+        const exp = Math.min(this.options.retryDelay * Math.pow(2, attempt - 1), cap);
+        return Math.round(exp / 2 + Math.random() * exp / 2);
+    }
+
+    /** A server-requested wait longer than a minute means give up, not sleep. */
+    _retryAfterTooLong(error) {
+        return !!error.retryAfter && error.retryAfter > 60;
+    }
+
+    /**
+     * If the browser reports being offline, wait until it's back before
+     * retrying instead of burning retry attempts. Cancellable via pause()/abort().
+     */
+    _waitForOnline() {
+        if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+            return Promise.resolve();
+        }
+        const signal = this.abortController ? this.abortController.signal : null;
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                window.removeEventListener('online', onOnline);
+                if (signal) signal.removeEventListener('abort', onAbort);
+            };
+            const onOnline = () => { cleanup(); resolve(); };
+            const onAbort = () => { cleanup(); reject(this._cancellationError()); };
+            if (signal && signal.aborted) {
+                reject(this._cancellationError());
+                return;
+            }
+            window.addEventListener('online', onOnline);
+            if (signal) signal.addEventListener('abort', onAbort);
+        });
+    }
+
+    /**
      * Custom error class that includes retry recommendations
      */
     createRetryableError(message, code, retryRecommended, retryAfter) {
@@ -1135,23 +1228,33 @@ class ChunkedUploader {
      * Parse error response and extract retry information
      */
     async parseErrorResponse(response) {
-        try {
-            const error = await response.json();
-            return this.createRetryableError(
-                error.error || 'Unknown error',
-                error.code || 'UNKNOWN',
-                error.retry_recommended !== undefined ? error.retry_recommended : true,
-                error.retry_after || 5
-            );
-        } catch {
-            // If JSON parsing fails, return generic error
-            return this.createRetryableError(
-                'Request failed',
-                'NETWORK_ERROR',
-                true,
-                5
-            );
+        // Proxies answer 502/504 with HTML, so the body may not be JSON.
+        const body = await response.json().catch(() => ({}));
+
+        // Server hint wins; otherwise decide from the status code. Defaulting
+        // to "retry every error after 5s" retried 404/410/413 pointlessly and
+        // meant exponential backoff never ran.
+        const retryRecommended = body.retry_recommended !== undefined
+            ? body.retry_recommended
+            : ChunkedUploader.isRetryableStatus(response.status);
+
+        let retryAfter = body.retry_after || null;
+        if (!retryAfter) {
+            const header = parseInt(response.headers.get('Retry-After'), 10);
+            retryAfter = Number.isFinite(header) && header > 0 ? header : null;
         }
+
+        const error = this.createRetryableError(
+            body.error || `Request failed (HTTP ${response.status})`,
+            body.code || `HTTP_${response.status}`,
+            retryRecommended,
+            retryAfter
+        );
+        error.status = response.status;
+        if (Array.isArray(body.missing_chunks)) {
+            error.missingChunks = body.missing_chunks;
+        }
+        return error;
     }
 
     /**
