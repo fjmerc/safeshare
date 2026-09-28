@@ -436,6 +436,23 @@ describe("SafeShareClient", () => {
     });
   });
 
+  describe("downloadToBuffer", () => {
+    it("should send the file password in X-File-Password, never in the URL", async () => {
+      const mockFetch = createMockFetch([{ status: 200, body: {} }]);
+      const client = new SafeShareClient({
+        baseUrl: "https://share.example.com",
+        fetch: mockFetch,
+      });
+
+      await client.downloadToBuffer("abc123xyz789", { password: "s3cret" });
+
+      const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("https://share.example.com/api/claim/abc123xyz789");
+      expect((init.headers as Record<string, string>)["X-File-Password"]).toBe("s3cret");
+      expect(init.redirect).toBe("error");
+    });
+  });
+
   describe("error handling", () => {
     it("should throw RateLimitError with retryAfter", async () => {
       const mockFetch = createMockFetch([

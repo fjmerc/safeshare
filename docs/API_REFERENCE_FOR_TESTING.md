@@ -75,7 +75,7 @@
 - Password (if file is password-protected) via one of, in priority order:
   1. `X-File-Password` request header *(preferred — keeps password out of proxy logs / browser history / Referer)*
   2. POST form body: `Content-Type: application/x-www-form-urlencoded`, body `password=…` *(body capped at 4 KiB)*
-  3. Query parameter `?password=…` *(deprecated, see "File Passwords (SH-1.5)" below; scheduled for removal `2026-09-30` per `Sunset` header)*
+  3. Query parameter `?password=…` *(deprecated, see "File Passwords (SH-1.5)" below; scheduled for removal `2027-03-31` per `Sunset` header)*
 
 **Response Status Codes**:
 - `200 OK` - File download successful
@@ -88,7 +88,7 @@
 
 **Response Headers** (only when the deprecated query-string password path is used):
 - `Deprecation: true`
-- `Sunset: Wed, 30 Sep 2026 00:00:00 GMT`
+- `Sunset: Wed, 31 Mar 2027 00:00:00 GMT`
 - `Link: <…>; rel="deprecation"; type="text/markdown"`
 - `Referrer-Policy: no-referrer`
 
@@ -102,7 +102,7 @@
 
 #### File Passwords (SH-1.5)
 
-`?password=…` in the URL leaks the password to reverse-proxy access logs (Cloudflare, Traefik, nginx), browser history, and outbound `Referer` headers from the download landing page. Use the `X-File-Password` request header instead. The query-string form remains accepted until `2026-09-30` for backwards compatibility with naive `<a href>` cross-origin downloads; every hit increments the Prometheus counter `safeshare_downloads_total{outcome="password_via_query_deprecated"}` and emits a WARN log line so operators can identify clients that still need to migrate.
+`?password=…` in the URL leaks the password to reverse-proxy access logs (Cloudflare, Traefik, nginx), browser history, and outbound `Referer` headers from the download landing page. Use the `X-File-Password` request header instead. The query-string form remains accepted until `2027-03-31` for backwards compatibility with naive `<a href>` cross-origin downloads; every hit increments the Prometheus counter `safeshare_downloads_total{outcome="password_via_query_deprecated"}` and emits a WARN log line so operators can identify clients that still need to migrate.
 
 ---
 

@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-28
+
 ### Security
 
 - Malware scanning (when enabled via `FEATURE_MALWARE_SCAN`) now actually inspects file contents: previously, with server-side encryption enabled, files were scanned *after* being encrypted, so ClamAV was checking ciphertext and every upload was reported clean regardless of its real content. Scanning now runs on the original file before it's encrypted or stored, and before a download link is issued. An infected upload is now rejected outright (no claim code is ever created) instead of being uploaded, made downloadable, and quarantined only later. Downloads of a file still awaiting a scan verdict, or whose scan failed, are now blocked until the file is verified (previously they were served normally); set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to restore the previous permissive behavior. End-to-end encrypted uploads are still scanned (the server can't be sure they're really opaque ciphertext) but are labeled "not scanned" rather than "clean," since the server can't verify their real, decrypted content; set `MALWARE_SCAN_REJECT_UNSCANNABLE=true` to reject end-to-end encrypted or too-large-to-scan uploads outright instead. See ADR-015 for the full design.
@@ -46,6 +48,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Changed
 
+- Go, TypeScript and Python SDKs now send file-download passwords in the `X-File-Password` header instead of the URL query string (the TypeScript and Go SDKs also refuse to forward the password on a redirect to another host). The server keeps accepting the deprecated `?password=` form until 31 March 2027 — the `Sunset` date advertised on those responses moves from 30 September 2026 so SDK users have time to upgrade.
 - Uploads now wait for their malware scan to finish (when `FEATURE_MALWARE_SCAN` is enabled) before the upload completes, adding a few seconds to upload time; previously scanning happened in the background after the upload had already finished. If the malware scanner is unreachable, uploads are now rejected by default rather than accepted unscanned — set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to keep the old behavior. New `MALWARE_SCAN_REJECT_UNSCANNABLE` setting (default off) rejects uploads that can't be scanned at all. Existing files' scan results from before this change are relabeled "not scanned" on upgrade, since they may have been scanned against encrypted rather than real content (see the Security section above).
 - Docker images are now built with Go 1.27.1 (pinned patch release instead of the floating `1.27` tag).
 - Files with a download limit: a download that is interrupted after its first few kilobytes now uses up one of the allowed downloads, even if it never finishes. The web interface resumes an interrupted download within the same session, so it is unaffected, but tools that retry from scratch or resume without the `X-Download-Session` header (for example a browser's built-in retry of a direct link) will use an additional download. Previously an interrupted download was never counted, which is what allowed limits to be bypassed.
@@ -1548,6 +1551,7 @@ Initial production release.
 
 <!-- Note: Historical version links below reference old v2.x tags that have been deleted.
      They are preserved for documentation purposes. The current release is v1.0.0. -->
+[1.6.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.6.0
 [1.5.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.5.0
 [1.4.1]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.1
 [1.4.0]: https://github.com/fjmerc/safeshare/releases/tag/v1.4.0

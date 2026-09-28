@@ -187,7 +187,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				// page.
 				w.Header().Set("Referrer-Policy", "no-referrer")
 				w.Header().Set("Deprecation", "true")
-				w.Header().Set("Sunset", "Wed, 30 Sep 2026 00:00:00 GMT")
+				w.Header().Set("Sunset", "Wed, 31 Mar 2027 00:00:00 GMT")
 				// Points at a fetchable docs URL (RFC 8594 / draft-ietf-httpapi-
 				// deprecation-header expect an actual resource, not a repo
 				// path). Track this if the default branch is renamed.

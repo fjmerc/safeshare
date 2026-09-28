@@ -548,16 +548,16 @@ class SafeShareClient:
         # Validate claim code
         self._validate_claim_code(claim_code)
 
-        # Build URL - password sent via query parameter as the server API expects
-        # Note: This is the server's design; passwords are transmitted over HTTPS
+        # The password goes in the X-File-Password header; the ?password=
+        # query parameter is deprecated server-side because URLs end up in
+        # proxy logs and history. The client doesn't follow redirects, so the
+        # header can't be forwarded to another host.
         url = f"/api/claim/{claim_code}"
-        params = {}
-        if password:
-            params["password"] = password
+        headers = {"X-File-Password": password} if password else {}
 
         try:
             # Use streaming download
-            with self._client.stream("GET", url, params=params) as response:
+            with self._client.stream("GET", url, headers=headers) as response:
                 if response.status_code >= 400:
                     # Read error body
                     response.read()
@@ -630,11 +630,9 @@ class SafeShareClient:
         self._validate_claim_code(claim_code)
 
         url = f"/api/claim/{claim_code}/info"
-        params = {}
-        if password:
-            params["password"] = password
+        headers = {"X-File-Password": password} if password else {}
 
-        response = self._client.get(url, params=params)
+        response = self._client.get(url, headers=headers)
         result = self._handle_response(response)
         return FileInfo(**result)
 
