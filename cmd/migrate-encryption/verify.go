@@ -243,9 +243,24 @@ func verifyOneFile(f *os.File, row verifyFileRow, keyEnabled bool, encryptionKey
 			// row has a stored hash, verifies the whole-file SHA-256 on
 			// the final chunk (see SFSEReader's doc comment).
 			if _, copyErr := io.Copy(io.Discard, reader); copyErr != nil && copyErr != io.EOF {
-				issue := "chunk authentication failed: " + copyErr.Error()
-				if errors.Is(copyErr, utils.ErrSFSE2IntegrityCheckFailed) {
+				// Security-audit finding (round 4): these must be checked
+				// most-specific-sentinel-first. ErrSFSEHashMismatch,
+				// ErrSFSEChunkAuthFailed, and the (rarer) other
+				// ErrSFSE2IntegrityCheckFailed-wrapping cases (currently
+				// just ErrSFSEShortRead) all wrap the same umbrella
+				// sentinel, so checking the umbrella first would always
+				// match and mislabel every case as the first branch's
+				// text — see utils.ErrSFSE2IntegrityCheckFailed's doc
+				// comment. A plain I/O error (not wrapped in the umbrella
+				// at all) falls through to the "read error" default.
+				issue := "read error: " + copyErr.Error()
+				switch {
+				case errors.Is(copyErr, utils.ErrSFSEHashMismatch):
 					issue = "hash mismatch: " + copyErr.Error()
+				case errors.Is(copyErr, utils.ErrSFSEChunkAuthFailed):
+					issue = "chunk authentication failed: " + copyErr.Error()
+				case errors.Is(copyErr, utils.ErrSFSE2IntegrityCheckFailed):
+					issue = "short read / other integrity failure: " + copyErr.Error()
 				}
 				return utils.FormatUnknown, "", &verifyProblem{
 					ClaimCodePrefix: claimPrefix,

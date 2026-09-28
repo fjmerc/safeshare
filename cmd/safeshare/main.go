@@ -199,6 +199,18 @@ func run() error {
 	// the cap; the handler still rate-limits via middleware.
 	handlers.SetInFlightTracker(handlers.NewInFlightTracker(cfg.MaxInFlightPerIPPerFile))
 
+	// ADR-017 (T34): install the process-wide decrypt-memory admission
+	// budget claim downloads acquire from before decrypting an SFSE chunk
+	// buffer or a legacy full file into RAM.
+	handlers.SetDecryptAdmission(utils.NewDecryptAdmission(cfg.DownloadDecryptMemoryBudget))
+
+	// ADR-017: install the operator-configured per-IP concurrency cap for
+	// encrypted claim downloads (MAX_ENCRYPTED_DOWNLOADS_PER_IP, default 8;
+	// 0 disables it). Raise or disable this for Tor/Ghost-mode or any
+	// deployment behind an untrusted/non-forwarding proxy where every
+	// client shares one apparent IP — see docs/TOR_DEPLOYMENT.md.
+	handlers.SetEncryptedRangeIPTracker(handlers.NewInFlightTracker(cfg.MaxEncryptedDownloadsPerIP))
+
 	// SH-1.4: size the chunked-upload assembly worker pool from config. The
 	// handler returns 503 with Retry-After once all slots are in use; raise
 	// ASSEMBLY_WORKERS_MAX to absorb burstier upload completions.

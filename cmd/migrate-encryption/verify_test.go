@@ -432,3 +432,100 @@ func TestOpenReadOnlyDB_RefusesWrites(t *testing.T) {
 		t.Fatalf("read failed: %v", err)
 	}
 }
+
+// TestRunVerify_ChunkAuthFailureLabeledDistinctlyFromHashMismatch is a
+// security-audit regression test (round 4): flipping a byte inside an
+// SFSE2 chunk's ciphertext/tag (not its header, and not its length) makes
+// the chunk's AEAD auth tag fail to verify — a "chunk authentication
+// failed" problem, categorically different from a whole-file SHA-256
+// mismatch (which requires every chunk to decrypt successfully in the
+// first place). Before this fix, both cases wrapped the same umbrella
+// sentinel (utils.ErrSFSE2IntegrityCheckFailed) with nothing to tell them
+// apart, so --verify's classification logic mislabeled every case here as
+// "hash mismatch" — the opposite of correct, since the file's stored hash
+// is deliberately left *correct* in this test to prove the mismatch is not
+// what's actually being detected.
+func TestRunVerify_ChunkAuthFailureLabeledDistinctlyFromHashMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	uploadsDir := filepath.Join(tmpDir, "uploads")
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("database.Initialize: %v", err)
+	}
+
+	plain := bytes.Repeat([]byte("tamper-test content "), 20)
+	encFileID, err := utils.GenerateEncFileID()
+	if err != nil {
+		t.Fatalf("GenerateEncFileID: %v", err)
+	}
+	storedFilename := "sfse2-tampered.dat"
+	dstPath := filepath.Join(uploadsDir, storedFilename)
+	if err := utils.EncryptFileStreamingV2(writeTempPlainFile(t, plain), dstPath, verifyTestKey, encFileID); err != nil {
+		t.Fatalf("EncryptFileStreamingV2: %v", err)
+	}
+
+	// Flip the file's last byte — part of the (only) chunk's AEAD tag, well
+	// past the fixed-size header, so the header's own structural checks
+	// still pass and the file's on-disk size is unchanged (no size-mismatch
+	// short-circuit either); the tamper is only caught when the chunk is
+	// actually decrypted.
+	raw, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	raw[len(raw)-1] ^= 0xFF
+	if err := os.WriteFile(dstPath, raw, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Deliberately correct hash: proves what's detected is the auth
+	// failure, not a hash mismatch (the decrypt never gets far enough to
+	// even compute one).
+	f := &models.File{
+		ClaimCode:        "tamperedchunk",
+		OriginalFilename: storedFilename,
+		StoredFilename:   storedFilename,
+		FileSize:         int64(len(plain)),
+		MimeType:         "application/octet-stream",
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		SHA256Hash:       sha256HexOf(plain),
+	}
+	if err := database.CreateFile(db, f); err != nil {
+		t.Fatalf("CreateFile: %v", err)
+	}
+	setEncFileID(t, db, f.ID, encFileID)
+	db.Close()
+
+	db2, err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("database.Initialize (reopen): %v", err)
+	}
+	defer db2.Close()
+
+	report, err := runVerify(db2, uploadsDir, verifyTestKey, false, false, true)
+	if err != nil {
+		t.Fatalf("runVerify: %v", err)
+	}
+
+	var found *verifyProblem
+	for i := range report.Problems {
+		if report.Problems[i].StoredFilename == storedFilename {
+			found = &report.Problems[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected a problem for %s, got problems: %+v", storedFilename, report.Problems)
+	}
+	if !strings.Contains(found.Issue, "chunk authentication failed") {
+		t.Errorf("Issue = %q, want it to mention 'chunk authentication failed'", found.Issue)
+	}
+	if strings.Contains(found.Issue, "hash mismatch") {
+		t.Errorf("Issue = %q, must NOT be mislabeled as 'hash mismatch' (security-audit finding, round 4)", found.Issue)
+	}
+}

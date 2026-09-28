@@ -266,7 +266,7 @@ func (r *SFSEReader) loadChunk(chunkIdx int64) error {
 		return r.err
 	}
 	if int64(n) != expectedReadSize {
-		r.err = fmt.Errorf("%w: chunk %d read %d bytes, expected %d", ErrSFSE2IntegrityCheckFailed, chunkIdx, n, expectedReadSize)
+		r.err = fmt.Errorf("%w: chunk %d read %d bytes, expected %d", ErrSFSEShortRead, chunkIdx, n, expectedReadSize)
 		return r.err
 	}
 
@@ -286,7 +286,18 @@ func (r *SFSEReader) loadChunk(chunkIdx int64) error {
 	// lifetime instead of one allocation per chunk read (T34).
 	plaintext, decErr := r.gcm.Open(ciphertext[:0], nonce, ciphertext, aad)
 	if decErr != nil {
-		r.err = fmt.Errorf("SFSEReader: decrypt chunk %d: %w", chunkIdx, decErr)
+		// Wrapped in ErrSFSEChunkAuthFailed, which itself wraps the
+		// umbrella ErrSFSE2IntegrityCheckFailed (round-3 security-audit
+		// finding, refined in round 4): an AEAD auth-tag failure means the
+		// chunk was tampered with or corrupted — distinct from a short
+		// read (ErrSFSEShortRead) or a whole-file hash mismatch
+		// (ErrSFSEHashMismatch), which wrap the same umbrella but are
+		// their own sentinels so a caller that cares (cmd/migrate-encryption
+		// --verify) can tell them apart, while claim_range.go's coarser
+		// errors.Is(err, ErrSFSE2IntegrityCheckFailed) check (only "was
+		// this an integrity problem at all, vs. a plain I/O error") still
+		// works unchanged against any of the three.
+		r.err = fmt.Errorf("SFSEReader: decrypt chunk %d: %w: %w", chunkIdx, ErrSFSEChunkAuthFailed, decErr)
 		return r.err
 	}
 
@@ -303,7 +314,7 @@ func (r *SFSEReader) loadChunk(chunkIdx int64) error {
 			if isLast {
 				sum := hex.EncodeToString(r.hasher.Sum(nil))
 				if sum != r.expectedSHA256Hex {
-					r.err = fmt.Errorf("%w: SHA-256 mismatch", ErrSFSE2IntegrityCheckFailed)
+					r.err = fmt.Errorf("%w: SHA-256 mismatch", ErrSFSEHashMismatch)
 					return r.err
 				}
 			}

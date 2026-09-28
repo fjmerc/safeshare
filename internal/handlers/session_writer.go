@@ -95,7 +95,8 @@ func newSessionWriter(ctx context.Context, w http.ResponseWriter, repos *reposit
 // ResponseOK reports whether the response is a success (200 or 206), i.e.
 // whether bytes written are file content rather than an error body.
 // net/http implicitly sends a 200 on the first Write if WriteHeader was never
-// called — serveEntireFile relies on exactly that behaviour — so an unset
+// called — http.ServeContent (via serveFileWithRangeSupport) relies on
+// exactly that behaviour for a full, non-Range download — so an unset
 // status counts as 200.
 func (sw *sessionWriter) ResponseOK() bool {
 	status := sw.statusCode
@@ -120,7 +121,7 @@ func (sw *sessionWriter) Write(p []byte) (int, error) {
 	}
 
 	// net/http implicitly sends a 200 on the first Write if WriteHeader was
-	// never called — serveEntireFile relies on exactly that behaviour, so
+	// never called — http.ServeContent relies on exactly that behaviour, so
 	// mirror it here rather than requiring every call site to WriteHeader
 	// explicitly.
 	if sw.ResponseOK() && !sw.committed && (sw.wholeFile || sw.written.Load()+int64(len(p)) > sw.threshold) {

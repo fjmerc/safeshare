@@ -602,14 +602,24 @@ Check the status of a chunked upload session.
 
 ### Download File
 
-Download a file using its claim code.
+Download a file using its claim code, or check its size/availability
+without downloading it.
 
-**Endpoint**: `GET /api/claim/:code`
+**Endpoint**: `GET /api/claim/:code`, `HEAD /api/claim/:code`
+
+`HEAD` returns exactly the same headers a `GET` would (`Content-Length`,
+`ETag`, `Accept-Ranges`, `Content-Type`, `Content-Disposition`, ...) with no
+body, and goes through every access check `GET` does — claim-code validity,
+expiry, malware-scan status, password, **and download-limit** (a `HEAD` on a
+file that's already exhausted its `max_downloads` gets the same `410 Gone`
+a `GET` would). It never counts against `max_downloads` and never reserves
+or spends a download-session slot — use it to check availability before
+committing to a real download (SafeShare's own web UI does this).
 
 **Authentication**: None required
 
 **Query Parameters**:
-- `password` (optional): Required if file is password-protected
+- `password` (optional, deprecated — prefer the `X-File-Password` request header): Required if file is password-protected
 
 **Example**:
 ```bash
@@ -617,20 +627,41 @@ Download a file using its claim code.
 curl -O http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
 
 # With password
-curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
+curl -O -H "X-File-Password: secret123" http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
+
+# Check size/availability without downloading
+curl -I http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE
 ```
 
 **Response** (200 OK):
-- Binary file data
+- Binary file data (omitted for `HEAD`)
 - Headers:
   - `Content-Type`: Original file MIME type
-  - `Content-Disposition`: attachment; filename="original_name.pdf"
+  - `Content-Disposition`: attachment; filename="original_name.pdf" (RFC 6266, with a UTF-8 `filename*=` value alongside the ASCII fallback)
   - `Content-Length`: File size in bytes
   - `Accept-Ranges`: bytes (supports HTTP Range requests)
+  - `ETag`: a strong validator for conditional requests and resume (see below)
+  - `Last-Modified`: the file's upload time
 
 **Response** (206 Partial Content):
-- Returned when Range header is present
+- Returned for a well-formed, satisfiable single-range `Range` request
 - Headers include `Content-Range`
+- An unsupported or malformed `Range` header (multiple ranges, or a
+  syntactically invalid one) is *not* rejected — it's treated as if no
+  `Range` header were sent, and the full file is returned with `200 OK`
+
+**Response** (304 Not Modified):
+- Returned when `If-None-Match` (checked against `ETag`) or
+  `If-Modified-Since` (checked against `Last-Modified`) indicates the
+  client's cached copy is current. Empty body. Never counts against
+  `max_downloads` or spends a download-session slot.
+- `If-Range` is also supported, so a resumed download safely falls back to
+  a full re-download (200) instead of an incorrect byte range if the
+  underlying file changed.
+
+**Every response** (200, 206, 304, 416, error, and `HEAD`) includes
+`Cache-Control: private, no-store` — claim responses can depend on
+per-recipient state and must never be cached by a browser or CDN.
 
 **Files with `max_downloads` set** also include:
 - `X-Download-Session`: an opaque bearer token for this download session.
@@ -638,19 +669,19 @@ curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
   `X-Download-Session` request header on follow-up Range requests for the
   same file so the resumed download is recognised as a continuation and
   counts once, not once per request. See `docs/HTTP_RANGE_SUPPORT.md` for the
-  full counting semantics (ADR-014).
-- `Cache-Control: private, no-store`: the response depends on per-recipient
-  session state and must not be cached.
+  full counting semantics (ADR-014). Never set on a `HEAD` request.
 
 **Error Responses**:
 - 401 Unauthorized: Password required or incorrect
 - 404 Not Found: Invalid claim code or file expired
 - 410 Gone: Download limit reached, **or** (`FILE_QUARANTINED`) the file was found infected by a malware scan
-- 416 Range Not Satisfiable: Invalid byte range
+- 416 Range Not Satisfiable: the `Range` header was syntactically valid but describes bytes the file doesn't have (e.g. a start position beyond the file's size, or any range at all against a zero-byte file). A malformed or multi-range `Range` header is *not* an error — see the 200/206 notes above.
 - 423 Locked (`SCAN_PENDING`, `Retry-After` header set): the file's malware scan has not completed yet
 - 403 Forbidden (`SCAN_FAILED`): the file's malware scan errored and it cannot be verified safe
+- 503 Service Unavailable (`SERVER_BUSY`, `Retry-After` header set): the server's encrypted-download memory budget is temporarily exhausted; retry after the given delay
+- 429 Too Many Requests (`TOO_MANY_INFLIGHT`, `Retry-After` header set): too many concurrent downloads in flight — either for this file from this IP, or (for encrypted content) for this IP across every file; retry after the given delay
 
-> See [SECURITY.md](SECURITY.md#-malware-scanning-clamav) for the full ADR-015 download-gating behavior, including the `MALWARE_SCAN_ALLOW_UNVERIFIED` opt-out.
+> See [SECURITY.md](SECURITY.md#-malware-scanning-clamav) for the full ADR-015 download-gating behavior, including the `MALWARE_SCAN_ALLOW_UNVERIFIED` opt-out, and [HTTP_RANGE_SUPPORT.md](HTTP_RANGE_SUPPORT.md) for the full Range/conditional-request/admission-control design (ADR-017).
 
 ---
 
@@ -1294,7 +1325,7 @@ All endpoints return consistent error format:
 - **404 Not Found**: Resource doesn't exist
 - **410 Gone**: Resource expired or limit reached
 - **413 Payload Too Large**: File exceeds size limit
-- **416 Range Not Satisfiable**: Invalid byte range
+- **416 Range Not Satisfiable**: `Range` header was syntactically valid but describes bytes the resource doesn't have (a malformed or multi-range `Range` header is not an error — it's ignored and the full resource is returned instead)
 - **429 Too Many Requests**: Rate limit exceeded
 - **500 Internal Server Error**: Server error
 - **503 Service Unavailable**: Service degraded or unavailable
