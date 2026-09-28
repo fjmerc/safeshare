@@ -19,10 +19,14 @@ func main() {
 	// Command-line flags
 	dbPath := flag.String("db", "./safeshare.db", "Path to SQLite database")
 	uploadsDir := flag.String("uploads", "./uploads", "Path to uploads directory")
-	encryptionKey := flag.String("enckey", "", "64-character hex encryption key (required)")
+	encryptionKey := flag.String("enckey", "", "64-character hex encryption key (required, except for --verify without --verify-decrypt)")
 	dryRun := flag.Bool("dry-run", false, "Preview migration without making changes")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
+	verify := flag.Bool("verify", false, "Read-only: classify every stored file and report problems. Makes no changes to the database or to any file.")
+	verifyDecrypt := flag.Bool("verify-decrypt", false, "With --verify: also Prime() the first chunk of each SFSE file to check the encryption key. Still read-only.")
+	verifyHash := flag.Bool("verify-hash", false, "With --verify: read every byte of every file and check content integrity (AEAD/GCM tags, plus SHA-256 where files.sha256_hash is set). Slow — reads the whole dataset. Still read-only. Implies --verify-decrypt.")
+	verifyAll := flag.Bool("all", false, "With --verify: include expired files too (default: non-expired only)")
 
 	flag.Parse()
 
@@ -41,6 +45,11 @@ func main() {
 		Level: logLevel,
 	}))
 	slog.SetDefault(logger)
+
+	if *verify {
+		runVerifyCommand(*dbPath, *uploadsDir, *encryptionKey, *verifyAll, *verifyDecrypt, *verifyHash)
+		return
+	}
 
 	// Validate required flags
 	if *encryptionKey == "" {
@@ -90,6 +99,56 @@ func main() {
 	}
 
 	slog.Info("migration completed successfully")
+}
+
+// runVerifyCommand implements --verify. It never calls exit-early os.Exit
+// paths shared with the migration flow above, so main()'s deferred cleanup
+// (none currently held at this point) can't be skipped, and it terminates
+// the process itself since it's the last thing main() does on this branch.
+func runVerifyCommand(dbPath, uploadsDir, encryptionKey string, includeExpired, verifyDecrypt, verifyHash bool) {
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		slog.Error("database file not found", "path", dbPath)
+		os.Exit(1)
+	}
+	if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
+		slog.Error("uploads directory not found", "path", uploadsDir)
+		os.Exit(1)
+	}
+	if encryptionKey != "" && !utils.IsEncryptionEnabled(encryptionKey) {
+		slog.Error("invalid encryption key", "key_length", len(encryptionKey))
+		fmt.Println("Encryption key must be exactly 64 hexadecimal characters (32 bytes), or omitted entirely")
+		os.Exit(1)
+	}
+
+	// mode=ro opens the database read-only at the SQLite level — --verify
+	// must never be able to write, even by accident (no schema creation, no
+	// migrations, no pragmas that touch the file).
+	db, err := openReadOnlyDB(dbPath)
+	if err != nil {
+		slog.Error("failed to open database read-only", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	slog.Info("starting verification",
+		"db", dbPath,
+		"uploads", uploadsDir,
+		"include_expired", includeExpired,
+		"verify_decrypt", verifyDecrypt || verifyHash,
+		"verify_hash", verifyHash,
+	)
+
+	report, err := runVerify(db, uploadsDir, encryptionKey, includeExpired, verifyDecrypt, verifyHash)
+	if err != nil {
+		slog.Error("verification failed", "error", err)
+		os.Exit(1)
+	}
+
+	printVerifyReport(os.Stdout, report)
+
+	if len(report.Problems) > 0 {
+		os.Exit(1)
+	}
 }
 
 func migrateEncryption(db *sql.DB, uploadsDir, encryptionKey string, dryRun bool) error {
