@@ -33,65 +33,12 @@ func NewFileRepository(pool *Pool) *FileRepository {
 
 // Create inserts a new file record into the database.
 func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
-	query := `
-		INSERT INTO files (
-			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-		RETURNING id, created_at
-	`
-
-	var passwordHash *string
-	if file.PasswordHash != "" {
-		passwordHash = &file.PasswordHash
-	}
-
-	var sha256Hash *string
-	if file.SHA256Hash != "" {
-		sha256Hash = &file.SHA256Hash
-	}
-
-	// ADR-015: the synchronous scan verdict is known before the record is
-	// ever created, so it's persisted at insert time rather than via a later
-	// UpdateScanStatus call. nil leaves the columns NULL (scanning disabled,
-	// or a legacy caller that doesn't set them).
-	var scanStatus, scanResult *string
-	if file.ScanStatus != "" {
-		scanStatus = &file.ScanStatus
-	}
-	if file.ScanResult != "" {
-		scanResult = &file.ScanResult
-	}
-
-	err := r.pool.QueryRow(
-		ctx,
-		query,
-		file.ClaimCode,
-		file.OriginalFilename,
-		file.StoredFilename,
-		file.FileSize,
-		file.MimeType,
-		file.ExpiresAt,
-		file.MaxDownloads,
-		file.UploaderIP,
-		passwordHash,
-		file.UserID,
-		sha256Hash,
-		file.ClientEncrypted,
-		nullableBytea(file.EncFileID),
-		scanStatus,
-		scanResult,
-		file.ScannedAt,
-	).Scan(&file.ID, &file.CreatedAt)
-
-	if err != nil {
+	if err := insertFile(ctx, r.pool, file); err != nil {
 		if isUniqueViolation(err) {
 			return repository.ErrDuplicateKey
 		}
-		return fmt.Errorf("failed to insert file: %w", err)
+		return err
 	}
-
 	return nil
 }
 
@@ -127,61 +74,11 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		}
 
 		// Insert file record
-		insertQuery := `
-			INSERT INTO files (
-				claim_code, original_filename, stored_filename, file_size,
-				mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-				client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-			RETURNING id, created_at
-		`
-
-		var passwordHash *string
-		if file.PasswordHash != "" {
-			passwordHash = &file.PasswordHash
-		}
-
-		var sha256Hash *string
-		if file.SHA256Hash != "" {
-			sha256Hash = &file.SHA256Hash
-		}
-
-		// ADR-015: see Create's comment above — the scan verdict is known
-		// before the record is created.
-		var scanStatus, scanResult *string
-		if file.ScanStatus != "" {
-			scanStatus = &file.ScanStatus
-		}
-		if file.ScanResult != "" {
-			scanResult = &file.ScanResult
-		}
-
-		err = tx.QueryRow(
-			ctx,
-			insertQuery,
-			file.ClaimCode,
-			file.OriginalFilename,
-			file.StoredFilename,
-			file.FileSize,
-			file.MimeType,
-			file.ExpiresAt,
-			file.MaxDownloads,
-			file.UploaderIP,
-			passwordHash,
-			file.UserID,
-			sha256Hash,
-			file.ClientEncrypted,
-			nullableBytea(file.EncFileID),
-			scanStatus,
-			scanResult,
-			file.ScannedAt,
-		).Scan(&file.ID, &file.CreatedAt)
-
-		if err != nil {
+		if err := insertFile(ctx, tx, file); err != nil {
 			if isUniqueViolation(err) {
 				return repository.ErrDuplicateKey
 			}
-			return fmt.Errorf("failed to insert file: %w", err)
+			return err
 		}
 
 		if err := tx.Commit(ctx); err != nil {

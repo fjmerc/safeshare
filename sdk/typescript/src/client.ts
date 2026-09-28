@@ -520,6 +520,14 @@ export class SafeShareClient {
     const deadline = Date.now() + MAX_DURATION;
     let delay = INITIAL_DELAY;
 
+    // ADR-016: bounds how many times this poll loop will POST /complete
+    // again after observing a retryable "failed" status (SCAN_UNAVAILABLE, a
+    // transient IO/DB error, etc). The server enforces its own attempt cap
+    // independently; this just keeps a permanently broken server from
+    // looping the SDK caller forever.
+    const MAX_ASSEMBLY_RETRIES = 3;
+    let assemblyRetries = 0;
+
     for (let iteration = 0; iteration < MAX_ITERATIONS && Date.now() < deadline; iteration++) {
       // Get status
       const status = await this.getUploadStatusInternal(uploadId);
@@ -543,13 +551,51 @@ export class SafeShareClient {
           };
 
         case "failed":
+          // ADR-016: a retryable failure still has its chunks on the
+          // server — POSTing /complete again reopens the upload and
+          // re-runs assembly, up to the server's own attempt cap.
+          if (status.retryable && assemblyRetries < MAX_ASSEMBLY_RETRIES) {
+            assemblyRetries++;
+            await this.sleep(delay);
+            try {
+              await this.request("POST", `/api/upload/complete/${uploadId}`);
+            } catch {
+              // Ignore: the next status read is the source of truth,
+              // whether the retry POST succeeded, re-failed, or hit a
+              // network error.
+            }
+            delay = Math.min(delay * 2, MAX_DELAY);
+            continue;
+          }
           throw new ChunkedUploadError(
             status.errorMessage ? `Assembly failed: "${status.errorMessage}"` : "Assembly failed",
-            uploadId
+            uploadId,
+            undefined,
+            undefined,
+            status.errorCode
           );
 
-        case "processing":
         case "uploading":
+          // Should not normally happen while polling (polling only starts
+          // after /complete already returned 202) — but defensively, if the
+          // row ever falls back to "uploading" underneath us, re-POST
+          // /complete (bounded by the same budget as a retryable failure)
+          // rather than silently poll a row nothing is ever going to finish
+          // on its own.
+          if (assemblyRetries < MAX_ASSEMBLY_RETRIES) {
+            assemblyRetries++;
+            await this.sleep(delay);
+            try {
+              await this.request("POST", `/api/upload/complete/${uploadId}`);
+            } catch {
+              // Ignore: the next status read is the source of truth.
+            }
+            delay = Math.min(delay * 2, MAX_DELAY);
+            continue;
+          }
+          throw new ChunkedUploadError("Upload fell back to uploading state and could not be resumed", uploadId);
+
+        case "processing":
           // Wait before retrying
           await this.sleep(delay);
           delay = Math.min(delay * 2, MAX_DELAY);
@@ -589,6 +635,9 @@ export class SafeShareClient {
     status: string;
     claimCode?: string;
     errorMessage?: string;
+    errorCode?: string;
+    retryable: boolean;
+    attempts: number;
     maxDownloads?: number;
   }> {
     const response = await this.request<{
@@ -604,6 +653,9 @@ export class SafeShareClient {
       status?: string;
       claim_code?: string;
       error_message?: string;
+      error_code?: string;
+      retryable?: boolean;
+      attempts?: number;
       max_downloads?: number;
     }>("GET", `/api/upload/status/${uploadId}`);
 
@@ -620,6 +672,9 @@ export class SafeShareClient {
       status: response.status ?? (response.complete ? "completed" : "uploading"),
       claimCode: response.claim_code,
       errorMessage: response.error_message,
+      errorCode: response.error_code,
+      retryable: response.retryable ?? false,
+      attempts: response.attempts ?? 0,
       maxDownloads: response.max_downloads,
     };
   }
@@ -643,6 +698,12 @@ export class SafeShareClient {
       chunk_size: number;
       expires_at: string;
       complete: boolean;
+      status?: string;
+      claim_code?: string;
+      error_message?: string;
+      error_code?: string;
+      retryable?: boolean;
+      attempts?: number;
     }>("GET", `/api/upload/status/${uploadId}`);
 
     return {
@@ -655,6 +716,12 @@ export class SafeShareClient {
       chunkSize: response.chunk_size,
       expiresAt: response.expires_at,
       complete: response.complete,
+      status: response.status,
+      claimCode: response.claim_code,
+      errorMessage: response.error_message,
+      errorCode: response.error_code,
+      retryable: response.retryable,
+      attempts: response.attempts,
     };
   }
 

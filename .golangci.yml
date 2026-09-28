@@ -47,7 +47,6 @@ linters:
         # Database operations in error paths
         - github.com/fjmerc/safeshare/internal/database.DeleteSession
         - github.com/fjmerc/safeshare/internal/database.DeleteUserSession
-        - github.com/fjmerc/safeshare/internal/database.SetAssemblyFailed
 
     staticcheck:
       checks:

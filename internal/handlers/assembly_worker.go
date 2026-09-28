@@ -8,10 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
-	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
@@ -26,6 +27,17 @@ import (
 // (L3 bug-hunter finding): it must not describe internal chunk paths or
 // mechanics — those go to the server log instead, via logIntegrityMismatch.
 const integrityMismatchMessage = "Upload could not be verified and was rejected"
+
+// genericAssemblyFailureMessage is the uploader-visible error_message for
+// every other internal assembly failure (claim-code generation, MIME
+// detection, disk/encryption I/O, the file-record insert, ...). These used
+// to embed the raw Go error (os path fragments, DB driver text, etc.)
+// directly via fmt.Sprintf("...: %v", err) — harmless while error_message
+// was log-only, but ADR-016's /complete now echoes it back in a 409 body
+// and /status always has (bug-hunter finding L5: no internal detail in
+// client-facing text). Every call site below still logs the real error via
+// slog.Error immediately before calling w.fail/w.failWithAudit.
+const genericAssemblyFailureMessage = "An internal error occurred while processing your upload. Please try again."
 
 // scannedContentMatches reports whether assembledHash matches what
 // verdict.hash recorded during the scan. verdict.hash is empty when nothing
@@ -54,14 +66,14 @@ func logIntegrityMismatch(uploadID string) {
 var scanRetryBackoff = []time.Duration{5 * time.Second, 15 * time.Second, 45 * time.Second}
 
 // scanRetrySleep sleeps for d, waking early if the server begins shutting
-// down (L3 bug-hunter finding: a plain time.Sleep ignored shutdown, needlessly
-// holding an assembly-worker goroutine — and the assembly-slot semaphore it
-// holds — open for up to 45s past a shutdown signal instead of letting the
-// process exit promptly). Overridable in tests to avoid real delays.
-var scanRetrySleep = func(d time.Duration) {
+// down, or if the assembly worker's own context is cancelled (lease lost,
+// or a shutdown yield request — ADR-016). Overridable in tests to avoid
+// real delays.
+var scanRetrySleep = func(ctx context.Context, d time.Duration) {
 	select {
 	case <-time.After(d):
 	case <-utils.GetUploadTracker().ShutdownCh():
+	case <-ctx.Done():
 	}
 }
 
@@ -113,46 +125,377 @@ func scanChunkedUploadWithRetry(ctx context.Context, cfg *config.Config, uploadD
 			"attempt", attempt+1,
 			"backoff", backoff,
 		)
-		scanRetrySleep(backoff)
+		scanRetrySleep(ctx, backoff)
 		if utils.GetUploadTracker().IsShuttingDown() {
 			return scanVerdict{}, errScanInterruptedByShutdown
+		}
+		if ctx.Err() != nil {
+			return scanVerdict{}, ctx.Err()
 		}
 	}
 }
 
 // errScanInterruptedByShutdown means the server began shutting down while a
-// scan was waiting to retry. The upload is neither failed nor published; it
-// stays in "processing" for the assembly recovery worker to re-run.
+// scan was waiting to retry. The upload is neither failed nor published; the
+// worker yields its lease so recovery re-runs it (and rescans) promptly.
 var errScanInterruptedByShutdown = errors.New("malware scan interrupted by shutdown")
 
-// recordInfectedChunkedUpload writes a best-effort audit row for a
-// rejected, infected chunked upload: no assembled file is ever written and
-// claimCode is never surfaced through the status endpoint (SetAssemblyFailed
-// leaves partial_uploads.claim_code unset). Insert failures are logged, not
-// surfaced — the caller marks assembly failed regardless.
-//
-// Bug-hunter finding (post-ADR-015 review): see recordInfectedUpload's doc
-// comment in upload.go — the same quota/storage-inflation fix applies here:
-// FileSize is 0, and the audit row's expiry is bounded to the server's
-// default regardless of what the uploader requested (including
-// expires_in_hours=0, "never expire").
-func recordInfectedChunkedUpload(ctx context.Context, repos *repository.Repositories, cfg *config.Config, partialUpload *models.PartialUpload, claimCode, clientIP string, verdict scanVerdict) {
-	auditExpiresAt := time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours()) * time.Hour)
+// assemblyFailure is a machine-readable assembly failure reason paired with
+// whether it's worth retrying (ADR-016). Centralizing the taxonomy here
+// (rather than scattering ad-hoc code/retryable pairs through the worker)
+// keeps /complete's Reopen decision and the SDK/web-client retry behaviour
+// consistent with what the worker actually recorded.
+type assemblyFailure struct {
+	code      string
+	retryable bool
+}
 
+// beforePublishHook, when non-nil, runs immediately before a worker calls
+// w.publish, with the upload_id being published. Test-only seam for
+// simulating races around the Publish transition (e.g. a stale worker that
+// reaches publish after another attempt has already taken over and
+// finished). Never set outside tests.
+var beforePublishHook func(uploadID string)
+
+var (
+	// errMalwareDetected: terminal — the content is what it is, retrying
+	// changes nothing.
+	errMalwareDetected = assemblyFailure{code: "MALWARE_DETECTED", retryable: false}
+	// errIntegrityMismatch: terminal — a TOCTOU chunk-content mismatch or a
+	// size mismatch between scan time and assembly time. Retrying would
+	// just re-run the same race; the uploader must re-upload from scratch
+	// (a fresh /api/upload/init), not retry /complete.
+	errIntegrityMismatch = assemblyFailure{code: "INTEGRITY_ERROR", retryable: false}
+	// errScanUnavailable: retryable — clamd was unreachable after retries.
+	errScanUnavailable = assemblyFailure{code: "SCAN_UNAVAILABLE", retryable: true}
+	// errAssemblyFailed: retryable — the catch-all for IO/DB/encryption/
+	// claim-code errors. These are usually transient (disk hiccup,
+	// momentary DB contention) and a retry (or a takeover by a healthier
+	// worker) commonly succeeds.
+	errAssemblyFailed = assemblyFailure{code: "ASSEMBLY_FAILED", retryable: true}
+	// errChunkMissing: terminal (bug-hunter follow-up finding) — a chunk
+	// file went missing or became unreadable on disk. Same client-facing
+	// code as errAssemblyFailed (ASSEMBLY_FAILED, no API contract change)
+	// but NOT retryable: recovery cannot re-run this upload to success
+	// because the missing bytes are gone, and the client cannot retry
+	// either — /api/upload/{id}/complete 400s MISSING_CHUNKS before ever
+	// reaching the lock, and chunk PUTs are refused once status is no
+	// longer "uploading" (409 UPLOAD_NOT_ACCEPTING). Marking this
+	// retryable=true left /status telling the client to keep waiting on
+	// an upload that could never recover; the uploader must start over
+	// with a fresh /api/upload/init instead.
+	errChunkMissing = assemblyFailure{code: "ASSEMBLY_FAILED", retryable: false}
+)
+
+// assemblyWorker holds the state for a single assembly attempt: the lease
+// it must renew to keep working, and the plumbing to fail/publish through
+// the owner-guarded ADR-016 transitions.
+type assemblyWorker struct {
+	repos  *repository.Repositories
+	cfg    *config.Config
+	upload *models.PartialUpload
+	lease  repository.AssemblyLease
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	leaseLost atomic.Bool // set by the heartbeat before it cancels ctx because renewal stopped succeeding
+
+	heartbeatDone chan struct{}
+}
+
+// assemblyRootCtx is cancelled by CancelAssemblies at shutdown, asking every
+// in-flight assembly worker to stop promptly (yielding its lease) instead of
+// running to completion. Each worker derives its own child context so a
+// single worker's lease loss doesn't cancel its siblings.
+var (
+	assemblyRootMu     sync.Mutex
+	assemblyRootCtx    context.Context
+	assemblyRootCancel context.CancelFunc
+)
+
+func init() {
+	assemblyRootCtx, assemblyRootCancel = context.WithCancel(context.Background())
+}
+
+// CancelAssemblies cancels the shared assembly root context, asking every
+// in-flight assembly worker to abandon its current step and yield its lease
+// rather than run to completion. Called from graceful shutdown after the
+// normal WaitForUploads grace period elapses (main.go).
+func CancelAssemblies() {
+	assemblyRootMu.Lock()
+	defer assemblyRootMu.Unlock()
+	assemblyRootCancel()
+}
+
+// resetAssemblyRootCtx replaces the shared assembly root context. Test-only:
+// lets tests run multiple shutdown scenarios without cross-contaminating a
+// cancelled root context across cases.
+func resetAssemblyRootCtx() {
+	assemblyRootMu.Lock()
+	defer assemblyRootMu.Unlock()
+	assemblyRootCancel()
+	assemblyRootCtx, assemblyRootCancel = context.WithCancel(context.Background())
+}
+
+// launchAssembly spawns the assembly worker goroutine for upload. It takes
+// ownership of the already-acquired semaphore slot (semCh) and upload
+// tracker entry: the CALLER must have already sent to semCh and called
+// utils.GetUploadTracker().StartAssembly(upload.UploadID) before calling
+// this; launchAssembly releases both via defer when assembly finishes
+// (success, terminal failure, or a shutdown yield).
+func launchAssembly(repos *repository.Repositories, cfg *config.Config, upload *models.PartialUpload, lease repository.AssemblyLease, semCh chan struct{}) {
+	tracker := utils.GetUploadTracker()
+	go func() {
+		defer tracker.FinishAssembly(upload.UploadID)
+		defer func() { <-semCh }()
+		runAssembly(repos, cfg, upload, lease)
+	}()
+}
+
+// runAssembly builds an assemblyWorker, starts its heartbeat, and runs the
+// assembly pipeline, recovering from panics exactly as the pre-ADR-016
+// worker did (a panicking goroutine must never leak the lease or the
+// upload's row forever).
+func runAssembly(repos *repository.Repositories, cfg *config.Config, upload *models.PartialUpload, lease repository.AssemblyLease) {
+	assemblyRootMu.Lock()
+	parent := assemblyRootCtx
+	assemblyRootMu.Unlock()
+
+	ctx, cancel := context.WithCancel(parent)
+	w := &assemblyWorker{
+		repos:         repos,
+		cfg:           cfg,
+		upload:        upload,
+		lease:         lease,
+		ctx:           ctx,
+		cancel:        cancel,
+		heartbeatDone: make(chan struct{}),
+	}
+	defer cancel()
+	defer w.stopHeartbeat()
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("assembly worker panic recovered", "upload_id", upload.UploadID, "panic", r)
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
+		}
+	}()
+
+	go w.heartbeat()
+
+	w.run()
+}
+
+// heartbeat renews the assembly lease on a tick of TTL/4 (per ADR-016),
+// cancelling the worker's context if the lease is confirmed lost (a
+// takeover won) or if no renewal has succeeded for TTL-15s (the DB may be
+// unreachable — better to stop and let recovery decide than keep working
+// past the point another attempt could legitimately take over).
+func (w *assemblyWorker) heartbeat() {
+	defer close(w.heartbeatDone)
+
+	ttl := w.lease.TTL
+	if ttl <= 0 {
+		ttl = utils.DefaultAssemblyLeaseTTL
+	}
+	tick := ttl / 4
+	if tick < time.Second {
+		tick = time.Second
+	}
+	staleDeadline := ttl - 15*time.Second
+	if staleDeadline <= 0 {
+		staleDeadline = ttl / 2
+	}
+
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
+	lastSuccess := time.Now()
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-ticker.C:
+			ok, err := w.repos.PartialUploads.RenewAssemblyLease(w.ctx, w.upload.UploadID, w.lease)
+			if err != nil {
+				slog.Warn("assembly lease renew failed; will retry", "error", err, "upload_id", w.upload.UploadID)
+				if time.Since(lastSuccess) >= staleDeadline {
+					slog.Error("assembly lease not renewed in time; aborting worker", "upload_id", w.upload.UploadID)
+					w.leaseLost.Store(true)
+					w.cancel()
+					return
+				}
+				continue
+			}
+			if !ok {
+				slog.Warn("assembly lease lost to another attempt; aborting worker", "upload_id", w.upload.UploadID)
+				w.leaseLost.Store(true)
+				w.cancel()
+				return
+			}
+			lastSuccess = time.Now()
+		}
+	}
+}
+
+// stopHeartbeat cancels the worker context (idempotent) and waits for the
+// heartbeat goroutine to exit, so nothing renews (or double-cancels) after
+// the worker itself has finished.
+func (w *assemblyWorker) stopHeartbeat() {
+	w.cancel()
+	<-w.heartbeatDone
+}
+
+// aborted checks whether the worker should stop: either its context was
+// cancelled (lease lost, or shutdown via CancelAssemblies) or the global
+// shutdown flag was raised directly (belt-and-suspenders with the
+// assemblyRootCtx cancellation path). Call at each pipeline checkpoint.
+func (w *assemblyWorker) aborted() bool {
+	return w.ctx.Err() != nil
+}
+
+// handleAbort cleans up finalPath (if created) and, when the abort reason is
+// shutdown (not a lost lease — no point spending a DB round-trip on a lease
+// we no longer hold), explicitly yields the lease so recovery can take over
+// immediately instead of waiting out the remainder of the TTL.
+func (w *assemblyWorker) handleAbort(finalPath string) {
+	if finalPath != "" {
+		if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
+			slog.Warn("failed to remove partial final file on assembly abort", "error", err, "upload_id", w.upload.UploadID, "path", finalPath)
+		}
+	}
+
+	if w.leaseLost.Load() {
+		slog.Info("assembly aborted: lease lost to another attempt", "upload_id", w.upload.UploadID)
+		return
+	}
+
+	// Bug-hunter follow-up finding: on the errScanInterruptedByShutdown
+	// path (IsShuttingDown fires before CancelAssemblies/assemblyRootCtx
+	// cancellation), w.ctx is still live here, so the heartbeat goroutine
+	// may still be ticking. Stop it — and wait for it to actually exit —
+	// before yielding below; otherwise an in-flight renew racing with this
+	// Yield could land afterward and extend the lease a full TTL, undoing
+	// the whole point of yielding early. stopHeartbeat is idempotent (a
+	// later deferred call in runAssembly is a no-op once this has run).
+	w.stopHeartbeat()
+
+	slog.Info("assembly aborted: shutting down, yielding lease for recovery", "upload_id", w.upload.UploadID)
+	yieldCtx, yieldCancel := context.WithTimeout(context.WithoutCancel(w.ctx), 5*time.Second)
+	defer yieldCancel()
+	if err := w.repos.PartialUploads.YieldAssemblyLease(yieldCtx, w.upload.UploadID, w.lease.Owner); err != nil {
+		slog.Warn("failed to yield assembly lease on shutdown", "error", err, "upload_id", w.upload.UploadID)
+	}
+}
+
+// fail records a terminal or retryable assembly failure via the owner-
+// guarded FailAssembly transition. A lost lease (another attempt already
+// resolved this upload) is expected under concurrent takeover and logged at
+// debug rather than error.
+func (w *assemblyWorker) fail(reason assemblyFailure, message string) {
+	w.failWithAudit(reason, message, nil)
+}
+
+// failWithAudit returns true only if FailAssembly actually committed the
+// failure (and, when auditFile is set, the audit row). Callers that follow
+// up with something destructive/irreversible — e.g. deleting chunks — must
+// check this: if the CAS was lost (ErrLeaseLost) or the audit insert hit a
+// belt-and-suspenders duplicate (ErrDuplicateKey), a DIFFERENT attempt now
+// owns this upload, quite possibly reading those same chunk files right
+// now, and deleting them out from under it would corrupt its assembly
+// (bug-hunter finding L1).
+func (w *assemblyWorker) failWithAudit(reason assemblyFailure, message string, auditFile *models.File) bool {
+	err := w.repos.PartialUploads.FailAssembly(context.WithoutCancel(w.ctx), w.upload.UploadID, w.lease.Owner, message, reason.code, reason.retryable, auditFile)
+	if err == nil {
+		if auditFile != nil {
+			scanStatus := auditFile.ScanStatus
+			scanResult := auditFile.ScanResult
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileInfected,
+				Timestamp: time.Now(),
+				File: webhooks.FileData{
+					ID:         auditFile.ID,
+					ClaimCode:  auditFile.ClaimCode,
+					Filename:   w.upload.Filename,
+					Size:       w.upload.TotalSize,
+					ExpiresAt:  auditFile.ExpiresAt,
+					ScanStatus: &scanStatus,
+					ScanResult: &scanResult,
+				},
+			})
+		}
+		return true
+	}
+	if errors.Is(err, repository.ErrLeaseLost) {
+		slog.Debug("assembly fail superseded: lease already lost", "upload_id", w.upload.UploadID, "code", reason.code)
+		return false
+	}
+	slog.Error("failed to record assembly failure", "error", err, "upload_id", w.upload.UploadID, "code", reason.code)
+	return false
+}
+
+// publish records successful assembly via the owner-guarded PublishAssembly
+// transition, which atomically flips partial_uploads to completed and
+// inserts the file record in one transaction.
+func (w *assemblyWorker) publish(file *models.File) error {
+	return w.repos.PartialUploads.PublishAssembly(context.WithoutCancel(w.ctx), w.upload.UploadID, w.lease.Owner, file)
+}
+
+// rereadPartialUploadWithRetry re-reads a partial_uploads row with a short
+// bounded retry. It exists for the ambiguous-publish-error path in run():
+// the most likely reason THIS read itself fails is the same transient DB
+// unavailability that made the original publish error ambiguous, so a
+// single attempt would almost always just reproduce "still can't tell" —
+// worth a few short retries before giving up and treating the outcome as
+// genuinely unknown.
+func rereadPartialUploadWithRetry(ctx context.Context, repos *repository.Repositories, uploadID string) (*models.PartialUpload, error) {
+	const maxAttempts = 3
+	delay := 200 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		recheck, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if err == nil {
+			return recheck, nil
+		}
+		lastErr = err
+		if attempt < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			delay *= 2
+		}
+	}
+	return nil, lastErr
+}
+
+// recordInfectedChunkedUpload builds the best-effort audit row for a
+// rejected, infected chunked upload: no assembled file is ever written and
+// claimCode is never surfaced through the status endpoint (a failed upload's
+// claim_code stays unset). The row is inserted inside FailAssembly's
+// transaction by the caller (w.failWithAudit), not here.
+//
+// Bug-hunter finding (post-ADR-015 review): FileSize is 0, and the audit
+// row's expiry is bounded to the server's default regardless of what the
+// uploader requested (including expires_in_hours=0, "never expire") —
+// avoids quota/storage-inflation from an audit row nobody can ever claim.
+func recordInfectedChunkedUpload(cfg *config.Config, partialUpload *models.PartialUpload, claimCode string, verdict scanVerdict) *models.File {
+	auditExpiresAt := time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours()) * time.Hour)
 	now := time.Now()
-	fileRecord := &models.File{
+	return &models.File{
 		ClaimCode:        claimCode,
 		OriginalFilename: partialUpload.Filename,
 		// Placeholder to satisfy the NOT NULL column; no file is ever
 		// assembled for an infected upload, and claim.go's scanGate blocks
 		// download by scan_status before this path would ever be opened.
-		StoredFilename: "quarantined-" + uuid.New().String(),
-		// Never the uploader's declared size — see the doc comment above.
+		StoredFilename:  "quarantined-" + uuid.New().String(),
 		FileSize:        0,
 		MimeType:        "application/octet-stream",
 		ExpiresAt:       auditExpiresAt,
 		MaxDownloads:    &partialUpload.MaxDownloads,
-		UploaderIP:      storeIP(clientIP, cfg),
+		UploaderIP:      partialUpload.UploaderIP,
 		PasswordHash:    partialUpload.PasswordHash,
 		UserID:          partialUpload.UserID,
 		ClientEncrypted: partialUpload.ClientEncrypted,
@@ -160,56 +503,26 @@ func recordInfectedChunkedUpload(ctx context.Context, repos *repository.Reposito
 		ScanResult:      verdict.result,
 		ScannedAt:       &now,
 	}
-
-	if err := repos.Files.Create(ctx, fileRecord); err != nil {
-		metrics.MalwareAuditRecordFailuresTotal.Inc()
-		slog.Error("failed to record infected chunked upload audit row", "error", err, "upload_id", partialUpload.UploadID)
-	}
-
-	scanStatus := verdict.status
-	scanResult := verdict.result
-	EmitWebhookEvent(&webhooks.Event{
-		Type:      webhooks.EventFileInfected,
-		Timestamp: now,
-		File: webhooks.FileData{
-			ID:         fileRecord.ID,
-			ClaimCode:  claimCode,
-			Filename:   partialUpload.Filename,
-			Size:       partialUpload.TotalSize, // declared size; nothing was actually stored
-			ExpiresAt:  auditExpiresAt,
-			ScanStatus: &scanStatus,
-			ScanResult: &scanResult,
-		},
-	})
 }
 
-// AssembleUploadAsync performs the file assembly in a background goroutine
-// This function is called after all chunks have been uploaded and validated
-func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, partialUpload *models.PartialUpload, clientIP string) {
-	// This function runs in a goroutine, so we must handle all errors internally
-	// and update the database status accordingly
-
-	uploadID := partialUpload.UploadID
-	ctx := context.Background() // Background context for async worker
-
-	// Add panic recovery to prevent goroutine death and orphaned files
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("assembly worker panic recovered",
-				"upload_id", uploadID,
-				"panic", r,
-			)
-			if err := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembly panicked: %v", r), ""); err != nil {
-				slog.Error("failed to mark assembly as failed after panic", "error", err, "upload_id", uploadID)
-			}
-		}
-	}()
+// run performs the actual file assembly for w.upload. This is the direct
+// descendant of the pre-ADR-016 AssembleUploadAsync; the main structural
+// change is that every failure/success point now goes through w.fail /
+// w.publish (owner-guarded, so a superseded attempt can never clobber a
+// winner) instead of unconditional SetAssemblyFailed/SetAssemblyCompleted
+// calls, and every step is preceded by an abort checkpoint.
+func (w *assemblyWorker) run() {
+	uploadID := w.upload.UploadID
+	cfg := w.cfg
+	partialUpload := w.upload
+	clientIP := partialUpload.UploaderIP
 
 	slog.Info("starting async assembly",
 		"upload_id", uploadID,
 		"filename", partialUpload.Filename,
 		"total_chunks", partialUpload.TotalChunks,
 		"total_size", partialUpload.TotalSize,
+		"attempt", partialUpload.AssemblyAttempts,
 	)
 
 	// Generate unique claim code
@@ -220,19 +533,14 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		claimCode, err = utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err, "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate claim code: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
-		// Check if code already exists
-		existing, err := repos.Files.GetByClaimCode(ctx, claimCode)
+		existing, err := w.repos.Files.GetByClaimCode(context.Background(), claimCode)
 		if err != nil {
 			slog.Error("failed to check claim code", "error", err, "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to check claim code: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
@@ -242,11 +550,14 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 
 		if i == maxRetries-1 {
 			slog.Error("failed to generate unique claim code after retries", "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Failed to generate unique claim code", ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, "Failed to generate unique claim code")
 			return
 		}
+	}
+
+	if w.aborted() {
+		w.handleAbort("")
+		return
 	}
 
 	// Generate unique filename for storage
@@ -262,9 +573,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		chunkFile, err := os.Open(utils.GetChunkPath(cfg.UploadDir, uploadID, 0))
 		if err != nil {
 			slog.Error("failed to open first chunk for MIME detection", "error", err, "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to open file for MIME detection: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
@@ -274,9 +583,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 
 		if err != nil && err != io.EOF {
 			slog.Error("failed to read first chunk for MIME detection", "error", err, "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to read file for MIME detection: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
@@ -286,23 +593,33 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		}
 	}
 
+	if w.aborted() {
+		w.handleAbort("")
+		return
+	}
+
 	// ADR-015: scan the chunk content synchronously, straight off the chunk
 	// files, before any encryption/strip/storage work below — a rejected
 	// upload must never reach the assemble/encrypt branch or produce a
 	// stored file.
-	verdict, scanErr := scanChunkedUploadWithRetry(ctx, cfg, cfg.UploadDir, uploadID, partialUpload.TotalChunks, partialUpload.TotalSize, partialUpload.ClientEncrypted)
+	verdict, scanErr := scanChunkedUploadWithRetry(w.ctx, cfg, cfg.UploadDir, uploadID, partialUpload.TotalChunks, partialUpload.TotalSize, partialUpload.ClientEncrypted)
 	if scanErr != nil {
-		// A missing/unopenable chunk is an assembly problem, not a scan
-		// verification problem: MALWARE_SCAN_ALLOW_UNVERIFIED must not apply
-		// (there's nothing to "proceed unverified" with — the data is gone),
-		// and it gets its own error_code rather than SCAN_UNAVAILABLE
-		// (bug-hunter finding).
-		if errors.Is(scanErr, errScanInterruptedByShutdown) {
-			// Leave the upload in "processing", exactly as a crash would:
-			// the assembly recovery worker re-runs it (and rescans) after
-			// restart. Failing it here would discard a good upload, and
-			// publishing it unverified would skip the scan.
-			slog.Warn("malware scan interrupted by shutdown; leaving upload for recovery", "upload_id", uploadID)
+		// Check abort FIRST, regardless of what error the scan actually
+		// surfaced. Closing the clamd socket on ctx.Done() (scanner.go)
+		// typically produces a generic "use of closed network connection"
+		// net.OpError, not context.Canceled — matching on the scan error's
+		// type/text is unreliable (bug-hunter finding: a shutdown or a lost
+		// lease mid-scan was being recorded as SCAN_UNAVAILABLE, burning an
+		// attempt and leaving a healthy upload "failed" instead of
+		// recoverable). w.aborted() is authoritative: it's true exactly when
+		// this worker's own ctx was cancelled, independent of how that
+		// surfaced downstream.
+		if w.aborted() || errors.Is(scanErr, errScanInterruptedByShutdown) {
+			// Leave the upload for recovery: the assembly recovery worker
+			// re-runs it (and rescans) rather than discarding a good
+			// upload or publishing it unverified.
+			slog.Warn("malware scan interrupted; leaving upload for recovery", "upload_id", uploadID, "reason", scanErr)
+			w.handleAbort("")
 			return
 		}
 		if errors.Is(scanErr, utils.ErrChunkMissing) {
@@ -314,9 +631,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				"error", scanErr,
 				"upload_id", uploadID,
 			)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Failed to read uploaded file data", "ASSEMBLY_FAILED"); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errChunkMissing, "Failed to read uploaded file data")
 			return
 		}
 		if !cfg.ClamAV.AllowUnverified {
@@ -324,9 +639,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				"error", scanErr,
 				"upload_id", uploadID,
 			)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, "Malware scanning is temporarily unavailable", "SCAN_UNAVAILABLE"); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errScanUnavailable, "Malware scanning is temporarily unavailable")
 			return
 		}
 		slog.Warn("malware scan failed after retries; proceeding unverified (MALWARE_SCAN_ALLOW_UNVERIFIED)",
@@ -341,13 +654,26 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			"virus_name", verdict.result,
 			"upload_id", uploadID,
 		)
-		recordInfectedChunkedUpload(ctx, repos, cfg, partialUpload, claimCode, clientIP, verdict)
-		if err := utils.DeleteChunks(cfg.UploadDir, uploadID); err != nil {
-			slog.Error("failed to delete chunks for infected upload", "error", err, "upload_id", uploadID)
+		auditFile := recordInfectedChunkedUpload(cfg, partialUpload, claimCode, verdict)
+		if w.failWithAudit(errMalwareDetected, fmt.Sprintf("Upload rejected: malware detected (%s)", verdict.result), auditFile) {
+			// Only delete chunks once the MALWARE_DETECTED verdict (and its
+			// audit row) actually committed under OUR lease. If it didn't
+			// (another attempt already took over, or a belt-and-suspenders
+			// duplicate-key backstop fired), that other attempt may be
+			// reading these same chunk files right now — deleting them
+			// would corrupt its assembly and could make it record a
+			// retryable ASSEMBLY_FAILED instead of MALWARE_DETECTED,
+			// losing the audit row and the file.infected webhook
+			// (bug-hunter finding L1).
+			if err := utils.DeleteChunks(cfg.UploadDir, uploadID); err != nil {
+				slog.Error("failed to delete chunks for infected upload", "error", err, "upload_id", uploadID)
+			}
 		}
-		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Upload rejected: malware detected (%s)", verdict.result), "MALWARE_DETECTED"); setErr != nil {
-			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-		}
+		return
+	}
+
+	if w.aborted() {
+		w.handleAbort("")
 		return
 	}
 
@@ -367,9 +693,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		encFileID, err = utils.GenerateEncFileID()
 		if err != nil {
 			slog.Error("failed to generate enc_file_id", "error", err, "upload_id", uploadID)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate enc_file_id: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
@@ -380,18 +704,44 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		if err != nil {
 			slog.Error("failed to assemble+encrypt chunks", "error", err, "upload_id", uploadID)
 			os.Remove(finalPath) // defensive: AssembleChunksEncrypted removes on error, but be safe
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
+			if errors.Is(err, utils.ErrPlaintextLengthMismatch) {
+				// A chunk shrank/vanished on disk between /complete's
+				// preflight checks and this reopen — content integrity
+				// problem, not a transient IO/DB hiccup (code-reviewer
+				// finding: this was falling through to the generic,
+				// retryable ASSEMBLY_FAILED).
+				w.fail(errIntegrityMismatch, integrityMismatchMessage)
+				return
 			}
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
+			return
+		}
+
+		// Verify the plaintext byte count matches what was expected (mirrors
+		// the multi-pass path's check below). AssembleChunksEncrypted already
+		// verified no chunk is missing, but a chunk truncated/shrunk on disk
+		// between /complete's integrity check and this reopen would otherwise
+		// surface only as a hash mismatch — code-reviewer finding: a size
+		// mismatch here was falling through as a generic, retryable
+		// ASSEMBLY_FAILED (from AssembleChunksEncrypted's own missing-chunks
+		// error) or, if chunk count matched but bytes didn't, silently passing
+		// through to the hash check. Checking size explicitly makes this
+		// terminal (INTEGRITY_ERROR), consistent with the multi-pass path.
+		if totalBytesWritten != partialUpload.TotalSize {
+			slog.Error("assembled file size mismatch (encrypted fast path)",
+				"upload_id", uploadID,
+				"expected", partialUpload.TotalSize,
+				"actual", totalBytesWritten,
+			)
+			os.Remove(finalPath)
+			w.fail(errIntegrityMismatch, integrityMismatchMessage)
 			return
 		}
 
 		if !scannedContentMatches(verdict, sha256Hash) {
 			logIntegrityMismatch(uploadID)
 			os.Remove(finalPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, integrityMismatchMessage, "ASSEMBLY_FAILED"); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errIntegrityMismatch, integrityMismatchMessage)
 			return
 		}
 	} else {
@@ -407,10 +757,8 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		totalBytesWritten, sha256Hash, err = utils.AssembleChunks(cfg.UploadDir, uploadID, partialUpload.TotalChunks, finalPath)
 		if err != nil {
 			slog.Error("failed to assemble chunks", "error", err, "upload_id", uploadID)
-			os.Remove(finalPath) // Clean up partial final file if it exists
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to assemble file: %v", err), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			os.Remove(finalPath)
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 			return
 		}
 
@@ -422,9 +770,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				"actual", totalBytesWritten,
 			)
 			os.Remove(finalPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Assembled file size mismatch: expected %d, got %d", partialUpload.TotalSize, totalBytesWritten), ""); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errIntegrityMismatch, integrityMismatchMessage)
 			return
 		}
 
@@ -438,9 +784,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		if !scannedContentMatches(verdict, sha256Hash) {
 			logIntegrityMismatch(uploadID)
 			os.Remove(finalPath)
-			if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, integrityMismatchMessage, "ASSEMBLY_FAILED"); setErr != nil {
-				slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-			}
+			w.fail(errIntegrityMismatch, integrityMismatchMessage)
 			return
 		}
 
@@ -489,9 +833,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			if err != nil {
 				slog.Error("failed to generate enc_file_id", "error", err, "upload_id", uploadID)
 				os.Remove(finalPath)
-				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to generate enc_file_id: %v", err), ""); setErr != nil {
-					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-				}
+				w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 				return
 			}
 
@@ -502,9 +844,7 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				slog.Error("failed to encrypt file (SFSE2)", "error", err, "upload_id", uploadID)
 				os.Remove(finalPath)
 				os.Remove(tempEncryptedPath)
-				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to encrypt file: %v", err), ""); setErr != nil {
-					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-				}
+				w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 				return
 			}
 
@@ -516,17 +856,13 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 			if err := os.Remove(finalPath); err != nil {
 				slog.Error("failed to remove original file", "error", err, "upload_id", uploadID)
 				os.Remove(tempEncryptedPath)
-				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to remove original file: %v", err), ""); setErr != nil {
-					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-				}
+				w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 				return
 			}
 			if err := os.Rename(tempEncryptedPath, finalPath); err != nil {
 				slog.Error("failed to rename encrypted file", "error", err, "upload_id", uploadID)
 				os.Remove(tempEncryptedPath)
-				if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to rename encrypted file: %v", err), ""); setErr != nil {
-					slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-				}
+				w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
 				return
 			}
 
@@ -535,6 +871,11 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 				"original_size", originalInfo.Size(),
 				"encrypted_size", encryptedInfo.Size())
 		}
+	}
+
+	if w.aborted() {
+		w.handleAbort(finalPath)
+		return
 	}
 
 	// Calculate expiration time
@@ -546,7 +887,6 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
 	}
 
-	// Create file record in database
 	// Always set maxDownloads (0 = unlimited, not "unset")
 	maxDownloads := &partialUpload.MaxDownloads
 
@@ -572,19 +912,97 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		fileRecord.ScannedAt = &scannedAt
 	}
 
-	if err := repos.Files.Create(ctx, fileRecord); err != nil {
-		os.Remove(finalPath) // Clean up on error
-		slog.Error("failed to create file record", "error", err, "upload_id", uploadID)
-		if setErr := repos.PartialUploads.SetAssemblyFailed(ctx, uploadID, fmt.Sprintf("Failed to create file record: %v", err), ""); setErr != nil {
-			slog.Error("failed to mark assembly as failed", "error", setErr, "upload_id", uploadID)
-		}
-		return
+	if beforePublishHook != nil {
+		beforePublishHook(uploadID)
 	}
 
-	// Mark partial upload as completed
-	if err := repos.PartialUploads.SetAssemblyCompleted(ctx, uploadID, claimCode); err != nil {
-		slog.Error("failed to mark partial upload as completed", "error", err, "upload_id", uploadID)
-		// Don't fail the request - file is already created
+	skipWebhook := false
+	if err := w.publish(fileRecord); err != nil {
+		if errors.Is(err, repository.ErrLeaseLost) {
+			slog.Info("assembly publish superseded: another attempt already resolved this upload", "upload_id", uploadID)
+			os.Remove(finalPath)
+			return
+		}
+
+		// Bug-hunter finding M3: a Commit that actually succeeded on the
+		// server but whose acknowledgement was lost (e.g. the connection
+		// dropped between COMMIT and the client receiving the reply)
+		// surfaces here as an ordinary error, not ErrLeaseLost — even
+		// though the row really did transition to "completed" under our
+		// own claim code. Blindly deleting finalPath and failing below
+		// would destroy the only copy of a file whose (already-published,
+		// already-unique-checked) claim code is now permanently valid.
+		// Before treating this as a real failure, check whether it
+		// actually went through: re-read the row (retried — the most
+		// likely reason THIS read itself fails is the same transient DB
+		// unavailability that made the publish error ambiguous) and see if
+		// it's "completed" with THIS attempt's own claim code — a
+		// cryptographically random value we already checked was unique
+		// before ever calling publish(), so nothing else could ever have
+		// set it.
+		// Not cancelled immediately: the success branch below reuses
+		// recheckCtx for the file-row refetch (GetByClaimCode). The 5s
+		// timeout already bounds its lifetime; deferring the cancel here
+		// (rather than calling it right after the reread) avoids handing
+		// that refetch an already-cancelled context, which would make it
+		// fail every time and permanently disable the webhook on this path.
+		recheckCtx, recheckCancel := context.WithTimeout(context.WithoutCancel(w.ctx), 5*time.Second)
+		defer recheckCancel()
+		recheck, recheckErr := rereadPartialUploadWithRetry(recheckCtx, w.repos, uploadID)
+
+		switch {
+		case recheckErr != nil:
+			// M3 edge case (follow-up bug-hunter finding): the re-read
+			// itself failed after retries — most likely the DB is still
+			// unreachable, so we genuinely cannot tell whether the
+			// original commit went through. Guessing either way is wrong
+			// half the time: deleting finalPath risks destroying a
+			// published file's only copy; calling w.fail risks recording
+			// ASSEMBLY_FAILED over a row that's actually completed (a
+			// no-op via ErrLeaseLost, but still misleading in intent).
+			// Do neither — leave finalPath and the row exactly as they
+			// are. If the commit truly failed, the lease eventually
+			// expires and recovery re-evaluates from scratch (worst case:
+			// this finalPath becomes an orphan for CleanupOrphanedFiles
+			// to reap, never a published row silently missing its bytes).
+			slog.Error("could not determine whether an ambiguous publish actually committed (DB still unreachable after retries); leaving upload and finalPath untouched for lease-expiry recovery",
+				"publish_error", err, "recheck_error", recheckErr, "upload_id", uploadID)
+			return
+
+		case recheck != nil && recheck.Status == "completed" && recheck.ClaimCode != nil && *recheck.ClaimCode == claimCode:
+			slog.Warn("assembly publish returned an error but the commit actually succeeded; treating as success",
+				"error", err, "upload_id", uploadID)
+			if publishedFile, fileErr := w.repos.Files.GetByClaimCode(recheckCtx, claimCode); fileErr == nil && publishedFile != nil {
+				fileRecord = publishedFile
+			} else {
+				// Don't emit a webhook carrying a fake ID=0 (bug-hunter
+				// finding): skip it entirely rather than guess. Chunk
+				// cleanup and the success log below are still correct —
+				// the row IS completed, we just couldn't fetch the file
+				// row's real ID this time.
+				slog.Error("failed to re-fetch published file row after ambiguous commit; skipping file.uploaded webhook", "error", fileErr, "upload_id", uploadID)
+				skipWebhook = true
+			}
+			// Fall through: do NOT remove finalPath (it's the published
+			// file) and do NOT call w.fail (the row is no longer
+			// "processing", so that CAS wouldn't match anyway).
+
+		case errors.Is(err, repository.ErrDuplicateKey):
+			// A file row for this upload_id already exists — the winning
+			// side of a race we lost despite passing the owner check (should
+			// be effectively impossible given the CAS, but the unique index
+			// is the belt-and-suspenders backstop). Don't leave a second
+			// copy of the bytes on disk.
+			slog.Warn("assembly publish found existing file row for this upload; discarding our copy", "upload_id", uploadID)
+			os.Remove(finalPath)
+			return
+
+		default:
+			slog.Error("failed to publish assembled file", "error", err, "upload_id", uploadID)
+			os.Remove(finalPath)
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
+			return
+		}
 	}
 
 	// Delete chunks (cleanup)
@@ -593,19 +1011,23 @@ func AssembleUploadAsync(repos *repository.Repositories, cfg *config.Config, par
 		// Don't fail - chunks will be cleaned up later by cleanup worker
 	}
 
-	// Emit webhook event for file upload completion
-	EmitWebhookEvent(&webhooks.Event{
-		Type:      webhooks.EventFileUploaded,
-		Timestamp: time.Now(),
-		File: webhooks.FileData{
-			ID:        fileRecord.ID,
-			ClaimCode: claimCode,
-			Filename:  partialUpload.Filename,
-			Size:      totalBytesWritten,
-			MimeType:  mimeType,
-			ExpiresAt: expiresAt,
-		},
-	})
+	// Emit webhook event for file upload completion (only after the commit
+	// above — a webhook for a file that turned out to be superseded/rolled
+	// back would be a lie).
+	if !skipWebhook {
+		EmitWebhookEvent(&webhooks.Event{
+			Type:      webhooks.EventFileUploaded,
+			Timestamp: time.Now(),
+			File: webhooks.FileData{
+				ID:        fileRecord.ID,
+				ClaimCode: claimCode,
+				Filename:  partialUpload.Filename,
+				Size:      totalBytesWritten,
+				MimeType:  mimeType,
+				ExpiresAt: expiresAt,
+			},
+		})
+	}
 
 	slog.Info("async assembly completed successfully",
 		"upload_id", uploadID,

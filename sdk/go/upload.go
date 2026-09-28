@@ -336,6 +336,14 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 	deadline := time.Now().Add(maxDuration)
 	delay := initialDelay
 
+	// ADR-016: bounds how many times this poll loop will POST /complete
+	// again after observing a retryable "failed" status (SCAN_UNAVAILABLE, a
+	// transient IO/DB error, etc). The server enforces its own attempt cap
+	// independently; this just keeps a permanently broken server from
+	// looping the SDK caller forever.
+	const maxAssemblyRetries = 3
+	assemblyRetries := 0
+
 	for iteration := 0; iteration < maxIterations && time.Now().Before(deadline); iteration++ {
 		// Check context cancellation
 		select {
@@ -374,16 +382,79 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 			}, nil
 
 		case "failed":
+			// ADR-016: a retryable failure still has its chunks on the
+			// server — POSTing /complete again reopens the upload and
+			// re-runs assembly, up to the server's own attempt cap.
+			if status.Retryable && assemblyRetries < maxAssemblyRetries {
+				assemblyRetries++
+				select {
+				case <-ctx.Done():
+					c.cancelUpload(context.Background(), uploadID)
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				resp, err := c.request(ctx, http.MethodPost, fmt.Sprintf("/api/upload/complete/%s", uploadID), nil, "")
+				if err == nil {
+					resp.Body.Close()
+				}
+				// Whether the retry POST succeeded, failed again, or hit a
+				// network error, fall through to the next poll iteration —
+				// the next status read is the source of truth. A terminal
+				// 409 from the retry POST just means the very next status
+				// read will show a non-retryable failure (or the same one
+				// with attempts exhausted), which is handled above.
+				delay = delay * 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				continue
+			}
+
 			errMsg := "assembly failed"
 			if status.ErrorMessage != nil {
 				errMsg = fmt.Sprintf("assembly failed: %q", *status.ErrorMessage)
 			}
+			code := ""
+			if status.ErrorCode != nil {
+				code = *status.ErrorCode
+			}
 			return nil, &ChunkedUploadError{
 				UploadID: uploadID,
+				Code:     code,
 				Err:      fmt.Errorf("%s", errMsg),
 			}
 
-		case "processing", "uploading":
+		case "uploading":
+			// Should not normally happen while polling (polling only starts
+			// after /complete already returned 202) — but defensively, if
+			// the row ever falls back to "uploading" underneath us, re-POST
+			// /complete (bounded by the same budget as a retryable failure)
+			// rather than silently poll a row nothing is ever going to
+			// finish on its own.
+			if assemblyRetries < maxAssemblyRetries {
+				assemblyRetries++
+				select {
+				case <-ctx.Done():
+					c.cancelUpload(context.Background(), uploadID)
+					return nil, ctx.Err()
+				case <-time.After(delay):
+				}
+				resp, err := c.request(ctx, http.MethodPost, fmt.Sprintf("/api/upload/complete/%s", uploadID), nil, "")
+				if err == nil {
+					resp.Body.Close()
+				}
+				delay = delay * 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				continue
+			}
+			return nil, &ChunkedUploadError{
+				UploadID: uploadID,
+				Err:      fmt.Errorf("upload fell back to uploading state and could not be resumed"),
+			}
+
+		case "processing":
 			// Wait with cancellation support before retrying
 			select {
 			case <-ctx.Done():
@@ -441,6 +512,8 @@ func (c *Client) getUploadStatusInternal(ctx context.Context, uploadID string) (
 		ClaimCode      *string `json:"claim_code,omitempty"`
 		ErrorMessage   *string `json:"error_message,omitempty"`
 		ErrorCode      *string `json:"error_code,omitempty"`
+		Retryable      bool    `json:"retryable"`
+		Attempts       int     `json:"attempts"`
 		MaxDownloads   *int    `json:"max_downloads,omitempty"`
 	}
 
@@ -462,6 +535,8 @@ func (c *Client) getUploadStatusInternal(ctx context.Context, uploadID string) (
 		ClaimCode:      apiResp.ClaimCode,
 		ErrorMessage:   apiResp.ErrorMessage,
 		ErrorCode:      apiResp.ErrorCode,
+		Retryable:      apiResp.Retryable,
+		Attempts:       apiResp.Attempts,
 		MaxDownloads:   apiResp.MaxDownloads,
 	}, nil
 }

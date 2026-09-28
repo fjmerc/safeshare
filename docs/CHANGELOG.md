@@ -35,6 +35,18 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+
+- New settings for chunked-upload assembly: `ASSEMBLY_LEASE_TTL` (default 2m — how long a stalled assembly holds an upload before another worker takes it over; active assemblies renew it), `ASSEMBLY_MAX_ATTEMPTS` (default 5) and `ASSEMBLY_SHUTDOWN_GRACE` (default 30s — how long shutdown waits for in-progress assemblies).
+- Chunked-upload assembly failures now report whether they're retryable (new `retryable` and `attempts` fields on the upload status response). Most assembly failure reasons (a scanner or storage hiccup) are now retryable by default; a scan/content mismatch is now reported as a new `INTEGRITY_ERROR` code and is not retryable (previously it was folded into the generic, retryable `ASSEMBLY_FAILED` code). New environment variables `ASSEMBLY_LEASE_TTL` (default 2m), `ASSEMBLY_MAX_ATTEMPTS` (default 5), and `ASSEMBLY_SHUTDOWN_GRACE` (default 30s) tune this behavior.
+
+### Fixed
+
+- Chunked uploads: a failed assembly (e.g. a transient malware-scanner or storage hiccup) previously left the upload permanently stuck showing "processing" or a dead-end failure, with no way to retry without starting the upload over from scratch. Failed uploads can now be retried automatically — the web app and all SDKs (Go, TypeScript, Python) do this for you when the failure is transient.
+- Chunked uploads: a crash or restart during file assembly, or an assembly that was simply still slow (e.g. a large file with malware scanning enabled), could under some timing produce two copies of the same upload with two different claim codes, or occasionally a slow-but-healthy assembly could be interrupted and restarted unnecessarily. Assembly progress is now tracked with a fenced lease so at most one attempt can ever finish a given upload.
+- Chunked uploads: an interrupted upload (server crash or restart mid-assembly) now resumes automatically within about a minute of the server restarting, instead of up to an hour.
+- Server shutdown now waits for in-progress chunked-upload assembly to finish (or reach a safe stopping point) before exiting, instead of potentially cutting it off mid-flight.
+
 ## [1.6.0] - 2026-09-28
 
 ### Security

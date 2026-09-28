@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/testutil"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -695,6 +697,110 @@ func TestUploadCompleteHandler_AssemblySaturated(t *testing.T) {
 	}
 	if pu.Status != "uploading" {
 		t.Errorf("after saturated 503, status = %q, want %q (lock leaked)", pu.Status, "uploading")
+	}
+}
+
+// TestUploadCompleteHandler_RetryableFailed_AssemblySaturated is the ADR-016
+// bug-hunter M2 regression test: a retryable "failed" row must NOT be
+// reopened before the assembly-slot/preflight checks. Before the fix,
+// /complete reopened failed->uploading first, so a 503 (saturated pool)
+// afterward stranded the row in "uploading" — a status the recovery sweep
+// never scans, so only the client's own retry could ever resurrect it, and
+// the SDKs/web client don't always retry on a bare network/slot error. The
+// row must stay exactly "failed" (retryable, same attempt count) so a later
+// /complete can still legitimately reopen and succeed.
+func TestUploadCompleteHandler_RetryableFailed_AssemblySaturated(t *testing.T) {
+	InitAssemblyWorkers(1)
+	t.Cleanup(func() { InitAssemblyWorkers(10) })
+
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440095"
+	partialUpload := &models.PartialUpload{
+		UploadID: uploadID, Filename: "retry-saturated.txt", TotalSize: 2048, ChunkSize: 1024,
+		TotalChunks: 2, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create partial upload: %v", err)
+	}
+
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := os.WriteFile(filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i)), bytes.Repeat([]byte("A"), 1024), 0644); err != nil {
+			t.Fatalf("write chunk %d: %v", i, err)
+		}
+	}
+
+	// Put the row in a retryable "failed" state (as if a prior attempt hit
+	// SCAN_UNAVAILABLE).
+	owner := "prior-attempt-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID, repository.AssemblyLease{Owner: owner, TTL: time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing: %v", err)
+	}
+	if err := repos.PartialUploads.FailAssembly(ctx, uploadID, owner, "clamd unreachable", "SCAN_UNAVAILABLE", true, nil); err != nil {
+		t.Fatalf("FailAssembly: %v", err)
+	}
+
+	// Saturate the pool.
+	sem := *currentAssemblySemaphore()
+	sem <- struct{}{}
+
+	handler := UploadCompleteHandler(repos, cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d (saturated pool)", rr.Code, http.StatusServiceUnavailable)
+	}
+
+	pu, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID after 503: %v", err)
+	}
+	if pu.Status != "failed" {
+		t.Fatalf("after saturated 503, status = %q, want %q (stranded, M2 regression)", pu.Status, "failed")
+	}
+	if !pu.ErrorRetryable {
+		t.Error("expected the row to remain retryable after the 503")
+	}
+	if pu.AssemblyAttempts != 1 {
+		t.Errorf("assembly_attempts = %d, want 1 (unchanged by the failed 503 attempt)", pu.AssemblyAttempts)
+	}
+
+	// Free the slot and retry: this time it must succeed.
+	<-sem
+
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, want %d; body: %s", rr2.Code, http.StatusAccepted, rr2.Body.String())
+	}
+
+	for i := 0; i < 50; i++ {
+		pu, _ = repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if pu != nil && pu.Status != "processing" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pu == nil || pu.Status != "completed" {
+		t.Fatalf("expected the retried upload to complete, got %+v", pu)
+	}
+	if pu.AssemblyAttempts != 2 {
+		t.Errorf("assembly_attempts = %d, want 2 (original + successful retry)", pu.AssemblyAttempts)
 	}
 }
 
@@ -1400,8 +1506,18 @@ func TestUploadCompleteHandler_AlreadyProcessing(t *testing.T) {
 	ctx := context.Background()
 	repos.PartialUploads.Create(ctx, partialUpload)
 
-	// Update status to "processing" (Status field not saved by CreatePartialUpload)
-	repos.PartialUploads.UpdateStatus(ctx, uploadID, "processing", nil)
+	// Lock for processing with a live (unexpired) lease — ADR-016: a
+	// "processing" row with an expired/never-set lease is takeover-eligible,
+	// and UploadCompleteHandler will attempt an inline recovery (spawning a
+	// real background assembly goroutine) rather than just answering 202.
+	// This test wants the plain idempotent-poll behavior (another attempt is
+	// still actively working), so it needs a genuinely live lease.
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID, repository.AssemblyLease{
+		Owner: "already-processing-owner",
+		TTL:   5 * time.Minute,
+	}); err != nil {
+		t.Fatalf("TryLockForProcessing: %v", err)
+	}
 
 	// Create chunk
 	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
@@ -1825,5 +1941,229 @@ func TestUploadChunkHandler_RejectsChunksAfterUploadLocked(t *testing.T) {
 				t.Error("chunk was written to a locked upload")
 			}
 		})
+	}
+}
+
+// TestUploadCompleteHandler_ConcurrentRequests_OneFileOneClaimCode is the
+// ADR-016 regression test for the race this feature closes: many concurrent
+// /complete requests for the same upload must produce exactly one file row
+// and one claim code, never a duplicate — the owner-fenced Lock/Publish CAS
+// guarantees at most one caller ever wins the transition into "processing",
+// and at most one worker ever publishes.
+func TestUploadCompleteHandler_ConcurrentRequests_OneFileOneClaimCode(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440099"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "concurrent.txt",
+		TotalSize:      1024,
+		ChunkSize:      1024,
+		TotalChunks:    1,
+		ExpiresInHours: 24,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	ctx := context.Background()
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(partialDir, "chunk_0"), bytes.Repeat([]byte("A"), 1024), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	handler := UploadCompleteHandler(repos, cfg)
+
+	const concurrency = 8
+	var wg sync.WaitGroup
+	codes := make([]int, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			codes[i] = rr.Code
+		}(i)
+	}
+	wg.Wait()
+
+	for _, c := range codes {
+		if c != http.StatusAccepted && c != http.StatusOK {
+			t.Errorf("unexpected status code %d among concurrent /complete requests", c)
+		}
+	}
+
+	// Wait for assembly to settle (poll — the winning request's worker runs
+	// in a background goroutine).
+	var pu *models.PartialUpload
+	for i := 0; i < 50; i++ {
+		pu, _ = repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if pu != nil && pu.Status != "processing" && pu.Status != "uploading" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pu == nil || pu.Status != "completed" {
+		t.Fatalf("expected upload to complete, got %+v", pu)
+	}
+	if pu.ClaimCode == nil || *pu.ClaimCode == "" {
+		t.Error("expected a claim code to be set")
+	}
+
+	_, total, err := repos.Files.GetAllForAdmin(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("GetAllForAdmin: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected exactly 1 file row after %d concurrent /complete requests, got %d", concurrency, total)
+	}
+}
+
+// TestUploadCompleteHandler_RetryableFailureReopensAndSucceeds is an
+// end-to-end ADR-016 regression test for the original bug (T20): a
+// retryable assembly failure (e.g. SCAN_UNAVAILABLE) used to leave the
+// upload permanently stuck, because TryLockForProcessing only matched
+// status='uploading'. POSTing /complete again must now reopen it and let
+// assembly succeed.
+func TestUploadCompleteHandler_RetryableFailureReopensAndSucceeds(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440097"
+	partialUpload := &models.PartialUpload{
+		UploadID:       uploadID,
+		Filename:       "retry-me.txt",
+		TotalSize:      1024,
+		ChunkSize:      1024,
+		TotalChunks:    1,
+		ExpiresInHours: 24,
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	partialDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(partialDir, "chunk_0"), bytes.Repeat([]byte("A"), 1024), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Simulate a prior attempt that failed for a retryable reason.
+	owner := "prior-attempt-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID, repository.AssemblyLease{Owner: owner, TTL: time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing: %v", err)
+	}
+	if err := repos.PartialUploads.FailAssembly(ctx, uploadID, owner, "clamd unreachable", "SCAN_UNAVAILABLE", true, nil); err != nil {
+		t.Fatalf("FailAssembly: %v", err)
+	}
+
+	pu, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil || pu == nil {
+		t.Fatalf("GetByUploadID: %v", err)
+	}
+	if pu.Status != "failed" || !pu.ErrorRetryable {
+		t.Fatalf("precondition: expected failed+retryable, got status=%s retryable=%v", pu.Status, pu.ErrorRetryable)
+	}
+
+	handler := UploadCompleteHandler(repos, cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body: %s", rr.Code, http.StatusAccepted, rr.Body.String())
+	}
+
+	for i := 0; i < 50; i++ {
+		pu, _ = repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if pu != nil && pu.Status != "processing" && pu.Status != "uploading" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if pu == nil || pu.Status != "completed" {
+		t.Fatalf("expected reopened upload to complete, got %+v", pu)
+	}
+	if pu.AssemblyAttempts < 2 {
+		t.Errorf("expected assembly_attempts >= 2 (original + retry), got %d", pu.AssemblyAttempts)
+	}
+}
+
+// TestUploadCompleteHandler_TerminalFailureReturns409 verifies a
+// non-retryable "failed" upload (e.g. MALWARE_DETECTED) answers 409 with
+// the failure's error_code, and is never silently retried.
+func TestUploadCompleteHandler_TerminalFailureReturns409(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.ChunkedUploadEnabled = true
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440096"
+	if err := repos.PartialUploads.Create(ctx, &models.PartialUpload{
+		UploadID: uploadID, Filename: "malware.txt", TotalSize: 1024, ChunkSize: 1024,
+		TotalChunks: 1, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	owner := "malware-scan-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID, repository.AssemblyLease{Owner: owner, TTL: time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing: %v", err)
+	}
+	if err := repos.PartialUploads.FailAssembly(ctx, uploadID, owner, "Upload rejected: malware detected", "MALWARE_DETECTED", false, nil); err != nil {
+		t.Fatalf("FailAssembly: %v", err)
+	}
+
+	handler := UploadCompleteHandler(repos, cfg)
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/complete/"+uploadID, nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
+	}
+
+	var errResp models.UploadCompleteErrorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Code != "MALWARE_DETECTED" {
+		t.Errorf("code = %q, want MALWARE_DETECTED", errResp.Code)
+	}
+
+	// Must not have been reopened/retried.
+	pu, _ := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if pu == nil || pu.Status != "failed" {
+		t.Errorf("expected upload to remain failed, got %+v", pu)
 	}
 }

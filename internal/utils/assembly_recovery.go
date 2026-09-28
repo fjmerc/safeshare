@@ -5,23 +5,35 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 )
 
-// AssemblyWorkerFunc is the type signature for the async assembly function
-type AssemblyWorkerFunc func(*repository.Repositories, *config.Config, *models.PartialUpload, string)
+// AssemblyRecoverer attempts to recover one "processing" upload whose lease
+// has expired: either take over the assembly (spawning a new attempt) or,
+// if it has exhausted its retry budget, mark it terminally failed. Returns
+// true if a new assembly attempt was actually started.
+//
+// Implemented as handlers.RecoverAssembly; declared here as a func type
+// (rather than importing the handlers package directly) to avoid an
+// import cycle — handlers already imports utils.
+type AssemblyRecoverer func(ctx context.Context, upload models.PartialUpload) bool
 
-// StartAssemblyRecoveryWorker starts a background worker that recovers interrupted assemblies on startup
-// and periodically checks for stuck processing uploads
-func StartAssemblyRecoveryWorker(ctx context.Context, repos *repository.Repositories, cfg *config.Config, assemblyFunc AssemblyWorkerFunc) {
-	// Run recovery immediately on startup
-	slog.Info("running assembly recovery on startup")
-	recoverInterruptedAssemblies(repos, cfg, assemblyFunc)
+// StartAssemblyRecoveryWorker runs recover against every "processing" upload
+// whose lease has expired, once immediately on startup and then on a tick of
+// max(leaseTTL/2, 15s) — frequent enough that a crashed or stalled worker's
+// row is picked back up well within its own lease TTL, replacing the old
+// flat 1-hour-since-assembly_started_at threshold (ADR-016 / T21).
+func StartAssemblyRecoveryWorker(ctx context.Context, repos *repository.Repositories, leaseTTL time.Duration, limit int, recoverFn AssemblyRecoverer) {
+	tick := leaseTTL / 2
+	if tick < 15*time.Second {
+		tick = 15 * time.Second
+	}
 
-	// Then run periodically every 10 minutes
-	ticker := time.NewTicker(10 * time.Minute)
+	slog.Info("running assembly recovery on startup", "tick", tick)
+	runAssemblyRecovery(repos, limit, recoverFn)
+
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
 	for {
@@ -30,75 +42,43 @@ func StartAssemblyRecoveryWorker(ctx context.Context, repos *repository.Reposito
 			slog.Info("assembly recovery worker stopped")
 			return
 		case <-ticker.C:
-			slog.Debug("running periodic assembly recovery check")
-			recoverInterruptedAssemblies(repos, cfg, assemblyFunc)
+			runAssemblyRecovery(repos, limit, recoverFn)
 		}
 	}
 }
 
-// recoverInterruptedAssemblies finds and resumes any uploads stuck in "processing" status
-func recoverInterruptedAssemblies(repos *repository.Repositories, cfg *config.Config, assemblyFunc AssemblyWorkerFunc) {
+// runAssemblyRecovery finds uploads whose assembly lease has expired and
+// hands each to recoverFn.
+func runAssemblyRecovery(repos *repository.Repositories, limit int, recoverFn AssemblyRecoverer) {
 	ctx := context.Background()
 
-	// Get all uploads in "processing" status
-	processingUploads, err := repos.PartialUploads.GetProcessing(ctx)
+	expired, err := repos.PartialUploads.GetExpiredLeases(ctx, limit)
 	if err != nil {
-		slog.Error("failed to get processing uploads for recovery", "error", err)
+		slog.Error("failed to get expired assembly leases for recovery", "error", err)
 		return
 	}
 
-	if len(processingUploads) == 0 {
-		slog.Debug("no interrupted assemblies found")
+	if len(expired) == 0 {
+		slog.Debug("no expired assembly leases found")
 		return
 	}
 
-	slog.Info("found interrupted assemblies",
-		"count", len(processingUploads),
-	)
+	slog.Info("found expired assembly leases", "count", len(expired))
 
-	// Resume each interrupted assembly
-	for _, upload := range processingUploads {
-		// Check if upload has been stuck for more than 1 hour (likely crashed)
-		// Note: Normal assemblies should complete faster; 1 hour threshold is conservative
-		if upload.AssemblyStartedAt != nil {
-			timeSinceStart := time.Since(*upload.AssemblyStartedAt)
-			if timeSinceStart < 1*time.Hour {
-				// Skip - assembly is probably still in progress
-				slog.Debug("skipping recent processing upload",
-					"upload_id", upload.UploadID,
-					"time_since_start", timeSinceStart,
-				)
-				continue
-			}
+	for _, upload := range expired {
+		recoverOne(ctx, upload, recoverFn)
+	}
+}
+
+// recoverOne runs recoverFn for a single upload with panic recovery, so one
+// bad row can't take down the whole recovery sweep.
+func recoverOne(ctx context.Context, upload models.PartialUpload, recoverFn AssemblyRecoverer) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("assembly recovery panic recovered", "upload_id", upload.UploadID, "panic", r)
 		}
-
-		slog.Info("resuming interrupted assembly",
-			"upload_id", upload.UploadID,
-			"filename", upload.Filename,
-			"total_chunks", upload.TotalChunks,
-		)
-
-		// Reset status back to "uploading" so the assembly worker can re-lock it
-		if err := repos.PartialUploads.UpdateStatus(ctx, upload.UploadID, "uploading", nil); err != nil {
-			slog.Error("failed to reset upload status", "error", err, "upload_id", upload.UploadID)
-			continue
-		}
-
-		// Try to lock and process
-		locked, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID)
-		if err != nil {
-			slog.Error("failed to lock upload for recovery", "error", err, "upload_id", upload.UploadID)
-			continue
-		}
-
-		if !locked {
-			slog.Warn("failed to acquire lock for recovery", "upload_id", upload.UploadID)
-			continue
-		}
-
-		// Spawn goroutine to resume assembly
-		// Note: Using "recovery-worker" as client_ip since this is a recovery operation
-		uploadCopy := upload
-		go assemblyFunc(repos, cfg, &uploadCopy, "recovery-worker")
+	}()
+	if !recoverFn(ctx, upload) {
+		slog.Debug("assembly recovery did not start a new attempt", "upload_id", upload.UploadID)
 	}
 }

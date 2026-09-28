@@ -545,6 +545,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >
+            Assembly failed terminally (ADR-016): not retryable, or the
+            ASSEMBLY_MAX_ATTEMPTS budget is exhausted. `code` carries the
+            same machine-readable reason as UploadStatusResponse.error_code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/upload/status/{upload_id}:
     get:
@@ -2220,6 +2229,21 @@ components:
         error_message:
           type: string
           description: Present when status is failed
+        error_code:
+          type: string
+          description: >
+            Machine-readable failure reason, present when status is failed
+            (ADR-015/ADR-016): MALWARE_DETECTED, SCAN_UNAVAILABLE,
+            INTEGRITY_ERROR, ASSEMBLY_RETRIES_EXHAUSTED, ASSEMBLY_FAILED.
+        retryable:
+          type: boolean
+          description: >
+            ADR-016: whether a status=failed upload can be retried by
+            POSTing /api/upload/complete/{upload_id} again. Meaningless for
+            any other status.
+        attempts:
+          type: integer
+          description: ADR-016 - number of assembly attempts made so far.
         expires_at:
           type: string
           format: date-time

@@ -48,6 +48,10 @@ Chunks are stored on the filesystem at:
 | `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
 | `READ_TIMEOUT` | `120` | HTTP read timeout in seconds |
 | `WRITE_TIMEOUT` | `120` | HTTP write timeout in seconds |
+| `ASSEMBLY_WORKERS_MAX` | `10` | Max concurrent assembly workers (SH-1.4); `/complete` returns `503 ASSEMBLY_BUSY` beyond this |
+| `ASSEMBLY_LEASE_TTL` | `2m` | How long an assembly worker's lease is valid before it must renew (heartbeat) or be eligible for takeover by recovery (ADR-016). Bounds: 30s–30m. |
+| `ASSEMBLY_MAX_ATTEMPTS` | `5` | Max times a single chunked upload will be (re)attempted — via retry after a transient failure, or takeover after a crashed/stalled worker — before it's marked terminally failed with `ASSEMBLY_RETRIES_EXHAUSTED` (ADR-016). Bounds: 1–20. |
+| `ASSEMBLY_SHUTDOWN_GRACE` | `30s` | How long graceful shutdown waits for in-progress assembly workers to finish (or yield their lease) before asking them to abandon their current step (ADR-016). Bounds: 5s–5m. |
 
 ### ⚠️ HTTP Timeout Configuration for Very Large Files or Slow Networks
 
@@ -168,32 +172,55 @@ Upload a single chunk.
 
 ### POST /api/upload/complete/:upload_id
 
-Finalize upload and assemble chunks.
+Finalize upload and assemble chunks. Assembly runs asynchronously off the request path (a background worker), guarded by a fenced lease (see [Assembly State Machine (ADR-016)](#assembly-state-machine-adr-016) below) so at most one attempt can ever finish a given upload.
 
-**Response (Success):**
+**Response (202 Accepted — assembly started/still running):**
 ```json
 {
-  "claim_code": "aFYR83-afRPqrb-8",
-  "download_url": "https://share.example.com/api/claim/aFYR83-afRPqrb-8"
+  "status": "processing",
+  "upload_id": "550e8400-...",
+  "message": "File is being assembled. Please poll /api/upload/status/550e8400-... for completion."
 }
 ```
 
-**Response (Missing Chunks):**
+**Response (200 OK — already completed):**
 ```json
 {
-  "error": "Missing chunks",
+  "claim_code": "aFYR83-afRPqrb-8",
+  "download_url": "https://share.example.com/api/claim/aFYR83-afRPqrb-8",
+  "original_filename": "large-file.zip",
+  "file_size": 5368709120,
+  "expires_at": "2025-11-07T12:00:00Z",
+  "max_downloads": 0,
+  "completed_downloads": 0
+}
+```
+
+**Response (400 — Missing Chunks):**
+```json
+{
+  "error": "Missing 4 chunks",
+  "code": "MISSING_CHUNKS",
   "missing_chunks": [0, 15, 27, 103]
 }
 ```
 
-**Assembly Process:**
-1. Verifies all chunks present (0 to total_chunks-1)
-2. Checks disk space for final file
-3. Creates final file using buffered I/O (64KB buffer)
-4. Encrypts if `ENCRYPTION_KEY` is set
-5. Generates claim code
-6. Inserts into files table
-7. Deletes chunks and partial upload record
+**Response (409 — terminal failure, not retryable, or attempt budget exhausted):**
+```json
+{
+  "error": "Upload could not be verified and was rejected",
+  "code": "INTEGRITY_ERROR"
+}
+```
+
+**Assembly process** (runs in the background after a `202`):
+1. Verifies all chunks present (0 to total_chunks-1) and their integrity
+2. Checks disk space for the final file
+3. Scans the assembled content synchronously (ADR-015), before any encryption/storage
+4. Creates the final file using buffered streaming I/O
+5. Encrypts if `ENCRYPTION_KEY` is set
+6. Generates a claim code and inserts the `files` row, atomically with marking the upload `completed` (ADR-016)
+7. Deletes chunks and (eventually) the partial upload record
 
 ### GET /api/upload/status/:upload_id
 
@@ -208,9 +235,41 @@ Check upload progress.
   "total_chunks": 5000,
   "missing_chunks": [0, 15, 27],
   "complete": false,
+  "status": "processing",
+  "retryable": false,
+  "attempts": 1,
   "expires_at": "2025-11-07T12:00:00Z"
 }
 ```
+
+`status` is one of `uploading`, `processing`, `completed`, `failed`. When `status` is `failed`, `retryable` indicates whether POSTing `/api/upload/complete/:upload_id` again will retry assembly (see below), and `attempts` is how many assembly attempts have been made so far (capped at `ASSEMBLY_MAX_ATTEMPTS`).
+
+## Assembly State Machine (ADR-016)
+
+Every chunked upload moves through `uploading → processing → completed` or `uploading → processing → failed`, but `processing` and `failed` are not dead ends: assembly is fenced with a lease (owner token + TTL), so a failed-but-retryable upload, or one whose worker crashed/stalled, can be recovered without losing the already-uploaded chunks. See [ADR-016](../../SafeShare-Planning/06-Architecture-Decisions/ADR-016-assembly-state-machine.md) for the full design and rationale.
+
+**`POST /complete` behavior by current state:**
+
+| Current state | Response | Notes |
+|---|---|---|
+| `completed`, has claim code | `200` with claim code | Idempotent — safe to call repeatedly |
+| `completed`, no claim code | `500 INTERNAL_ERROR` | Should be unreachable; publish sets both atomically |
+| `processing`, lease live | `202` | Another attempt (or this one) is actively working |
+| `processing`, lease expired | `202` | An inline takeover attempt is made first, so an actively-polling client doesn't wait for the next recovery sweep |
+| `failed`, retryable, attempts < max | Reopens and retries assembly, then `202` | Chunks are re-verified; missing ones must be re-uploaded first (`400 MISSING_CHUNKS`) |
+| `failed`, not retryable or attempts exhausted | `409` with `code` = the failure's `error_code` | Not retryable — a fresh `/api/upload/init` is required |
+
+**Error codes** (`error_code` on `/status`, `code` on a `409` from `/complete`):
+
+| Code | Retryable | Meaning |
+|---|---|---|
+| `SCAN_UNAVAILABLE` | Yes | Malware scanner unreachable after retries |
+| `ASSEMBLY_FAILED` | Yes | A transient IO/DB/encryption/claim-code error |
+| `MALWARE_DETECTED` | No | The scanned content matched a malware signature |
+| `INTEGRITY_ERROR` | No | Assembled content didn't match what was scanned (TOCTOU), or a size mismatch — re-upload from scratch |
+| `ASSEMBLY_RETRIES_EXHAUSTED` | No | `ASSEMBLY_MAX_ATTEMPTS` reached without success |
+
+The official Go, TypeScript, and Python SDKs, and the bundled web client, automatically retry a `retryable: true` failure (POSTing `/complete` again) a bounded number of times while polling `/status`, before reporting a terminal error.
 
 ## Usage Examples
 
@@ -1328,14 +1387,19 @@ Test results:
 
 ### Assembly failure (`status: "failed"`)
 
-When `FEATURE_MALWARE_SCAN=true`, chunk assembly (`GET /api/upload/status/:upload_id`) now includes a synchronous malware scan of the reassembled content before encryption/storage (ADR-015). A failed assembly's `error_code` field gives the machine-readable reason, in addition to the human-readable `error_message`:
+When `FEATURE_MALWARE_SCAN=true`, chunk assembly (`GET /api/upload/status/:upload_id`) now includes a synchronous malware scan of the reassembled content before encryption/storage (ADR-015). A failed assembly's `error_code` field gives the machine-readable reason, in addition to the human-readable `error_message`; `retryable` says whether re-submitting `/complete` will retry assembly (see [Assembly State Machine (ADR-016)](#assembly-state-machine-adr-016)):
 
-| `error_code` | Meaning |
-|---|---|
-| `MALWARE_DETECTED` | The file was scanned and found infected. No claim code is ever issued; not retryable with the same content. |
-| `SCAN_UNAVAILABLE` | The malware scanner could not be reached after 3 retries (5s/15s/45s backoff). Retryable — re-submit `/complete` once the scanner recovers, or set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to proceed unverified instead of failing. |
+| `error_code` | `retryable` | Meaning |
+|---|---|---|
+| `MALWARE_DETECTED` | No | The file was scanned and found infected. No claim code is ever issued. |
+| `SCAN_UNAVAILABLE` | Yes | The malware scanner could not be reached after 3 retries (5s/15s/45s backoff). Re-submit `/complete` once the scanner recovers, or set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to proceed unverified instead of failing. |
+| `INTEGRITY_ERROR` | No | The assembled content didn't match what was scanned (TOCTOU), or its size changed underneath it. Start a fresh upload. |
+| `ASSEMBLY_RETRIES_EXHAUSTED` | No | The upload was retried (or recovered after a crash) `ASSEMBLY_MAX_ATTEMPTS` times without success. |
+| `ASSEMBLY_FAILED` | Yes | A transient IO/DB/encryption/claim-code error. |
 
-`error_code` may be absent (`null`/omitted) for assembly failures unrelated to scanning (e.g. a disk error).
+`error_code` may be absent (`null`/omitted) for legacy rows predating ADR-016, in which case treat the failure as not retryable.
+
+The official SDKs and the bundled web client automatically retry a `retryable: true` failure a bounded number of times before reporting it to the caller/UI as terminal.
 
 ## Backward Compatibility
 

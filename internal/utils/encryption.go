@@ -129,6 +129,19 @@ var ErrUnsupportedSFSEVersion = errors.New("unsupported SFSE version")
 // context.
 var ErrSFSE2IntegrityCheckFailed = errors.New("SFSE2 integrity check failed")
 
+// ErrPlaintextLengthMismatch is returned by EncryptFileStreamingV2FromReader
+// when src doesn't produce exactly plaintextLen bytes — either running out
+// early (mid-read, src hits EOF with zero bytes on a non-final chunk) or,
+// more commonly for a single-internal-chunk plaintext, the post-loop
+// totalRead-vs-plaintextLen check catching a short (or, if src has extra
+// trailing bytes, long) final read that the per-iteration io.ReadFull
+// otherwise accepts as a legitimate final chunk. Typical cause: a chunk
+// truncated, replaced, or removed on disk between a preflight size/missing-
+// chunk check and this reopen. Callers on the chunked-assembly fast path
+// (ADR-016) treat this as a content-integrity failure (terminal), not a
+// transient IO error.
+var ErrPlaintextLengthMismatch = errors.New("plaintext length mismatch")
+
 // EncryptFileStreaming encrypts a file using chunked AES-256-GCM without loading entire file into memory.
 // This prevents OOM issues for large files (>1GB).
 //
@@ -720,7 +733,7 @@ func EncryptFileStreamingV2FromReader(dst io.Writer, src io.Reader, keyHex strin
 			return fmt.Errorf("failed to read chunk %d: %w", chunkIndex, readErr)
 		}
 		if n == 0 {
-			return fmt.Errorf("plaintext shorter than declared length: read %d bytes, expected %d", totalRead, plaintextLen)
+			return fmt.Errorf("%w: read %d bytes, expected %d", ErrPlaintextLengthMismatch, totalRead, plaintextLen)
 		}
 		totalRead += int64(n)
 
@@ -746,7 +759,7 @@ func EncryptFileStreamingV2FromReader(dst io.Writer, src io.Reader, keyHex strin
 	}
 
 	if totalRead != plaintextLen {
-		return fmt.Errorf("plaintext length mismatch: read %d bytes, header declared %d", totalRead, plaintextLen)
+		return fmt.Errorf("%w: read %d bytes, header declared %d", ErrPlaintextLengthMismatch, totalRead, plaintextLen)
 	}
 	return nil
 }
