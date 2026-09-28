@@ -237,14 +237,21 @@ func TestClaimHandler_RangeRequest_InvalidRange(t *testing.T) {
 			wantStatus:  http.StatusRequestedRangeNotSatisfiable,
 		},
 		{
+			// ADR-017 (T27): a malformed Range header is ignored, not
+			// rejected — RFC 9110 treats it as if it were absent, and
+			// serving 200 full (rather than 416) is what stops a client
+			// that sent a nonsense Range from being denied the file
+			// outright.
 			name:        "invalid range format",
 			rangeHeader: "bytes=abc-def",
-			wantStatus:  http.StatusRequestedRangeNotSatisfiable, // Handler returns 416 for all range errors
+			wantStatus:  http.StatusOK,
 		},
 		{
+			// ADR-017 (T27): first-byte-pos > last-byte-pos is likewise
+			// treated as if Range were absent, not rejected.
 			name:        "start greater than end",
 			rangeHeader: "bytes=500-100",
-			wantStatus:  http.StatusRequestedRangeNotSatisfiable, // Handler returns 416 for all range errors
+			wantStatus:  http.StatusOK,
 		},
 	}
 
@@ -433,7 +440,11 @@ func TestClaimHandler_RangeRequest_ResumableDownload(t *testing.T) {
 	}
 }
 
-// TestClaimHandler_RangeRequest_MultipleRanges tests that multi-range requests are not supported (yet)
+// TestClaimHandler_RangeRequest_MultipleRanges tests that a multi-range
+// request is served as 200 full content (ADR-017 / T27: this server never
+// supports multipart/byteranges responses — each part would cost its own
+// chunk decrypt — so a multi-range Range header is treated as if absent,
+// per RFC 9110's "ignore what you can't satisfy" allowance).
 func TestClaimHandler_RangeRequest_MultipleRanges(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -468,16 +479,9 @@ func TestClaimHandler_RangeRequest_MultipleRanges(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	// Implementation should either:
-	// 1. Return 416 Range Not Satisfiable (not supported)
-	// 2. Return 200 OK with full content (ignore Range)
-	// 3. Return 206 with only first range (partial support)
-
-	// Accept any of these as valid for now
-	if rr.Code != http.StatusRequestedRangeNotSatisfiable &&
-		rr.Code != http.StatusOK &&
-		rr.Code != http.StatusPartialContent {
-		t.Errorf("multi-range: status = %d, expected 416, 200, or 206", rr.Code)
+	testutil.AssertStatusCode(t, rr, http.StatusOK)
+	if !bytes.Equal(rr.Body.Bytes(), testContent) {
+		t.Error("multi-range: response body doesn't match the full file")
 	}
 }
 

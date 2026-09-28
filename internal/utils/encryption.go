@@ -122,12 +122,43 @@ const (
 // header is not a recognized value.
 var ErrUnsupportedSFSEVersion = errors.New("unsupported SFSE version")
 
-// ErrSFSE2IntegrityCheckFailed indicates an SFSE2 read produced output that
-// fails a structural integrity check (plaintext length mismatch, missing
-// is_last flag, SHA-256 mismatch against the DB-recorded checksum). Distinct
-// from gcm.Open failures, which surface as wrapping errors with the per-chunk
-// context.
+// ErrSFSE2IntegrityCheckFailed is the umbrella sentinel for every kind of
+// SFSE1/SFSE2 integrity failure: a structural header mismatch (plaintext
+// length, missing is_last flag), a truncated/short chunk read, a per-chunk
+// AEAD auth-tag failure, or a whole-file SHA-256 mismatch. Callers that only
+// need to know "was this an integrity problem at all, as opposed to a plain
+// I/O error" (e.g. claim_range.go's metric-label split) check
+// errors.Is(err, ErrSFSE2IntegrityCheckFailed), which is true for all of the
+// more specific sentinels below — each wraps this one via its own %w chain
+// — as well as for the structural checks in OpenSFSEReader that wrap it
+// directly (a mismatched header field has no more specific category).
+//
+// Callers that need to distinguish *which* kind of integrity failure
+// occurred (e.g. cmd/migrate-encryption's --verify report) should check
+// errors.Is against the more specific sentinel first — ErrSFSEHashMismatch,
+// then ErrSFSEChunkAuthFailed, then ErrSFSEShortRead — before falling back
+// to this umbrella one, since errors.Is(err, ErrSFSE2IntegrityCheckFailed)
+// alone cannot distinguish them (security-audit finding: an earlier version
+// of this codebase used only this umbrella sentinel everywhere, which made
+// --verify's "hash mismatch" vs. "chunk authentication failed" labels
+// disagree with what had actually failed).
 var ErrSFSE2IntegrityCheckFailed = errors.New("SFSE2 integrity check failed")
+
+// ErrSFSEChunkAuthFailed indicates a per-chunk AEAD auth-tag failure
+// (gcm.Open rejected the chunk) — the chunk's ciphertext or tag was
+// tampered with or corrupted. Wraps ErrSFSE2IntegrityCheckFailed.
+var ErrSFSEChunkAuthFailed = fmt.Errorf("SFSE chunk authentication failed: %w", ErrSFSE2IntegrityCheckFailed)
+
+// ErrSFSEHashMismatch indicates the whole-file SHA-256 computed while
+// streaming an SFSE1/SFSE2 file didn't match the DB-recorded checksum, even
+// though every individual chunk's AEAD tag authenticated correctly. Wraps
+// ErrSFSE2IntegrityCheckFailed.
+var ErrSFSEHashMismatch = fmt.Errorf("SFSE whole-file hash mismatch: %w", ErrSFSE2IntegrityCheckFailed)
+
+// ErrSFSEShortRead indicates a chunk read fewer bytes than the header's
+// chunk_size (and this chunk's position) implied — a truncated file, most
+// often. Wraps ErrSFSE2IntegrityCheckFailed.
+var ErrSFSEShortRead = fmt.Errorf("SFSE short/truncated chunk read: %w", ErrSFSE2IntegrityCheckFailed)
 
 // ErrPlaintextLengthMismatch is returned by EncryptFileStreamingV2FromReader
 // when src doesn't produce exactly plaintextLen bytes — either running out

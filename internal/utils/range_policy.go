@@ -27,6 +27,20 @@ const (
 	RangeUnsatisfiable
 )
 
+// String returns a short lowercase name for k, used in log lines.
+func (k RangeKind) String() string {
+	switch k {
+	case RangeFull:
+		return "full"
+	case RangePartial:
+		return "partial"
+	case RangeUnsatisfiable:
+		return "unsatisfiable"
+	default:
+		return "unknown"
+	}
+}
+
 // RangeDecision is the result of ResolveRange.
 type RangeDecision struct {
 	Kind  RangeKind

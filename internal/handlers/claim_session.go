@@ -52,10 +52,11 @@ func sessionHeartbeatInterval(leaseTTL time.Duration) time.Duration {
 // recipient's one download on a request that then 404s (file deleted on
 // disk, decryption failure, ...) with zero bytes delivered.
 func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, file *models.File, filePath, originalClaimCode, claimCode string) {
-	// Capped-file responses must never be cached: the response body (and
-	// whether it 206s or 410s) depends on per-recipient state that can
-	// change from one request to the next.
-	w.Header().Set("Cache-Control", "private, no-store")
+	// Cache-Control: private, no-store is set unconditionally for every
+	// claim response by ClaimHandler before it dispatches here (ADR-017 /
+	// T10) — capped-file responses especially depend on per-recipient state
+	// that can change from one request to the next, but the header now
+	// applies uniformly, not just to this path.
 
 	// Determine, before any bytes are written: whether this request covers
 	// the entire file (always counts under ADR-012 Policy A regardless of
@@ -64,23 +65,34 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// its range reaches the file's last byte (used below to decide
 	// completion — a resumed tail request like `bytes=X-` doesn't start at 0,
 	// so it isn't wholeFile, but finishing it IS what completes the download).
-	wholeFile := true
-	rangeEndsAtEOF := true
-	rangeLen := file.FileSize
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		if httpRange, err := utils.ParseRange(rangeHeader, file.FileSize); err == nil {
-			wholeFile = httpRange.Start == 0 && httpRange.End == file.FileSize-1
-			rangeEndsAtEOF = httpRange.End == file.FileSize-1
-			rangeLen = httpRange.ContentLength()
-		} else {
-			// Invalid range: serveFileWithRangeSupport will re-parse and reply
-			// 416 before any bytes are written, so these values are moot —
-			// sessionWriter only applies the threshold to 200/206 responses,
-			// and nothing will actually be served.
-			wholeFile = false
-			rangeEndsAtEOF = false
-			rangeLen = 0
-		}
+	//
+	// claimRangeDecision is the exact same function serveFileWithRangeSupport
+	// calls below to actually decide and rewrite the request — deterministic
+	// given the same request/file, so the two calls can never disagree about
+	// what gets served. Its ETag return value is discarded here: this call
+	// only needs the range decision for sizing; serveFileWithRangeSupport
+	// sets the actual `ETag` response header from its own call.
+	var wholeFile, rangeEndsAtEOF bool
+	var rangeLen int64
+	decisionForSizing, _ := claimRangeDecision(r, file)
+	switch decisionForSizing.Kind {
+	case utils.RangeFull:
+		wholeFile = true
+		rangeEndsAtEOF = true
+		rangeLen = file.FileSize
+	case utils.RangePartial:
+		wholeFile = decisionForSizing.Start == 0 && decisionForSizing.End == file.FileSize-1
+		rangeEndsAtEOF = decisionForSizing.End == file.FileSize-1
+		rangeLen = decisionForSizing.End - decisionForSizing.Start + 1
+	case utils.RangeUnsatisfiable:
+		// serveFileWithRangeSupport will independently reach the same
+		// conclusion and reply 416 before any bytes are written, so these
+		// values are moot — sessionWriter only applies the commit
+		// threshold to a 200/206 response, and nothing will actually be
+		// served here.
+		wholeFile = false
+		rangeEndsAtEOF = false
+		rangeLen = 0
 	}
 
 	// Resume path: a client presenting a session token from an earlier
@@ -196,8 +208,8 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// that unwinds past it. Stop is idempotent.
 	defer heartbeat.Stop()
 
-	extendTransferDeadline(w, cfg, file.FileSize)
-	commitable := serveFileWithRangeSupport(sw, r, file, filePath, cfg)
+	transferDeadline := extendTransferDeadline(w, cfg, file.FileSize)
+	commitable := serveFileWithRangeSupport(sw, r, file, filePath, cfg, transferDeadline)
 
 	heartbeat.Stop()
 

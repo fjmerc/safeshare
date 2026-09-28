@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -36,6 +37,31 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
+
+// ReadFrom lets a claim download reach the real ResponseWriter's sendfile
+// fast path (ADR-017 T33): http.ServeContent's io.CopyN hands the
+// ResponseWriter a bounded io.Reader (an *io.LimitedReader) via ReadFrom
+// when it's available, and net/http's own writer specially recognizes that
+// reader — when it wraps an *os.File, as it does for a plaintext download —
+// to drive sendfile. Go's struct embedding only promotes methods declared
+// on the embedded http.ResponseWriter *interface*; io.ReaderFrom isn't one
+// of them, so without this override a type assertion for it on this
+// wrapper always fails even when the concrete writer underneath supports
+// it, silently downgrading every wrapped response to a buffered copy loop.
+func (rw *responseWriter) ReadFrom(src io.Reader) (int64, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(onlyWriter{rw.ResponseWriter}, src)
+}
+
+// onlyWriter strips every method except Write from w, so passing it as
+// io.Copy's dst can never rediscover a ReadFrom method (on this type or
+// whatever it wraps) and recurse back into responseWriter.ReadFrom.
+type onlyWriter struct{ io.Writer }
 
 // claimCodeRegex matches claim codes in URLs (e.g., /api/claim/ABC123xyz or /api/claim/ABC-123-xyz/info)
 var claimCodeRegex = regexp.MustCompile(`(/api/claim/)([^/\s]+)`)

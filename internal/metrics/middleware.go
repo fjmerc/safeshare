@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,26 @@ func (rw *responseWriter) WriteHeader(code int) {
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
+
+// ReadFrom delegates to the wrapped writer's own ReadFrom when available, so
+// this wrapper doesn't break the sendfile fast path a plaintext claim
+// download can otherwise reach (ADR-017 T33 — see the identical override,
+// with the full rationale, on middleware.responseWriter in
+// internal/middleware/logging.go). This wrapper doesn't track a status
+// default the way the logging one does (its statusCode field is already
+// initialized to http.StatusOK, matching net/http's own implicit-200
+// behavior), so there's nothing else to do here first.
+func (rw *responseWriter) ReadFrom(src io.Reader) (int64, error) {
+	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(onlyWriter{rw.ResponseWriter}, src)
+}
+
+// onlyWriter strips every method except Write from w, so passing it as
+// io.Copy's dst can never rediscover a ReadFrom method (on this type or
+// whatever it wraps) and recurse back into responseWriter.ReadFrom.
+type onlyWriter struct{ io.Writer }
 
 // Middleware instruments HTTP handlers with request metrics
 func Middleware(next http.Handler) http.Handler {
@@ -58,16 +79,16 @@ type pathPattern struct {
 
 // Static paths that map directly to themselves
 var exactPaths = map[string]string{
-	"/":                  "/",
-	"/health":            "/health",
-	"/metrics":           "/metrics",
-	"/api/upload":        "/api/upload",
-	"/api/config":        "/api/config",
-	"/api/upload/init":   "/api/upload/init",
-	"/admin/login":       "/admin/login",
-	"/admin/dashboard":   "/admin/dashboard",
-	"/login":             "/login",
-	"/dashboard":         "/dashboard",
+	"/":                "/",
+	"/health":          "/health",
+	"/metrics":         "/metrics",
+	"/api/upload":      "/api/upload",
+	"/api/config":      "/api/config",
+	"/api/upload/init": "/api/upload/init",
+	"/admin/login":     "/admin/login",
+	"/admin/dashboard": "/admin/dashboard",
+	"/login":           "/login",
+	"/dashboard":       "/dashboard",
 }
 
 // Dynamic path patterns with prefix matching

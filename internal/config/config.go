@@ -94,42 +94,45 @@ type Config struct {
 	mu sync.RWMutex // Protects mutable fields
 
 	// Immutable fields (set at startup only)
-	Port                     string
-	DBPath                   string
-	DatabaseType             string            // "sqlite" or "postgresql" (default: sqlite)
-	PostgreSQL               *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
-	StorageType              string            // "filesystem" or "s3" (default: filesystem)
-	S3                       *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
-	AutoBackup               *AutoBackupConfig // Automatic backup configuration
-	APIToken                 *APITokenConfig   // API token limit configuration
-	MFA                      *MFAConfig        // MFA configuration
-	SSO                      *SSOConfig        // SSO/OIDC configuration
-	ClamAV                   *ClamAVConfig     // ClamAV malware scanning configuration
-	UploadDir                string
-	BackupDir                string // Optional backup directory (defaults to DataDir/backups)
-	DataDir                  string // Data directory for database and backups
-	Version                  string // Application version
-	CleanupIntervalMinutes   int
-	PublicURL                string
-	DownloadURL              string // Optional: Separate URL for downloads (bypasses CDN timeouts)
-	EncryptionKey            string
-	AdminUsername            string
-	SessionExpiryHours       int
-	HTTPSEnabled             bool
-	RequireAuthForUpload     bool
-	ChunkedUploadEnabled     bool
-	ChunkedUploadThreshold   int64
-	ChunkSize                int64
-	PartialUploadExpiryHours int
-	ReadTimeoutSeconds       int
-	WriteTimeoutSeconds      int
-	TrustProxyHeaders        string // "auto", "true", "false" - controls proxy header trust
-	TrustedProxyIPs          string // Comma-separated list of trusted proxy IPs/CIDR ranges
-	StripMetadata            bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
-	anonymousMode            bool   // When true, IPs are not stored and redacted from logs
-	AllowPrivateWebhookTargets bool // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
-	AssemblyWorkersMax         int  // Max concurrent chunked-upload assembly workers (SH-1.4). 503 returned beyond this; raise to absorb burstier upload completions.
-	MaxInFlightPerIPPerFile    int  // SH-2.3 bug-hunter M3: max concurrent download reservations per (file, IP). Defence against Slowloris-style reservation exhaustion. 0 disables the cap. Default 3.
+	Port                        string
+	DBPath                      string
+	DatabaseType                string            // "sqlite" or "postgresql" (default: sqlite)
+	PostgreSQL                  *PostgreSQLConfig // PostgreSQL configuration (if DATABASE_TYPE=postgresql)
+	StorageType                 string            // "filesystem" or "s3" (default: filesystem)
+	S3                          *S3Config         // S3 configuration (if STORAGE_TYPE=s3)
+	AutoBackup                  *AutoBackupConfig // Automatic backup configuration
+	APIToken                    *APITokenConfig   // API token limit configuration
+	MFA                         *MFAConfig        // MFA configuration
+	SSO                         *SSOConfig        // SSO/OIDC configuration
+	ClamAV                      *ClamAVConfig     // ClamAV malware scanning configuration
+	UploadDir                   string
+	BackupDir                   string // Optional backup directory (defaults to DataDir/backups)
+	DataDir                     string // Data directory for database and backups
+	Version                     string // Application version
+	CleanupIntervalMinutes      int
+	PublicURL                   string
+	DownloadURL                 string // Optional: Separate URL for downloads (bypasses CDN timeouts)
+	EncryptionKey               string
+	AdminUsername               string
+	SessionExpiryHours          int
+	HTTPSEnabled                bool
+	RequireAuthForUpload        bool
+	ChunkedUploadEnabled        bool
+	ChunkedUploadThreshold      int64
+	ChunkSize                   int64
+	PartialUploadExpiryHours    int
+	ReadTimeoutSeconds          int
+	WriteTimeoutSeconds         int
+	TrustProxyHeaders           string // "auto", "true", "false" - controls proxy header trust
+	TrustedProxyIPs             string // Comma-separated list of trusted proxy IPs/CIDR ranges
+	StripMetadata               bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
+	anonymousMode               bool   // When true, IPs are not stored and redacted from logs
+	AllowPrivateWebhookTargets  bool   // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
+	AssemblyWorkersMax          int    // Max concurrent chunked-upload assembly workers (SH-1.4). 503 returned beyond this; raise to absorb burstier upload completions.
+	MaxInFlightPerIPPerFile     int    // SH-2.3 bug-hunter M3: max concurrent download reservations per (file, IP). Defence against Slowloris-style reservation exhaustion. 0 disables the cap. Default 3.
+	LegacyDecryptMaxBytes       int64  // ADR-017 / master finding #9: max on-disk size a legacy (pre-SFSE, single-shot AES-GCM) encrypted file may be for claim download to decrypt it fully into RAM. Larger files 500 instead of risking OOM; run migrate-encryption to upgrade them to SFSE. Default 128MB — deliberately kept well under DownloadDecryptMemoryBudget's default (256MB) so one max-size legacy decrypt can never by itself consume the whole process-wide budget and serialize every other concurrent encrypted download behind it.
+	DownloadDecryptMemoryBudget int64  // ADR-017 (T34): process-wide ceiling, in bytes, on decrypt memory held across all concurrent encrypted claim downloads (SFSE chunk buffers + legacy full-file decrypts) at once. A download that can't get a share of this budget within a few seconds gets a 503 with Retry-After. Default 256MB.
+	MaxEncryptedDownloadsPerIP  int    // ADR-017: max concurrent encrypted (SFSE/legacy) claim downloads a single client IP may have in flight at once, across every file. 0 disables the cap. Default 8. Raise (or disable) this for Tor/Ghost-mode or any deployment behind an untrusted/non-forwarding proxy where every client shares one apparent IP — see docs/TOR_DEPLOYMENT.md.
 
 	// Feature flags (enterprise features - can be updated at runtime)
 	Features *FeatureFlags
@@ -152,35 +155,38 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		// Immutable fields
-		Port:                     getEnv("PORT", "8080"),
-		DBPath:                   getEnv("DB_PATH", "./safeshare.db"),
-		DatabaseType:             getEnv("DATABASE_TYPE", "sqlite"),
-		StorageType:              getEnv("STORAGE_TYPE", "filesystem"),
-		UploadDir:                getEnv("UPLOAD_DIR", "./uploads"),
-		BackupDir:                getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
-		DataDir:                  getEnv("DATA_DIR", "./data"),
-		Version:                  getEnv("APP_VERSION", "1.4.1"),
-		CleanupIntervalMinutes:   getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
-		PublicURL:                getEnv("PUBLIC_URL", ""),
-		DownloadURL:              getEnv("DOWNLOAD_URL", ""), // Optional: bypasses CDN for large downloads
-		EncryptionKey:            getEnv("ENCRYPTION_KEY", ""),
-		AdminUsername:            getEnv("ADMIN_USERNAME", ""),
-		SessionExpiryHours:       getEnvInt("SESSION_EXPIRY_HOURS", 24),
-		HTTPSEnabled:             getEnvBool("HTTPS_ENABLED", false),
-		RequireAuthForUpload:     getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
-		ChunkedUploadEnabled:     getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
-		ChunkedUploadThreshold:   getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
-		ChunkSize:                getEnvInt64("CHUNK_SIZE", 10485760),                // 10MB (was 5MB)
-		PartialUploadExpiryHours: getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
-		ReadTimeoutSeconds:       getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
-		WriteTimeoutSeconds:      getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
-		TrustProxyHeaders:        getEnv("TRUST_PROXY_HEADERS", "auto"),
-		TrustedProxyIPs:          getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
-		StripMetadata:            getEnvBool("STRIP_METADATA", false),
-		anonymousMode:            getEnvBool("ANONYMOUS_MODE", false),
-		AllowPrivateWebhookTargets: getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
-		AssemblyWorkersMax:         getEnvInt("ASSEMBLY_WORKERS_MAX", 10),
-		MaxInFlightPerIPPerFile:    getEnvInt("MAX_INFLIGHT_PER_IP_PER_FILE", 3),
+		Port:                        getEnv("PORT", "8080"),
+		DBPath:                      getEnv("DB_PATH", "./safeshare.db"),
+		DatabaseType:                getEnv("DATABASE_TYPE", "sqlite"),
+		StorageType:                 getEnv("STORAGE_TYPE", "filesystem"),
+		UploadDir:                   getEnv("UPLOAD_DIR", "./uploads"),
+		BackupDir:                   getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
+		DataDir:                     getEnv("DATA_DIR", "./data"),
+		Version:                     getEnv("APP_VERSION", "1.4.1"),
+		CleanupIntervalMinutes:      getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
+		PublicURL:                   getEnv("PUBLIC_URL", ""),
+		DownloadURL:                 getEnv("DOWNLOAD_URL", ""), // Optional: bypasses CDN for large downloads
+		EncryptionKey:               getEnv("ENCRYPTION_KEY", ""),
+		AdminUsername:               getEnv("ADMIN_USERNAME", ""),
+		SessionExpiryHours:          getEnvInt("SESSION_EXPIRY_HOURS", 24),
+		HTTPSEnabled:                getEnvBool("HTTPS_ENABLED", false),
+		RequireAuthForUpload:        getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
+		ChunkedUploadEnabled:        getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
+		ChunkedUploadThreshold:      getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
+		ChunkSize:                   getEnvInt64("CHUNK_SIZE", 10485760),                // 10MB (was 5MB)
+		PartialUploadExpiryHours:    getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
+		ReadTimeoutSeconds:          getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
+		WriteTimeoutSeconds:         getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
+		TrustProxyHeaders:           getEnv("TRUST_PROXY_HEADERS", "auto"),
+		TrustedProxyIPs:             getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
+		StripMetadata:               getEnvBool("STRIP_METADATA", false),
+		anonymousMode:               getEnvBool("ANONYMOUS_MODE", false),
+		AllowPrivateWebhookTargets:  getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
+		AssemblyWorkersMax:          getEnvInt("ASSEMBLY_WORKERS_MAX", 10),
+		MaxInFlightPerIPPerFile:     getEnvInt("MAX_INFLIGHT_PER_IP_PER_FILE", 3),
+		LegacyDecryptMaxBytes:       getEnvInt64("LEGACY_DECRYPT_MAX_BYTES", 128*1024*1024),
+		DownloadDecryptMemoryBudget: getEnvInt64("DOWNLOAD_DECRYPT_MEMORY_BUDGET", 256*1024*1024),
+		MaxEncryptedDownloadsPerIP:  getEnvInt("MAX_ENCRYPTED_DOWNLOADS_PER_IP", 8),
 
 		// Feature flags (enterprise features - all default to false)
 		Features: loadFeatureFlags(),
@@ -584,6 +590,30 @@ func (c *Config) validate() error {
 		return err
 	}
 
+	if err := c.validateDownloadDecryptSettings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateDownloadDecryptSettings rejects non-positive budgets for the
+// ADR-017 decrypt-admission controls: a zero or negative
+// LEGACY_DECRYPT_MAX_BYTES would refuse every legacy-encrypted download
+// outright, and a zero or negative DOWNLOAD_DECRYPT_MEMORY_BUDGET would
+// make utils.NewDecryptAdmission treat the budget as disabled (unlimited) —
+// the opposite of what a operator setting either variable at all almost
+// certainly intends.
+func (c *Config) validateDownloadDecryptSettings() error {
+	if c.LegacyDecryptMaxBytes <= 0 {
+		return fmt.Errorf("LEGACY_DECRYPT_MAX_BYTES must be positive, got %d", c.LegacyDecryptMaxBytes)
+	}
+	if c.DownloadDecryptMemoryBudget <= 0 {
+		return fmt.Errorf("DOWNLOAD_DECRYPT_MEMORY_BUDGET must be positive, got %d", c.DownloadDecryptMemoryBudget)
+	}
+	if c.MaxEncryptedDownloadsPerIP < 0 {
+		return fmt.Errorf("MAX_ENCRYPTED_DOWNLOADS_PER_IP must be 0 (disabled) or positive, got %d", c.MaxEncryptedDownloadsPerIP)
+	}
 	return nil
 }
 

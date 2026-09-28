@@ -104,6 +104,18 @@ These environment variables are recommended for Tor deployments:
 | `PUBLIC_URL` | `http://<onion>.onion` | Ensures correct download URLs |
 | `ENCRYPTION_KEY` | 64-char hex | Encrypts files at rest on disk |
 | `REQUIRE_AUTH_FOR_UPLOAD` | `true` (optional) | Limits uploads to registered users |
+| `MAX_ENCRYPTED_DOWNLOADS_PER_IP` | `0` (disabled), or a value sized to expected concurrent visitors | See below — the default of 8 applies per *apparent* IP, and every Tor visitor shares the same one |
+
+### `MAX_ENCRYPTED_DOWNLOADS_PER_IP` and hidden services
+
+SafeShare bounds how many encrypted (password-protected or server-side-encrypted) downloads a single client IP may have in flight at once (default 8), *and* how much of the shared decrypt-memory budget one client may use concurrently (a quarter of `DOWNLOAD_DECRYPT_MEMORY_BUDGET`) — both to stop one client from monopolizing server resources (see `docs/HTTP_RANGE_SUPPORT.md`'s "Encrypted-Download Admission Control"). Over a Tor hidden service — or behind any reverse proxy `TRUST_PROXY_HEADERS=false` doesn't see through — every visitor's connection to SafeShare arrives from the *same* local address (the Tor daemon or proxy forwarding to the app), not their own. Both limits therefore apply to **all Tor visitors combined**, not per real visitor: the 9th concurrent encrypted download from *any* two different Tor users gets rejected with `429 TOO_MANY_INFLIGHT`, and (independently) two Tor visitors' downloads together could get capped at a single quarter-share of the memory budget.
+
+This is the same reason `TRUST_PROXY_HEADERS=false` is recommended above (a hidden service has no meaningful per-visitor IP to trust in the first place) — both caps have an identical blind spot, because both are keyed by apparent client address. Either:
+
+- **Set `MAX_ENCRYPTED_DOWNLOADS_PER_IP=0`** to disable *both* the per-IP concurrency cap and the per-client memory-budget share — `0` means no per-client limits of either kind; only the global `DOWNLOAD_DECRYPT_MEMORY_BUDGET` ceiling still bounds aggregate decrypt memory across all downloads combined. This doesn't remove protection — it removes the *per-visitor* accounting that Tor makes meaningless, while keeping the one limit (the global budget) that's still meaningful regardless of how many visitors share an apparent address. Or,
+- **Raise `MAX_ENCRYPTED_DOWNLOADS_PER_IP`** to a value sized for your expected number of concurrent Tor visitors, if you'd still like some ceiling (both concurrency and memory share) on how much of the shared budget flows through this one apparent address.
+
+This limitation is inherent to not being able to distinguish visitors behind a single forwarding point — it applies equally to any non-Tor deployment sitting behind a proxy that doesn't forward (or isn't trusted to forward) real client IPs.
 
 ## Security Hardening Checklist
 
