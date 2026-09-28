@@ -169,6 +169,19 @@ export class SafeShareClient {
     return headers;
   }
 
+  /**
+   * Headers for a claim download: auth headers plus the file password, if
+   * any, in X-File-Password (the ?password= query parameter is deprecated
+   * because URLs end up in proxy logs and history).
+   */
+  private downloadHeaders(password?: string): Record<string, string> {
+    const headers = this.getHeaders();
+    if (password) {
+      headers["X-File-Password"] = password;
+    }
+    return headers;
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -667,11 +680,7 @@ export class SafeShareClient {
     // Resolve and sanitize destination path
     const resolvedDest = resolve(destination);
 
-    // Build URL with optional password
-    let url = `/api/claim/${claimCode}`;
-    if (options.password) {
-      url += `?password=${encodeURIComponent(options.password)}`;
-    }
+    const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -679,7 +688,10 @@ export class SafeShareClient {
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: this.downloadHeaders(options.password),
+        // A file password travels in a header, which fetch would forward on a
+        // redirect; refuse redirects rather than risk sending it elsewhere.
+        redirect: options.password ? "error" : "follow",
         signal: controller.signal,
       });
 
@@ -743,10 +755,7 @@ export class SafeShareClient {
   ): Promise<Buffer> {
     this.validateClaimCode(claimCode);
 
-    let url = `/api/claim/${claimCode}`;
-    if (options.password) {
-      url += `?password=${encodeURIComponent(options.password)}`;
-    }
+    const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -754,7 +763,10 @@ export class SafeShareClient {
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: this.downloadHeaders(options.password),
+        // A file password travels in a header, which fetch would forward on a
+        // redirect; refuse redirects rather than risk sending it elsewhere.
+        redirect: options.password ? "error" : "follow",
         signal: controller.signal,
       });
 

@@ -88,6 +88,16 @@ Before upgrading, ensure:
 
 ## Version-Specific Upgrades
 
+### Upgrading to v1.6.0
+
+Database migrations run automatically on startup (SQLite `024_download_sessions`, `025_scan_integrity`; PostgreSQL 12 and 13). Back up first as usual. Behaviour changes to review:
+
+- **Malware scanning is now enforced when enabled** (`FEATURE_MALWARE_SCAN=true`). Files are scanned before they are stored, so uploads wait for the scan, and **a ClamAV outage blocks new uploads** (503 `SCAN_UNAVAILABLE`). Set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` only if you accept unscanned files during outages. Make sure clamd's `StreamMaxLength` is at least `CLAMAV_MAX_FILE_SIZE` and enable `AlertExceedsMax yes` (see docs/SECURITY.md). Existing files' scan results are relabelled "not scanned", because earlier scans of encrypted deployments inspected ciphertext.
+- **Download limits are now strictly enforced.** Files with `max_downloads` use download sessions (`X-Download-Session` header). An interrupted download that resumes *without* the session token uses an additional download; the web UI always sends it. If you proxy SafeShare with CORS, expose and allow `X-Download-Session`.
+- **`DOWNLOAD_RESERVATION_TTL` default is now 5 minutes** (was 30); active transfers renew their slot. New: `DOWNLOAD_SESSION_IDLE_TTL` (default 1h), `CLAMAV_SCAN_TIMEOUT` (default 180s), `MALWARE_SCAN_ALLOW_UNVERIFIED`, `MALWARE_SCAN_REJECT_UNSCANNABLE`.
+- **SDKs:** upgrade the Go, TypeScript and Python SDKs. Older versions silently ignored `download_limit` (Go/TS) and send download passwords in the URL; the server still accepts `?password=` until **2027-03-31**.
+- **Frontend:** after upgrading, purge your CDN cache for `/assets/*` and the service worker so browsers pick up the new client.
+
 ### Upgrading to v2.8.x
 
 **From:** v2.7.x  

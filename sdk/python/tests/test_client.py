@@ -190,8 +190,10 @@ class TestDownload:
 
     def test_download_with_password(self, httpx_mock: HTTPXMock, tmp_path):
         """Test download with password."""
+        # Password must travel in the X-File-Password header, not the URL.
         httpx_mock.add_response(
-            url="https://example.com/api/claim/ABC123?password=secret",
+            url="https://example.com/api/claim/ABC123",
+            match_headers={"X-File-Password": "secret"},
             content=b"Secret content",
         )
 
