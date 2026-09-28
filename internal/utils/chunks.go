@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,15 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 )
+
+// ErrChunkMissing is returned (wrapped) by chunkSequenceReader.Read when a
+// chunk file cannot be opened — missing, permissions, or otherwise
+// unreadable. Distinct from a generic I/O error so callers (in particular
+// the ADR-015 malware-scan retry loop) can tell "the source data is gone"
+// apart from "the downstream scanner is having trouble," which call for
+// different responses: the former is never worth retrying and is never a
+// candidate for MALWARE_SCAN_ALLOW_UNVERIFIED.
+var ErrChunkMissing = errors.New("chunk missing or unreadable")
 
 const (
 	// chunkBufferSize is the buffer size for chunk assembly (20MB)
@@ -284,7 +294,7 @@ func (r *chunkSequenceReader) Read(p []byte) (int, error) {
 			}
 			f, err := os.Open(GetChunkPath(r.uploadDir, r.uploadID, r.nextChunk))
 			if err != nil {
-				return 0, fmt.Errorf("failed to open chunk %d: %w", r.nextChunk, err)
+				return 0, fmt.Errorf("failed to open chunk %d: %w: %w", r.nextChunk, ErrChunkMissing, err)
 			}
 			r.current = f
 			r.nextChunk++
@@ -310,6 +320,22 @@ func (r *chunkSequenceReader) Close() error {
 		return err
 	}
 	return nil
+}
+
+// OpenChunksReader returns an io.ReadCloser that streams the chunks of a
+// partial upload, in ascending order, as one concatenated plaintext stream —
+// without assembling them into a file on disk first. Used to scan a chunked
+// upload's content synchronously (ADR-015) before assembly/encryption.
+//
+// Chunks are only read here once the upload is frozen for assembly (status
+// != "uploading" — see UploadChunkHandler), so it's safe to open them one at
+// a time without racing a concurrent chunk write.
+func OpenChunksReader(uploadDir, uploadID string, totalChunks int) io.ReadCloser {
+	return &chunkSequenceReader{
+		uploadDir:   uploadDir,
+		uploadID:    uploadID,
+		totalChunks: totalChunks,
+	}
 }
 
 // countingReader counts bytes read through it.

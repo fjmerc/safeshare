@@ -9,6 +9,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
 // UserRepository is a mock implementation of repository.UserRepository for testing.
@@ -740,8 +741,13 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 		return []models.File{}, 0, nil
 	}
 
+	// Infected audit rows (ADR-015) are excluded — see the sqlite/postgres
+	// GetFiles for the full bug-hunter rationale.
 	allFiles := make([]models.File, 0, len(files))
 	for _, f := range files {
+		if f.ScanStatus == scanning.ScanStatusInfected {
+			continue
+		}
 		allFiles = append(allFiles, *deepCopyFile(f))
 	}
 
@@ -780,7 +786,7 @@ func (r *UserRepository) DeleteFile(ctx context.Context, fileID, userID int64) (
 	}
 
 	file, exists := files[fileID]
-	if !exists {
+	if !exists || file.ScanStatus == scanning.ScanStatusInfected {
 		return nil, repository.ErrNotFound
 	}
 
@@ -811,7 +817,7 @@ func (r *UserRepository) DeleteFileByClaimCode(ctx context.Context, claimCode st
 	}
 
 	for id, file := range files {
-		if file.ClaimCode == claimCode {
+		if file.ClaimCode == claimCode && file.ScanStatus != scanning.ScanStatusInfected {
 			fileCopy := deepCopyFile(file)
 			delete(files, id)
 			return fileCopy, nil
@@ -842,7 +848,7 @@ func (r *UserRepository) UpdateFileName(ctx context.Context, fileID, userID int6
 	}
 
 	file, exists := files[fileID]
-	if !exists {
+	if !exists || file.ScanStatus == scanning.ScanStatusInfected {
 		return repository.ErrNotFound
 	}
 
@@ -871,7 +877,7 @@ func (r *UserRepository) UpdateFileNameByClaimCode(ctx context.Context, claimCod
 	}
 
 	for _, file := range files {
-		if file.ClaimCode == claimCode {
+		if file.ClaimCode == claimCode && file.ScanStatus != scanning.ScanStatusInfected {
 			file.OriginalFilename = newFilename
 			return nil
 		}
@@ -901,7 +907,7 @@ func (r *UserRepository) UpdateFileExpiration(ctx context.Context, fileID, userI
 	}
 
 	file, exists := files[fileID]
-	if !exists {
+	if !exists || file.ScanStatus == scanning.ScanStatusInfected {
 		return repository.ErrNotFound
 	}
 
@@ -930,7 +936,7 @@ func (r *UserRepository) UpdateFileExpirationByClaimCode(ctx context.Context, cl
 	}
 
 	for _, file := range files {
-		if file.ClaimCode == claimCode {
+		if file.ClaimCode == claimCode && file.ScanStatus != scanning.ScanStatusInfected {
 			file.ExpiresAt = newExpiration
 			return nil
 		}
@@ -989,7 +995,7 @@ func (r *UserRepository) RegenerateClaimCode(ctx context.Context, fileID, userID
 	}
 
 	file, exists := files[fileID]
-	if !exists {
+	if !exists || file.ScanStatus == scanning.ScanStatusInfected {
 		return nil, repository.ErrNotFound
 	}
 
@@ -1027,7 +1033,7 @@ func (r *UserRepository) RegenerateClaimCodeByClaimCode(ctx context.Context, old
 	}
 
 	for _, file := range files {
-		if file.ClaimCode == oldClaimCode {
+		if file.ClaimCode == oldClaimCode && file.ScanStatus != scanning.ScanStatusInfected {
 			newClaimCode := generateMockClaimCode()
 			file.ClaimCode = newClaimCode
 

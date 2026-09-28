@@ -342,6 +342,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: |
+            Malware scan rejected the upload (see ADR-015). `code` is
+            `MALWARE_DETECTED` (the file was scanned and found infected; no
+            claim code is ever issued) or `UNSCANNABLE_UPLOAD` (the file
+            can't be scanned — end-to-end encrypted or over the scan size
+            limit — and this server requires scannable uploads).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Malware scanning is enabled but the scanner could not be reached
+            (`code: SCAN_UNAVAILABLE`). Retry after the delay in the
+            `Retry-After` header.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '507':
           description: Disk full or quota exceeded
           content:

@@ -709,6 +709,24 @@ CREATE INDEX IF NOT EXISTS idx_dl_sessions_committed_last_seen
 ALTER TABLE files ADD COLUMN IF NOT EXISTS uncounted_bytes BIGINT NOT NULL DEFAULT 0;
 `,
 	},
+	{
+		Version:     13,
+		Name:        "013_scan_integrity",
+		Description: "ADR-015: synchronous plaintext malware scanning — partial_uploads.error_code and legacy scan_status relabelling",
+		SQL: `
+-- Machine-readable chunked-upload assembly failure reason (e.g.
+-- MALWARE_DETECTED, SCAN_UNAVAILABLE). See the SQLite counterpart
+-- (internal/database/migrations/025_scan_integrity.sql) for the full
+-- rationale, including why 'clean'/'pending'/'error' scan_status rows are
+-- relabelled below rather than left as-is or newly blocked.
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS error_code TEXT;
+
+UPDATE files
+SET scan_status = 'not_scanned',
+    scan_result = 'legacy: pre-ADR-015 scan not trusted'
+WHERE scan_status IN ('clean', 'pending', 'error');
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

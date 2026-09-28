@@ -229,12 +229,22 @@ services:
       # --- Integrations ---
       - FEATURE_WEBHOOKS=true
       - FEATURE_API_TOKENS=true
-      # --- Malware scanning ---
+      # --- Malware scanning (see ADR-015; scanning is synchronous — set
+      #     CLAMAV_MAX_FILE_SIZE no higher than clamd's own StreamMaxLength,
+      #     or files under your limit but over clamd's will error the scan.
+      #     CLAMAV_TIMEOUT is an idle timeout only; CLAMAV_SCAN_TIMEOUT bounds
+      #     the wait for clamd's verdict and must stay above clamd.conf's own
+      #     MaxScanTime. See docs/SECURITY.md for required clamd.conf hardening
+      #     — AlertExceedsMax yes in particular, or oversize/limit-exceeded
+      #     content scans as clean regardless of these settings.) ---
       - FEATURE_MALWARE_SCAN=true
       - CLAMAV_HOST=clamav
       - CLAMAV_PORT=3310
       - CLAMAV_TIMEOUT=30
+      - CLAMAV_SCAN_TIMEOUT=180
       - CLAMAV_MAX_FILE_SIZE=104857600
+      - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
+      - MALWARE_SCAN_REJECT_UNSCANNABLE=false
       # --- Access control ---
       - BLOCKED_EXTENSIONS=.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm
       - RATE_LIMIT_UPLOAD=10
@@ -269,7 +279,7 @@ volumes:
 
 - **User management**: Invite-only registration, role-based access (user/admin)
 - **MFA**: TOTP authenticator apps for all users
-- **Malware scanning**: Uploaded files scanned asynchronously via ClamAV sidecar; infected files quarantined automatically
+- **Malware scanning**: Uploaded files scanned synchronously via ClamAV sidecar before storage — an infected file is rejected outright and never gets a download link (see ADR-015)
 - **Webhook notifications**: Real-time alerts on `file.uploaded`, `file.downloaded`, `file.expired`, `file.deleted`, `file.infected`
 - **API tokens**: Programmatic access with scoped permissions and rotation
 - **Audit logs**: Every upload, download, login, and admin action logged in structured JSON
@@ -333,12 +343,22 @@ services:
       # --- Integrations ---
       - FEATURE_WEBHOOKS=true
       - FEATURE_API_TOKENS=true
-      # --- Malware scanning ---
+      # --- Malware scanning (see ADR-015; scanning is synchronous — set
+      #     CLAMAV_MAX_FILE_SIZE no higher than clamd's own StreamMaxLength,
+      #     or files under your limit but over clamd's will error the scan.
+      #     CLAMAV_TIMEOUT is an idle timeout only; CLAMAV_SCAN_TIMEOUT bounds
+      #     the wait for clamd's verdict and must stay above clamd.conf's own
+      #     MaxScanTime. See docs/SECURITY.md for required clamd.conf hardening
+      #     — AlertExceedsMax yes in particular, or oversize/limit-exceeded
+      #     content scans as clean regardless of these settings.) ---
       - FEATURE_MALWARE_SCAN=true
       - CLAMAV_HOST=clamav
       - CLAMAV_PORT=3310
       - CLAMAV_TIMEOUT=30
+      - CLAMAV_SCAN_TIMEOUT=180
       - CLAMAV_MAX_FILE_SIZE=104857600
+      - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
+      - MALWARE_SCAN_REJECT_UNSCANNABLE=false
       # --- PostgreSQL ---
       - DATABASE_TYPE=postgresql
       - FEATURE_POSTGRESQL=true

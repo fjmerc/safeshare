@@ -469,7 +469,12 @@ curl -X POST \
 - 400 Bad Request: Invalid parameters or missing file
 - 403 Forbidden: Authentication required (if REQUIRE_AUTH_FOR_UPLOAD=true)
 - 413 Payload Too Large: File exceeds MAX_FILE_SIZE
+- 422 Unprocessable Entity (`MALWARE_DETECTED`): the file was scanned and found infected; it is rejected and never stored — no claim code is issued
+- 422 Unprocessable Entity (`UNSCANNABLE_UPLOAD`): the file cannot be scanned (end-to-end encrypted or exceeds the scan size limit) and this server requires all uploads to be scannable (`MALWARE_SCAN_REJECT_UNSCANNABLE=true`)
+- 503 Service Unavailable (`SCAN_UNAVAILABLE`, `Retry-After` header set): malware scanning is enabled but the scanner could not be reached; retry after the given delay
 - 507 Insufficient Storage: Disk full or quota exceeded
+
+> **Malware scanning** (ADR-015): when `FEATURE_MALWARE_SCAN=true`, the upload is scanned synchronously — before encryption/storage and before a claim code is generated — so `POST /api/upload` may take noticeably longer to respond. See [SECURITY.md](SECURITY.md#-malware-scanning-clamav) for the full behavior, including the `not_scanned` status used for end-to-end encrypted or oversized uploads.
 
 ---
 
@@ -589,9 +594,9 @@ Check the status of a chunked upload session.
 
 **Status Values**:
 - `uploading`: Chunks being received
-- `processing`: File assembly in progress
+- `processing`: File assembly in progress (includes the malware scan, when `FEATURE_MALWARE_SCAN=true` — see ADR-015)
 - `completed`: Upload complete, claim code available
-- `failed`: Upload failed (check error_message field)
+- `failed`: Upload failed (check `error_message`; `error_code` gives a machine-readable reason, e.g. `MALWARE_DETECTED`, `SCAN_UNAVAILABLE`, when applicable)
 
 ---
 
@@ -640,8 +645,12 @@ curl -O "http://localhost:8080/api/claim/Xy9kLm8pQz4vDwE?password=secret123"
 **Error Responses**:
 - 401 Unauthorized: Password required or incorrect
 - 404 Not Found: Invalid claim code or file expired
-- 410 Gone: Download limit reached
+- 410 Gone: Download limit reached, **or** (`FILE_QUARANTINED`) the file was found infected by a malware scan
 - 416 Range Not Satisfiable: Invalid byte range
+- 423 Locked (`SCAN_PENDING`, `Retry-After` header set): the file's malware scan has not completed yet
+- 403 Forbidden (`SCAN_FAILED`): the file's malware scan errored and it cannot be verified safe
+
+> See [SECURITY.md](SECURITY.md#-malware-scanning-clamav) for the full ADR-015 download-gating behavior, including the `MALWARE_SCAN_ALLOW_UNVERIFIED` opt-out.
 
 ---
 
@@ -668,9 +677,13 @@ Retrieve file metadata without downloading.
   "max_downloads": 5,
   "downloads_remaining": 3,
   "password_protected": true,
-  "sha256_hash": "a3b2c1d4e5f6..."
+  "sha256_hash": "a3b2c1d4e5f6...",
+  "scan_status": "clean",
+  "download_available": true
 }
 ```
+
+`scan_status` is one of `clean`, `infected`, `pending`, `error`, `not_scanned`, or omitted (scanning disabled, or file predates the malware scanning feature). `download_available` is `false` exactly when `GET /api/claim/:code` would currently be blocked by the scan gate (see ADR-015) — check it before presenting a download link so the recipient gets a clear "still being scanned" state instead of a failed download.
 
 **Error Responses**:
 - 401 Unauthorized: Password required or incorrect
@@ -1246,9 +1259,13 @@ Retrieve public-facing configuration (no authentication required).
   "chunked_upload_enabled": true,
   "chunked_upload_threshold": 104857600,
   "chunk_size": 10485760,
-  "require_auth_for_upload": false
+  "require_auth_for_upload": false,
+  "malware_scan_enabled": false,
+  "unscannable_uploads_rejected": false
 }
 ```
+
+`malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all.
 
 **Use Case**: Frontend configuration, dynamic UI updates
 
@@ -1298,6 +1315,12 @@ All endpoints return consistent error format:
 - `auth_required`: Authentication required
 - `permission_denied`: Insufficient privileges
 - `extension_blocked`: File type not allowed
+- `MALWARE_DETECTED`: Upload scanned and rejected as infected (ADR-015; not retryable)
+- `UNSCANNABLE_UPLOAD`: Upload cannot be scanned (E2E encrypted or too large) and this server requires scannable uploads
+- `SCAN_UNAVAILABLE`: Malware scanner unreachable/timed out; retryable after the `Retry-After` delay
+- `FILE_QUARANTINED`: Download blocked — the file was found infected
+- `SCAN_PENDING`: Download blocked — the file's scan hasn't completed yet; retryable after the `Retry-After` delay
+- `SCAN_FAILED`: Download blocked — the file's scan errored and it could not be verified
 
 ---
 

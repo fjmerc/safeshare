@@ -36,8 +36,8 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
@@ -59,6 +59,13 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		file.SHA256Hash,
 		file.ClientEncrypted,
 		nullableBlob(file.EncFileID),
+		// ADR-015: the synchronous scan verdict is known before the record is
+		// ever created, so it's persisted at insert time rather than via a
+		// later UpdateScanStatus call. Empty/nil leave the columns NULL
+		// (scanning disabled, or a legacy caller that doesn't set them).
+		nullableString(file.ScanStatus),
+		nullableString(file.ScanResult),
+		nullableTimeRFC3339(file.ScannedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -87,12 +94,16 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 
 	// Check quota within transaction
 	var currentUsage int64
+	// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows are
+	// already inserted with file_size=0, but exclude them explicitly too, so
+	// a future insert bug can't silently reintroduce quota inflation.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE datetime(expires_at) > datetime('now')
+		AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 	if err := tx.QueryRowContext(ctx, query).Scan(&currentUsage); err != nil {
 		return fmt.Errorf("failed to get current usage: %w", err)
@@ -108,8 +119,8 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
@@ -130,6 +141,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		file.SHA256Hash,
 		file.ClientEncrypted,
 		nullableBlob(file.EncFileID),
+		nullableString(file.ScanStatus),
+		nullableString(file.ScanResult),
+		nullableTimeRFC3339(file.ScannedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -1536,12 +1550,14 @@ func (r *FileRepository) batchDeleteFiles(ctx context.Context, fileIDs []int64) 
 
 // GetTotalUsage returns the total storage used by active files and partial uploads.
 func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): see CreateWithQuotaCheck.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
 		FROM files
 		WHERE datetime(expires_at) > datetime('now')
+		AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 
 	var totalUsage int64
@@ -1555,8 +1571,11 @@ func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
 
 // GetStats returns statistics about file storage.
 func (r *FileRepository) GetStats(ctx context.Context, uploadDir string) (*repository.FileStats, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+	// count toward the file total but never toward storageUsed — see
+	// CreateWithQuotaCheck.
 	query := `
-		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN scan_status IS NULL OR scan_status != 'infected' THEN file_size ELSE 0 END), 0)
 		FROM files
 		WHERE datetime(expires_at) > datetime('now')
 	`

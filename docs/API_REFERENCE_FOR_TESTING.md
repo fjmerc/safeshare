@@ -34,7 +34,11 @@
 - `201 Created` - Upload successful (**NOT 200 OK**)
 - `400 Bad Request` - Invalid parameters or missing file
 - `413 Request Entity Too Large` - File exceeds size limit
+- `422 Unprocessable Entity` - `MALWARE_DETECTED` (scanned and infected; no claim code issued) or `UNSCANNABLE_UPLOAD` (E2E/oversized content and `MALWARE_SCAN_REJECT_UNSCANNABLE=true`) — see ADR-015
+- `503 Service Unavailable` - `SCAN_UNAVAILABLE`; scanner unreachable, `Retry-After` header set (only when `FEATURE_MALWARE_SCAN=true` and `MALWARE_SCAN_ALLOW_UNVERIFIED` is not set)
 - `507 Insufficient Storage` - Not enough disk space or quota exceeded
+
+**Malware scanning note**: when `FEATURE_MALWARE_SCAN=true`, the upload is scanned synchronously before the handler responds — tests that enable it should expect extra latency and, for an EICAR-content upload, a `422 MALWARE_DETECTED` response instead of `201`, with no file written to `UploadDir` and no row returned by `GetByClaimCode` for any code (none is ever issued).
 
 **Response Body** (201):
 ```json

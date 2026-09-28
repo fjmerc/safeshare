@@ -17,6 +17,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
 // FileRepository is a mock implementation of repository.FileRepository for testing.
@@ -253,10 +254,15 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		return r.CreateWithQuotaCheckError
 	}
 
-	// Check quota
+	// Check quota. Defense in depth (bug-hunter finding, ADR-015): skip
+	// infected-audit rows explicitly — they're inserted with FileSize=0
+	// anyway, but this mirrors the sqlite/postgres query guard.
 	r.mu.RLock()
 	var totalUsage int64
 	for _, f := range r.files {
+		if f.ScanStatus == scanning.ScanStatusInfected {
+			continue
+		}
 		totalUsage += f.FileSize
 	}
 	r.mu.RUnlock()
@@ -1047,6 +1053,9 @@ func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
 
 	var total int64
 	for _, file := range r.files {
+		if file.ScanStatus == scanning.ScanStatusInfected {
+			continue
+		}
 		total += file.FileSize
 	}
 
@@ -1073,8 +1082,12 @@ func (r *FileRepository) GetStats(ctx context.Context, uploadDir string) (*repos
 
 	for _, file := range r.files {
 		stats.TotalFiles++
-		stats.StorageUsed += file.FileSize
-		stats.TotalUsage += file.FileSize
+		// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+		// count toward TotalFiles but never toward storage.
+		if file.ScanStatus != scanning.ScanStatusInfected {
+			stats.StorageUsed += file.FileSize
+			stats.TotalUsage += file.FileSize
+		}
 
 		if now.After(file.ExpiresAt) {
 			stats.ExpiredFiles++

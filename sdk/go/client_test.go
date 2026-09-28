@@ -381,7 +381,7 @@ func TestErrorSanitization(t *testing.T) {
 }
 
 func TestAPIError(t *testing.T) {
-	err := newAPIError(401, "Authentication required")
+	err := newAPIError(401, "Authentication required", "")
 
 	if !errors.Is(err, ErrAuthentication) {
 		t.Errorf("401 error should wrap ErrAuthentication")

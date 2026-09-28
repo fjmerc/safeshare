@@ -74,7 +74,7 @@ func (c *Client) Download(ctx context.Context, claimCode, destination string, op
 		if err := handleResponse(resp, nil); err != nil {
 			return err
 		}
-		return newAPIError(resp.StatusCode, errResp.Error)
+		return newAPIError(resp.StatusCode, errResp.Error, "")
 	}
 
 	// Get content length for progress
@@ -204,6 +204,8 @@ func (c *Client) GetFileInfo(ctx context.Context, claimCode string) (*FileInfo, 
 		ExpiresAt:          parseTime(apiResp.ExpiresAt),
 		PasswordProtected:  apiResp.PasswordProtected,
 		DownloadsRemaining: downloadsRemaining,
+		ScanStatus:         apiResp.ScanStatus,
+		DownloadAvailable:  apiResp.DownloadAvailable,
 	}, nil
 }
 

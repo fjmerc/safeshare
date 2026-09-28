@@ -180,7 +180,7 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code
 		FROM partial_uploads
 		WHERE upload_id = $1
 	`
@@ -192,6 +192,7 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 	var errorMessage sql.NullString
 	var assemblyStartedAt sql.NullTime
 	var assemblyCompletedAt sql.NullTime
+	var errorCode sql.NullString
 
 	err := r.pool.QueryRow(ctx, query, uploadID).Scan(
 		&upload.UploadID,
@@ -214,6 +215,7 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 		&assemblyStartedAt,
 		&assemblyCompletedAt,
 		&upload.ClientEncrypted,
+		&errorCode,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -243,6 +245,9 @@ func (r *PartialUploadRepository) GetByUploadID(ctx context.Context, uploadID st
 	}
 	if assemblyCompletedAt.Valid {
 		upload.AssemblyCompletedAt = &assemblyCompletedAt.Time
+	}
+	if errorCode.Valid {
+		upload.ErrorCode = &errorCode.String
 	}
 
 	return upload, nil
@@ -356,7 +361,7 @@ func (r *PartialUploadRepository) GetAbandoned(ctx context.Context, expiryHours 
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code
 		FROM partial_uploads
 		WHERE completed = false
 		AND (
@@ -383,7 +388,7 @@ func (r *PartialUploadRepository) GetOldCompleted(ctx context.Context, retention
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code
 		FROM partial_uploads
 		WHERE completed = true
 		AND last_activity < NOW() - $1 * INTERVAL '1 hour'
@@ -400,7 +405,7 @@ func (r *PartialUploadRepository) GetByUserID(ctx context.Context, userID int64)
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code
 		FROM partial_uploads
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -523,20 +528,27 @@ func (r *PartialUploadRepository) SetAssemblyCompleted(ctx context.Context, uplo
 	return nil
 }
 
-// SetAssemblyFailed marks assembly as failed with error message.
-func (r *PartialUploadRepository) SetAssemblyFailed(ctx context.Context, uploadID, errorMessage string) error {
+// SetAssemblyFailed marks assembly as failed with an error message and an
+// optional machine-readable error code (e.g. MALWARE_DETECTED,
+// SCAN_UNAVAILABLE — see ADR-015; empty string leaves error_code NULL).
+func (r *PartialUploadRepository) SetAssemblyFailed(ctx context.Context, uploadID, errorMessage, errorCode string) error {
 	if uploadID == "" {
 		return fmt.Errorf("upload_id cannot be empty")
 	}
 
+	var errorCodeArg interface{}
+	if errorCode != "" {
+		errorCodeArg = errorCode
+	}
+
 	query := `
 		UPDATE partial_uploads
-		SET status = 'failed', error_message = $1, last_activity = NOW()
-		WHERE upload_id = $2
+		SET status = 'failed', error_message = $1, error_code = $2, last_activity = NOW()
+		WHERE upload_id = $3
 	`
 
 	return withRetryNoReturn(ctx, 3, func() error {
-		_, err := r.pool.Exec(ctx, query, errorMessage, uploadID)
+		_, err := r.pool.Exec(ctx, query, errorMessage, errorCodeArg, uploadID)
 		if err != nil {
 			return fmt.Errorf("failed to set assembly failed: %w", err)
 		}
@@ -551,7 +563,7 @@ func (r *PartialUploadRepository) GetProcessing(ctx context.Context) ([]models.P
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code,
-			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted
+			status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code
 		FROM partial_uploads
 		WHERE status = 'processing'
 		ORDER BY assembly_started_at ASC
@@ -633,6 +645,7 @@ func (r *PartialUploadRepository) scanPartialUploads(rows pgx.Rows) ([]models.Pa
 		var errorMessage sql.NullString
 		var assemblyStartedAt sql.NullTime
 		var assemblyCompletedAt sql.NullTime
+		var errorCode sql.NullString
 
 		err := rows.Scan(
 			&upload.UploadID,
@@ -655,6 +668,7 @@ func (r *PartialUploadRepository) scanPartialUploads(rows pgx.Rows) ([]models.Pa
 			&assemblyStartedAt,
 			&assemblyCompletedAt,
 			&upload.ClientEncrypted,
+			&errorCode,
 		)
 
 		if err != nil {
@@ -681,6 +695,9 @@ func (r *PartialUploadRepository) scanPartialUploads(rows pgx.Rows) ([]models.Pa
 		}
 		if assemblyCompletedAt.Valid {
 			upload.AssemblyCompletedAt = &assemblyCompletedAt.Time
+		}
+		if errorCode.Valid {
+			upload.ErrorCode = &errorCode.String
 		}
 
 		uploads = append(uploads, upload)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Standard errors returned by the SDK.
@@ -24,6 +25,31 @@ var (
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrQuotaExceeded indicates the user's quota was exceeded.
 	ErrQuotaExceeded = errors.New("quota exceeded")
+
+	// ErrMalwareDetected indicates the server's malware scan found a threat
+	// and rejected the upload before storing it (ADR-015). Not retryable
+	// with the same file content.
+	ErrMalwareDetected = errors.New("malware detected")
+	// ErrFileQuarantined indicates the requested file was found infected by
+	// a scan and is permanently unavailable for download (ADR-015).
+	ErrFileQuarantined = errors.New("file quarantined")
+	// ErrScanPending indicates the file's malware scan has not completed
+	// yet; the download may succeed on retry. Check APIError.RetryAfter for
+	// how long to wait (ADR-015).
+	ErrScanPending = errors.New("malware scan pending")
+	// ErrScanUnavailable indicates the malware scanner could not be reached
+	// or timed out; the request may succeed on retry once the scanner
+	// recovers. Check APIError.RetryAfter for how long to wait (ADR-015).
+	ErrScanUnavailable = errors.New("malware scanner unavailable")
+	// ErrScanFailed indicates a file's malware scan previously errored and
+	// the server will not serve it until re-verified (ADR-015). Not
+	// retryable by the client.
+	ErrScanFailed = errors.New("malware scan failed")
+	// ErrUnscannableUpload indicates the server rejected an upload outright
+	// because its content can never be scanned (end-to-end encrypted, or
+	// larger than the server's scan size limit) and this server requires
+	// all uploads to be scannable (MALWARE_SCAN_REJECT_UNSCANNABLE, ADR-015).
+	ErrUnscannableUpload = errors.New("upload cannot be scanned for malware")
 )
 
 // APIError represents an error response from the SafeShare API.
@@ -32,6 +58,12 @@ type APIError struct {
 	StatusCode int
 	// Message is the error message.
 	Message string
+	// Code is the server's machine-readable error code (the JSON response's
+	// "code" field, e.g. "MALWARE_DETECTED", "SCAN_PENDING"), when present.
+	Code string
+	// RetryAfter is the server's suggested retry delay, parsed from the
+	// Retry-After response header (0 if absent or not sent as whole seconds).
+	RetryAfter time.Duration
 	// Err is the underlying error type.
 	Err error
 }
@@ -106,11 +138,40 @@ func (e *ChunkedUploadError) Unwrap() error {
 	return e.Err
 }
 
-// newAPIError creates an APIError from an HTTP response.
-func newAPIError(statusCode int, message string) *APIError {
+// newAPIError creates an APIError from an HTTP response. code is the
+// server's machine-readable error code (the JSON response's "code" field);
+// pass "" if unavailable (e.g. the response body didn't decode).
+func newAPIError(statusCode int, message string, code string) *APIError {
 	err := &APIError{
 		StatusCode: statusCode,
 		Message:    sanitizeErrorMessage(message),
+		Code:       code,
+	}
+
+	// ADR-015 error codes are matched first and take priority over the
+	// status-code heuristics below: several of them share an HTTP status
+	// with an older, differently-meaning error (e.g. FILE_QUARANTINED and
+	// the legacy download-limit-reached case both use 410), so the code is
+	// the only reliable disambiguator.
+	switch code {
+	case "MALWARE_DETECTED":
+		err.Err = ErrMalwareDetected
+		return err
+	case "FILE_QUARANTINED":
+		err.Err = ErrFileQuarantined
+		return err
+	case "SCAN_PENDING":
+		err.Err = ErrScanPending
+		return err
+	case "SCAN_UNAVAILABLE":
+		err.Err = ErrScanUnavailable
+		return err
+	case "SCAN_FAILED":
+		err.Err = ErrScanFailed
+		return err
+	case "UNSCANNABLE_UPLOAD":
+		err.Err = ErrUnscannableUpload
+		return err
 	}
 
 	// Map status codes to error types

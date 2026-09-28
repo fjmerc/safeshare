@@ -604,9 +604,13 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 		offset = 0
 	}
 
-	// Get total count
+	// Get total count. Infected audit rows (ADR-015) are excluded: they are
+	// never a file the owner actually shared, just a quarantine record, and
+	// bug-hunter flagged surfacing them (claim code, download URL, edit
+	// actions) in the owner's own dashboard as a real information/action
+	// leak — see also the WHERE clause on the paginated query below.
 	var total int
-	countQuery := `SELECT COUNT(*) FROM files WHERE user_id = ?`
+	countQuery := `SELECT COUNT(*) FROM files WHERE user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')`
 	err := r.db.QueryRowContext(ctx, countQuery, userID).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count user files: %w", err)
@@ -615,7 +619,7 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 	// Get paginated files
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
 		created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
-		FROM files WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		FROM files WHERE user_id = ? AND (scan_status IS NULL OR scan_status != 'infected') ORDER BY created_at DESC LIMIT ? OFFSET ?`
 
 	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
 	if err != nil {
@@ -703,7 +707,7 @@ func (r *UserRepository) DeleteFile(ctx context.Context, fileID, userID int64) (
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, uploader_ip, password_hash, user_id
 		FROM files
-		WHERE id = ? AND user_id = ?
+		WHERE id = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 
 	file := &models.File{}
@@ -800,7 +804,7 @@ func (r *UserRepository) DeleteFileByClaimCode(ctx context.Context, claimCode st
 			mime_type, created_at, expires_at, max_downloads, download_count,
 			completed_downloads, uploader_ip, password_hash, user_id
 		FROM files
-		WHERE claim_code = ? AND user_id = ?
+		WHERE claim_code = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 
 	file := &models.File{}
@@ -880,7 +884,7 @@ func (r *UserRepository) DeleteFileByClaimCode(ctx context.Context, claimCode st
 
 // UpdateFileName updates the original filename for a file owned by the specified user.
 func (r *UserRepository) UpdateFileName(ctx context.Context, fileID, userID int64, newFilename string) error {
-	query := `UPDATE files SET original_filename = ? WHERE id = ? AND user_id = ?`
+	query := `UPDATE files SET original_filename = ? WHERE id = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')`
 
 	result, err := r.db.ExecContext(ctx, query, newFilename, fileID, userID)
 	if err != nil {
@@ -901,7 +905,7 @@ func (r *UserRepository) UpdateFileName(ctx context.Context, fileID, userID int6
 
 // UpdateFileNameByClaimCode updates the original filename for a file identified by claim code.
 func (r *UserRepository) UpdateFileNameByClaimCode(ctx context.Context, claimCode string, userID int64, newFilename string) error {
-	query := `UPDATE files SET original_filename = ? WHERE claim_code = ? AND user_id = ?`
+	query := `UPDATE files SET original_filename = ? WHERE claim_code = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')`
 
 	result, err := r.db.ExecContext(ctx, query, newFilename, claimCode, userID)
 	if err != nil {
@@ -922,7 +926,7 @@ func (r *UserRepository) UpdateFileNameByClaimCode(ctx context.Context, claimCod
 
 // UpdateFileExpiration updates the expiration date for a file owned by the specified user.
 func (r *UserRepository) UpdateFileExpiration(ctx context.Context, fileID, userID int64, newExpiration time.Time) error {
-	query := `UPDATE files SET expires_at = ? WHERE id = ? AND user_id = ?`
+	query := `UPDATE files SET expires_at = ? WHERE id = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')`
 
 	// Format as RFC3339 for consistent SQLite datetime() parsing
 	expiresAtRFC3339 := newExpiration.Format(time.RFC3339)
@@ -946,7 +950,7 @@ func (r *UserRepository) UpdateFileExpiration(ctx context.Context, fileID, userI
 
 // UpdateFileExpirationByClaimCode updates the expiration date for a file identified by claim code.
 func (r *UserRepository) UpdateFileExpirationByClaimCode(ctx context.Context, claimCode string, userID int64, newExpiration time.Time) error {
-	query := `UPDATE files SET expires_at = ? WHERE claim_code = ? AND user_id = ?`
+	query := `UPDATE files SET expires_at = ? WHERE claim_code = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')`
 
 	// Format as RFC3339 for consistent SQLite datetime() parsing
 	expiresAtRFC3339 := newExpiration.Format(time.RFC3339)
@@ -1053,7 +1057,7 @@ func (r *UserRepository) RegenerateClaimCode(ctx context.Context, fileID, userID
 	err = tx.QueryRowContext(ctx, `
 		SELECT claim_code, original_filename
 		FROM files
-		WHERE id = ? AND user_id = ?
+		WHERE id = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`, fileID, userID).Scan(&currentClaimCode, &filename)
 
 	if err == sql.ErrNoRows {
@@ -1073,7 +1077,7 @@ func (r *UserRepository) RegenerateClaimCode(ctx context.Context, fileID, userID
 	result, err := tx.ExecContext(ctx, `
 		UPDATE files
 		SET claim_code = ?
-		WHERE id = ? AND user_id = ?
+		WHERE id = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`, newClaimCode, fileID, userID)
 
 	if err != nil {
@@ -1124,7 +1128,7 @@ func (r *UserRepository) RegenerateClaimCodeByClaimCode(ctx context.Context, old
 	err = tx.QueryRowContext(ctx, `
 		SELECT id, original_filename
 		FROM files
-		WHERE claim_code = ? AND user_id = ?
+		WHERE claim_code = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`, oldClaimCode, userID).Scan(&fileID, &filename)
 
 	if err == sql.ErrNoRows {
@@ -1144,7 +1148,7 @@ func (r *UserRepository) RegenerateClaimCodeByClaimCode(ctx context.Context, old
 	result, err := tx.ExecContext(ctx, `
 		UPDATE files
 		SET claim_code = ?
-		WHERE claim_code = ? AND user_id = ?
+		WHERE claim_code = ? AND user_id = ? AND (scan_status IS NULL OR scan_status != 'infected')
 	`, newClaimCode, oldClaimCode, userID)
 
 	if err != nil {

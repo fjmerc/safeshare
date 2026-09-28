@@ -42,7 +42,8 @@ func setupPartialUploadTestDB(t *testing.T) *sql.DB {
 			error_message TEXT,
 			assembly_started_at TEXT,
 			assembly_completed_at TEXT,
-			client_encrypted INTEGER NOT NULL DEFAULT 0
+			client_encrypted INTEGER NOT NULL DEFAULT 0,
+			error_code TEXT
 		)
 	`)
 	if err != nil {
@@ -671,7 +672,7 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	_ = repo.Create(ctx, upload)
 
 	// Set assembly failed
-	err := repo.SetAssemblyFailed(ctx, "assembly-fail-test", "checksum mismatch")
+	err := repo.SetAssemblyFailed(ctx, "assembly-fail-test", "checksum mismatch", "")
 	if err != nil {
 		t.Fatalf("SetAssemblyFailed failed: %v", err)
 	}
@@ -682,6 +683,41 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	}
 	if result.ErrorMessage == nil || *result.ErrorMessage != "checksum mismatch" {
 		t.Error("expected ErrorMessage='checksum mismatch'")
+	}
+	if result.ErrorCode != nil {
+		t.Errorf("expected ErrorCode=nil for empty error code, got %v", *result.ErrorCode)
+	}
+}
+
+// TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode verifies the
+// ADR-015 machine-readable error_code column round-trips through
+// SetAssemblyFailed/GetByUploadID.
+func TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode(t *testing.T) {
+	db := setupPartialUploadTestDB(t)
+	defer db.Close()
+	repo := NewPartialUploadRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	upload := &models.PartialUpload{
+		UploadID:     "assembly-fail-code-test",
+		Filename:     "test.txt",
+		TotalSize:    1024,
+		ChunkSize:    256,
+		TotalChunks:  4,
+		CreatedAt:    now,
+		LastActivity: now,
+	}
+	_ = repo.Create(ctx, upload)
+
+	err := repo.SetAssemblyFailed(ctx, "assembly-fail-code-test", "Upload rejected: malware detected (Eicar-Test-Signature)", "MALWARE_DETECTED")
+	if err != nil {
+		t.Fatalf("SetAssemblyFailed failed: %v", err)
+	}
+
+	result, _ := repo.GetByUploadID(ctx, "assembly-fail-code-test")
+	if result.ErrorCode == nil || *result.ErrorCode != "MALWARE_DETECTED" {
+		t.Errorf("expected ErrorCode=MALWARE_DETECTED, got %v", result.ErrorCode)
 	}
 }
 

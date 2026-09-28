@@ -21,6 +21,7 @@ type PartialUpload struct {
 	ClaimCode           *string    `json:"claim_code,omitempty"`
 	Status              string     `json:"status"` // uploading, processing, completed, failed
 	ErrorMessage        *string    `json:"error_message,omitempty"`
+	ErrorCode           *string    `json:"error_code,omitempty"` // Machine-readable failure reason, e.g. MALWARE_DETECTED, SCAN_UNAVAILABLE (ADR-015)
 	AssemblyStartedAt   *time.Time `json:"assembly_started_at,omitempty"`
 	AssemblyCompletedAt *time.Time `json:"assembly_completed_at,omitempty"`
 	ClientEncrypted     bool       `json:"client_encrypted"` // True when contents were encrypted in the browser before upload (E2E)
@@ -67,6 +68,7 @@ type UploadStatusResponse struct {
 	ClaimCode          *string   `json:"claim_code,omitempty"`
 	Status             string    `json:"status"` // uploading, processing, completed, failed
 	ErrorMessage       *string   `json:"error_message,omitempty"`
+	ErrorCode          *string   `json:"error_code,omitempty"`   // Machine-readable failure reason, e.g. MALWARE_DETECTED, SCAN_UNAVAILABLE (ADR-015)
 	DownloadURL        *string   `json:"download_url,omitempty"` // Only set when completed
 	FileSize           int64     `json:"file_size"`
 	MaxDownloads       int       `json:"max_downloads"`

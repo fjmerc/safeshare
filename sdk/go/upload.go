@@ -440,6 +440,7 @@ func (c *Client) getUploadStatusInternal(ctx context.Context, uploadID string) (
 		Status         string  `json:"status"`
 		ClaimCode      *string `json:"claim_code,omitempty"`
 		ErrorMessage   *string `json:"error_message,omitempty"`
+		ErrorCode      *string `json:"error_code,omitempty"`
 		MaxDownloads   *int    `json:"max_downloads,omitempty"`
 	}
 
@@ -460,6 +461,7 @@ func (c *Client) getUploadStatusInternal(ctx context.Context, uploadID string) (
 		Status:         apiResp.Status,
 		ClaimCode:      apiResp.ClaimCode,
 		ErrorMessage:   apiResp.ErrorMessage,
+		ErrorCode:      apiResp.ErrorCode,
 		MaxDownloads:   apiResp.MaxDownloads,
 	}, nil
 }

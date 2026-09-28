@@ -344,6 +344,74 @@ export BLOCKED_EXTENSIONS=".exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,
 
 ---
 
+## 🦠 Malware Scanning (ClamAV)
+
+### Overview
+
+Optional real-time malware scanning via a ClamAV sidecar, enabled with `FEATURE_MALWARE_SCAN=true`. See ADR-015 (`SafeShare-Planning/06-Architecture-Decisions/ADR-015-synchronous-plaintext-scanning.md`) for the full design rationale.
+
+Scanning is **synchronous** and runs against the **original, unencrypted upload content** before the file is encrypted or stored, and before a claim code is generated — an infected upload is rejected outright (`422 MALWARE_DETECTED`) and never becomes downloadable. This matters specifically when `ENCRYPTION_KEY` is also set: scanning the plaintext (rather than the at-rest ciphertext) is the only way a scan result means anything.
+
+### Download gate
+
+Every download is gated on the file's own scan verdict, not just on whether scanning is currently enabled:
+
+| `scan_status` | Download behavior |
+|---|---|
+| `infected` | Always blocked — `410 FILE_QUARANTINED` |
+| `pending` | Blocked — `423`, retry after 15s (legacy value; nothing in the current design writes it, but old rows are still honored) |
+| `error` | Blocked — `403 SCAN_FAILED` |
+| `clean` | Allowed |
+| `not_scanned` | Allowed (see below) |
+| unset (scanning disabled, or pre-scanning-feature file) | Allowed |
+
+### End-to-end encrypted and oversized uploads
+
+Client-side (E2E) encrypted uploads are still scanned server-side — an attacker could smuggle plaintext malware through the `client_encrypted` flag — but a non-infected result is recorded as `not_scanned` rather than `clean`, since the server cannot verify the genuinely-decrypted content is safe. The same applies to uploads larger than `CLAMAV_MAX_FILE_SIZE`. A detected infection is still `infected` either way.
+
+By default, `not_scanned` uploads are accepted. Set `MALWARE_SCAN_REJECT_UNSCANNABLE=true` to reject them outright (`422 UNSCANNABLE_UPLOAD`) instead.
+
+### Scanner unavailability
+
+If ClamAV cannot be reached, times out, or returns an unrecognized response, the scan is treated as failed — uploads are rejected (`503 SCAN_UNAVAILABLE`) and downloads of previously-`error`/`pending` files are blocked, by default. Set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to instead proceed without a verified scan (logged as a startup `WARN`); this never overrides a confirmed `infected` verdict.
+
+⚠️ **`MALWARE_SCAN_ALLOW_UNVERIFIED` is uploader-triggerable, not just an operator escape hatch.** A clamd `ERROR` reply or a scan timeout are both things an uploader can deliberately provoke (a crafted/oversized stream, a payload shaped to run near `CLAMAV_SCAN_TIMEOUT`), and with this flag on, doing so gets their upload waved through as `scan_status=error` instead of blocked. In other words, a sufficiently motivated attacker can use it to *effectively disable scanning for their own upload* against a server running with this flag set. Only enable it if you've accepted that trade-off (e.g. availability matters more than guaranteed scanning for your deployment) — it does not weaken the `infected` verdict path, which is never bypassable.
+
+Chunked-upload scan failures retry (3×, with backoff) only on a clamd **connection** failure (dial/refused/DNS) — a timeout waiting for a verdict, or a clamd `ERROR` reply, is not retried, since retrying against the same clamd would just reproduce the same outcome while holding an assembly-worker slot.
+
+### Configuration
+
+```bash
+export FEATURE_MALWARE_SCAN=true
+export CLAMAV_HOST=clamav
+export CLAMAV_PORT=3310
+export CLAMAV_TIMEOUT=30                    # seconds; IDLE timeout only — TCP dial and each individual write while streaming
+export CLAMAV_SCAN_TIMEOUT=180              # seconds; separate bound on waiting for clamd's verdict AFTER the full stream is sent — see below
+export CLAMAV_MAX_FILE_SIZE=104857600       # bytes; keep <= clamd's own StreamMaxLength
+export MALWARE_SCAN_ALLOW_UNVERIFIED=false  # true: fail open on scanner errors (not on confirmed infections) — see warning above
+export MALWARE_SCAN_REJECT_UNSCANNABLE=false # true: reject E2E/oversized uploads outright
+```
+
+`CLAMAV_TIMEOUT` vs `CLAMAV_SCAN_TIMEOUT`: clamd buffers the **entire** INSTREAM before it starts scanning, so zero reply bytes flow while a large file is actually being scanned — that wait is bounded by `CLAMAV_SCAN_TIMEOUT`, not `CLAMAV_TIMEOUT`. Keep `CLAMAV_SCAN_TIMEOUT` comfortably above clamd's own `MaxScanTime` (see hardening below): if it's lower, large-but-legitimate uploads fail with `SCAN_UNAVAILABLE` well before clamd would have finished.
+
+### Hardening clamd itself
+
+SafeShare trusts clamd's response at face value, so a permissively-configured clamd can silently under-report threats. In `clamd.conf`, set:
+
+- **`AlertExceedsMax yes`** — without this, a file that exceeds clamd's own internal scan limits (`MaxFileSize`, `MaxScanSize`, `MaxRecursion`, etc.) is reported clean (`stream: OK`) rather than flagged, regardless of what `CLAMAV_MAX_FILE_SIZE` is set to on the SafeShare side. A `Heuristics.Limits.Exceeded.*` signature name in a `FOUND` reply — which this alert setting produces — is treated the same as any other match: `scan_status=infected`.
+- **`StreamMaxLength`** must be `>= CLAMAV_MAX_FILE_SIZE`. If clamd's own limit is lower, clamd rejects larger streams (`INSTREAM size limit exceeded. ERROR`), which SafeShare treats as a scan error — the upload is refused with `SCAN_UNAVAILABLE`, or stored with `scan_status=error` under `MALWARE_SCAN_ALLOW_UNVERIFIED` — so files between the two limits can never be uploaded normally.
+- **`MaxScanTime`** should be comfortably *below* `CLAMAV_SCAN_TIMEOUT` (SafeShare's client-side wait), so clamd itself gives up and replies before SafeShare's deadline does — otherwise SafeShare times out and reports `SCAN_UNAVAILABLE` for a scan that was actually still progressing normally.
+- **`AlertEncrypted yes`** (and `AlertEncryptedArchive` / `AlertEncryptedDoc` as appropriate for your threat model) — flags encrypted archives/documents clamd cannot look inside, which would otherwise scan as clean despite being unexamined.
+
+### Limitations
+
+⚠️ **Legacy scan results**: files scanned before this synchronous design (upgrading from an older SafeShare version) have their `clean`/`pending`/`error` scan status relabeled `not_scanned` on migration — a pre-upgrade "clean" verdict may have been computed against ciphertext and cannot be trusted. Re-scan such files out of band if certainty is required.
+⚠️ **E2E encryption vs. scanning**: these two features are in tension by design — a server that can decrypt content to scan it isn't offering true end-to-end confidentiality. Operators must choose the trade-off that fits their threat model via `MALWARE_SCAN_REJECT_UNSCANNABLE`.
+⚠️ **Signature-based**: ClamAV, like any signature-based scanner, does not catch zero-day malware.
+⚠️ **CLI import bypasses scanning entirely**: files imported via `cmd/import-file` never go through the HTTP upload path and are therefore never scanned — they're recorded as `scan_status=not_scanned`, `scan_result="imported via CLI"` unconditionally (the CLI has no reliable way to read the server's live, admin-toggleable scan setting). Treat CLI-imported content as unverified regardless of `FEATURE_MALWARE_SCAN`.
+
+---
+
 ## 🔑 Password Protection
 
 ### Overview
