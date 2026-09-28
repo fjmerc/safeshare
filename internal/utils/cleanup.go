@@ -139,7 +139,17 @@ func CleanupAbandonedUploads(repos *repository.Repositories, uploadDir string, e
 		return nil, err
 	}
 
-	// Phase 1: Clean up abandoned (incomplete) uploads tracked in database
+	// Phase 1: Clean up abandoned (incomplete) uploads tracked in database.
+	//
+	// ADR-016: delete the DB row FIRST, via a CAS (DeleteIfAbandoned)
+	// re-evaluated against the abandoned criteria at delete time rather than
+	// the GetAbandoned snapshot above. This closes a race where an upload
+	// became active again (a client resumed it, or an assembly worker/
+	// recovery took it over) between the list query and this loop: deleting
+	// chunks a live assembly is still reading would corrupt that assembly,
+	// but deleting the DB row is safe (and effectively a no-op) because the
+	// CAS simply won't match a row that's no longer abandoned — leaving
+	// both the row and its chunks alone for that iteration.
 	for _, upload := range abandoned {
 		// Calculate actual bytes from chunks on disk (ReceivedBytes in DB is not updated during upload for performance)
 		chunkSize, err := GetUploadChunksSize(uploadDir, upload.UploadID)
@@ -153,22 +163,29 @@ func CleanupAbandonedUploads(repos *repository.Repositories, uploadDir string, e
 			result.BytesReclaimed += chunkSize
 		}
 
-		// Delete chunks from filesystem
+		deleted, err := repos.PartialUploads.DeleteIfAbandoned(ctx, upload.UploadID, expiryHours)
+		if err != nil {
+			slog.Error("failed to delete partial upload record",
+				"upload_id", upload.UploadID,
+				"error", err,
+			)
+			continue
+		}
+		if !deleted {
+			slog.Debug("skipping partial upload no longer abandoned at delete time",
+				"upload_id", upload.UploadID,
+			)
+			continue
+		}
+
+		// Delete chunks from filesystem now that the DB row is gone —
+		// nothing can resume an assembly for an upload_id with no row.
 		if err := DeleteChunks(uploadDir, upload.UploadID); err != nil {
 			slog.Error("failed to delete chunks",
 				"upload_id", upload.UploadID,
 				"error", err,
 			)
 			continue // Continue with other uploads
-		}
-
-		// Delete partial upload record from database
-		if err := repos.PartialUploads.Delete(ctx, upload.UploadID); err != nil {
-			slog.Error("failed to delete partial upload record",
-				"upload_id", upload.UploadID,
-				"error", err,
-			)
-			continue
 		}
 
 		slog.Info("cleaned up abandoned partial upload",

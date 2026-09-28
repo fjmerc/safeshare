@@ -121,6 +121,11 @@ type ChunkedUploadError struct {
 	UploadID string
 	// ChunkNumber is the chunk that failed (if applicable).
 	ChunkNumber int
+	// Code is the machine-readable failure reason reported by the server
+	// (e.g. "MALWARE_DETECTED", "SCAN_UNAVAILABLE", "ASSEMBLY_RETRIES_EXHAUSTED"),
+	// when this error represents a terminal assembly failure (ADR-016).
+	// Empty for other kinds of chunked-upload errors (network, timeout, etc).
+	Code string
 	// Err is the underlying error.
 	Err error
 }

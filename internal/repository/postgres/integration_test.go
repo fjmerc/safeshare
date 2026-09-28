@@ -18,6 +18,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -1559,7 +1560,11 @@ func TestPartialUploadRepository_IncrementChunksReceived(t *testing.T) {
 	}
 }
 
-func TestPartialUploadRepository_MarkCompleted(t *testing.T) {
+// TestPartialUploadRepository_PublishAssembly_Postgres covers the ADR-016
+// Publish transition against a live PostgreSQL database: MarkCompleted was
+// removed in favor of PublishAssembly, which atomically flips the row to
+// completed and inserts the file record in the same transaction.
+func TestPartialUploadRepository_PublishAssembly_Postgres(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
@@ -1579,10 +1584,24 @@ func TestPartialUploadRepository_MarkCompleted(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// Mark completed
-	err = repos.PartialUploads.MarkCompleted(ctx, "complete-upload-001", "finalcode")
+	lease := repository.AssemblyLease{Owner: "pg-owner-1", TTL: 2 * time.Minute}
+	locked, err := repos.PartialUploads.TryLockForProcessing(ctx, "complete-upload-001", lease)
 	if err != nil {
-		t.Fatalf("MarkCompleted() error = %v", err)
+		t.Fatalf("TryLockForProcessing() error = %v", err)
+	}
+	if !locked {
+		t.Fatal("TryLockForProcessing() expected to acquire lock")
+	}
+
+	file := &models.File{
+		ClaimCode: "finalcode", OriginalFilename: "done.zip", StoredFilename: "stored-final.zip",
+		FileSize: 1000, MimeType: "application/zip", ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	if err := repos.PartialUploads.PublishAssembly(ctx, "complete-upload-001", "pg-owner-1", file); err != nil {
+		t.Fatalf("PublishAssembly() error = %v", err)
+	}
+	if file.ID == 0 {
+		t.Error("expected file.ID to be set after PublishAssembly")
 	}
 
 	// Verify
@@ -1602,6 +1621,62 @@ func TestPartialUploadRepository_MarkCompleted(t *testing.T) {
 		}
 		t.Errorf("ClaimCode = %q, want %q", got, "finalcode")
 	}
+
+	// A second publish attempt under the same owner must now fail: the row
+	// is no longer "processing".
+	file2 := &models.File{
+		ClaimCode: "finalcode2", OriginalFilename: "done.zip", StoredFilename: "stored-final2.zip",
+		FileSize: 1000, MimeType: "application/zip", ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	if err := repos.PartialUploads.PublishAssembly(ctx, "complete-upload-001", "pg-owner-1", file2); !errors.Is(err, repository.ErrLeaseLost) {
+		t.Errorf("expected ErrLeaseLost on double publish, got %v", err)
+	}
+}
+
+// TestIsFilesPartialUploadIDViolation_Postgres is a DB-review regression
+// test: the generic "any UNIQUE violation on files" check used to map a
+// claim_code collision (insertFile's OTHER unique constraint — a rare
+// claim-code-generation race, unrelated to ADR-016 fencing) to the same
+// ErrDuplicateKey as a genuine idx_files_partial_upload_id collision ("this
+// upload was already published/failed by someone else"), conflating two
+// very different situations. Exercises real PostgreSQL unique-violation
+// errors (with their real ConstraintName) rather than a synthetic one.
+func TestIsFilesPartialUploadIDViolation_Postgres(t *testing.T) {
+	setupTestRepos(t) // ensures schema/tables exist and cleanup runs
+	ctx := context.Background()
+
+	insert := func(claimCode, partialUploadID string) error {
+		_, err := testPool.Exec(ctx, `
+			INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, partial_upload_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, claimCode, "f.txt", "stored-"+claimCode, 10, "text/plain", time.Now().Add(time.Hour), partialUploadID)
+		return err
+	}
+
+	pid := "dup-upload-id-pg"
+	if err := insert("PGCLAIMA", pid); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	t.Run("partial_upload_id collision is detected", func(t *testing.T) {
+		err := insert("PGCLAIMB", pid) // same partial_upload_id, different claim_code
+		if err == nil {
+			t.Fatal("expected a unique constraint violation")
+		}
+		if !isFilesPartialUploadIDViolation(err) {
+			t.Errorf("expected isFilesPartialUploadIDViolation=true for a partial_upload_id collision, got error: %v", err)
+		}
+	})
+
+	t.Run("claim_code collision is not misreported", func(t *testing.T) {
+		err := insert("PGCLAIMA", "other-upload-id-pg") // same claim_code as the first insert, different partial_upload_id
+		if err == nil {
+			t.Fatal("expected a unique constraint violation")
+		}
+		if isFilesPartialUploadIDViolation(err) {
+			t.Errorf("a claim_code collision must not be misreported as a partial_upload_id violation: %v", err)
+		}
+	})
 }
 
 // ============================================================================
@@ -6094,7 +6169,7 @@ func TestPartialUploadRepository_UpdateStatus(t *testing.T) {
 	}
 }
 
-func TestPartialUploadRepository_SetAssemblyStarted(t *testing.T) {
+func TestPartialUploadRepository_TryLockForProcessing_Started(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
@@ -6115,10 +6190,13 @@ func TestPartialUploadRepository_SetAssemblyStarted(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// Test SetAssemblyStarted
-	err = repos.PartialUploads.SetAssemblyStarted(ctx, upload.UploadID)
+	// Test TryLockForProcessing (Lock transition: uploading -> processing)
+	locked, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID, repository.AssemblyLease{Owner: "pg-started-owner", TTL: 2 * time.Minute})
 	if err != nil {
-		t.Fatalf("SetAssemblyStarted() error = %v", err)
+		t.Fatalf("TryLockForProcessing() error = %v", err)
+	}
+	if !locked {
+		t.Fatal("TryLockForProcessing() expected to acquire lock")
 	}
 
 	// Verify
@@ -6127,11 +6205,14 @@ func TestPartialUploadRepository_SetAssemblyStarted(t *testing.T) {
 		t.Fatalf("GetByUploadID() error = %v", err)
 	}
 	if retrieved.AssemblyStartedAt == nil {
-		t.Error("SetAssemblyStarted() did not set assembly_started_at")
+		t.Error("TryLockForProcessing() did not set assembly_started_at")
+	}
+	if retrieved.AssemblyAttempts != 1 {
+		t.Errorf("AssemblyAttempts = %d, want 1", retrieved.AssemblyAttempts)
 	}
 }
 
-func TestPartialUploadRepository_SetAssemblyCompleted(t *testing.T) {
+func TestPartialUploadRepository_PublishAssembly_SetsCompletedFields(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
@@ -6152,11 +6233,17 @@ func TestPartialUploadRepository_SetAssemblyCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	owner := "pg-complete-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID, repository.AssemblyLease{Owner: owner, TTL: 2 * time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing() error = %v", err)
+	}
 
-	// Test SetAssemblyCompleted
-	err = repos.PartialUploads.SetAssemblyCompleted(ctx, upload.UploadID, claimCode)
-	if err != nil {
-		t.Fatalf("SetAssemblyCompleted() error = %v", err)
+	file := &models.File{
+		ClaimCode: claimCode, OriginalFilename: "complete-file.bin", StoredFilename: "stored-complete.bin",
+		FileSize: 1024, MimeType: "application/octet-stream", ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	if err := repos.PartialUploads.PublishAssembly(ctx, upload.UploadID, owner, file); err != nil {
+		t.Fatalf("PublishAssembly() error = %v", err)
 	}
 
 	// Verify
@@ -6165,14 +6252,14 @@ func TestPartialUploadRepository_SetAssemblyCompleted(t *testing.T) {
 		t.Fatalf("GetByUploadID() error = %v", err)
 	}
 	if retrieved.AssemblyCompletedAt == nil {
-		t.Error("SetAssemblyCompleted() did not set assembly_completed_at")
+		t.Error("PublishAssembly() did not set assembly_completed_at")
 	}
 	if retrieved.ClaimCode == nil || *retrieved.ClaimCode != claimCode {
-		t.Error("SetAssemblyCompleted() did not set claim_code")
+		t.Error("PublishAssembly() did not set claim_code")
 	}
 }
 
-func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
+func TestPartialUploadRepository_FailAssembly(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
@@ -6192,11 +6279,15 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	owner := "pg-fail-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID, repository.AssemblyLease{Owner: owner, TTL: 2 * time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing() error = %v", err)
+	}
 
-	// Test SetAssemblyFailed
-	err = repos.PartialUploads.SetAssemblyFailed(ctx, upload.UploadID, "test failure reason", "")
+	// Test FailAssembly (retryable, no error code)
+	err = repos.PartialUploads.FailAssembly(ctx, upload.UploadID, owner, "test failure reason", "", true, nil)
 	if err != nil {
-		t.Fatalf("SetAssemblyFailed() error = %v", err)
+		t.Fatalf("FailAssembly() error = %v", err)
 	}
 
 	// Verify
@@ -6210,12 +6301,16 @@ func TestPartialUploadRepository_SetAssemblyFailed(t *testing.T) {
 	if retrieved.ErrorCode != nil {
 		t.Errorf("ErrorCode = %v, want nil for empty error code", *retrieved.ErrorCode)
 	}
+	if !retrieved.ErrorRetryable {
+		t.Error("ErrorRetryable = false, want true")
+	}
 }
 
-// TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode verifies the
-// ADR-015 machine-readable error_code column round-trips through
-// SetAssemblyFailed/GetByUploadID against PostgreSQL.
-func TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode(t *testing.T) {
+// TestPartialUploadRepository_FailAssembly_WithErrorCode verifies the
+// ADR-015 machine-readable error_code column (and the ADR-016
+// error_retryable column) round-trip through FailAssembly/GetByUploadID
+// against PostgreSQL.
+func TestPartialUploadRepository_FailAssembly_WithErrorCode(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
@@ -6232,10 +6327,14 @@ func TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode(t *testing.T) {
 	if err := repos.PartialUploads.Create(ctx, upload); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	owner := "pg-fail-code-owner"
+	if _, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID, repository.AssemblyLease{Owner: owner, TTL: 2 * time.Minute}); err != nil {
+		t.Fatalf("TryLockForProcessing() error = %v", err)
+	}
 
-	err := repos.PartialUploads.SetAssemblyFailed(ctx, upload.UploadID, "Upload rejected: malware detected (Eicar-Test-Signature)", "MALWARE_DETECTED")
+	err := repos.PartialUploads.FailAssembly(ctx, upload.UploadID, owner, "Upload rejected: malware detected (Eicar-Test-Signature)", "MALWARE_DETECTED", false, nil)
 	if err != nil {
-		t.Fatalf("SetAssemblyFailed() error = %v", err)
+		t.Fatalf("FailAssembly() error = %v", err)
 	}
 
 	retrieved, err := repos.PartialUploads.GetByUploadID(ctx, upload.UploadID)
@@ -6245,18 +6344,21 @@ func TestPartialUploadRepository_SetAssemblyFailed_WithErrorCode(t *testing.T) {
 	if retrieved.ErrorCode == nil || *retrieved.ErrorCode != "MALWARE_DETECTED" {
 		t.Errorf("ErrorCode = %v, want %q", retrieved.ErrorCode, "MALWARE_DETECTED")
 	}
+	if retrieved.ErrorRetryable {
+		t.Error("ErrorRetryable = true, want false for MALWARE_DETECTED")
+	}
 }
 
-func TestPartialUploadRepository_GetProcessing(t *testing.T) {
+func TestPartialUploadRepository_GetExpiredLeases(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
 
-	// Test GetProcessing - should work even with no processing uploads
-	uploads, err := repos.PartialUploads.GetProcessing(ctx)
+	// Should work even with no expired-lease uploads.
+	uploads, err := repos.PartialUploads.GetExpiredLeases(ctx, 0)
 	if err != nil {
-		t.Fatalf("GetProcessing() error = %v", err)
+		t.Fatalf("GetExpiredLeases() error = %v", err)
 	}
-	t.Logf("GetProcessing() returned %d uploads", len(uploads))
+	t.Logf("GetExpiredLeases() returned %d uploads", len(uploads))
 }
 
 func TestPartialUploadRepository_TryLockForProcessing(t *testing.T) {
@@ -6285,7 +6387,7 @@ func TestPartialUploadRepository_TryLockForProcessing(t *testing.T) {
 	}
 
 	// Test TryLockForProcessing
-	locked, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID)
+	locked, err := repos.PartialUploads.TryLockForProcessing(ctx, upload.UploadID, repository.AssemblyLease{Owner: "pg-lock-owner", TTL: 2 * time.Minute})
 	if err != nil {
 		t.Fatalf("TryLockForProcessing() error = %v", err)
 	}

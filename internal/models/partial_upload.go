@@ -25,6 +25,24 @@ type PartialUpload struct {
 	AssemblyStartedAt   *time.Time `json:"assembly_started_at,omitempty"`
 	AssemblyCompletedAt *time.Time `json:"assembly_completed_at,omitempty"`
 	ClientEncrypted     bool       `json:"client_encrypted"` // True when contents were encrypted in the browser before upload (E2E)
+
+	// ADR-016 assembly lease fields. Owner is a fencing token
+	// (utils.GetOwnerID()+"/"+uuid, unique per lock attempt) that guards
+	// every processing->* transition: PublishAssembly/FailAssembly only
+	// succeed when the row's owner still matches, so a worker that lost its
+	// lease to a takeover can never clobber the winner's result.
+	Owner            *string    `json:"-"` // Never exposed to clients; internal fencing token only.
+	LeaseExpiresAt   *time.Time `json:"-"`
+	AssemblyAttempts int        `json:"assembly_attempts"`
+	// ErrorRetryable is persisted at failure time (see assemblyFailure in
+	// assembly_worker.go) so /complete and /status can tell a transient
+	// failure (SCAN_UNAVAILABLE, ASSEMBLY_FAILED) from a terminal one
+	// (MALWARE_DETECTED, INTEGRITY_ERROR, ASSEMBLY_RETRIES_EXHAUSTED)
+	// without re-deriving it from ErrorCode.
+	ErrorRetryable bool `json:"-"`
+	// UploaderIP is set at init time (storeIP) so recovery/takeover keeps
+	// the real uploader IP instead of a synthetic "recovery-worker" value.
+	UploaderIP string `json:"-"`
 }
 
 // UploadInitRequest represents the request to initialize a chunked upload
@@ -69,6 +87,8 @@ type UploadStatusResponse struct {
 	Status             string    `json:"status"` // uploading, processing, completed, failed
 	ErrorMessage       *string   `json:"error_message,omitempty"`
 	ErrorCode          *string   `json:"error_code,omitempty"`   // Machine-readable failure reason, e.g. MALWARE_DETECTED, SCAN_UNAVAILABLE (ADR-015)
+	Retryable          bool      `json:"retryable"`              // ADR-016: whether a "failed" status can be retried via /complete
+	Attempts           int       `json:"attempts"`               // ADR-016: number of assembly attempts made so far
 	DownloadURL        *string   `json:"download_url,omitempty"` // Only set when completed
 	FileSize           int64     `json:"file_size"`
 	MaxDownloads       int       `json:"max_downloads"`

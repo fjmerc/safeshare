@@ -32,52 +32,7 @@ func NewFileRepository(db *sql.DB) *FileRepository {
 
 // Create inserts a new file record into the database.
 func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
-	query := `
-		INSERT INTO files (
-			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
-	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
-
-	result, err := r.db.ExecContext(
-		ctx,
-		query,
-		file.ClaimCode,
-		file.OriginalFilename,
-		file.StoredFilename,
-		file.FileSize,
-		file.MimeType,
-		expiresAtRFC3339,
-		file.MaxDownloads,
-		file.UploaderIP,
-		file.PasswordHash,
-		file.UserID,
-		file.SHA256Hash,
-		file.ClientEncrypted,
-		nullableBlob(file.EncFileID),
-		// ADR-015: the synchronous scan verdict is known before the record is
-		// ever created, so it's persisted at insert time rather than via a
-		// later UpdateScanStatus call. Empty/nil leave the columns NULL
-		// (scanning disabled, or a legacy caller that doesn't set them).
-		nullableString(file.ScanStatus),
-		nullableString(file.ScanResult),
-		nullableTimeRFC3339(file.ScannedAt),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert file: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	file.ID = id
-	return nil
+	return insertFile(ctx, r.db, file)
 }
 
 // CreateWithQuotaCheck atomically checks quota and inserts file record in a transaction.
@@ -115,46 +70,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 	}
 
 	// Insert file record
-	insertQuery := `
-		INSERT INTO files (
-			claim_code, original_filename, stored_filename, file_size,
-			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
-
-	result, err := tx.ExecContext(
-		ctx,
-		insertQuery,
-		file.ClaimCode,
-		file.OriginalFilename,
-		file.StoredFilename,
-		file.FileSize,
-		file.MimeType,
-		expiresAtRFC3339,
-		file.MaxDownloads,
-		file.UploaderIP,
-		file.PasswordHash,
-		file.UserID,
-		file.SHA256Hash,
-		file.ClientEncrypted,
-		nullableBlob(file.EncFileID),
-		nullableString(file.ScanStatus),
-		nullableString(file.ScanResult),
-		nullableTimeRFC3339(file.ScannedAt),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert file: %w", err)
+	if err := insertFile(ctx, tx, file); err != nil {
+		return err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	file.ID = id
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)

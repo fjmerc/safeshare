@@ -881,6 +881,10 @@ Tracks upload sessions with upload_id (UUID), filename, total_size, chunk_size, 
 7. Return claim code to user
 ```
 
+### Reliability (ADR-016)
+
+Assembly (step 6) runs asynchronously in a background worker, guarded by a lease-based state machine (fencing owner token + TTL on `partial_uploads`) rather than a simple status flag: a retryable failure (transient scan/IO/DB error) can be retried by POSTing `/complete` again instead of being stuck forever, and a crashed or stalled worker is recovered by a background sweep (`internal/handlers/assembly_recovery.go`, `internal/utils/assembly_recovery.go`) that takes over its lease — never by two workers racing to finish the same upload, which the owner-fenced `PublishAssembly`/`FailAssembly` transitions make structurally impossible. See [ADR-016](../../SafeShare-Planning/06-Architecture-Decisions/ADR-016-assembly-state-machine.md) and [CHUNKED_UPLOAD.md's state machine section](CHUNKED_UPLOAD.md#assembly-state-machine-adr-016) for the full design.
+
 ### Security Features
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
 - Rate limiting on upload initialization

@@ -94,6 +94,12 @@ class UploadStatus(BaseModel):
     claim_code: Optional[str] = None
     download_url: Optional[str] = None
     error_message: Optional[str] = None
+    error_code: Optional[str] = None
+    # ADR-016: whether a "failed" status can be retried by POSTing
+    # /api/upload/complete again, and how many assembly attempts have been
+    # made so far.
+    retryable: bool = False
+    attempts: int = 0
     expires_at: datetime
 
 

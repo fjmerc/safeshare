@@ -574,18 +574,52 @@ class ChunkedUploader {
                 }
 
                 if (status.status === 'failed') {
-                    // Assembly failed - throw error
+                    // ADR-016: a retryable failure (e.g. SCAN_UNAVAILABLE, a
+                    // transient IO/DB error during assembly) doesn't have to
+                    // be terminal — the chunks are still on the server, and
+                    // POSTing /complete again reopens the upload and re-runs
+                    // assembly. Bounded to a few attempts (_retryFailedAssembly)
+                    // so a permanently broken server doesn't retry forever.
+                    if (status.retryable && await this._retryFailedAssembly(status)) {
+                        consecutiveErrors = 0;
+                        await this.sleep(pollInterval);
+                        attempts++;
+                        continue;
+                    }
+
+                    // Terminal (not retryable, or the local retry budget is
+                    // exhausted) - throw error
                     const error = new Error(status.error_message || 'File assembly failed');
                     error.terminal = true;
-                    // ADR-015: machine-readable reason (e.g. MALWARE_DETECTED,
-                    // SCAN_UNAVAILABLE), when the server sent one, so the UI
-                    // can show a purpose-specific message instead of the raw
-                    // error_message text.
+                    // ADR-015/ADR-016: machine-readable reason (e.g.
+                    // MALWARE_DETECTED, SCAN_UNAVAILABLE, INTEGRITY_ERROR,
+                    // ASSEMBLY_RETRIES_EXHAUSTED), when the server sent one, so
+                    // the UI can show a purpose-specific message instead of the
+                    // raw error_message text.
                     error.code = status.error_code || null;
                     throw error;
                 }
 
-                // Status is still "processing" or "uploading" - continue polling
+                if (status.status === 'uploading') {
+                    // Should not normally happen while polling (polling only
+                    // starts after /complete already returned 202) — but
+                    // defensively, if the row ever falls back to "uploading"
+                    // underneath us, silently polling it forever would hang.
+                    // Re-POST /complete (bounded, same budget/backoff as a
+                    // retryable failure) rather than assume it's still
+                    // progressing on its own.
+                    if (await this._retryFailedAssembly(status)) {
+                        consecutiveErrors = 0;
+                        await this.sleep(pollInterval);
+                        attempts++;
+                        continue;
+                    }
+                    const error = new Error('Upload fell back to uploading state and could not be resumed');
+                    error.terminal = true;
+                    throw error;
+                }
+
+                // Status is still "processing" - continue polling
                 // Wait before next poll
                 consecutiveErrors = 0;
                 await this.sleep(pollInterval);
@@ -625,6 +659,67 @@ class ChunkedUploader {
         // Max attempts reached without completion
         const elapsedMinutes = Math.round((Date.now() - startTime) / 60000);
         throw new Error(`Assembly polling timed out after ${maxAttempts} attempts (${elapsedMinutes} minutes elapsed)`);
+    }
+
+    /**
+     * ADR-016: reopen and retry a chunked upload whose assembly failed for a
+     * retryable reason (SCAN_UNAVAILABLE, a transient IO/DB error, etc — see
+     * status.retryable). POSTs /complete again, which the server accepts
+     * for a retryable "failed" upload under its own attempt cap (re-running
+     * missing-chunk repair too, via _postComplete). Bounded to a handful of
+     * attempts across the whole polling session so a permanently broken
+     * server doesn't retry forever.
+     * @param {Object} status - the failed status payload from getStatus()
+     * @returns {Promise<boolean>} true if the retry was accepted and polling
+     *   should continue; false once the local retry budget is exhausted or
+     *   the server itself refused (e.g. answered 409 terminal).
+     */
+    async _retryFailedAssembly(status) {
+        const maxRetries = 3;
+        this._assemblyRetryCount = (this._assemblyRetryCount || 0) + 1;
+        if (this._assemblyRetryCount > maxRetries) {
+            return false;
+        }
+
+        this.emit('assembling_retry', {
+            uploadId: this.uploadId,
+            attempt: this._assemblyRetryCount,
+            maxRetries,
+            code: status.error_code || null,
+            message: status.error_message || null
+        });
+
+        const delay = Math.min(2000 * Math.pow(2, this._assemblyRetryCount - 1), 15000);
+        console.warn(`Assembly failed (retryable, code: ${status.error_code || 'unknown'}); retrying completion ` +
+            `(attempt ${this._assemblyRetryCount}/${maxRetries}) in ${delay}ms...`);
+        await this.sleep(delay);
+
+        try {
+            await this._postComplete();
+            return true;
+        } catch (error) {
+            if (this._isCancellation(error)) {
+                throw error;
+            }
+            // A definitively terminal server response (retryRecommended
+            // explicitly false — e.g. a 409 meaning attempts are exhausted
+            // server-side too, or a non-retryable error code) means further
+            // retries can't help; stop now. Anything else — a network blip,
+            // or a transient 5xx that _postComplete's own internal backoff
+            // didn't outlast — is still worth another attempt from here:
+            // return true so the poll loop calls back into
+            // _retryFailedAssembly on its next tick (status.retryable is
+            // still true), which is what actually enforces the maxRetries
+            // budget above. Bug-hunter finding (ADR-016 M2): returning false
+            // on the very first _postComplete failure meant the outer
+            // "retry up to 3 times" budget was never really usable — one
+            // failed POST always gave up immediately instead of backing off
+            // and retrying.
+            if (error.retryRecommended === false) {
+                return false;
+            }
+            return this._assemblyRetryCount < maxRetries;
+        }
     }
 
     /**

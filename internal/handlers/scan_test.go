@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/scanning/scanningtest"
@@ -26,6 +28,24 @@ import (
 // testEncryptionKey is a valid 64-hex-char (32 byte) AES-256 key, matching
 // the literal used elsewhere in this package's tests.
 const testEncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// assembleUploadSync replaces the pre-ADR-016 AssembleUploadAsync(repos,
+// cfg, upload, clientIP) call these tests used: it locks the upload for
+// processing (as UploadCompleteHandler would) and then runs the assembly
+// pipeline synchronously in the calling goroutine, so a plain function call
+// in a test still deterministically waits for the result.
+func assembleUploadSync(t *testing.T, repos *repository.Repositories, cfg *config.Config, upload *models.PartialUpload) {
+	t.Helper()
+	lease := repository.AssemblyLease{Owner: "test-owner-" + upload.UploadID, TTL: time.Minute}
+	locked, err := repos.PartialUploads.TryLockForProcessing(context.Background(), upload.UploadID, lease)
+	if err != nil {
+		t.Fatalf("TryLockForProcessing: %v", err)
+	}
+	if !locked {
+		t.Fatalf("TryLockForProcessing: expected to acquire lock for %s", upload.UploadID)
+	}
+	runAssembly(repos, cfg, upload, lease)
+}
 
 // enableMalwareScan points cfg at a fake clamd server and enables the
 // malware scanning feature flag.
@@ -433,7 +453,7 @@ func TestAssembleUploadAsync_MalwareDetected(t *testing.T) {
 		t.Fatalf("failed to save chunk: %v", err)
 	}
 
-	AssembleUploadAsync(repos, cfg, partialUpload, "127.0.0.1")
+	assembleUploadSync(t, repos, cfg, partialUpload)
 
 	result, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
 	if err != nil {
@@ -695,6 +715,69 @@ func TestUploadHandler_InfectedAuditRow_BoundedExpiry(t *testing.T) {
 	}
 }
 
+// TestAssembleUploadAsync_EncryptedFastPath_SizeMismatchIsTerminal is a
+// code-review regression test: the encrypted-no-strip fast path
+// (utils.AssembleChunksEncrypted) never verified the assembled byte count
+// against the declared TotalSize, unlike the multi-pass path a few lines
+// below it — a chunk shrunk on disk between /complete's preflight checks and
+// this reopen surfaced (if at all) as the generic, retryable ASSEMBLY_FAILED
+// instead of a terminal INTEGRITY_ERROR. Chunks are only checked for
+// presence (GetMissingChunks), not size, before assembly starts.
+func TestAssembleUploadAsync_EncryptedFastPath_SizeMismatchIsTerminal(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.EncryptionKey = testEncryptionKey // encryption on, no metadata stripping -> fast path
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440082"
+	// Declares 1024 bytes across 2 chunks but only 768 are actually written
+	// (chunk 1 truncated).
+	partialUpload := &models.PartialUpload{
+		UploadID: uploadID, Filename: "test.bin", TotalSize: 1024, ChunkSize: 512,
+		TotalChunks: 2, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}
+	ctx := context.Background()
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("failed to create partial upload: %v", err)
+	}
+	if err := utils.SaveChunk(cfg.UploadDir, uploadID, 0, bytes.Repeat([]byte("a"), 512)); err != nil {
+		t.Fatalf("failed to save chunk 0: %v", err)
+	}
+	if err := utils.SaveChunk(cfg.UploadDir, uploadID, 1, bytes.Repeat([]byte("b"), 256)); err != nil {
+		t.Fatalf("failed to save chunk 1: %v", err)
+	}
+
+	assembleUploadSync(t, repos, cfg, partialUpload)
+
+	result, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID() error: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if result.ErrorCode == nil || *result.ErrorCode != "INTEGRITY_ERROR" {
+		t.Errorf("error_code = %v, want INTEGRITY_ERROR", result.ErrorCode)
+	}
+	if result.ErrorRetryable {
+		t.Error("expected INTEGRITY_ERROR to be non-retryable (attempts must not be silently retried)")
+	}
+	if result.ClaimCode != nil {
+		t.Error("expected no claim code for a size-mismatched assembly")
+	}
+
+	entries, _ := os.ReadDir(cfg.UploadDir)
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".") {
+			t.Errorf("unexpected file left in uploads dir after failed assembly: %s", e.Name())
+		}
+	}
+}
+
 // TestAssembleUploadAsync_MissingChunkFailsFast verifies a missing chunk
 // file fails assembly immediately with error_code ASSEMBLY_FAILED — not
 // SCAN_UNAVAILABLE, and without going through the 3x scan-retry backoff
@@ -739,7 +822,7 @@ func TestAssembleUploadAsync_MissingChunkFailsFast(t *testing.T) {
 	}
 
 	start := time.Now()
-	AssembleUploadAsync(repos, cfg, partialUpload, "127.0.0.1")
+	assembleUploadSync(t, repos, cfg, partialUpload)
 	elapsed := time.Since(start)
 
 	if elapsed > 2*time.Second {
@@ -755,6 +838,14 @@ func TestAssembleUploadAsync_MissingChunkFailsFast(t *testing.T) {
 	}
 	if result.ErrorCode == nil || *result.ErrorCode != "ASSEMBLY_FAILED" {
 		t.Errorf("error_code = %v, want ASSEMBLY_FAILED", result.ErrorCode)
+	}
+	// Bug-hunter follow-up finding: a missing chunk is structurally
+	// unrecoverable — /complete 400s MISSING_CHUNKS before ever reaching
+	// the lock, and chunk PUTs are refused once status is no longer
+	// "uploading" — so this must NOT be flagged retryable (there is no
+	// path back to a retry ever succeeding).
+	if result.ErrorRetryable {
+		t.Error("expected a missing-chunk failure to be non-retryable (no recovery path exists)")
 	}
 }
 
@@ -848,7 +939,7 @@ func TestAssembleUploadAsync_TOCTOU_RejectsSwappedContent(t *testing.T) {
 			}
 			t.Cleanup(func() { newScanner = origNewScanner })
 
-			AssembleUploadAsync(repos, cfg, partialUpload, "127.0.0.1")
+			assembleUploadSync(t, repos, cfg, partialUpload)
 
 			result, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
 			if err != nil {
@@ -857,8 +948,15 @@ func TestAssembleUploadAsync_TOCTOU_RejectsSwappedContent(t *testing.T) {
 			if result.Status != "failed" {
 				t.Fatalf("status = %q, want failed", result.Status)
 			}
-			if result.ErrorCode == nil || *result.ErrorCode != "ASSEMBLY_FAILED" {
-				t.Errorf("error_code = %v, want ASSEMBLY_FAILED", result.ErrorCode)
+			// ADR-016: a TOCTOU content mismatch is now its own terminal
+			// error_code (INTEGRITY_ERROR) rather than the generic,
+			// retryable ASSEMBLY_FAILED — retrying can't fix a race that
+			// already happened.
+			if result.ErrorCode == nil || *result.ErrorCode != "INTEGRITY_ERROR" {
+				t.Errorf("error_code = %v, want INTEGRITY_ERROR", result.ErrorCode)
+			}
+			if result.ErrorRetryable {
+				t.Error("expected INTEGRITY_ERROR to be non-retryable")
 			}
 			if result.ClaimCode != nil {
 				t.Error("expected no claim code when scanned/assembled content mismatch")
@@ -882,5 +980,255 @@ func TestAssembleUploadAsync_TOCTOU_RejectsSwappedContent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestAssembleUploadAsync_ShutdownDuringScan_LeavesUploadForRecovery is a
+// bug-hunter regression test (ADR-016 M1): closing the clamd connection on
+// shutdown (scanner.go's ctx-watcher goroutine) surfaces to the caller as a
+// generic "use of closed network connection" error, not context.Canceled —
+// pattern-matching the scan error to detect an abort is unreliable. The
+// worker must instead check w.aborted() directly, or a shutdown/lease-loss
+// mid-scan gets misrecorded as a terminal-looking SCAN_UNAVAILABLE failure
+// (burning a retry attempt) instead of being left in "processing" for
+// recovery to pick straight back up.
+func TestAssembleUploadAsync_ShutdownDuringScan_LeavesUploadForRecovery(t *testing.T) {
+	// ModeHang: clamd accepts the connection and reads the full stream, but
+	// never replies — the worker blocks in scanner.go's readResponse until
+	// something closes the socket, exactly the window CancelAssemblies must
+	// interrupt.
+	srv := scanningtest.New(t, scanningtest.ModeHang)
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	enableMalwareScan(cfg, srv)
+	t.Cleanup(resetAssemblyRootCtx) // don't leak a cancelled root ctx into later tests in this package
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	uploadID := "550e8400-e29b-41d4-a716-446655440083"
+	content := bytes.Repeat([]byte("a"), 512)
+	partialUpload := &models.PartialUpload{
+		UploadID: uploadID, Filename: "test.bin", TotalSize: int64(len(content)), ChunkSize: int64(len(content)),
+		TotalChunks: 1, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := utils.SaveChunk(cfg.UploadDir, uploadID, 0, content); err != nil {
+		t.Fatalf("SaveChunk: %v", err)
+	}
+
+	lease := repository.AssemblyLease{Owner: "shutdown-test-owner", TTL: time.Minute}
+	locked, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID, lease)
+	if err != nil || !locked {
+		t.Fatalf("TryLockForProcessing: locked=%v err=%v", locked, err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runAssembly(repos, cfg, partialUpload, lease)
+	}()
+
+	// Let the scan actually start streaming to clamd before cutting it off.
+	time.Sleep(300 * time.Millisecond)
+	CancelAssemblies()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("runAssembly did not return after CancelAssemblies")
+	}
+
+	result, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID: %v", err)
+	}
+	if result.Status != "processing" {
+		t.Fatalf("status = %q, want processing (left for recovery)", result.Status)
+	}
+	if result.ErrorCode != nil {
+		t.Errorf("error_code = %v, want nil (must not be misrecorded as SCAN_UNAVAILABLE)", *result.ErrorCode)
+	}
+	// The lease must be immediately takeover-eligible (yielded), not left to
+	// ride out the rest of its TTL — verified functionally (rather than by
+	// re-parsing the stored timestamp) by confirming TakeOverExpiredLease
+	// actually succeeds right now.
+	tookOver, err := repos.PartialUploads.TakeOverExpiredLease(ctx, uploadID, repository.AssemblyLease{Owner: "recovery-owner", TTL: time.Minute}, 5)
+	if err != nil {
+		t.Fatalf("TakeOverExpiredLease: %v", err)
+	}
+	if !tookOver {
+		t.Error("expected the yielded lease to be immediately takeover-eligible")
+	}
+	if result.AssemblyAttempts != 1 {
+		t.Errorf("assembly_attempts = %d, want 1 (unchanged — no attempt burned on a shutdown abort)", result.AssemblyAttempts)
+	}
+}
+
+// publishAckDroppedWrapper wraps a real PartialUploadRepository and, for
+// PublishAssembly only, lets the real call go through (so the commit
+// genuinely happens) but then returns a synthetic error — simulating a
+// connection drop between COMMIT and the client receiving the
+// acknowledgement.
+type publishAckDroppedWrapper struct {
+	repository.PartialUploadRepository
+}
+
+func (w *publishAckDroppedWrapper) PublishAssembly(ctx context.Context, uploadID, owner string, file *models.File) error {
+	if err := w.PartialUploadRepository.PublishAssembly(ctx, uploadID, owner, file); err != nil {
+		return err
+	}
+	return errors.New("simulated: connection dropped after commit, before ack")
+}
+
+// TestAssembleUploadAsync_AmbiguousCommitError_KeepsPublishedFile is a
+// bug-hunter regression test (ADR-016 M3): if PublishAssembly's commit
+// actually succeeds on the server but the acknowledgement is lost (e.g. the
+// connection drops right after COMMIT), the worker must not treat that as a
+// failure — the row is genuinely "completed" with a valid, already-issued
+// claim code. The old code unconditionally deleted finalPath and called
+// w.fail (which harmlessly no-ops via ErrLeaseLost since the row is no
+// longer "processing"), silently destroying the only copy of the file while
+// leaving a live claim code pointing at nothing.
+func TestAssembleUploadAsync_AmbiguousCommitError_KeepsPublishedFile(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	// Wrap only PartialUploads; Files stays real so GetByClaimCode below
+	// sees the row PublishAssembly's transaction actually committed.
+	repos.PartialUploads = &publishAckDroppedWrapper{PartialUploadRepository: repos.PartialUploads}
+
+	ctx := context.Background()
+	uploadID := "550e8400-e29b-41d4-a716-446655440084"
+	content := []byte("hello world, this is the published content")
+	partialUpload := &models.PartialUpload{
+		UploadID: uploadID, Filename: "test.txt", TotalSize: int64(len(content)), ChunkSize: int64(len(content)),
+		TotalChunks: 1, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := utils.SaveChunk(cfg.UploadDir, uploadID, 0, content); err != nil {
+		t.Fatalf("SaveChunk: %v", err)
+	}
+
+	assembleUploadSync(t, repos, cfg, partialUpload)
+
+	result, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		t.Fatalf("GetByUploadID: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed (the commit genuinely succeeded)", result.Status)
+	}
+	if result.ClaimCode == nil || *result.ClaimCode == "" {
+		t.Fatal("expected a claim code to be set")
+	}
+
+	file, err := repos.Files.GetByClaimCode(ctx, *result.ClaimCode)
+	if err != nil || file == nil {
+		t.Fatalf("GetByClaimCode: file=%v err=%v", file, err)
+	}
+
+	// The published file's bytes must still be on disk — not deleted by the
+	// ambiguous-error handling.
+	storedPath := filepath.Join(cfg.UploadDir, file.StoredFilename)
+	if _, statErr := os.Stat(storedPath); statErr != nil {
+		t.Errorf("expected published file to still exist at %s: %v", storedPath, statErr)
+	}
+
+	// Chunks must still have been cleaned up, same as an unambiguous success.
+	chunkDir := filepath.Join(cfg.UploadDir, ".partial", uploadID)
+	if _, statErr := os.Stat(chunkDir); statErr == nil {
+		t.Error("expected chunks directory to be cleaned up after a (falsely-reported-failed) successful publish")
+	}
+}
+
+// publishAckDroppedAndRereadFailsWrapper extends publishAckDroppedWrapper:
+// every GetByUploadID call also fails, simulating the worst case for the
+// follow-up bug-hunter finding on M3 — the ambiguous publish error AND the
+// re-read used to resolve it both fail, most plausibly because the DB is
+// still unreachable. In that case the worker cannot tell whether the
+// commit went through and must not guess either way.
+type publishAckDroppedAndRereadFailsWrapper struct {
+	*publishAckDroppedWrapper
+}
+
+func (w *publishAckDroppedAndRereadFailsWrapper) GetByUploadID(ctx context.Context, uploadID string) (*models.PartialUpload, error) {
+	return nil, errors.New("simulated: DB still unreachable")
+}
+
+// TestAssembleUploadAsync_AmbiguousCommitError_RereadAlsoFails_LeavesFinalPathUntouched
+// is a bug-hunter follow-up regression test on M3: when the ambiguous-commit
+// re-read (added to resolve M3) itself fails after retries, the worker must
+// not fall back to deleting finalPath and recording ASSEMBLY_FAILED — the
+// commit may well have actually succeeded, and destroying the file would
+// leave a "completed" row with a valid claim code but no bytes behind it.
+// The correct outcome is UNKNOWN: leave finalPath on disk, don't touch the
+// row, and let the lease eventually expire for recovery to re-evaluate.
+func TestAssembleUploadAsync_AmbiguousCommitError_RereadAlsoFails_LeavesFinalPathUntouched(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	base := &publishAckDroppedWrapper{PartialUploadRepository: repos.PartialUploads}
+	repos.PartialUploads = &publishAckDroppedAndRereadFailsWrapper{publishAckDroppedWrapper: base}
+
+	ctx := context.Background()
+	uploadID := "550e8400-e29b-41d4-a716-446655440085"
+	content := []byte("hello world, this is the published content, take two")
+	partialUpload := &models.PartialUpload{
+		UploadID: uploadID, Filename: "test.txt", TotalSize: int64(len(content)), ChunkSize: int64(len(content)),
+		TotalChunks: 1, ExpiresInHours: 24, CreatedAt: time.Now(), LastActivity: time.Now(),
+	}
+	if err := repos.PartialUploads.Create(ctx, partialUpload); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := utils.SaveChunk(cfg.UploadDir, uploadID, 0, content); err != nil {
+		t.Fatalf("SaveChunk: %v", err)
+	}
+
+	assembleUploadSync(t, repos, cfg, partialUpload)
+
+	// The underlying PublishAssembly call actually committed (same as the
+	// ack-dropped case above), so the row really is "completed" with a
+	// valid claim code — this test isn't about that transition, only about
+	// what the worker does with finalPath and the row when it CAN'T
+	// discover that fact. Fetch directly through the real repo (bypassing
+	// the always-failing wrapper) to inspect ground truth.
+	realResult, realErr := base.PartialUploadRepository.GetByUploadID(ctx, uploadID)
+	if realErr != nil {
+		t.Fatalf("GetByUploadID (real): %v", realErr)
+	}
+	if realResult.Status != "completed" {
+		t.Fatalf("status = %q, want completed (the underlying commit still actually succeeded)", realResult.Status)
+	}
+	if realResult.ClaimCode == nil || *realResult.ClaimCode == "" {
+		t.Fatal("expected a claim code to be set")
+	}
+
+	file, fileErr := repos.Files.GetByClaimCode(ctx, *realResult.ClaimCode)
+	if fileErr != nil || file == nil {
+		t.Fatalf("GetByClaimCode: file=%v err=%v", file, fileErr)
+	}
+
+	// The core assertion: finalPath must still exist. A worker that gave up
+	// and deleted it after a failed re-read would destroy the only copy of
+	// an already-published file.
+	storedPath := filepath.Join(cfg.UploadDir, file.StoredFilename)
+	if _, statErr := os.Stat(storedPath); statErr != nil {
+		t.Errorf("expected finalPath to still exist at %s after an unresolvable ambiguous commit: %v", storedPath, statErr)
 	}
 }

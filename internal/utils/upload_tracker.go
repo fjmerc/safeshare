@@ -12,12 +12,13 @@ import (
 // UploadTracker tracks in-progress uploads for graceful shutdown.
 // It provides a mechanism to wait for all uploads to complete before shutting down.
 type UploadTracker struct {
-	mu            sync.RWMutex
-	activeUploads map[string]*activeUpload
-	wg            sync.WaitGroup
-	assemblyWg    sync.WaitGroup // Tracks async assembly workers
-	shuttingDown  atomic.Bool
-	shutdownCh    chan struct{}
+	mu             sync.RWMutex
+	activeUploads  map[string]*activeUpload
+	wg             sync.WaitGroup
+	assemblyWg     sync.WaitGroup // Tracks async assembly workers
+	activeAssembly atomic.Int64   // Count mirrored alongside assemblyWg (sync.WaitGroup exposes no reader)
+	shuttingDown   atomic.Bool
+	shutdownCh     chan struct{}
 }
 
 // activeUpload represents an in-progress upload operation.
@@ -104,6 +105,7 @@ func (ut *UploadTracker) StartAssembly(uploadID string) bool {
 	}
 
 	ut.assemblyWg.Add(1)
+	ut.activeAssembly.Add(1)
 	slog.Debug("assembly started", "upload_id", uploadID)
 	return true
 }
@@ -111,7 +113,15 @@ func (ut *UploadTracker) StartAssembly(uploadID string) bool {
 // FinishAssembly marks an assembly worker as completed.
 func (ut *UploadTracker) FinishAssembly(uploadID string) {
 	ut.assemblyWg.Done()
+	ut.activeAssembly.Add(-1)
 	slog.Debug("assembly finished", "upload_id", uploadID)
+}
+
+// GetActiveAssemblyCount returns the number of assembly workers currently
+// in flight (registered via StartAssembly, not yet released via
+// FinishAssembly).
+func (ut *UploadTracker) GetActiveAssemblyCount() int {
+	return int(ut.activeAssembly.Load())
 }
 
 // GetActiveUploads returns information about all active uploads.
@@ -155,7 +165,7 @@ func (ut *UploadTracker) WaitForUploads(timeout time.Duration) bool {
 
 	done := make(chan struct{})
 	go func() {
-		ut.wg.Wait()       // Wait for active uploads
+		ut.wg.Wait()         // Wait for active uploads
 		ut.assemblyWg.Wait() // Wait for assembly workers
 		close(done)
 	}()
@@ -188,7 +198,7 @@ func (ut *UploadTracker) WaitForUploadsWithContext(ctx context.Context) bool {
 
 	done := make(chan struct{})
 	go func() {
-		ut.wg.Wait()       // Wait for active uploads
+		ut.wg.Wait()         // Wait for active uploads
 		ut.assemblyWg.Wait() // Wait for assembly workers
 		close(done)
 	}()

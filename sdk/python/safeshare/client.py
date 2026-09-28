@@ -501,6 +501,14 @@ class SafeShareClient:
         max_wait: float = 600.0,
     ) -> UploadResult:
         """Wait for async upload completion."""
+        # ADR-016: bounds how many times this loop will POST /complete again
+        # after observing a retryable "failed" status (SCAN_UNAVAILABLE, a
+        # transient IO/DB error, etc). The server enforces its own attempt
+        # cap independently; this just keeps a permanently broken server
+        # from looping the caller forever.
+        max_assembly_retries = 3
+        assembly_retries = 0
+
         start_time = time.time()
         while time.time() - start_time < max_wait:
             status = self.get_upload_status(upload_id)
@@ -513,7 +521,40 @@ class SafeShareClient:
                     original_filename=status.filename,
                 )
             elif status.status == "failed":
-                raise ChunkedUploadError(status.error_message or "Upload failed")
+                if status.retryable and assembly_retries < max_assembly_retries:
+                    assembly_retries += 1
+                    time.sleep(poll_interval)
+                    try:
+                        response = self._client.post(f"/api/upload/complete/{upload_id}")
+                        self._handle_response(response)
+                    except SafeShareError:
+                        # Ignore: the next status read is the source of
+                        # truth, whether the retry POST succeeded, re-failed,
+                        # or the server answered a terminal error.
+                        pass
+                    continue
+
+                raise ChunkedUploadError(
+                    status.error_message or "Upload failed",
+                    error_code=status.error_code,
+                )
+            elif status.status == "uploading":
+                # Should not normally happen while polling (polling only
+                # starts after /complete already returned 202) — but
+                # defensively, if the row ever falls back to "uploading"
+                # underneath us, re-POST /complete (bounded by the same
+                # budget as a retryable failure) rather than silently poll a
+                # row nothing is ever going to finish on its own.
+                if assembly_retries < max_assembly_retries:
+                    assembly_retries += 1
+                    time.sleep(poll_interval)
+                    try:
+                        response = self._client.post(f"/api/upload/complete/{upload_id}")
+                        self._handle_response(response)
+                    except SafeShareError:
+                        pass
+                    continue
+                raise ChunkedUploadError("Upload fell back to uploading state and could not be resumed")
 
             time.sleep(poll_interval)
 

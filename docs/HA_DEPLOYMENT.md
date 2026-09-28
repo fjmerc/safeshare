@@ -575,6 +575,10 @@ aws elbv2 modify-target-group-attributes \
                Key=stickiness.lb_cookie.duration_seconds,Value=3600
 ```
 
+### Assembly Recovery Across Instances (ADR-016)
+
+Sticky sessions keep a given upload's chunk requests and `/complete` call on one instance, but chunk-assembly recovery does not need them: assembly progress is tracked with a fenced lease (owner token + TTL) on the shared `partial_uploads` row, not in any single instance's memory. If the instance handling an upload's assembly dies mid-flight, its lease simply expires (default `ASSEMBLY_LEASE_TTL=2m`), and *any* surviving instance's background recovery sweep can take over — the owner-fenced `PublishAssembly`/`FailAssembly` transitions guarantee at most one instance ever finishes a given upload, even if two both attempt a takeover in a race. No special HA configuration is required for this beyond the shared PostgreSQL database; see [ADR-016](../../SafeShare-Planning/06-Architecture-Decisions/ADR-016-assembly-state-machine.md).
+
 ### Health Check Configuration
 
 Configure your load balancer to use the readiness endpoint:

@@ -727,6 +727,53 @@ SET scan_status = 'not_scanned',
 WHERE scan_status IN ('clean', 'pending', 'error');
 `,
 	},
+	{
+		Version:     14,
+		Name:        "014_assembly_lease",
+		Description: "ADR-016: reliable chunked-upload assembly — lease-based state machine",
+		SQL: `
+-- See internal/database/migrations/026_assembly_lease.sql (the SQLite
+-- counterpart) for the full T20/T21 rationale behind every column below.
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS processing_owner TEXT;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS assembly_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS error_retryable BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS uploader_ip TEXT;
+
+UPDATE partial_uploads
+SET assembly_attempts = 1
+WHERE status IN ('processing', 'failed', 'completed');
+
+-- Two ASSEMBLY_FAILED/NULL-coded messages are excluded from the retryable
+-- backfill (DB-review finding L3): pre-ADR-016 code recorded a scanned/
+-- assembled content (TOCTOU) mismatch as error_code='ASSEMBLY_FAILED' with
+-- the fixed message 'Upload could not be verified and was rejected', and an
+-- assembled file size mismatch as error_code=NULL with message LIKE
+-- 'Assembled file size mismatch%'. Both are the same class of failure
+-- ADR-016 itself now gives its own terminal INTEGRITY_ERROR code — retrying
+-- either just re-runs the same already-resolved race/corruption, so legacy
+-- rows matching these messages are backfilled terminal, not retryable.
+UPDATE partial_uploads
+SET error_retryable = TRUE
+WHERE status = 'failed'
+  AND (error_code IS NULL OR error_code IN ('SCAN_UNAVAILABLE', 'ASSEMBLY_FAILED'))
+  AND (error_message IS NULL OR error_message != 'Upload could not be verified and was rejected')
+  AND (error_message IS NULL OR error_message NOT LIKE 'Assembled file size mismatch%');
+
+-- Existing 'processing' rows keep lease_expires_at = NULL, which is
+-- treated as expired everywhere — they become takeover candidates for the
+-- recovery worker's TTL-based sweep, same as a crashed worker's row would.
+
+ALTER TABLE files ADD COLUMN IF NOT EXISTS partial_upload_id TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_partial_upload_id
+    ON files(partial_upload_id)
+    WHERE partial_upload_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_partial_uploads_status_lease
+    ON partial_uploads(status, lease_expires_at);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

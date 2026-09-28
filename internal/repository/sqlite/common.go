@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // validateStoredFilename validates that a stored filename is safe to use in file paths.
@@ -97,10 +99,10 @@ func isSQLiteBusyError(err error) bool {
 	return strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "sqlite_busy") ||
 		strings.Contains(errStr, "sqlite_locked") ||
-		strings.Contains(errStr, "(5)") ||   // SQLITE_BUSY
-		strings.Contains(errStr, "(6)") ||   // SQLITE_LOCKED
+		strings.Contains(errStr, "(5)") || // SQLITE_BUSY
+		strings.Contains(errStr, "(6)") || // SQLITE_LOCKED
 		strings.Contains(errStr, "(517)") || // SQLITE_BUSY_SNAPSHOT
-		strings.Contains(errStr, "(262)")    // SQLITE_BUSY_RECOVERY
+		strings.Contains(errStr, "(262)") // SQLITE_BUSY_RECOVERY
 }
 
 // generateClaimCode generates a cryptographically secure claim code.
@@ -142,4 +144,60 @@ func nullableTimeRFC3339(t *time.Time) interface{} {
 		return nil
 	}
 	return t.Format(time.RFC3339)
+}
+
+// sqlExecer is satisfied by both *sql.DB and *sql.Tx, letting insertFile be
+// shared by FileRepository.Create/CreateWithQuotaCheck and
+// PartialUploadRepository.PublishAssembly/FailAssembly's audit-row insert
+// (ADR-016) — all of which run the identical files INSERT, either against
+// the bare connection or an already-open transaction.
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+// insertFile runs the shared files INSERT against execer (a *sql.DB or an
+// open *sql.Tx) and sets file.ID from the result.
+func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error {
+	query := `
+		INSERT INTO files (
+			claim_code, original_filename, stored_filename, file_size,
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
+
+	result, err := execer.ExecContext(
+		ctx,
+		query,
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		expiresAtRFC3339,
+		file.MaxDownloads,
+		file.UploaderIP,
+		file.PasswordHash,
+		file.UserID,
+		file.SHA256Hash,
+		file.ClientEncrypted,
+		nullableBlob(file.EncFileID),
+		nullableString(file.ScanStatus),
+		nullableString(file.ScanResult),
+		nullableTimeRFC3339(file.ScannedAt),
+		file.PartialUploadID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert file: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	file.ID = id
+	return nil
 }
