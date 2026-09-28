@@ -633,7 +633,7 @@ func serveFileWithRangeSupport(
 			sendErrorResponse(w, r, "Server Error", "An error occurred while decrypting the file. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return false
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }() // Close only wipes the buffer; its error carries nothing actionable
 
 		// Prime chunk 0 now — before any header is written — so a wrong
 		// key or a corrupt/truncated first chunk surfaces as a clean 500
