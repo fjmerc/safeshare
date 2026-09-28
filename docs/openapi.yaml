@@ -342,6 +342,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: |
+            Malware scan rejected the upload (see ADR-015). `code` is
+            `MALWARE_DETECTED` (the file was scanned and found infected; no
+            claim code is ever issued) or `UNSCANNABLE_UPLOAD` (the file
+            can't be scanned — end-to-end encrypted or over the scan size
+            limit — and this server requires scannable uploads).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: |
+            Malware scanning is enabled but the scanner could not be reached
+            (`code: SCAN_UNAVAILABLE`). Retry after the delay in the
+            `Retry-After` header.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '507':
           description: Disk full or quota exceeded
           content:
@@ -578,6 +603,18 @@ paths:
           schema:
             type: string
           description: Password for protected files
+        - name: X-Download-Session
+          in: header
+          required: false
+          schema:
+            type: string
+          description: |
+            Opaque bearer token from a previous response's X-Download-Session
+            header. Only meaningful for files with max_downloads set (ADR-014):
+            send it back on a resumed Range request so the download is
+            recognised as a continuation of the same session and counts once,
+            not once per request. Unrecognised, foreign, or expired tokens are
+            silently treated as a fresh download rather than rejected.
       responses:
         '200':
           description: File content
@@ -598,6 +635,18 @@ paths:
               schema:
                 type: string
               description: bytes
+            X-Download-Session:
+              schema:
+                type: string
+              description: >-
+                Present only for files with max_downloads set. Echo back as a
+                request header on a resumed Range request.
+            Cache-Control:
+              schema:
+                type: string
+              description: >-
+                'private, no-store' on files with max_downloads set — the
+                response depends on per-recipient session state.
           content:
             application/octet-stream:
               schema:
@@ -610,6 +659,18 @@ paths:
               schema:
                 type: string
               description: 'bytes 0-999/10000'
+            X-Download-Session:
+              schema:
+                type: string
+              description: >-
+                Present only for files with max_downloads set. Echo back as a
+                request header on the next Range request to resume the same
+                session.
+            Cache-Control:
+              schema:
+                type: string
+              description: >-
+                'private, no-store' on files with max_downloads set.
           content:
             application/octet-stream:
               schema:

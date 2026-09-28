@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -137,6 +136,19 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 				fmt.Sprintf("File size exceeds maximum of %d bytes", cfg.GetMaxFileSize()),
 				"FILE_TOO_LARGE",
 				http.StatusRequestEntityTooLarge,
+			)
+			return
+		}
+
+		// ADR-015: when the operator has opted into rejecting uploads that
+		// cannot be scanned at all (E2E ciphertext, or larger than the
+		// scanner's size limit), fail fast before allocating an upload
+		// session for it.
+		if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.RejectUnscannable && isUnscannable(cfg, req.TotalSize, req.ClientEncrypted) {
+			sendSmartError(w,
+				"This file cannot be scanned for malware (it is end-to-end encrypted or exceeds the scan size limit) and this server rejects unscannable uploads",
+				"UNSCANNABLE_UPLOAD",
+				http.StatusUnprocessableEntity,
 			)
 			return
 		}
@@ -378,6 +390,14 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
+		// Once /complete has locked the upload for assembly (or assembly
+		// failed), its chunks are frozen: a late write could swap data under
+		// the assembler without anything noticing.
+		if partialUpload.Status != "uploading" {
+			sendError(w, "Upload is no longer accepting chunks", "UPLOAD_NOT_ACCEPTING", http.StatusConflict)
+			return
+		}
+
 		// Check if upload has expired (based on last activity)
 		expiryTime := partialUpload.LastActivity.Add(time.Duration(cfg.PartialUploadExpiryHours) * time.Hour)
 		if time.Now().After(expiryTime) {
@@ -477,31 +497,35 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			}
 		}
 
-		// If chunk exists, verify it matches (idempotency check)
+		// If the chunk is already stored and identical, this is a retry of a
+		// chunk that made it: answer success without rewriting (idempotent).
+		// A stored chunk of the wrong size can only be a leftover from an
+		// interrupted write (before writes were atomic) and is replaced below;
+		// rejecting it made every retry fail and forced a full re-upload.
+		// Same size but different bytes is refused: a legitimate retry resends
+		// the same slice of the same file, so the first complete write wins.
 		if exists {
 			if existingSize == chunkSize {
-				// Read existing chunk to calculate checksum
-				existingData, err := os.ReadFile(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
-				var existingChecksum string
-				if err == nil {
-					hash := sha256.Sum256(existingData)
-					existingChecksum = hex.EncodeToString(hash[:])
-				} else {
-					// If we can't read the chunk for checksum, log warning but continue
-					slog.Warn("failed to read existing chunk for checksum verification",
-						"error", err,
-						"upload_id", uploadID,
-						"chunk_number", chunkNumber,
+				existingChecksum, err := utils.HashFileSHA256(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
+				if err != nil {
+					slog.Error("failed to hash existing chunk", "error", err, "upload_id", uploadID, "chunk_number", chunkNumber)
+					sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+					return
+				}
+				if existingChecksum != checksum {
+					sendError(w,
+						fmt.Sprintf("Chunk %d was already uploaded with different content", chunkNumber),
+						"CHUNK_CONFLICT",
+						http.StatusConflict,
 					)
-					existingChecksum = "" // Empty checksum indicates verification skipped
+					return
 				}
 
-				// Chunk already exists with same size - treat as success (idempotent)
 				slog.Debug("chunk already exists (idempotent)",
 					"upload_id", uploadID,
 					"chunk_number", chunkNumber,
 					"size", chunkSize,
-					"checksum", existingChecksum,
+					"checksum", checksum,
 				)
 
 				// Update activity time
@@ -516,30 +540,27 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 					chunksReceived = 0
 				}
 
-				// Return success response
 				response := models.UploadChunkResponse{
 					UploadID:       uploadID,
 					ChunkNumber:    chunkNumber,
 					ChunksReceived: chunksReceived,
 					TotalChunks:    partialUpload.TotalChunks,
 					Complete:       chunksReceived == partialUpload.TotalChunks,
-					Checksum:       existingChecksum,
+					Checksum:       checksum,
 				}
 
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(response)
 				return
-			} else {
-				// Chunk exists but with different size - corruption
-				sendSmartError(w,
-					fmt.Sprintf("Chunk %d already exists with different size (expected %d, got %d). Possible corruption.",
-						chunkNumber, existingSize, chunkSize),
-					"CHUNK_CORRUPTION",
-					http.StatusConflict,
-				)
-				return
 			}
+
+			slog.Warn("replacing stored chunk of the wrong size (interrupted earlier write)",
+				"upload_id", uploadID,
+				"chunk_number", chunkNumber,
+				"stored_size", existingSize,
+				"new_size", chunkSize,
+			)
 		}
 
 		// Check disk space before saving chunk
@@ -559,6 +580,19 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 				"reason", errMsg,
 			)
 			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			return
+		}
+
+		// Re-check state right before writing: the body upload above can take a
+		// while, and /complete may have locked the upload for assembly meanwhile.
+		current, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+		if err != nil {
+			slog.Error("failed to re-read partial upload", "error", err)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+		if current == nil || current.Completed || current.Status != "uploading" {
+			sendError(w, "Upload is no longer accepting chunks", "UPLOAD_NOT_ACCEPTING", http.StatusConflict)
 			return
 		}
 
@@ -762,6 +796,7 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			// Return error with list of missing chunks
 			errorResp := models.UploadCompleteErrorResponse{
 				Error:         fmt.Sprintf("Missing %d chunks", len(missingChunks)),
+				Code:          "MISSING_CHUNKS",
 				MissingChunks: missingChunks,
 			}
 
@@ -953,6 +988,7 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			ClaimCode:          partialUpload.ClaimCode,
 			Status:             partialUpload.Status,
 			ErrorMessage:       partialUpload.ErrorMessage,
+			ErrorCode:          partialUpload.ErrorCode,
 			DownloadURL:        downloadURL,
 			FileSize:           partialUpload.TotalSize,
 			MaxDownloads:       partialUpload.MaxDownloads,

@@ -24,10 +24,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
+      # CI takes its Go version from go.mod's toolchain directive; fail if the
+      # Dockerfile builder image drifts, so we test what we ship.
+      - name: Check Dockerfile Go matches go.mod toolchain
+        run: |
+          want=$(sed -n 's/^toolchain go//p' go.mod)
+          got=$(sed -n 's/^FROM golang:\([0-9.]*\)-alpine.*/\1/p' Dockerfile)
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error::Dockerfile golang:${got} != go.mod toolchain go${want}"
+            exit 1
+          fi
+
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25.14'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -36,7 +47,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v7
         with:
-          version: v2.11.3
+          version: v2.14.0
 
       - name: Run tests with coverage
         run: |
@@ -61,11 +72,37 @@ jobs:
           fi
           echo "Coverage check passed: ${COVERAGE}% >= ${THRESHOLD}%"
 
+  # Race detection runs as its own job so it can have a realistic time budget
+  # and actually fail the build. It used to be a step in `test` with a 5-minute
+  # timeout, `|| echo` and continue-on-error: internal/handlers needs ~20+ min
+  # under -race (bcrypt/MFA timing tests), so it always timed out and races were
+  # never reported. handlers gets its own matrix leg to keep wall-clock down.
+  race:
+    name: race (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: handlers
+            packages: ./internal/handlers
+          - name: core
+            packages: ./internal/middleware ./internal/database ./internal/utils ./internal/repository/sqlite
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Run race detection
-        run: |
-          echo "Running race detection on critical packages..."
-          go test ./internal/handlers ./internal/middleware ./internal/database ./internal/utils -race -timeout=5m || echo "Race detection completed with warnings"
-        continue-on-error: true
+        run: go test -race -timeout=45m ${{ matrix.packages }}
 
   # PostgreSQL integration tests run separately to avoid slowing down the main test suite
   test-postgres:
@@ -92,9 +129,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25.14'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -130,8 +167,12 @@ jobs:
   # tests in internal/storage/s3/. Independent of `test-postgres`; both run
   # in parallel.
   #
+  # Upstream stopped publishing minio/minio images to Docker Hub, so this
+  # uses the pgsty/minio community build (same binary, bundles mc), pinned
+  # by digest.
+  #
   # MinIO is launched via `docker run` rather than `services:` because the
-  # official minio/minio image needs `server /data` as its command, and
+  # MinIO image needs `server /data` as its command, and
   # GitHub Actions service containers don't expose a `command` field. This
   # matches the local `scripts/test-minio.sh` flow (which also uses an
   # explicit `mc mb` bucket-creation step after MinIO is healthy).
@@ -145,9 +186,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25.14'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
@@ -160,12 +201,10 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin123 \
-            minio/minio:RELEASE.2024-11-07T00-52-20Z \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 \
             server /data
 
       - name: Wait for MinIO ready + create test bucket
-        env:
-          MC_HOST_local: http://minioadmin:minioadmin123@localhost:9000
         run: |
           # Poll the /minio/health/ready endpoint for up to 60s.
           for i in $(seq 1 30); do
@@ -180,11 +219,10 @@ jobs:
             fi
             sleep 2
           done
-          # Idempotent bucket creation via mc.
-          docker run --rm --network host \
-            -e MC_HOST_local="$MC_HOST_local" \
-            minio/mc:RELEASE.2024-11-05T11-29-45Z \
-            mb -p local/safeshare-test
+          # Idempotent bucket creation via the mc binary bundled in the
+          # MinIO image (upstream minio/mc is no longer on Docker Hub).
+          docker exec -e MC_HOST_local=http://minioadmin:minioadmin123@127.0.0.1:9000 \
+            safeshare-minio-ci mc mb -p local/safeshare-test
 
       - name: Run MinIO integration tests
         env:
@@ -234,23 +272,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25.14'
+          go-version-file: go.mod
           cache: true
 
       - name: Download dependencies
         run: go mod download
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Run govulncheck (SARIF output)
         run: govulncheck -format sarif ./... > govulncheck-results.sarif
         continue-on-error: true
 
       - name: Upload govulncheck SARIF
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
         with:
           sarif_file: govulncheck-results.sarif
           category: govulncheck
@@ -293,7 +331,7 @@ jobs:
         run: npm test
 
   build-and-push:
-    needs: [test, test-postgres, test-minio, security-scan]
+    needs: [test, race, test-postgres, test-minio, security-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -302,7 +340,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
@@ -326,7 +364,7 @@ jobs:
 
       - name: Build and push Docker image
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -339,7 +377,7 @@ jobs:
       # PR-specific: Build local image for vulnerability scanning
       - name: Build local image for PR scanning
         if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           load: true
@@ -414,7 +452,7 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v3
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'trivy-container'
@@ -441,7 +479,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
         with:
           generate_release_notes: true
           body: |

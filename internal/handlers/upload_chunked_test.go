@@ -1704,3 +1704,126 @@ func TestUploadChunkHandler_MissingChunkFile(t *testing.T) {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 }
+
+// chunkTestRequest builds a multipart chunk upload request.
+func chunkTestRequest(t *testing.T, uploadID string, chunkNumber int, data []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, _ := writer.CreateFormFile("chunk", fmt.Sprintf("chunk%d", chunkNumber))
+	part.Write(data)
+	writer.Close()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/upload/chunk/%s/%d", uploadID, chunkNumber), &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+// TestUploadChunkHandler_StoredChunkMismatch covers a re-upload that doesn't
+// match the stored chunk. A truncated chunk (left by an interrupted write
+// before writes were atomic) used to be rejected with 409 CHUNK_CORRUPTION on
+// every retry; it is now replaced. A same-size chunk with different bytes is
+// refused, so an already-stored chunk can't be swapped.
+func TestUploadChunkHandler_StoredChunkMismatch(t *testing.T) {
+	cases := []struct {
+		name       string
+		stored     []byte
+		wantStatus int
+		wantCode   string
+		replaced   bool
+	}{
+		{"truncated is replaced", bytes.Repeat([]byte("A"), 100), http.StatusOK, "", true},
+		{"same size different content is refused", bytes.Repeat([]byte("Z"), 1024), http.StatusConflict, "CHUNK_CONFLICT", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testutil.SetupTestDB(t)
+			cfg := testutil.SetupTestConfig(t)
+			cfg.ChunkedUploadEnabled = true
+
+			repos, err := sqlite.NewRepositories(cfg, db)
+			if err != nil {
+				t.Fatalf("failed to create repositories: %v", err)
+			}
+
+			uploadID := "550e8400-e29b-41d4-a716-446655440099"
+			repos.PartialUploads.Create(context.Background(), &models.PartialUpload{
+				UploadID:     uploadID,
+				Filename:     "test.txt",
+				TotalSize:    2048,
+				ChunkSize:    1024,
+				TotalChunks:  2,
+				CreatedAt:    time.Now(),
+				LastActivity: time.Now(),
+			})
+
+			if err := utils.SaveChunk(cfg.UploadDir, uploadID, 0, tc.stored); err != nil {
+				t.Fatalf("failed to seed chunk: %v", err)
+			}
+
+			chunkData := bytes.Repeat([]byte("A"), 1024)
+			rr := httptest.NewRecorder()
+			UploadChunkHandler(repos, cfg).ServeHTTP(rr, chunkTestRequest(t, uploadID, 0, chunkData))
+
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if tc.wantCode != "" {
+				var errResp models.ErrorResponse
+				json.Unmarshal(rr.Body.Bytes(), &errResp)
+				if errResp.Code != tc.wantCode {
+					t.Errorf("code = %q, want %q", errResp.Code, tc.wantCode)
+				}
+			}
+			got, _ := os.ReadFile(utils.GetChunkPath(cfg.UploadDir, uploadID, 0))
+			if replaced := bytes.Equal(got, chunkData); replaced != tc.replaced {
+				t.Errorf("stored chunk replaced = %v, want %v", replaced, tc.replaced)
+			}
+		})
+	}
+}
+
+// TestUploadChunkHandler_RejectsChunksAfterUploadLocked checks that chunks
+// can't be written once /complete has locked the upload for assembly (or
+// assembly failed), so data can't change under the assembler.
+func TestUploadChunkHandler_RejectsChunksAfterUploadLocked(t *testing.T) {
+	for _, status := range []string{"processing", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			db := testutil.SetupTestDB(t)
+			cfg := testutil.SetupTestConfig(t)
+			cfg.ChunkedUploadEnabled = true
+
+			repos, err := sqlite.NewRepositories(cfg, db)
+			if err != nil {
+				t.Fatalf("failed to create repositories: %v", err)
+			}
+
+			uploadID := "550e8400-e29b-41d4-a716-446655440098"
+			repos.PartialUploads.Create(context.Background(), &models.PartialUpload{
+				UploadID:     uploadID,
+				Filename:     "test.txt",
+				TotalSize:    2048,
+				ChunkSize:    1024,
+				TotalChunks:  2,
+				Status:       status,
+				CreatedAt:    time.Now(),
+				LastActivity: time.Now(),
+			})
+
+			rr := httptest.NewRecorder()
+			UploadChunkHandler(repos, cfg).ServeHTTP(rr, chunkTestRequest(t, uploadID, 0, bytes.Repeat([]byte("A"), 1024)))
+
+			if rr.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
+			}
+			var errResp models.ErrorResponse
+			json.Unmarshal(rr.Body.Bytes(), &errResp)
+			if errResp.Code != "UPLOAD_NOT_ACCEPTING" {
+				t.Errorf("code = %q, want UPLOAD_NOT_ACCEPTING", errResp.Code)
+			}
+			if exists, _, _ := utils.ChunkExists(cfg.UploadDir, uploadID, 0); exists {
+				t.Error("chunk was written to a locked upload")
+			}
+		})
+	}
+}

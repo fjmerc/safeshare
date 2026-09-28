@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -169,6 +170,16 @@ func validateTokenID(id int) error {
 
 // request makes an HTTP request to the API.
 func (c *Client) request(ctx context.Context, method, path string, body io.Reader, contentType string) (*http.Response, error) {
+	return c.requestWithPassword(ctx, method, path, body, contentType, "")
+}
+
+// requestWithPassword is request plus an optional file password, sent in the
+// X-File-Password header. The password used to go in the query string, which
+// the server deprecated because URLs end up in proxy logs and history.
+//
+// Unlike Authorization, Go's http.Client forwards custom headers on a
+// redirect to another host, so password requests refuse cross-host redirects.
+func (c *Client) requestWithPassword(ctx context.Context, method, path string, body io.Reader, contentType, password string) (*http.Response, error) {
 	reqURL := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -184,7 +195,27 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 		req.Header.Set("Content-Type", contentType)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	httpClient := c.httpClient
+	if password != "" {
+		req.Header.Set("X-File-Password", password)
+		guarded := *c.httpClient
+		next := c.httpClient.CheckRedirect
+		guarded.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+			if r.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("refusing redirect to another host with a file password: %s", r.URL.Host)
+			}
+			if next != nil {
+				return next(r, via)
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		}
+		httpClient = &guarded
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
@@ -197,14 +228,23 @@ func handleResponse(resp *http.Response, target interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		// Try to decode error message
+		// Try to decode error message and machine-readable code
 		var errResp struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
 			errResp.Error = resp.Status
 		}
-		return newAPIError(resp.StatusCode, errResp.Error)
+		apiErr := newAPIError(resp.StatusCode, errResp.Error, errResp.Code)
+		// ADR-015: SCAN_PENDING/SCAN_UNAVAILABLE responses carry a
+		// Retry-After header telling the caller how long to wait.
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
+				apiErr.RetryAfter = time.Duration(seconds) * time.Second
+			}
+		}
+		return apiErr
 	}
 
 	if target != nil {

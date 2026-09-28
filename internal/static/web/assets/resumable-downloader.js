@@ -37,6 +37,14 @@ class ResumableDownloader {
         // of proxy access logs, browser history, and Referer headers.
         this.password = options.password || null;
 
+        // ADR-014: download-session bearer token. Captured from the first
+        // response's X-Download-Session header and echoed back on every
+        // subsequent (resume) request so a paused/resumed download is
+        // recognised as the same session server-side and only counts once
+        // against max_downloads, instead of each Range request being an
+        // independent, uncounted probe.
+        this.sessionToken = null;
+
         // Event listeners
         this.eventListeners = {};
 
@@ -54,6 +62,9 @@ class ResumableDownloader {
         const headers = { ...extra };
         if (this.password) {
             headers['X-File-Password'] = this.password;
+        }
+        if (this.sessionToken) {
+            headers['X-Download-Session'] = this.sessionToken;
         }
         return headers;
     }
@@ -175,6 +186,16 @@ class ResumableDownloader {
 
         if (!response.ok && response.status !== 206) {
             throw new Error(`Download failed: ${response.statusText}`);
+        }
+
+        // ADR-014: capture the session token so a subsequent pause/resume
+        // request (or a retry after this one) presents it and is recognised
+        // as a continuation of the same download rather than a fresh,
+        // separately-counted request. Unlimited-download files never send
+        // this header, so sessionToken simply stays null for them.
+        const sessionToken = response.headers.get('X-Download-Session');
+        if (sessionToken) {
+            this.sessionToken = sessionToken;
         }
 
         if (rangeHeader && response.status === 206) {

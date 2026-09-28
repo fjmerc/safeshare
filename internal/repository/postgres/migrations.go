@@ -658,6 +658,75 @@ CREATE INDEX IF NOT EXISTS idx_dl_reservations_file_id
     ON download_reservations(file_id);
 `,
 	},
+	{
+		Version:     12,
+		Name:        "012_download_sessions",
+		Description: "Download sessions: T1 (Range-split double-counting) and T5 (TTL < transfer deadline) fixes; see ADR-014, amends ADR-012",
+		SQL: `
+-- Replaces download_reservations with a session row that survives across
+-- separate HTTP requests. See internal/database/migrations/024_download_sessions.sql
+-- (the SQLite counterpart) for the full T1/T5 rationale.
+--
+-- Anything still in download_reservations at migration time is from a dead
+-- process — clear it and reset the denormalised in_flight_reservations
+-- counter before dropping the table.
+DELETE FROM download_reservations;
+UPDATE files SET in_flight_reservations = 0;
+
+DROP TABLE IF EXISTS download_reservations;
+
+CREATE TABLE IF NOT EXISTS download_sessions (
+    token_hash          TEXT        PRIMARY KEY,
+    file_id             BIGINT      NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    committed_at        TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    bytes_served        BIGINT      NOT NULL DEFAULT 0,
+    -- Probe-threshold bytes atomically granted to this session at Reserve
+    -- time (charged against files.uncounted_bytes in the same transaction).
+    -- Refunded as (probe_bytes_granted - bytes_served) on Cancel/abandon, in
+    -- full on Commit. See the SQLite migration's comment for the full
+    -- rationale.
+    probe_bytes_granted BIGINT      NOT NULL DEFAULT 0,
+    -- Cumulative bytes reserved (not necessarily delivered) by trusted-token
+    -- replay requests, bounded by ~2x the file size — closes indefinite
+    -- replay of a committed session's token. Unsent bytes are released when
+    -- each request finishes.
+    bytes_reserved       BIGINT     NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_dl_sessions_file_id
+    ON download_sessions(file_id);
+
+CREATE INDEX IF NOT EXISTS idx_dl_sessions_committed_last_seen
+    ON download_sessions(committed_at, last_seen_at);
+
+-- Cumulative bytes served to tokenless probe requests that were cancelled
+-- before crossing the per-request commit threshold P. Once a file's
+-- uncounted_bytes reaches budget B = 4*P, every subsequent tokenless byte on
+-- that file counts immediately.
+ALTER TABLE files ADD COLUMN IF NOT EXISTS uncounted_bytes BIGINT NOT NULL DEFAULT 0;
+`,
+	},
+	{
+		Version:     13,
+		Name:        "013_scan_integrity",
+		Description: "ADR-015: synchronous plaintext malware scanning — partial_uploads.error_code and legacy scan_status relabelling",
+		SQL: `
+-- Machine-readable chunked-upload assembly failure reason (e.g.
+-- MALWARE_DETECTED, SCAN_UNAVAILABLE). See the SQLite counterpart
+-- (internal/database/migrations/025_scan_integrity.sql) for the full
+-- rationale, including why 'clean'/'pending'/'error' scan_status rows are
+-- relabelled below rather than left as-is or newly blocked.
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS error_code TEXT;
+
+UPDATE files
+SET scan_status = 'not_scanned',
+    scan_result = 'legacy: pre-ADR-015 scan not trusted'
+WHERE scan_status IN ('clean', 'pending', 'error');
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

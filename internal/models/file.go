@@ -16,15 +16,16 @@ type File struct {
 	DownloadCount      int
 	CompletedDownloads int // Tracks only successfully completed full file downloads (HTTP 200 OK)
 	UploaderIP         string
-	PasswordHash       string  // bcrypt hash - empty string means no password
-	UserID             *int64  // nullable - nil means no associated user (anonymous upload or legacy)
-	Username           *string // optional - populated in admin queries for display purposes
+	PasswordHash       string     // bcrypt hash - empty string means no password
+	UserID             *int64     // nullable - nil means no associated user (anonymous upload or legacy)
+	Username           *string    // optional - populated in admin queries for display purposes
 	SHA256Hash         string     // SHA256 checksum of original file (before encryption) - empty for legacy files
 	ScanStatus         string     // Malware scan status: "", "pending", "clean", "infected", "error", "skipped"
 	ScanResult         string     // Virus name (if infected) or error message (if error)
 	ScannedAt          *time.Time // When scan completed (nil if not scanned)
 	ClientEncrypted    bool       // True when contents were encrypted in the browser before upload (E2E)
 	EncFileID          []byte     // 16-byte random identifier bound into SFSE2 chunk AAD; nil/empty for legacy SFSE1 files (ADR-011)
+	UncountedBytes     int64      // Cumulative bytes served to cancelled, sub-threshold tokenless probes (ADR-014 download-session probe budget)
 }
 
 // UploadResponse is the JSON response returned after a successful upload
@@ -64,12 +65,12 @@ type HealthResponse struct {
 
 // DatabaseMetrics contains database performance and health information
 type DatabaseMetrics struct {
-	SizeBytes       int64   `json:"size_bytes"`                  // Total database file size
-	SizeMB          float64 `json:"size_mb"`                     // Size in megabytes
-	WALSizeBytes    int64   `json:"wal_size_bytes,omitempty"`    // Write-Ahead Log size (SQLite only)
-	PageCount       int64   `json:"page_count,omitempty"`        // Total number of pages (SQLite only)
-	PageSize        int64   `json:"page_size,omitempty"`         // Size of each page in bytes (SQLite only)
-	IndexCount      int     `json:"index_count,omitempty"`       // Total number of indexes
+	SizeBytes       int64   `json:"size_bytes"`                 // Total database file size
+	SizeMB          float64 `json:"size_mb"`                    // Size in megabytes
+	WALSizeBytes    int64   `json:"wal_size_bytes,omitempty"`   // Write-Ahead Log size (SQLite only)
+	PageCount       int64   `json:"page_count,omitempty"`       // Total number of pages (SQLite only)
+	PageSize        int64   `json:"page_size,omitempty"`        // Size of each page in bytes (SQLite only)
+	IndexCount      int     `json:"index_count,omitempty"`      // Total number of indexes
 	OpenConnections int     `json:"open_connections,omitempty"` // Current open connections (PostgreSQL)
 	MaxConnections  int     `json:"max_connections,omitempty"`  // Maximum connection pool size (PostgreSQL)
 }

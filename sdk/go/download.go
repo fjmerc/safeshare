@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,14 +52,10 @@ func (c *Client) Download(ctx context.Context, claimCode, destination string, op
 		}
 	}
 
-	// Build URL with optional password
 	downloadURL := fmt.Sprintf("/api/claim/%s", claimCode)
-	if opts.Password != "" {
-		downloadURL += "?password=" + url.QueryEscape(opts.Password)
-	}
 
-	// Make request
-	resp, err := c.request(ctx, http.MethodGet, downloadURL, nil, "")
+	// Make request (password, if any, goes in the X-File-Password header)
+	resp, err := c.requestWithPassword(ctx, http.MethodGet, downloadURL, nil, "", opts.Password)
 	if err != nil {
 		return err
 	}
@@ -74,7 +69,7 @@ func (c *Client) Download(ctx context.Context, claimCode, destination string, op
 		if err := handleResponse(resp, nil); err != nil {
 			return err
 		}
-		return newAPIError(resp.StatusCode, errResp.Error)
+		return newAPIError(resp.StatusCode, errResp.Error, "")
 	}
 
 	// Get content length for progress
@@ -123,14 +118,10 @@ func (c *Client) DownloadToWriter(ctx context.Context, claimCode string, w io.Wr
 		opts = &DownloadOptions{}
 	}
 
-	// Build URL with optional password
 	downloadURL := fmt.Sprintf("/api/claim/%s", claimCode)
-	if opts.Password != "" {
-		downloadURL += "?password=" + url.QueryEscape(opts.Password)
-	}
 
-	// Make request
-	resp, err := c.request(ctx, http.MethodGet, downloadURL, nil, "")
+	// Make request (password, if any, goes in the X-File-Password header)
+	resp, err := c.requestWithPassword(ctx, http.MethodGet, downloadURL, nil, "", opts.Password)
 	if err != nil {
 		return err
 	}
@@ -204,6 +195,8 @@ func (c *Client) GetFileInfo(ctx context.Context, claimCode string) (*FileInfo, 
 		ExpiresAt:          parseTime(apiResp.ExpiresAt),
 		PasswordProtected:  apiResp.PasswordProtected,
 		DownloadsRemaining: downloadsRemaining,
+		ScanStatus:         apiResp.ScanStatus,
+		DownloadAvailable:  apiResp.DownloadAvailable,
 	}, nil
 }
 

@@ -34,7 +34,11 @@
 - `201 Created` - Upload successful (**NOT 200 OK**)
 - `400 Bad Request` - Invalid parameters or missing file
 - `413 Request Entity Too Large` - File exceeds size limit
+- `422 Unprocessable Entity` - `MALWARE_DETECTED` (scanned and infected; no claim code issued) or `UNSCANNABLE_UPLOAD` (E2E/oversized content and `MALWARE_SCAN_REJECT_UNSCANNABLE=true`) — see ADR-015
+- `503 Service Unavailable` - `SCAN_UNAVAILABLE`; scanner unreachable, `Retry-After` header set (only when `FEATURE_MALWARE_SCAN=true` and `MALWARE_SCAN_ALLOW_UNVERIFIED` is not set)
 - `507 Insufficient Storage` - Not enough disk space or quota exceeded
+
+**Malware scanning note**: when `FEATURE_MALWARE_SCAN=true`, the upload is scanned synchronously before the handler responds — tests that enable it should expect extra latency and, for an EICAR-content upload, a `422 MALWARE_DETECTED` response instead of `201`, with no file written to `UploadDir` and no row returned by `GetByClaimCode` for any code (none is ever issued).
 
 **Response Body** (201):
 ```json
@@ -71,7 +75,7 @@
 - Password (if file is password-protected) via one of, in priority order:
   1. `X-File-Password` request header *(preferred — keeps password out of proxy logs / browser history / Referer)*
   2. POST form body: `Content-Type: application/x-www-form-urlencoded`, body `password=…` *(body capped at 4 KiB)*
-  3. Query parameter `?password=…` *(deprecated, see "File Passwords (SH-1.5)" below; scheduled for removal `2026-09-30` per `Sunset` header)*
+  3. Query parameter `?password=…` *(deprecated, see "File Passwords (SH-1.5)" below; scheduled for removal `2027-03-31` per `Sunset` header)*
 
 **Response Status Codes**:
 - `200 OK` - File download successful
@@ -84,7 +88,7 @@
 
 **Response Headers** (only when the deprecated query-string password path is used):
 - `Deprecation: true`
-- `Sunset: Wed, 30 Sep 2026 00:00:00 GMT`
+- `Sunset: Wed, 31 Mar 2027 00:00:00 GMT`
 - `Link: <…>; rel="deprecation"; type="text/markdown"`
 - `Referrer-Policy: no-referrer`
 
@@ -98,7 +102,7 @@
 
 #### File Passwords (SH-1.5)
 
-`?password=…` in the URL leaks the password to reverse-proxy access logs (Cloudflare, Traefik, nginx), browser history, and outbound `Referer` headers from the download landing page. Use the `X-File-Password` request header instead. The query-string form remains accepted until `2026-09-30` for backwards compatibility with naive `<a href>` cross-origin downloads; every hit increments the Prometheus counter `safeshare_downloads_total{outcome="password_via_query_deprecated"}` and emits a WARN log line so operators can identify clients that still need to migrate.
+`?password=…` in the URL leaks the password to reverse-proxy access logs (Cloudflare, Traefik, nginx), browser history, and outbound `Referer` headers from the download landing page. Use the `X-File-Password` request header instead. The query-string form remains accepted until `2027-03-31` for backwards compatibility with naive `<a href>` cross-origin downloads; every hit increments the Prometheus counter `safeshare_downloads_total{outcome="password_via_query_deprecated"}` and emits a WARN log line so operators can identify clients that still need to migrate.
 
 ---
 

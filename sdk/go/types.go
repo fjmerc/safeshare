@@ -97,6 +97,9 @@ type UploadStatus struct {
 	ClaimCode *string `json:"claim_code,omitempty"`
 	// ErrorMessage is the error message (only set when failed).
 	ErrorMessage *string `json:"error_message,omitempty"`
+	// ErrorCode is the machine-readable failure reason (only set when
+	// failed), e.g. "MALWARE_DETECTED", "SCAN_UNAVAILABLE" (ADR-015).
+	ErrorCode *string `json:"error_code,omitempty"`
 	// MaxDownloads is the maximum download limit (nil if unlimited).
 	MaxDownloads *int `json:"max_downloads,omitempty"`
 }
@@ -115,6 +118,15 @@ type FileInfo struct {
 	PasswordProtected bool `json:"password_protected"`
 	// DownloadsRemaining is downloads left (nil if unlimited).
 	DownloadsRemaining *int `json:"downloads_remaining"`
+	// ScanStatus is the malware scan status ("clean", "infected", "pending",
+	// "error", "not_scanned", or "" for scanning-disabled/legacy files).
+	// See ADR-015.
+	ScanStatus string `json:"scan_status,omitempty"`
+	// DownloadAvailable is false when the scan gate currently blocks
+	// downloading this file (infected, pending, or errored — see ADR-015);
+	// Download() will return an APIError wrapping one of ErrFileQuarantined,
+	// ErrScanPending, or ErrScanFailed in that case.
+	DownloadAvailable bool `json:"download_available"`
 }
 
 // UserFile represents a file owned by the authenticated user.
@@ -244,13 +256,14 @@ type ClientConfig struct {
 }
 
 // apiUploadResponse is the raw API response for uploads.
+// Server returns models.UploadResponse / models.UploadCompleteResponse.
 type apiUploadResponse struct {
 	ClaimCode         string  `json:"claim_code"`
-	Filename          string  `json:"filename"`
-	Size              int64   `json:"size"`
+	Filename          string  `json:"original_filename"`
+	Size              int64   `json:"file_size"`
 	MimeType          string  `json:"mime_type"`
 	ExpiresAt         *string `json:"expires_at"`
-	DownloadLimit     *int    `json:"download_limit"`
+	DownloadLimit     *int    `json:"max_downloads"`
 	PasswordProtected bool    `json:"password_protected"`
 	UserID            *int    `json:"user_id,omitempty"`
 }
@@ -271,6 +284,8 @@ type apiFileInfoResponse struct {
 	PasswordProtected    bool    `json:"password_required"`
 	DownloadURL          string  `json:"download_url"`
 	SHA256Hash           string  `json:"sha256_hash"`
+	ScanStatus           string  `json:"scan_status,omitempty"`
+	DownloadAvailable    bool    `json:"download_available"`
 }
 
 // apiUserFileResponse is the raw API response for user files.
@@ -337,4 +352,13 @@ type apiTokenCreatedResponse struct {
 // apiTokenListResponse is the raw API response for listing tokens.
 type apiTokenListResponse struct {
 	Tokens []apiTokenInfoResponse `json:"tokens"`
+}
+
+// downloadLimitOrNil normalizes a server download limit. Chunked-upload
+// responses encode "unlimited" as 0 rather than null.
+func downloadLimitOrNil(limit *int) *int {
+	if limit == nil || *limit <= 0 {
+		return nil
+	}
+	return limit
 }

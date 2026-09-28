@@ -1317,11 +1317,25 @@ Test results:
 | `UPLOAD_COMPLETED` | 409 | Upload already completed |
 | `CHUNK_TOO_LARGE` | 413 | Chunk exceeds size limit |
 | `CHUNK_SIZE_MISMATCH` | 400 | Chunk size doesn't match expected |
-| `CHUNK_CORRUPTION` | 409 | Chunk exists with different size |
+| `UPLOAD_NOT_ACCEPTING` | 409 | Upload is being assembled (or assembly failed); chunks can no longer be written |
+| `CHUNK_CONFLICT` | 409 | Chunk was already uploaded with different content |
+| `MISSING_CHUNKS` | 400 | `/complete` called before all chunks arrived (`missing_chunks` lists them) |
 | `TOO_MANY_CHUNKS` | 400 | More than 10,000 chunks |
 | `FILE_TOO_LARGE` | 413 | Exceeds MAX_FILE_SIZE |
 | `QUOTA_EXCEEDED` | 507 | Storage quota exceeded |
 | `INSUFFICIENT_STORAGE` | 507 | Not enough disk space |
+| `UNSCANNABLE_UPLOAD` | 422 | (`POST /api/upload/init`, ADR-015) File cannot be scanned (E2E encrypted or exceeds the scan size limit) and this server requires scannable uploads |
+
+### Assembly failure (`status: "failed"`)
+
+When `FEATURE_MALWARE_SCAN=true`, chunk assembly (`GET /api/upload/status/:upload_id`) now includes a synchronous malware scan of the reassembled content before encryption/storage (ADR-015). A failed assembly's `error_code` field gives the machine-readable reason, in addition to the human-readable `error_message`:
+
+| `error_code` | Meaning |
+|---|---|
+| `MALWARE_DETECTED` | The file was scanned and found infected. No claim code is ever issued; not retryable with the same content. |
+| `SCAN_UNAVAILABLE` | The malware scanner could not be reached after 3 retries (5s/15s/45s backoff). Retryable — re-submit `/complete` once the scanner recovers, or set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to proceed unverified instead of failing. |
+
+`error_code` may be absent (`null`/omitted) for assembly failures unrelated to scanning (e.g. a disk error).
 
 ## Backward Compatibility
 

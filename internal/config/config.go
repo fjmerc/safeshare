@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -48,10 +49,33 @@ type APITokenConfig struct {
 
 // ClamAVConfig holds ClamAV malware scanning configuration.
 type ClamAVConfig struct {
-	Host        string // ClamAV daemon host (default: "clamav")
-	Port        int    // ClamAV daemon port (default: 3310)
-	Timeout     int    // Scan timeout in seconds (default: 30)
-	MaxFileSize int64  // Maximum file size to scan in bytes, 0 = unlimited (default: 104857600 = 100MB)
+	Host    string // ClamAV daemon host (default: "clamav")
+	Port    int    // ClamAV daemon port (default: 3310)
+	Timeout int    // IDLE timeout in seconds: TCP dial, and each individual write while streaming (default: 30)
+	// ScanTimeout bounds the wait for clamd's verdict after the full stream
+	// has been sent, separately from Timeout (default: 180). clamd buffers
+	// the entire INSTREAM before replying, so this must accommodate a large,
+	// legitimately slow scan against clamd's own MaxScanTime — bug-hunter
+	// finding: conflating this with the idle Timeout made a sensible
+	// "connection stalled" default (30s) also an unintentional hard cap on
+	// total scan time, well under clamd's default MaxScanTime (120s),
+	// causing legitimate large uploads to fail with SCAN_UNAVAILABLE.
+	ScanTimeout int
+	MaxFileSize int64 // Maximum file size to scan in bytes, 0 = unlimited (default: 104857600 = 100MB)
+
+	// AllowUnverified lets an upload/download proceed when the malware scan
+	// itself could not be completed (clamd unreachable, timed out, or
+	// returned an unrecognized response) instead of failing closed
+	// (MALWARE_SCAN_ALLOW_UNVERIFIED, default: false). See ADR-015.
+	// Never allows a confirmed-infected file through — only pending/error.
+	AllowUnverified bool
+
+	// RejectUnscannable rejects an upload outright (422 UNSCANNABLE_UPLOAD)
+	// when its content cannot be scanned at all: end-to-end encrypted
+	// (client_encrypted) or larger than MaxFileSize
+	// (MALWARE_SCAN_REJECT_UNSCANNABLE, default: false — such uploads are
+	// otherwise accepted and marked "not_scanned"). See ADR-015.
+	RejectUnscannable bool
 }
 
 // MFAConfig holds Multi-Factor Authentication configuration.
@@ -181,10 +205,13 @@ func Load() (*Config, error) {
 
 		// ClamAV malware scanning configuration
 		ClamAV: &ClamAVConfig{
-			Host:        getEnv("CLAMAV_HOST", "clamav"),
-			Port:        getEnvInt("CLAMAV_PORT", 3310),
-			Timeout:     getEnvInt("CLAMAV_TIMEOUT", 30),
-			MaxFileSize: getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+			Host:              getEnv("CLAMAV_HOST", "clamav"),
+			Port:              getEnvInt("CLAMAV_PORT", 3310),
+			Timeout:           getEnvInt("CLAMAV_TIMEOUT", 30),
+			ScanTimeout:       getEnvInt("CLAMAV_SCAN_TIMEOUT", 180),
+			MaxFileSize:       getEnvInt64("CLAMAV_MAX_FILE_SIZE", 104857600), // 100MB
+			AllowUnverified:   getEnvBool("MALWARE_SCAN_ALLOW_UNVERIFIED", false),
+			RejectUnscannable: getEnvBool("MALWARE_SCAN_REJECT_UNSCANNABLE", false),
 		},
 
 		// Mutable fields (lowercase, accessed via getters/setters)
@@ -211,6 +238,10 @@ func Load() (*Config, error) {
 	// Validate configuration
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.AllowUnverified {
+		slog.Warn("MALWARE_SCAN_ALLOW_UNVERIFIED is enabled: uploads/downloads proceed even when clamd is unreachable or a scan fails, instead of blocking (see ADR-015)")
 	}
 
 	return cfg, nil
@@ -549,6 +580,24 @@ func (c *Config) validate() error {
 		return err
 	}
 
+	if err := c.validateClamAVSettings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateClamAVSettings rejects non-positive scan timeouts: a zero or
+// negative deadline would make every scan fail immediately — an upload
+// outage when failing closed, or every upload unverified under
+// MALWARE_SCAN_ALLOW_UNVERIFIED.
+func (c *Config) validateClamAVSettings() error {
+	if c.ClamAV.Timeout <= 0 {
+		return fmt.Errorf("CLAMAV_TIMEOUT must be positive (got %d)", c.ClamAV.Timeout)
+	}
+	if c.ClamAV.ScanTimeout <= 0 {
+		return fmt.Errorf("CLAMAV_SCAN_TIMEOUT must be positive (got %d)", c.ClamAV.ScanTimeout)
+	}
 	return nil
 }
 

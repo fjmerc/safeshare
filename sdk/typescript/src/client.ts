@@ -64,6 +64,14 @@ type FetchRequestBody = NonNullable<Parameters<typeof fetch>[1]>["body"];
  * console.log(`Claim code: ${result.claimCode}`);
  * ```
  */
+/**
+ * Normalize a server download limit. Chunked-upload responses encode
+ * "unlimited" as 0 rather than null.
+ */
+function positiveOrNull(limit: number | null | undefined): number | null {
+  return limit !== null && limit !== undefined && limit > 0 ? limit : null;
+}
+
 export class SafeShareClient {
   private readonly baseUrl: string;
   private readonly apiToken?: string;
@@ -157,6 +165,19 @@ export class SafeShareClient {
     const headers: Record<string, string> = {};
     if (this.apiToken) {
       headers["Authorization"] = `Bearer ${this.apiToken}`;
+    }
+    return headers;
+  }
+
+  /**
+   * Headers for a claim download: auth headers plus the file password, if
+   * any, in X-File-Password (the ?password= query parameter is deprecated
+   * because URLs end up in proxy logs and history).
+   */
+  private downloadHeaders(password?: string): Record<string, string> {
+    const headers = this.getHeaders();
+    if (password) {
+      headers["X-File-Password"] = password;
     }
     return headers;
   }
@@ -304,7 +325,7 @@ export class SafeShareClient {
       formData.append("expires_in_hours", String(options.expiresInHours));
     }
     if (options.downloadLimit !== undefined && options.downloadLimit !== null) {
-      formData.append("download_limit", String(options.downloadLimit));
+      formData.append("max_downloads", String(options.downloadLimit));
     }
     if (options.password) {
       formData.append("password", options.password);
@@ -312,12 +333,11 @@ export class SafeShareClient {
 
     const response = await this.request<{
       claim_code: string;
-      filename: string;
-      size: number;
+      original_filename: string;
+      file_size: number;
       mime_type: string;
       expires_at: string | null;
-      download_limit: number | null;
-      password_protected: boolean;
+      max_downloads: number | null;
       user_id?: number;
     }>("POST", "/api/upload", {
       body: formData,
@@ -325,12 +345,12 @@ export class SafeShareClient {
 
     return {
       claimCode: response.claim_code,
-      filename: response.filename,
-      size: response.size,
+      filename: response.original_filename,
+      size: response.file_size,
       mimeType: response.mime_type,
       expiresAt: response.expires_at,
-      downloadLimit: response.download_limit,
-      passwordProtected: response.password_protected,
+      downloadLimit: positiveOrNull(response.max_downloads),
+      passwordProtected: !!options.password, // Server does not echo this; we know it from the request
       userId: response.user_id,
     };
   }
@@ -355,7 +375,7 @@ export class SafeShareClient {
       initBody.expires_in_hours = options.expiresInHours;
     }
     if (options.downloadLimit !== undefined && options.downloadLimit !== null) {
-      initBody.download_limit = options.downloadLimit;
+      initBody.max_downloads = options.downloadLimit;
     }
     if (options.password) {
       initBody.password = options.password;
@@ -407,7 +427,7 @@ export class SafeShareClient {
       }
 
       // Complete the upload - may return 200 (sync) or 202 (async assembly)
-      const completeResult = await this.completeChunkedUpload(uploadId, filename, stats.size);
+      const completeResult = await this.completeChunkedUpload(uploadId, filename, stats.size, !!options.password);
 
       return completeResult;
     } catch (error) {
@@ -434,7 +454,8 @@ export class SafeShareClient {
   private async completeChunkedUpload(
     uploadId: string,
     filename: string,
-    fileSize: number
+    fileSize: number,
+    passwordProtected: boolean
   ): Promise<UploadResult> {
     const url = `${this.baseUrl}/api/upload/complete/${uploadId}`;
     const controller = new AbortController();
@@ -453,29 +474,28 @@ export class SafeShareClient {
 
       // Check if async assembly (202 Accepted)
       if (response.status === 202) {
-        return this.pollForCompletion(uploadId, filename, fileSize);
+        return this.pollForCompletion(uploadId, filename, fileSize, passwordProtected);
       }
 
       // Sync completion (200 OK)
       const result = await response.json() as {
         claim_code: string;
-        filename: string;
-        size: number;
+        original_filename: string;
+        file_size: number;
         mime_type: string;
         expires_at: string | null;
-        download_limit: number | null;
-        password_protected: boolean;
+        max_downloads: number | null;
         user_id?: number;
       };
 
       return {
         claimCode: result.claim_code,
-        filename: result.filename,
-        size: result.size,
+        filename: result.original_filename,
+        size: result.file_size,
         mimeType: result.mime_type,
         expiresAt: result.expires_at,
-        downloadLimit: result.download_limit,
-        passwordProtected: result.password_protected,
+        downloadLimit: positiveOrNull(result.max_downloads),
+        passwordProtected,
         userId: result.user_id,
       };
     } finally {
@@ -489,7 +509,8 @@ export class SafeShareClient {
   private async pollForCompletion(
     uploadId: string,
     filename: string,
-    fileSize: number
+    fileSize: number,
+    passwordProtected: boolean
   ): Promise<UploadResult> {
     const INITIAL_DELAY = 500;
     const MAX_DELAY = 5000;
@@ -517,8 +538,8 @@ export class SafeShareClient {
             size: fileSize,
             mimeType: "", // Not available in status response
             expiresAt: status.expiresAt,
-            downloadLimit: status.maxDownloads ?? null,
-            passwordProtected: false, // Not available in status response
+            downloadLimit: positiveOrNull(status.maxDownloads),
+            passwordProtected,
           };
 
         case "failed":
@@ -659,11 +680,7 @@ export class SafeShareClient {
     // Resolve and sanitize destination path
     const resolvedDest = resolve(destination);
 
-    // Build URL with optional password
-    let url = `/api/claim/${claimCode}`;
-    if (options.password) {
-      url += `?password=${encodeURIComponent(options.password)}`;
-    }
+    const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -671,7 +688,10 @@ export class SafeShareClient {
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: this.downloadHeaders(options.password),
+        // A file password travels in a header, which fetch would forward on a
+        // redirect; refuse redirects rather than risk sending it elsewhere.
+        redirect: options.password ? "error" : "follow",
         signal: controller.signal,
       });
 
@@ -735,10 +755,7 @@ export class SafeShareClient {
   ): Promise<Buffer> {
     this.validateClaimCode(claimCode);
 
-    let url = `/api/claim/${claimCode}`;
-    if (options.password) {
-      url += `?password=${encodeURIComponent(options.password)}`;
-    }
+    const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -746,7 +763,10 @@ export class SafeShareClient {
     try {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: this.downloadHeaders(options.password),
+        // A file password travels in a header, which fetch would forward on a
+        // redirect; refuse redirects rather than risk sending it elsewhere.
+        redirect: options.password ? "error" : "follow",
         signal: controller.signal,
       });
 

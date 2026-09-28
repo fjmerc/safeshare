@@ -49,6 +49,19 @@ var (
 		},
 	)
 
+	// MalwareAuditRecordFailuresTotal counts failures to persist the audit row
+	// for a rejected, infected upload (ADR-015's recordInfectedUpload /
+	// recordInfectedChunkedUpload). The 422/failed-assembly response to the
+	// client does not depend on this insert succeeding, so a spike here is
+	// silent to end users but means infected uploads aren't being logged to
+	// the files table — worth alerting on.
+	MalwareAuditRecordFailuresTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "safeshare_malware_audit_record_failures_total",
+			Help: "Total number of failures to persist an audit row for a rejected, infected upload",
+		},
+	)
+
 	// ChunkedUploadAssemblySaturated counts how many times an assembly request
 	// was refused with 503 because every assembly slot was in use. Spikes here
 	// indicate operators should raise ASSEMBLY_WORKERS_MAX or investigate stuck

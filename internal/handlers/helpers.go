@@ -40,6 +40,15 @@ const maxTransferDeadline = 6 * time.Hour
 // header reads (Slowloris surface) still complete under the original
 // ReadTimeout because handlers only run after headers are parsed.
 func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferBytes int64) {
+	extendTransferDeadlineWithExtra(w, cfg, transferBytes, 0)
+}
+
+// extendTransferDeadlineWithExtra is extendTransferDeadline plus a fixed
+// extra budget for server-side work the request waits on after the body is
+// read — e.g. a synchronous malware scan, which must be able to run for the
+// full CLAMAV_SCAN_TIMEOUT. If the read deadline passed mid-scan, net/http
+// would cancel the request context and abort the scan.
+func extendTransferDeadlineWithExtra(w http.ResponseWriter, cfg *config.Config, transferBytes int64, extra time.Duration) {
 	if transferBytes < 0 {
 		transferBytes = 0
 	}
@@ -53,6 +62,9 @@ func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferB
 	d := transferDeadlineMargin + time.Duration(seconds)*time.Second
 	if configured := time.Duration(max(cfg.ReadTimeoutSeconds, cfg.WriteTimeoutSeconds)) * time.Second; d < configured {
 		d = configured
+	}
+	if extra > 0 {
+		d += extra
 	}
 	if d > maxTransferDeadline {
 		d = maxTransferDeadline
@@ -252,6 +264,9 @@ func shouldRetryError(code string) (bool, int) {
 		"QUOTA_EXCEEDED":       0,  // Quota exceeded - retry won't help
 		"NETWORK_ERROR":        2,  // Network issues - retry after 2s
 		"TIMEOUT":              5,  // Timeout - retry after 5s
+		"SCAN_PENDING":         15, // ADR-015: still being scanned - retry after 15s
+		"SCAN_UNAVAILABLE":     30, // ADR-015: scanner unreachable/timed out - retry after 30s
+		"INTEGRITY_MISMATCH":   5,  // ADR-015: scanned/stored content mismatch (TOCTOU defense) - a fresh upload attempt should succeed
 	}
 
 	nonRetryableErrors := map[string]bool{
@@ -269,6 +284,10 @@ func shouldRetryError(code string) (bool, int) {
 		"FORBIDDEN":           true,
 		"INVALID_CHUNK":       true,
 		"CHECKSUM_MISMATCH":   true, // Retry won't help - data corruption
+		"MALWARE_DETECTED":    true, // ADR-015: confirmed infected - retry won't help
+		"SCAN_FAILED":         true, // ADR-015: scan errored and could not be verified - not client-retryable
+		"UNSCANNABLE_UPLOAD":  true, // ADR-015: content can never be scanned as submitted
+		"FILE_QUARANTINED":    true, // ADR-015: confirmed infected - retry won't help
 	}
 
 	// Check if explicitly non-retryable

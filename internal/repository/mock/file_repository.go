@@ -17,6 +17,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
 // FileRepository is a mock implementation of repository.FileRepository for testing.
@@ -29,9 +30,10 @@ type FileRepository struct {
 	byClaimCode map[string]*models.File // by claim code (separate copy from files map)
 	nextID      int64
 
-	// SH-2.3: reservations side-table mirror. Tokens → (fileID, createdAt).
-	// in_flight counter per file lives implicitly as len(reservations where file_id = X).
-	reservations map[string]mockReservation
+	// ADR-014: download_sessions mirror. Tokens → (fileID, createdAt, ...).
+	// in_flight counter per file lives implicitly as the count of uncommitted
+	// sessions where file_id = X (see countInFlight).
+	sessions map[string]mockDownloadSession
 
 	// Error injection for testing error handling
 	// NOTE: Set these BEFORE concurrent access begins
@@ -44,9 +46,15 @@ type FileRepository struct {
 	TryIncrementDownloadWithLimitError   error
 	IncrementCompletedDownloadsError     error
 	ReserveDownloadError                 error
+	ReserveSessionBytesError             error
+	ReleaseSessionBytesError             error
+	LookupDownloadSessionError           error
+	CommitDownloadSessionError           error
+	TouchDownloadSessionError            error
+	CompleteDownloadSessionError         error
 	CommitDownloadError                  error
 	CancelDownloadError                  error
-	ReapStaleReservationsError           error
+	ReapDownloadSessionsError            error
 	DeleteError                          error
 	DeleteByClaimCodeError               error
 	DeleteByClaimCodesError              error
@@ -68,19 +76,25 @@ type FileRepository struct {
 	OnTryIncrementDownload func(ctx context.Context, id int64, claimCode string) (bool, error)
 }
 
-// mockReservation is the in-memory mirror of a download_reservations row.
-type mockReservation struct {
-	fileID    int64
-	createdAt time.Time
+// mockDownloadSession is the in-memory mirror of a download_sessions row.
+type mockDownloadSession struct {
+	fileID        int64
+	createdAt     time.Time
+	lastSeenAt    time.Time
+	committed     bool
+	completed     bool
+	bytesServed   int64
+	probeGranted  int64
+	bytesReserved int64
 }
 
 // NewFileRepository creates a new mock FileRepository with default behavior.
 func NewFileRepository() *FileRepository {
 	return &FileRepository{
-		files:        make(map[int64]*models.File),
-		byClaimCode:  make(map[string]*models.File),
-		reservations: make(map[string]mockReservation),
-		nextID:       1,
+		files:       make(map[int64]*models.File),
+		byClaimCode: make(map[string]*models.File),
+		sessions:    make(map[string]mockDownloadSession),
+		nextID:      1,
 	}
 }
 
@@ -94,7 +108,7 @@ func (r *FileRepository) Reset() {
 
 	r.files = make(map[int64]*models.File)
 	r.byClaimCode = make(map[string]*models.File)
-	r.reservations = make(map[string]mockReservation)
+	r.sessions = make(map[string]mockDownloadSession)
 	r.nextID = 1
 
 	// Clear error injection
@@ -107,9 +121,15 @@ func (r *FileRepository) Reset() {
 	r.TryIncrementDownloadWithLimitError = nil
 	r.IncrementCompletedDownloadsError = nil
 	r.ReserveDownloadError = nil
+	r.ReserveSessionBytesError = nil
+	r.ReleaseSessionBytesError = nil
+	r.LookupDownloadSessionError = nil
+	r.CommitDownloadSessionError = nil
+	r.TouchDownloadSessionError = nil
+	r.CompleteDownloadSessionError = nil
 	r.CommitDownloadError = nil
 	r.CancelDownloadError = nil
-	r.ReapStaleReservationsError = nil
+	r.ReapDownloadSessionsError = nil
 	r.DeleteError = nil
 	r.DeleteByClaimCodeError = nil
 	r.DeleteByClaimCodesError = nil
@@ -234,10 +254,15 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		return r.CreateWithQuotaCheckError
 	}
 
-	// Check quota
+	// Check quota. Defense in depth (bug-hunter finding, ADR-015): skip
+	// infected-audit rows explicitly — they're inserted with FileSize=0
+	// anyway, but this mirrors the sqlite/postgres query guard.
 	r.mu.RLock()
 	var totalUsage int64
 	for _, f := range r.files {
+		if f.ScanStatus == scanning.ScanStatusInfected {
+			continue
+		}
 		totalUsage += f.FileSize
 	}
 	r.mu.RUnlock()
@@ -443,11 +468,13 @@ func (r *FileRepository) IncrementCompletedDownloads(ctx context.Context, id int
 	return nil
 }
 
-// countInFlight returns the live reservation count for fileID (caller must hold r.mu).
+// countInFlight returns the count of UNCOMMITTED sessions for fileID (caller
+// must hold r.mu). A committed session is no longer "in flight" — it has
+// already been credited toward download_count.
 func (r *FileRepository) countInFlight(fileID int64) int {
 	n := 0
-	for _, res := range r.reservations {
-		if res.fileID == fileID {
+	for _, s := range r.sessions {
+		if s.fileID == fileID && !s.committed {
 			n++
 		}
 	}
@@ -455,9 +482,9 @@ func (r *FileRepository) countInFlight(fileID int64) int {
 }
 
 // ReserveDownload implements repository.FileRepository.ReserveDownload
-func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, error) {
+func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, int64, error) {
 	if r.ReserveDownloadError != nil {
-		return "", r.ReserveDownloadError
+		return "", 0, r.ReserveDownloadError
 	}
 
 	r.mu.Lock()
@@ -465,42 +492,94 @@ func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expe
 
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", 0, ctx.Err()
 	default:
 	}
 
 	file, exists := r.files[fileID]
 	if !exists {
-		return "", repository.ErrClaimCodeChanged
+		return "", 0, repository.ErrClaimCodeChanged
 	}
 	if file.ClaimCode != expectedClaimCode {
-		return "", repository.ErrClaimCodeChanged
+		return "", 0, repository.ErrClaimCodeChanged
 	}
 
 	// Unlimited cap: fast-path sentinel.
 	if file.MaxDownloads == nil || *file.MaxDownloads == 0 {
-		return repository.ReservationTokenUnlimited, nil
+		return repository.ReservationTokenUnlimited, 0, nil
 	}
 
 	inFlight := r.countInFlight(fileID)
 	if file.DownloadCount+inFlight >= *file.MaxDownloads {
-		return "", nil // cap hit
+		return "", 0, nil // cap hit
 	}
 
-	token, err := mockReservationToken()
+	token, err := mockDownloadSessionToken()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	r.reservations[token] = mockReservation{fileID: fileID, createdAt: time.Now()}
-	return token, nil
+
+	// Atomically (the mutex is already held) charge this session's
+	// probe-threshold allowance against the file's uncounted-bytes budget —
+	// mirrors the sqlite/postgres implementations' in-transaction grant.
+	threshold := repository.ProbeThreshold(file.FileSize)
+	remaining := repository.ProbeBudget(threshold) - file.UncountedBytes
+	if remaining < 0 {
+		remaining = 0
+	}
+	granted := threshold
+	if granted > remaining {
+		granted = remaining
+	}
+	if granted > 0 {
+		file.UncountedBytes += granted
+		if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+			ccFile.UncountedBytes = file.UncountedBytes
+		}
+	}
+
+	now := time.Now()
+	r.sessions[token] = mockDownloadSession{fileID: fileID, createdAt: now, lastSeenAt: now, probeGranted: granted}
+	return token, granted, nil
 }
 
-// CommitDownload implements repository.FileRepository.CommitDownload
-func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
-	if r.CommitDownloadError != nil {
-		return r.CommitDownloadError
+// ReserveSessionBytes implements repository.FileRepository.ReserveSessionBytes
+func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64) (bool, error) {
+	if r.ReserveSessionBytesError != nil {
+		return false, r.ReserveSessionBytesError
 	}
-	if token == "" {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return false, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
+	s, present := r.sessions[token]
+	if !present || s.fileID != fileID || s.completed {
+		return false, nil
+	}
+	if s.bytesReserved+length > limit {
+		return false, nil
+	}
+	s.bytesReserved += length
+	s.lastSeenAt = time.Now()
+	r.sessions[token] = s
+	return true, nil
+}
+
+// ReleaseSessionBytes implements repository.FileRepository.ReleaseSessionBytes
+func (r *FileRepository) ReleaseSessionBytes(ctx context.Context, fileID int64, token string, amount int64) error {
+	if r.ReleaseSessionBytesError != nil {
+		return r.ReleaseSessionBytesError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited || amount <= 0 {
 		return nil
 	}
 
@@ -513,53 +592,227 @@ func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token
 	default:
 	}
 
-	if token == repository.ReservationTokenUnlimited {
-		if file, ok := r.files[fileID]; ok {
-			file.DownloadCount++
-			file.CompletedDownloads++
-			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
-				ccFile.DownloadCount = file.DownloadCount
-				ccFile.CompletedDownloads = file.CompletedDownloads
-			}
+	if s, present := r.sessions[token]; present && s.fileID == fileID {
+		s.bytesReserved -= amount
+		if s.bytesReserved < 0 {
+			s.bytesReserved = 0
 		}
-		return nil
+		r.sessions[token] = s
+	}
+	return nil
+}
+
+// LookupDownloadSession implements repository.FileRepository.LookupDownloadSession
+func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge time.Duration) (*repository.DownloadSession, error) {
+	if r.LookupDownloadSessionError != nil {
+		return nil, r.LookupDownloadSessionError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil, nil
 	}
 
-	res, present := r.reservations[token]
-	if present && res.fileID == fileID {
-		delete(r.reservations, token)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	s, present := r.sessions[token]
+	if !present || s.fileID != fileID {
+		return nil, nil
+	}
+	// A completed session has already delivered the whole file once —
+	// replaying its token must not resolve to a streamable session (see
+	// ReserveSessionBytes and ADR-014 bug-hunter finding).
+	if s.completed {
+		return nil, nil
+	}
+	now := time.Now()
+	if maxAge > 0 && now.Sub(s.createdAt) > maxAge {
+		return nil, nil
+	}
+	if idleTTL > 0 && now.Sub(s.lastSeenAt) > idleTTL {
+		return nil, nil
+	}
+	return &repository.DownloadSession{
+		FileID:        fileID,
+		Committed:     s.committed,
+		Completed:     s.completed,
+		BytesServed:   s.bytesServed,
+		BytesReserved: s.bytesReserved,
+		CreatedAt:     s.createdAt,
+		LastSeenAt:    s.lastSeenAt,
+	}, nil
+}
+
+// CommitDownloadSession implements repository.FileRepository.CommitDownloadSession
+func (r *FileRepository) CommitDownloadSession(ctx context.Context, fileID int64, token string) (repository.DownloadCommitResult, error) {
+	if r.CommitDownloadSessionError != nil {
+		return 0, r.CommitDownloadSessionError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return repository.DownloadCommitAlreadyCommitted, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
+	if s, present := r.sessions[token]; present && s.fileID == fileID {
+		if s.committed {
+			return repository.DownloadCommitAlreadyCommitted, nil
+		}
+		s.committed = true
+		s.lastSeenAt = time.Now()
+		r.sessions[token] = s
 		if file, ok := r.files[fileID]; ok {
 			file.DownloadCount++
-			file.CompletedDownloads++
+			// Refund this session's entire probe grant — it's a real,
+			// credited download now, not an uncounted probe.
+			file.UncountedBytes -= s.probeGranted
+			if file.UncountedBytes < 0 {
+				file.UncountedBytes = 0
+			}
 			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
 				ccFile.DownloadCount = file.DownloadCount
-				ccFile.CompletedDownloads = file.CompletedDownloads
+				ccFile.UncountedBytes = file.UncountedBytes
 			}
 		}
-		return nil
+		return repository.DownloadCommitCredited, nil
 	}
 
 	// Reaped-mid-stream recovery.
 	// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
 	// Using `download_count >= max_downloads` alone would let a late-committing
-	// reservation jump past a still-live reservation and over-count past the cap
+	// session jump past a still-live reservation and over-count past the cap
 	// (bug-hunter C1: same-token replay or retry-race could double-credit).
 	file, ok := r.files[fileID]
 	if !ok {
-		return nil
+		return repository.DownloadCommitSlotLost, nil
 	}
 	if file.MaxDownloads != nil && *file.MaxDownloads > 0 &&
 		file.DownloadCount+r.countInFlight(fileID) >= *file.MaxDownloads {
 		// cap already taken by another reader; under-count rather than over-count.
-		return nil
+		return repository.DownloadCommitSlotLost, nil
 	}
 	file.DownloadCount++
-	file.CompletedDownloads++
 	if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
 		ccFile.DownloadCount = file.DownloadCount
-		ccFile.CompletedDownloads = file.CompletedDownloads
+	}
+	// Re-insert as committed under the same token so a later
+	// CompleteDownloadSession call can still find it. probeGranted is 0: the
+	// original row's grant was already refunded by whatever swept it.
+	now := time.Now()
+	r.sessions[token] = mockDownloadSession{fileID: fileID, createdAt: now, lastSeenAt: now, committed: true}
+	return repository.DownloadCommitCredited, nil
+}
+
+// TouchDownloadSession implements repository.FileRepository.TouchDownloadSession
+func (r *FileRepository) TouchDownloadSession(ctx context.Context, fileID int64, token string, bytesDelta int64) error {
+	if r.TouchDownloadSessionError != nil {
+		return r.TouchDownloadSessionError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if s, present := r.sessions[token]; present && s.fileID == fileID {
+		s.lastSeenAt = time.Now()
+		s.bytesServed += bytesDelta
+		r.sessions[token] = s
 	}
 	return nil
+}
+
+// CompleteDownloadSession implements repository.FileRepository.CompleteDownloadSession
+func (r *FileRepository) CompleteDownloadSession(ctx context.Context, fileID int64, token string) (bool, error) {
+	if r.CompleteDownloadSessionError != nil {
+		return false, r.CompleteDownloadSessionError
+	}
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return false, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
+	s, present := r.sessions[token]
+	if !present || s.fileID != fileID || !s.committed || s.completed {
+		return false, nil
+	}
+	s.completed = true
+	r.sessions[token] = s
+	if file, ok := r.files[fileID]; ok {
+		file.CompletedDownloads++
+		if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+			ccFile.CompletedDownloads = file.CompletedDownloads
+		}
+	}
+	return true, nil
+}
+
+// CommitDownload implements repository.FileRepository.CommitDownload
+func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
+	if r.CommitDownloadError != nil {
+		return r.CommitDownloadError
+	}
+	if token == "" {
+		return nil
+	}
+
+	if token == repository.ReservationTokenUnlimited {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if file, ok := r.files[fileID]; ok {
+			file.DownloadCount++
+			file.CompletedDownloads++
+			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+				ccFile.DownloadCount = file.DownloadCount
+				ccFile.CompletedDownloads = file.CompletedDownloads
+			}
+		}
+		return nil
+	}
+
+	result, err := r.CommitDownloadSession(ctx, fileID, token)
+	if err != nil {
+		return err
+	}
+	if result == repository.DownloadCommitSlotLost {
+		return nil
+	}
+	_, err = r.CompleteDownloadSession(ctx, fileID, token)
+	return err
 }
 
 // CancelDownload implements repository.FileRepository.CancelDownload
@@ -580,16 +833,31 @@ func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token
 	default:
 	}
 
-	if res, present := r.reservations[token]; present && res.fileID == fileID {
-		delete(r.reservations, token)
+	if s, present := r.sessions[token]; present && s.fileID == fileID && !s.committed {
+		delete(r.sessions, token)
+		if file, ok := r.files[fileID]; ok {
+			// Refund only the unspent portion of the grant — bytes the
+			// session actually served stay charged against the budget.
+			refund := s.probeGranted - s.bytesServed
+			if refund < 0 {
+				refund = 0
+			}
+			file.UncountedBytes -= refund
+			if file.UncountedBytes < 0 {
+				file.UncountedBytes = 0
+			}
+			if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+				ccFile.UncountedBytes = file.UncountedBytes
+			}
+		}
 	}
 	return nil
 }
 
-// ReapStaleReservations implements repository.FileRepository.ReapStaleReservations
-func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Duration) (int, error) {
-	if r.ReapStaleReservationsError != nil {
-		return 0, r.ReapStaleReservationsError
+// ReapDownloadSessions implements repository.FileRepository.ReapDownloadSessions
+func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (int, int, error) {
+	if r.ReapDownloadSessionsError != nil {
+		return 0, 0, r.ReapDownloadSessionsError
 	}
 
 	r.mu.Lock()
@@ -597,26 +865,48 @@ func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Dur
 
 	select {
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return 0, 0, ctx.Err()
 	default:
 	}
 
-	cutoff := time.Now().Add(-ttl)
-	reaped := 0
-	for token, res := range r.reservations {
-		if res.createdAt.Before(cutoff) {
-			// Find the file backing this reservation so we can keep the file's
-			// implicit in_flight count consistent (mock tracks in_flight as len of
-			// reservation entries; deleting the entry decrements automatically).
-			delete(r.reservations, token)
-			reaped++
+	now := time.Now()
+	leaseCutoff := now.Add(-leaseTTL)
+	idleCutoff := now.Add(-idleTTL)
+	maxAgeCutoff := now.Add(-maxAge)
+
+	cancelled, expired := 0, 0
+	for token, s := range r.sessions {
+		switch {
+		case !s.committed && s.lastSeenAt.Before(leaseCutoff):
+			// Abandoned uncommitted session: refund the implicit in_flight slot
+			// (via deletion) and the unspent portion of the probe grant, same
+			// as CancelDownload.
+			delete(r.sessions, token)
+			if file, ok := r.files[s.fileID]; ok {
+				refund := s.probeGranted - s.bytesServed
+				if refund < 0 {
+					refund = 0
+				}
+				file.UncountedBytes -= refund
+				if file.UncountedBytes < 0 {
+					file.UncountedBytes = 0
+				}
+				if ccFile, ok := r.byClaimCode[file.ClaimCode]; ok {
+					ccFile.UncountedBytes = file.UncountedBytes
+				}
+			}
+			cancelled++
+		case s.committed && (s.lastSeenAt.Before(idleCutoff) || s.createdAt.Before(maxAgeCutoff)):
+			// Idle/aged-out committed session: pure record cleanup, no counter change.
+			delete(r.sessions, token)
+			expired++
 		}
 	}
-	return reaped, nil
+	return cancelled, expired, nil
 }
 
-// mockReservationToken produces an opaque 32-char hex token for the mock.
-func mockReservationToken() (string, error) {
+// mockDownloadSessionToken produces an opaque 32-char hex token for the mock.
+func mockDownloadSessionToken() (string, error) {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", err
@@ -763,6 +1053,9 @@ func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
 
 	var total int64
 	for _, file := range r.files {
+		if file.ScanStatus == scanning.ScanStatusInfected {
+			continue
+		}
 		total += file.FileSize
 	}
 
@@ -789,8 +1082,12 @@ func (r *FileRepository) GetStats(ctx context.Context, uploadDir string) (*repos
 
 	for _, file := range r.files {
 		stats.TotalFiles++
-		stats.StorageUsed += file.FileSize
-		stats.TotalUsage += file.FileSize
+		// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+		// count toward TotalFiles but never toward storage.
+		if file.ScanStatus != scanning.ScanStatusInfected {
+			stats.StorageUsed += file.FileSize
+			stats.TotalUsage += file.FileSize
+		}
 
 		if now.After(file.ExpiresAt) {
 			stats.ExpiredFiles++

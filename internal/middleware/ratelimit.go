@@ -26,11 +26,19 @@ type requestRecord struct {
 	mu         sync.Mutex
 }
 
-// RateLimiter manages rate limiting per IP address
+// RateLimiter manages rate limiting per IP address and limit type
 type RateLimiter struct {
 	config  ConfigProvider
-	records sync.Map // map[string]*requestRecord
+	records sync.Map // map[string]*requestRecord, keyed by bucketKey
 	cleanup *time.Ticker
+}
+
+// bucketKey returns the record key for an IP within a limit type. Each limit
+// type needs its own bucket: sharing one slice per IP meant the chunks of a
+// single large upload counted against the upload and download limits, locking
+// the IP out of new uploads and downloads for an hour.
+func bucketKey(limitType, ip string) string {
+	return limitType + "|" + ip
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration provider
@@ -88,13 +96,13 @@ func (rl *RateLimiter) Stop() {
 	rl.cleanup.Stop()
 }
 
-// checkLimit checks if the request is within rate limits
-func (rl *RateLimiter) checkLimit(ip string, limit int) bool {
+// checkLimit checks if the request is within rate limits for the given limit type
+func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	now := time.Now()
 	oneHourAgo := now.Add(-1 * time.Hour)
 
-	// Get or create record for this IP
-	value, _ := rl.records.LoadOrStore(ip, &requestRecord{
+	// Get or create record for this IP and limit type
+	value, _ := rl.records.LoadOrStore(bucketKey(limitType, ip), &requestRecord{
 		timestamps: make([]time.Time, 0),
 	})
 	record := value.(*requestRecord)
@@ -172,7 +180,7 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			}
 
 			// Check rate limit
-			if !rl.checkLimit(ip, limit) {
+			if !rl.checkLimit(ip, limitType, limit) {
 				slog.Warn("rate limit exceeded",
 					"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 					"limit_type", limitType,

@@ -2,22 +2,106 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/scanning"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
+
+// scanGateResult is the outcome of scanGate: whether a download may proceed,
+// and if not, the response to send.
+type scanGateResult struct {
+	blocked    bool
+	title      string
+	message    string
+	code       string
+	statusCode int
+	retryAfter int // seconds; 0 means no Retry-After header
+}
+
+// scanGate enforces ADR-015's fail-closed download policy, gated on the
+// file's OWN scan_status rather than the server's current
+// MALWARE_SCAN_ENABLED flag — a file scanned (or left unscanned) under a
+// different server configuration must still be judged by what its own row
+// says, not by whether scanning happens to be on right now.
+//
+//   - infected: always blocked (410) — never overridden by AllowUnverified.
+//   - pending: blocked (423, Retry-After) unless AllowUnverified.
+//   - error: blocked (403) unless AllowUnverified.
+//   - "", clean, not_scanned, skipped, or any other value: allowed. A NULL/
+//     empty status covers scanning-disabled and pre-ADR-015 legacy files;
+//     not_scanned covers E2E/oversized content that was deliberately never
+//     inspected (see scanUpload) — neither is grounds to block on its own.
+func scanGate(file *models.File, cfg *config.Config) scanGateResult {
+	switch file.ScanStatus {
+	case scanning.ScanStatusInfected:
+		return scanGateResult{
+			blocked:    true,
+			title:      "File Quarantined",
+			message:    "This file was detected as malware and is not available for download.",
+			code:       "FILE_QUARANTINED",
+			statusCode: http.StatusGone,
+		}
+	case scanning.ScanStatusPending:
+		if cfg.ClamAV.AllowUnverified {
+			return scanGateResult{}
+		}
+		return scanGateResult{
+			blocked:    true,
+			title:      "Scan In Progress",
+			message:    "This file is still being scanned for malware. Please try again shortly.",
+			code:       "SCAN_PENDING",
+			statusCode: http.StatusLocked,
+			retryAfter: 15,
+		}
+	case scanning.ScanStatusError:
+		if cfg.ClamAV.AllowUnverified {
+			return scanGateResult{}
+		}
+		return scanGateResult{
+			blocked:    true,
+			title:      "File Unavailable",
+			message:    "This file is unavailable — it could not be verified as safe.",
+			code:       "SCAN_FAILED",
+			statusCode: http.StatusForbidden,
+		}
+	default:
+		return scanGateResult{}
+	}
+}
+
+// reservationFinalizeTimeout bounds the Commit/Cancel/Complete of a download
+// session, which runs detached from the (possibly cancelled) request context.
+// Long enough to cover beginImmediateTx's SQLITE_BUSY retries.
+const reservationFinalizeTimeout = 30 * time.Second
+
+// logTokenHash returns a short, non-reversible prefix for correlating log
+// lines with the download_sessions row without ever writing the bearer
+// token itself into logs (bug-hunter finding: the token is a bearer
+// credential once ADR-014 lets it be replayed across requests). Matches the
+// hash the repository layer stores, truncated to 8 hex chars — enough to
+// eyeball-correlate a handful of log lines, not enough to be a lookup oracle.
+func logTokenHash(token string) string {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return token
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:4])
+}
 
 // ClaimHandler handles file download requests using claim codes
 func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
@@ -64,16 +148,22 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			return
 		}
 
-		// Block download of infected files
-		if file.ScanStatus == scanning.ScanStatusInfected {
-			slog.Warn("download blocked: file infected",
+		// ADR-015: gate the download on this file's own scan verdict before
+		// any password check, in-flight tracking, or reservation/session
+		// work — a blocked request must never reserve or commit a download
+		// slot.
+		if gate := scanGate(file, cfg); gate.blocked {
+			slog.Warn("download blocked by scan gate",
+				"reason", gate.code,
 				"claim_code", redactClaimCode(claimCode),
-				"virus_name", file.ScanResult,
+				"scan_status", file.ScanStatus,
+				"scan_result", file.ScanResult,
 				"client_ip", logIP(getClientIP(r), cfg),
 			)
-			sendErrorResponse(w, r, "File Quarantined",
-				"This file was detected as malware and is not available for download.",
-				"FILE_QUARANTINED", http.StatusGone)
+			if gate.retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(gate.retryAfter))
+			}
+			sendErrorResponse(w, r, gate.title, gate.message, gate.code, gate.statusCode)
 			return
 		}
 
@@ -97,7 +187,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				// page.
 				w.Header().Set("Referrer-Policy", "no-referrer")
 				w.Header().Set("Deprecation", "true")
-				w.Header().Set("Sunset", "Wed, 30 Sep 2026 00:00:00 GMT")
+				w.Header().Set("Sunset", "Wed, 31 Mar 2027 00:00:00 GMT")
 				// Points at a fetchable docs URL (RFC 8594 / draft-ietf-httpapi-
 				// deprecation-header expect an actual resource, not a repo
 				// path). Track this if the default branch is renamed.
@@ -173,158 +263,114 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// Store original claim code for optimistic locking
 		originalClaimCode := file.ClaimCode
 
-		// Reserve a download slot. For files with no cap, ReserveDownload returns the
-		// sentinel ReservationTokenUnlimited and Commit/Cancel become no-ops.
-		token, err := repos.Files.ReserveDownload(ctx, file.ID, originalClaimCode)
-		if err != nil {
-			if errors.Is(err, repository.ErrClaimCodeChanged) {
-				slog.Warn("claim code changed before reservation",
-					"file_id", file.ID,
-					"original_code", redactClaimCode(originalClaimCode),
-					"client_ip", logIP(getClientIP(r), cfg),
-				)
-				sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
-				return
-			}
-			slog.Error("failed to reserve download slot", "file_id", file.ID, "error", err)
-			sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-		if token == "" {
-			// Cap hit — download_count + in_flight_reservations >= max_downloads.
-			slog.Warn("file access denied",
-				"reason", "download_limit_reached",
-				"claim_code", redactClaimCode(claimCode),
-				"filename", file.OriginalFilename,
-				"client_ip", logIP(getClientIP(r), cfg),
-			)
-			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
-			return
-		}
+		// capped files (max_downloads set and > 0) go through the ADR-014
+		// download-session flow below, which closes T1 (Range-splitting a
+		// download never counted) and T5 (reaper TTL shorter than the max
+		// transfer deadline). Uncapped files keep the original ADR-012 fast
+		// path unchanged — see ADR-014 "Unlimited files keep the existing fast
+		// path unchanged": no session bookkeeping, no X-Download-Session
+		// header, no Cache-Control override, one code path fewer for the
+		// overwhelmingly common case.
+		capped := file.MaxDownloads != nil && *file.MaxDownloads > 0
 
-		// Safety net: if we exit early before deciding Commit/Cancel, Cancel runs so
-		// the in_flight counter doesn't leak. The flag is flipped to true after the
-		// explicit Commit/Cancel below; in normal flow the deferred call no-ops.
-		finalised := false
-		defer func() {
-			if finalised || token == repository.ReservationTokenUnlimited {
-				return
-			}
-			if err := repos.Files.CancelDownload(context.Background(), file.ID, token); err != nil {
-				slog.Error("safety-net reservation cancel failed", "file_id", file.ID, "error", err)
-			}
-		}()
-
-		// Serve file with Range support (handles both full and partial downloads).
-		// Returns commitable=true only when the request received the entire file
-		// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
-		extendTransferDeadline(w, cfg, file.FileSize)
-		commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg)
-
-		// SH-2.3 code-reviewer M1/M2: set `finalised = true` after the explicit
-		// Commit/Cancel runs, regardless of error. If we left finalised=false on a
-		// Commit error, the deferred safety-net would then Cancel — which after a
-		// failed Commit's rollback releases the slot (since the reservation row still
-		// exists). The result would be: bytes delivered + slot released → another
-		// recipient could claim a `max_downloads=1` file. Far worse than the
-		// alternative (slot held until reaper sweeps it ~30 min later, under-counting
-		// but never over-delivering). For the symmetric Cancel-failure case, the
-		// second Cancel is harmless idempotent, but we want consistent semantics:
-		// once we made an explicit decision, the safety-net must not re-decide.
-		//
-		// `committed` (distinct from `finalised`) tracks whether the explicit Commit
-		// actually succeeded — that's the signal the webhook + audit block below
-		// uses to decide whether the counters have moved. We must NOT collapse it
-		// into `finalised`, or a failed Commit would still fire file.downloaded.
-		committed := false
-		if commitable {
-			if err := repos.Files.CommitDownload(ctx, file.ID, token); err != nil {
-				slog.Error("failed to commit download", "file_id", file.ID, "reservation_token", token, "error", err)
-			} else {
-				committed = true
-			}
-		} else {
-			if err := repos.Files.CancelDownload(ctx, file.ID, token); err != nil {
-				slog.Error("failed to cancel reservation", "file_id", file.ID, "reservation_token", token, "error", err)
-			}
-		}
-		finalised = true
-
-		// Webhook + audit log. Only emit on successful commit; cancelled streams
-		// (partial range, mid-stream failure) don't trigger the file.expired event.
-		// Bug-hunter SH-2.3 finding H3/H4: read the authoritative download_count from
-		// the DB after Commit — the pre-Reserve snapshot in `file.DownloadCount` is
-		// stale under concurrent commits and would misfire the file.expired webhook.
-		var remainingDownloads string
-		switch {
-		case committed:
-			now := time.Now()
-			EmitWebhookEvent(&webhooks.Event{
-				Type:      webhooks.EventFileDownloaded,
-				Timestamp: now,
-				File: webhooks.FileData{
-					ID:           file.ID,
-					ClaimCode:    file.ClaimCode,
-					Filename:     file.OriginalFilename,
-					Size:         file.FileSize,
-					MimeType:     file.MimeType,
-					ExpiresAt:    file.ExpiresAt,
-					DownloadedAt: &now,
-				},
-			})
-
-			if file.MaxDownloads != nil {
-				fresh, err := repos.Files.GetByID(ctx, file.ID)
-				switch {
-				case err != nil:
-					slog.Warn("failed to re-read file after commit; falling back to pre-Reserve snapshot for webhook decision",
+		if !capped {
+			// Reserve a download slot. ReserveDownload returns the sentinel
+			// ReservationTokenUnlimited here; Commit/Cancel are no-ops for it.
+			token, _, err := repos.Files.ReserveDownload(ctx, file.ID, originalClaimCode)
+			if err != nil {
+				if errors.Is(err, repository.ErrClaimCodeChanged) {
+					slog.Warn("claim code changed before reservation",
 						"file_id", file.ID,
-						"error", err,
+						"original_code", redactClaimCode(originalClaimCode),
+						"client_ip", logIP(getClientIP(r), cfg),
 					)
-					remainingDownloads = fmt.Sprintf("%d", *file.MaxDownloads-(file.DownloadCount+1))
-				case fresh == nil:
-					// File was deleted between commit and re-read (cleanup worker).
-					remainingDownloads = "0"
-				default:
-					remaining := *file.MaxDownloads - fresh.DownloadCount
-					remainingDownloads = fmt.Sprintf("%d", remaining)
-					// Fire file.expired only when the counter has actually reached the cap.
-					if fresh.DownloadCount >= *file.MaxDownloads {
-						reason := "download_limit_reached"
-						EmitWebhookEvent(&webhooks.Event{
-							Type:      webhooks.EventFileExpired,
-							Timestamp: time.Now(),
-							File: webhooks.FileData{
-								ClaimCode: claimCode,
-								Filename:  file.OriginalFilename,
-								Size:      file.FileSize,
-								MimeType:  file.MimeType,
-								ExpiresAt: file.ExpiresAt,
-								Reason:    &reason,
-							},
-						})
-						slog.Info("file expired due to download limit",
-							"claim_code", redactClaimCode(claimCode),
-							"filename", file.OriginalFilename,
-							"download_count", fresh.DownloadCount,
-							"max_downloads", *file.MaxDownloads,
-						)
-					}
+					sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
+					return
 				}
-			} else {
-				remainingDownloads = "unlimited"
+				slog.Error("failed to reserve download slot", "file_id", file.ID, "error", err)
+				sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
 			}
-		case file.MaxDownloads != nil:
-			remainingDownloads = fmt.Sprintf("%d", *file.MaxDownloads-file.DownloadCount)
-		default:
-			remainingDownloads = "unlimited"
+			if token != "" && token != repository.ReservationTokenUnlimited {
+				// Race: max_downloads was set on this file after we read it
+				// (capped=false, from the snapshot at the top of this
+				// handler), but ReserveDownload's fresh read saw the new cap
+				// and returned a real session token instead of the sentinel.
+				// Streaming it here would apply no probe threshold and never
+				// Cancel on a partial range — release the slot and re-dispatch
+				// to the capped flow, which re-reserves with the correct
+				// threshold/session semantics (bug-hunter finding).
+				if err := repos.Files.CancelDownload(ctx, file.ID, token); err != nil {
+					slog.Error("failed to cancel late-capped reservation", "file_id", file.ID, "error", err)
+				}
+				// serveCappedDownload dereferences file.MaxDownloads once it
+				// has credited a download — the `file` snapshot in scope here
+				// still has it nil (that's the whole reason we're in this
+				// branch), which would panic there. Re-read the file so the
+				// capped flow sees the cap that's now actually in effect
+				// (bug-hunter finding).
+				freshFile, ferr := repos.Files.GetByID(ctx, file.ID)
+				if ferr != nil || freshFile == nil {
+					slog.Error("failed to re-read file for late-capped re-dispatch", "file_id", file.ID, "error", ferr)
+					sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+					return
+				}
+				serveCappedDownload(ctx, w, r, repos, cfg, freshFile, filePath, originalClaimCode, claimCode)
+				return
+			}
+
+			// Serve file with Range support (handles both full and partial downloads).
+			// Returns commitable=true only when the request received the entire file
+			// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
+			extendTransferDeadline(w, cfg, file.FileSize)
+			commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg)
+
+			// Commit/Cancel run on a context detached from the request: when the client
+			// disconnects, r.Context() is already cancelled, the transaction can't begin.
+			finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), reservationFinalizeTimeout)
+			defer cancelFinalize()
+
+			committed := false
+			if commitable {
+				if err := repos.Files.CommitDownload(finalizeCtx, file.ID, token); err != nil {
+					slog.Error("failed to commit download", "file_id", file.ID, "error", err)
+				} else {
+					committed = true
+				}
+			}
+			// No cap, no reservation row for ReservationTokenUnlimited — nothing to
+			// Cancel on the non-commitable path.
+
+			if committed {
+				now := time.Now()
+				EmitWebhookEvent(&webhooks.Event{
+					Type:      webhooks.EventFileDownloaded,
+					Timestamp: now,
+					File: webhooks.FileData{
+						ID:           file.ID,
+						ClaimCode:    file.ClaimCode,
+						Filename:     file.OriginalFilename,
+						Size:         file.FileSize,
+						MimeType:     file.MimeType,
+						ExpiresAt:    file.ExpiresAt,
+						DownloadedAt: &now,
+					},
+				})
+			}
+
+			slog.Debug("download completed",
+				"claim_code", redactClaimCode(claimCode),
+				"committed", committed,
+				"remaining_downloads", "unlimited",
+			)
+			return
 		}
 
-		slog.Debug("download completed",
-			"claim_code", redactClaimCode(claimCode),
-			"committed", committed,
-			"remaining_downloads", remainingDownloads,
-		)
+		// Capped files (max_downloads set and > 0) go through the ADR-014
+		// download-session flow in claim_session.go, which closes T1
+		// (Range-splitting a download never counted) and T5 (reaper TTL
+		// shorter than the max transfer deadline).
+		serveCappedDownload(ctx, w, r, repos, cfg, file, filePath, originalClaimCode, claimCode)
 	}
 }
 
@@ -381,6 +427,11 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, claimCode)
 
+		// ADR-015: report the scan gate's verdict so clients can show a
+		// meaningful state (e.g. "still being scanned") instead of a bare
+		// 423/403/410 the next time they try to actually download.
+		gate := scanGate(file, cfg)
+
 		// Return file info as JSON
 		response := map[string]interface{}{
 			"claim_code":             file.ClaimCode,
@@ -397,6 +448,8 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"download_url":           downloadURL,
 			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
 			"client_encrypted":       file.ClientEncrypted,
+			"scan_status":            file.ScanStatus,
+			"download_available":     !gate.blocked,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -310,6 +310,8 @@ func TestLoad_InvalidNumericValues(t *testing.T) {
 		{"zero max expiration", "MAX_EXPIRATION_HOURS", "0", "MAX_EXPIRATION_HOURS must be positive"},
 		{"negative cleanup interval", "CLEANUP_INTERVAL_MINUTES", "-1", "CLEANUP_INTERVAL_MINUTES must be positive"},
 		{"zero cleanup interval", "CLEANUP_INTERVAL_MINUTES", "0", "CLEANUP_INTERVAL_MINUTES must be positive"},
+		{"zero clamav timeout", "CLAMAV_TIMEOUT", "0", "CLAMAV_TIMEOUT must be positive"},
+		{"negative clamav scan timeout", "CLAMAV_SCAN_TIMEOUT", "-5", "CLAMAV_SCAN_TIMEOUT must be positive"},
 		{"negative upload rate limit", "RATE_LIMIT_UPLOAD", "-1", "RATE_LIMIT_UPLOAD must be positive"},
 		{"zero upload rate limit", "RATE_LIMIT_UPLOAD", "0", "RATE_LIMIT_UPLOAD must be positive"},
 		{"negative download rate limit", "RATE_LIMIT_DOWNLOAD", "-1", "RATE_LIMIT_DOWNLOAD must be positive"},

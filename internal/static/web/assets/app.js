@@ -113,7 +113,9 @@
         max_file_size: 104857600, // Default 100MB
         chunked_upload_enabled: false,
         chunked_upload_threshold: 104857600, // Default 100MB
-        chunk_size: 5242880 // Default 5MB
+        chunk_size: 5242880, // Default 5MB
+        malware_scan_enabled: false,
+        unscannable_uploads_rejected: false
     };
 
     // Note: Toast notification system is now loaded from toast.js
@@ -131,6 +133,9 @@
         checkForCompletedUploads(); // Check for saved completions to recover
         setupBeforeUnloadProtection(); // Prevent navigation during upload
         clearLegacyDownloadProgress(); // Remove download_* keys from the removed cross-refresh resume feature
+        if (typeof ChunkedUploader !== 'undefined') {
+            ChunkedUploader.scrubSavedPasswords(); // Older versions stored upload passwords in plaintext
+        }
 
         // Handle file received via Web Share Target API
         await handleShareTarget();
@@ -260,6 +265,15 @@
         if (!e2eGroup || !e2eToggle) return;
 
         if (window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported()) {
+            // ADR-015: when the server rejects uploads it can't scan,
+            // end-to-end encrypted content (opaque ciphertext to the server)
+            // is one of those cases — hide the toggle entirely rather than
+            // let someone enable it and then hit UNSCANNABLE_UPLOAD.
+            if (serverConfig.unscannable_uploads_rejected) {
+                e2eGroup.classList.add('hidden');
+                return;
+            }
+
             e2eGroup.classList.remove('hidden');
 
             // Show size warning + sub-option when toggle is enabled
@@ -1067,8 +1081,18 @@
                 if (e.lengthComputable) {
                     const percent = (e.loaded / e.total) * 100;
                     progressFill.style.width = percent + '%';
-                    progressText.textContent = `Uploading... ${Math.round(percent)}%`;
                     updateUploadStats(e.loaded, e.total);
+                    if (percent >= 100) {
+                        // ADR-015: the body is fully sent, but the server still
+                        // has to scan, encrypt, and store the file before it
+                        // responds — say so instead of sitting at "100%" with
+                        // no explanation for what can be several more seconds.
+                        progressText.textContent = serverConfig.malware_scan_enabled
+                            ? 'Scanning for malware...'
+                            : 'Finishing upload...';
+                    } else {
+                        progressText.textContent = `Uploading... ${Math.round(percent)}%`;
+                    }
                 }
             });
 
@@ -1083,8 +1107,15 @@
                     const error = JSON.parse(xhr.responseText);
                     // Show user-friendly error message
                     let errorMsg = error.error || 'Upload failed';
+                    // ADR-015 error codes get a clearer, purpose-specific message.
                     if (error.code === 'BLOCKED_EXTENSION') {
                         showToast(`Security Alert: ${error.error}. Blocked file types include executables and scripts.`, 'error', 5000);
+                    } else if (error.code === 'MALWARE_DETECTED') {
+                        showToast(`Upload rejected: ${error.error}`, 'error', 6000);
+                    } else if (error.code === 'SCAN_UNAVAILABLE') {
+                        showToast('Malware scanning is temporarily unavailable. Please try again shortly.', 'error', 5000);
+                    } else if (error.code === 'UNSCANNABLE_UPLOAD') {
+                        showToast('This file cannot be scanned for malware (end-to-end encrypted or too large) and this server requires all uploads to be scanned.', 'error', 6000);
                     } else {
                         showToast(errorMsg, 'error', 4000);
                     }
@@ -1163,9 +1194,17 @@
             uploader.on('error', (data) => {
                 console.error('Chunked upload error:', data);
 
-                // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
+                // ADR-015: a machine-readable error_code from the assembly
+                // worker gets a clear, purpose-specific message ahead of the
+                // generic fallbacks below.
                 let errorMessage;
-                if (data.error && data.error.includes('Failed to fetch')) {
+                if (data.code === 'MALWARE_DETECTED') {
+                    // Server message already reads "Upload rejected: malware detected (…)"
+                    errorMessage = data.error;
+                } else if (data.code === 'SCAN_UNAVAILABLE') {
+                    errorMessage = 'Malware scanning is temporarily unavailable. Please try again shortly.';
+                } else if (data.error && data.error.includes('Failed to fetch')) {
+                    // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
                     errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
                 } else {
                     errorMessage = `Upload failed at ${data.stage}: ${data.error}`;
@@ -1191,7 +1230,11 @@
             // Register assembling event (when file assembly starts)
             uploader.on('assembling', (data) => {
                 console.log('File assembly started:', data);
-                progressText.textContent = 'Assembling file... This may take a moment for large files.';
+                // ADR-015: assembly now includes a synchronous malware scan
+                // before the file is stored.
+                progressText.textContent = serverConfig.malware_scan_enabled
+                    ? 'Processing and scanning file... This may take a moment for large files.'
+                    : 'Assembling file... This may take a moment for large files.';
                 // Keep progress bar at 100% (chunks are uploaded)
                 progressFill.style.width = '100%';
             });
@@ -1200,11 +1243,12 @@
             uploader.on('assembling_progress', (data) => {
                 console.log('Assembly progress:', data);
                 // Update UI with polling status
+                const verb = serverConfig.malware_scan_enabled ? 'Processing and scanning' : 'Assembling file';
                 const elapsed = Math.round((data.attempts * 2) / 60); // Rough estimate in minutes
                 if (elapsed > 0) {
-                    progressText.textContent = `Assembling file... (~${elapsed} min elapsed)`;
+                    progressText.textContent = `${verb}... (~${elapsed} min elapsed)`;
                 } else {
-                    progressText.textContent = 'Assembling file... Please wait.';
+                    progressText.textContent = `${verb}... Please wait.`;
                 }
             });
 
@@ -1221,8 +1265,10 @@
             console.log('Chunked upload successful:', result);
 
         } catch (error) {
-            // Don't show error toast (or log an error) for user-initiated cancellation
-            if (error.message !== 'Upload cancelled') {
+            // Don't show error toast (or log an error) for user-initiated
+            // cancellation, or for a failure the uploader's 'error' event
+            // already reported (it's marked error.reported).
+            if (error.message !== 'Upload cancelled' && !error.reported) {
                 console.error('Chunked upload error:', error);
                 // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
                 let errorMessage;

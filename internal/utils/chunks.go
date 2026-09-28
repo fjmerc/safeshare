@@ -4,16 +4,28 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 )
+
+// ErrChunkMissing is returned (wrapped) by chunkSequenceReader.Read when a
+// chunk file cannot be opened — missing, permissions, or otherwise
+// unreadable. Distinct from a generic I/O error so callers (in particular
+// the ADR-015 malware-scan retry loop) can tell "the source data is gone"
+// apart from "the downstream scanner is having trouble," which call for
+// different responses: the former is never worth retrying and is never a
+// candidate for MALWARE_SCAN_ALLOW_UNVERIFIED.
+var ErrChunkMissing = errors.New("chunk missing or unreadable")
 
 const (
 	// chunkBufferSize is the buffer size for chunk assembly (20MB)
@@ -55,28 +67,65 @@ func GetUploadChunksDir(uploadDir, uploadID string) string {
 
 // GetChunkPath returns the file path for a specific chunk
 func GetChunkPath(uploadDir, uploadID string, chunkNumber int) string {
-	return filepath.Join(GetUploadChunksDir(uploadDir, uploadID), fmt.Sprintf("chunk_%d", chunkNumber))
+	return filepath.Join(GetUploadChunksDir(uploadDir, uploadID), fmt.Sprintf("%s%d", chunkFilePrefix, chunkNumber))
 }
 
-// SaveChunk saves a chunk to disk
+// chunkFilePrefix is the name prefix of a stored chunk ("chunk_<N>").
+const chunkFilePrefix = "chunk_"
+
+// parseChunkFileName returns the chunk number for a stored chunk file name.
+// Only exact "chunk_<digits>" names match, so in-progress temp files are
+// never counted or assembled as chunks.
+func parseChunkFileName(name string) (int, bool) {
+	digits, ok := strings.CutPrefix(name, chunkFilePrefix)
+	if !ok || digits == "" {
+		return 0, false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// SaveChunk saves a chunk to disk atomically: the data goes to a temp file in
+// the same directory that is renamed over the final path only once fully
+// written. A failed or interrupted write (ENOSPC, crash, client retry racing
+// the original request) therefore never leaves a truncated chunk_N behind,
+// which used to make every retry of that chunk fail with CHUNK_CORRUPTION.
 func SaveChunk(uploadDir, uploadID string, chunkNumber int, data []byte) error {
 	// Create chunks directory if it doesn't exist
 	chunksDir := GetUploadChunksDir(uploadDir, uploadID)
-	if err := os.MkdirAll(chunksDir, 0755); err != nil {
+	if err := os.MkdirAll(chunksDir, 0700); err != nil {
 		return fmt.Errorf("failed to create chunks directory: %w", err)
 	}
 
-	// Open chunk file (avoid os.WriteFile to prevent implicit sync)
+	// Temp name doesn't match parseChunkFileName, so it's invisible to counts.
+	// CreateTemp opens with 0600 (avoid os.WriteFile to prevent implicit sync).
 	chunkPath := GetChunkPath(uploadDir, uploadID, chunkNumber)
-	file, err := os.OpenFile(chunkPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.CreateTemp(chunksDir, fmt.Sprintf(".%s%d.tmp-*", chunkFilePrefix, chunkNumber))
 	if err != nil {
 		return fmt.Errorf("failed to create chunk file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := file.Name()
 
-	// Write chunk data
 	if _, err := file.Write(data); err != nil {
+		file.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write chunk data: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close chunk file: %w", err)
+	}
+	if err := os.Rename(tmpPath, chunkPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to finalize chunk file: %w", err)
 	}
 
 	// Intentionally NO file.Sync() - let OS flush asynchronously
@@ -245,7 +294,7 @@ func (r *chunkSequenceReader) Read(p []byte) (int, error) {
 			}
 			f, err := os.Open(GetChunkPath(r.uploadDir, r.uploadID, r.nextChunk))
 			if err != nil {
-				return 0, fmt.Errorf("failed to open chunk %d: %w", r.nextChunk, err)
+				return 0, fmt.Errorf("failed to open chunk %d: %w: %w", r.nextChunk, ErrChunkMissing, err)
 			}
 			r.current = f
 			r.nextChunk++
@@ -271,6 +320,22 @@ func (r *chunkSequenceReader) Close() error {
 		return err
 	}
 	return nil
+}
+
+// OpenChunksReader returns an io.ReadCloser that streams the chunks of a
+// partial upload, in ascending order, as one concatenated plaintext stream —
+// without assembling them into a file on disk first. Used to scan a chunked
+// upload's content synchronously (ADR-015) before assembly/encryption.
+//
+// Chunks are only read here once the upload is frozen for assembly (status
+// != "uploading" — see UploadChunkHandler), so it's safe to open them one at
+// a time without racing a concurrent chunk write.
+func OpenChunksReader(uploadDir, uploadID string, totalChunks int) io.ReadCloser {
+	return &chunkSequenceReader{
+		uploadDir:   uploadDir,
+		uploadID:    uploadID,
+		totalChunks: totalChunks,
+	}
 }
 
 // countingReader counts bytes read through it.
@@ -415,10 +480,10 @@ func GetChunkCount(uploadDir, uploadID string) (int, error) {
 		return 0, fmt.Errorf("failed to read chunks directory: %w", err)
 	}
 
-	// Count only chunk files (not directories)
+	// Count only chunk files (not directories or in-progress temp files)
 	count := 0
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if _, ok := parseChunkFileName(entry.Name()); ok && !entry.IsDir() {
 			count++
 		}
 	}
@@ -443,7 +508,7 @@ func GetUploadChunksSize(uploadDir, uploadID string) (int64, error) {
 
 	var totalSize int64
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if _, ok := parseChunkFileName(entry.Name()); ok && !entry.IsDir() {
 			info, err := entry.Info()
 			if err != nil {
 				return 0, fmt.Errorf("failed to get file info: %w", err)
@@ -537,12 +602,8 @@ func GetChunkNumbers(uploadDir, uploadID string) ([]int, error) {
 
 	var chunkNumbers []int
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			// Parse chunk number from filename (chunk_N)
-			var chunkNum int
-			if _, err := fmt.Sscanf(entry.Name(), "chunk_%d", &chunkNum); err == nil {
-				chunkNumbers = append(chunkNumbers, chunkNum)
-			}
+		if chunkNum, ok := parseChunkFileName(entry.Name()); ok && !entry.IsDir() {
+			chunkNumbers = append(chunkNumbers, chunkNum)
 		}
 	}
 
@@ -556,4 +617,20 @@ func GetChunkNumbers(uploadDir, uploadID string) ([]int, error) {
 func DetectMimeType(data []byte) string {
 	mtype := mimetype.Detect(data)
 	return mtype.String()
+}
+
+// HashFileSHA256 returns the hex SHA-256 of a file's contents, streaming it
+// rather than reading it into memory.
+func HashFileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

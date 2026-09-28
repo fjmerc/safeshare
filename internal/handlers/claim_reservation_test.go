@@ -137,8 +137,8 @@ func TestReservation_PartialRangeProbeDoesNotConsumeSlot(t *testing.T) {
 // because both must resolve to full coverage and therefore commit.
 func TestReservation_FullRangeCommits(t *testing.T) {
 	cases := []struct {
-		name    string
-		header  string
+		name   string
+		header string
 	}{
 		{"explicit-0-to-N-1", fmt.Sprintf("bytes=0-%d", 4095)},
 		{"open-ended-bytes-0-", "bytes=0-"},
@@ -199,7 +199,7 @@ func TestReservation_ClientDisconnectMidStream(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	token, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("ReserveDownload: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestReservation_ClientDisconnectMidStream(t *testing.T) {
 	}
 
 	// Fresh reservation must succeed — the slot has been released.
-	token2, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token2, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("second ReserveDownload: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestReservation_ClientDisconnectMidStream(t *testing.T) {
 
 // TestReservation_ProcessCrashRecoveredByReaper — SH-2.3.10.
 // A reservation is taken but never committed/cancelled (process crash analog).
-// Calling ReapStaleReservations with a negative TTL (which translates to
+// Calling ReapDownloadSessions with a negative lease TTL (which translates to
 // "reap everything created before now") must reap the row, decrement
 // in_flight, and free the slot.
 func TestReservation_ProcessCrashRecoveredByReaper(t *testing.T) {
@@ -240,7 +240,7 @@ func TestReservation_ProcessCrashRecoveredByReaper(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	token, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("ReserveDownload: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestReservation_ProcessCrashRecoveredByReaper(t *testing.T) {
 	}
 
 	// Another reader is locked out while the (orphaned) reservation is live.
-	pre, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	pre, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("intervening ReserveDownload: %v", err)
 	}
@@ -259,16 +259,16 @@ func TestReservation_ProcessCrashRecoveredByReaper(t *testing.T) {
 
 	// Reaper sweeps anything older than "now" — reaps the orphan immediately.
 	// Negative ttl ⇒ cutoff > now ⇒ all existing rows match.
-	n, err := repos.Files.ReapStaleReservations(ctx, -1*time.Second)
+	n, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
 	if err != nil {
-		t.Fatalf("ReapStaleReservations: %v", err)
+		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 	if n < 1 {
-		t.Fatalf("ReapStaleReservations: count = %d, want >= 1", n)
+		t.Fatalf("ReapDownloadSessions: cancelled = %d, want >= 1", n)
 	}
 
 	// Slot is now free.
-	post, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	post, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("post-reap ReserveDownload: %v", err)
 	}
@@ -294,14 +294,14 @@ func TestReservation_CommitAfterReapStillSucceeds(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	token, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("ReserveDownload: %v", err)
 	}
 
 	// Reaper runs (token row gone, in_flight decremented).
-	if _, err := repos.Files.ReapStaleReservations(ctx, -1*time.Second); err != nil {
-		t.Fatalf("ReapStaleReservations: %v", err)
+	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour); err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 
 	// Commit now — branch 2b path. No other reader has taken the slot, so it
@@ -323,7 +323,7 @@ func TestReservation_CommitIdempotent(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	token, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("ReserveDownload: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestReservation_UnlimitedDownloadsBypassesReservation(t *testing.T) {
 	}
 
 	// ReserveDownload should return the sentinel.
-	tok, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	tok, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("ReserveDownload: %v", err)
 	}
@@ -527,14 +527,14 @@ func TestReservation_LateCommitRespectsInFlight(t *testing.T) {
 	}
 
 	// (1)-(2): A reserves.
-	tokenA, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	tokenA, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || tokenA == "" || tokenA == repository.ReservationTokenUnlimited {
 		t.Fatalf("Reserve A: token=%q err=%v", tokenA, err)
 	}
 
 	// (3) Reaper sweeps A — orphan recovery scenario.
-	if _, err := repos.Files.ReapStaleReservations(ctx, -1*time.Second); err != nil {
-		t.Fatalf("ReapStaleReservations: %v", err)
+	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour); err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 
 	// (4) A's late Commit fires. Recovery branch credits dc=1.
@@ -547,7 +547,7 @@ func TestReservation_LateCommitRespectsInFlight(t *testing.T) {
 	}
 
 	// (5) B reserves — cap is dc(1) + in_flight(0) = 1, room for one more.
-	tokenB, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	tokenB, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || tokenB == "" || tokenB == repository.ReservationTokenUnlimited {
 		t.Fatalf("Reserve B: token=%q err=%v", tokenB, err)
 	}
@@ -571,16 +571,19 @@ func TestReservation_LateCommitRespectsInFlight(t *testing.T) {
 	}
 }
 
-// TestReservation_CommitFailureHoldsSlot — code-reviewer M1 regression.
-// When the explicit CommitDownload returns an error, the deferred safety-net
-// must NOT fire a Cancel. Cancelling after a failed Commit would release the
-// slot back to the cap — letting another recipient claim a max_downloads=1
-// file even though the first recipient already received the bytes.
+// TestReservation_CommitFailureHoldsSlot — code-reviewer M1 regression,
+// carried forward to ADR-014's CommitDownloadSession. When a mid-stream
+// commit attempt errors, the handler must NOT fall back to CancelDownload
+// afterwards: the request may already believe it has a live download in
+// flight, and releasing the slot would let a second recipient claim a
+// max_downloads=1 file out from under the first.
 //
-// Verified via the mock's CommitDownloadError injection: serve a download to
-// completion, force Commit to fail, then assert that a follow-up Reserve is
-// denied (slot still held until reaper TTL elapses, the intended
-// under-deliver-rather-than-over-deliver outcome).
+// Verified via the mock's CommitDownloadSessionError injection. A no-Range
+// GET is "wholeFile" under ADR-014, so sessionWriter attempts the commit on
+// the very first Write — before any bytes reach the client — which is the
+// commitAttempted path this test exercises. After the failed attempt, a
+// follow-up Reserve must still be denied (slot held for the reaper to sweep,
+// the intended under-deliver-rather-than-over-deliver outcome).
 func TestReservation_CommitFailureHoldsSlot(t *testing.T) {
 	mockRepo := mock.NewFileRepository()
 	repos := &repository.Repositories{Files: mockRepo}
@@ -611,25 +614,26 @@ func TestReservation_CommitFailureHoldsSlot(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Inject a Commit failure — the handler must log and continue, but the
-	// safety-net Cancel must NOT fire.
-	mockRepo.CommitDownloadError = errCommitInjected
+	// Inject a mid-stream commit failure — the handler must not fall back to
+	// Cancel afterwards.
+	mockRepo.CommitDownloadSessionError = errCommitInjected
 
 	req := httptest.NewRequest(http.MethodGet, "/api/claim/sh23m1", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("download: status = %d, want 200; body=%q", rr.Code, rr.Body.String())
-	}
+	// The commit failure aborts the stream before any bytes are written, so
+	// the exact status/body isn't the load-bearing assertion here — what
+	// matters is what happens to the slot afterwards.
 
-	// Clear the injection so the next Reserve isn't poisoned by it (only Commit
-	// was meant to fail).
-	mockRepo.CommitDownloadError = nil
+	// Clear the injection so the next Reserve isn't poisoned by it (only the
+	// mid-stream commit was meant to fail).
+	mockRepo.CommitDownloadSessionError = nil
 
-	// A second Reserve must be denied — the slot is still held by the orphaned
-	// reservation. If the safety-net had fired Cancel after the failed Commit,
-	// this Reserve would succeed and let an extra recipient through.
-	tok, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	// A second Reserve must be denied — the slot is still held by the
+	// uncommitted session row. If the handler had fallen back to Cancel after
+	// the failed commit, this Reserve would succeed and let an extra
+	// recipient through.
+	tok, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("second Reserve: %v", err)
 	}
@@ -649,23 +653,23 @@ func TestReservation_ReaperRespectsTTLForFreshReservations(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	token, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
 		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
 	}
 
 	// A 30-minute TTL means "reap anything older than 30 minutes". A
 	// just-inserted row is ~0 seconds old, so the reaper must leave it alone.
-	n, err := repos.Files.ReapStaleReservations(ctx, 30*time.Minute)
+	n, _, err := repos.Files.ReapDownloadSessions(ctx, 30*time.Minute, time.Hour, 24*time.Hour)
 	if err != nil {
-		t.Fatalf("ReapStaleReservations: %v", err)
+		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 	if n != 0 {
 		t.Errorf("reaper swept %d fresh reservation(s); want 0", n)
 	}
 
 	// The reservation must still be live — a second Reserve should be denied.
-	tok2, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	tok2, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil {
 		t.Fatalf("second ReserveDownload: %v", err)
 	}
@@ -677,3 +681,65 @@ func TestReservation_ReaperRespectsTTLForFreshReservations(t *testing.T) {
 // errCommitInjected is the sentinel error used by TestReservation_CommitFailureHoldsSlot
 // to inject a Commit failure into the mock repository.
 var errCommitInjected = errors.New("injected commit failure for M1 regression test")
+
+// cancelOnWriteRecorder cancels the request context on the first body write,
+// simulating a client that disconnects while the response is being streamed.
+type cancelOnWriteRecorder struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnWriteRecorder) Write(p []byte) (int, error) {
+	c.cancel()
+	return c.ResponseRecorder.Write(p)
+}
+
+// TestReservation_FinalizeSurvivesCancelledRequestContext is a regression test:
+// Commit/Cancel used the request context, which is already cancelled after a
+// client disconnect. Cancel then failed and held the slot until the reaper ran
+// (~30 min), and Commit failed so a delivered download was never counted.
+func TestReservation_FinalizeSurvivesCancelledRequestContext(t *testing.T) {
+	t.Run("aborted partial range releases the slot", func(t *testing.T) {
+		repos, handler, code, file, cleanup := setupReservationTest(t)
+		defer cleanup()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil).WithContext(ctx)
+		req.Header.Set("Range", "bytes=0-99")
+		rr := &cancelOnWriteRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+		handler.ServeHTTP(rr, req)
+
+		got, _ := repos.Files.GetByID(context.Background(), file.ID)
+		if got.DownloadCount != 0 {
+			t.Errorf("download_count = %d, want 0", got.DownloadCount)
+		}
+
+		// The slot must be free straight away, not after the reaper TTL.
+		fullReq := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil)
+		fullRR := httptest.NewRecorder()
+		handler.ServeHTTP(fullRR, fullReq)
+		if fullRR.Code != http.StatusOK {
+			t.Fatalf("follow-up full download: got status %d, want 200 (slot leaked)", fullRR.Code)
+		}
+	})
+
+	t.Run("delivered download is counted after disconnect", func(t *testing.T) {
+		repos, handler, code, file, cleanup := setupReservationTest(t)
+		defer cleanup()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil).WithContext(ctx)
+		rr := &cancelOnWriteRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+		handler.ServeHTTP(rr, req)
+
+		if rr.Body.Len() != int(file.FileSize) {
+			t.Fatalf("delivered %d bytes, want %d", rr.Body.Len(), file.FileSize)
+		}
+		got, _ := repos.Files.GetByID(context.Background(), file.ID)
+		if got.DownloadCount != 1 {
+			t.Errorf("download_count = %d, want 1 (commit lost to cancelled context)", got.DownloadCount)
+		}
+	})
+}

@@ -4,7 +4,9 @@ package postgres
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -35,8 +37,8 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at
 	`
 
@@ -48,6 +50,18 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 	var sha256Hash *string
 	if file.SHA256Hash != "" {
 		sha256Hash = &file.SHA256Hash
+	}
+
+	// ADR-015: the synchronous scan verdict is known before the record is
+	// ever created, so it's persisted at insert time rather than via a later
+	// UpdateScanStatus call. nil leaves the columns NULL (scanning disabled,
+	// or a legacy caller that doesn't set them).
+	var scanStatus, scanResult *string
+	if file.ScanStatus != "" {
+		scanStatus = &file.ScanStatus
+	}
+	if file.ScanResult != "" {
+		scanResult = &file.ScanResult
 	}
 
 	err := r.pool.QueryRow(
@@ -66,6 +80,9 @@ func (r *FileRepository) Create(ctx context.Context, file *models.File) error {
 		sha256Hash,
 		file.ClientEncrypted,
 		nullableBytea(file.EncFileID),
+		scanStatus,
+		scanResult,
+		file.ScannedAt,
 	).Scan(&file.ID, &file.CreatedAt)
 
 	if err != nil {
@@ -89,12 +106,16 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 
 		// Check quota within transaction
 		var currentUsage int64
+		// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+		// are already inserted with file_size=0, but exclude them explicitly
+		// too, so a future insert bug can't silently reintroduce quota inflation.
 		query := `
 			SELECT
 				COALESCE(SUM(file_size), 0) +
 				COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
 			FROM files
 			WHERE expires_at > NOW()
+			AND (scan_status IS NULL OR scan_status != 'infected')
 		`
 		if err := tx.QueryRow(ctx, query).Scan(&currentUsage); err != nil {
 			return fmt.Errorf("failed to get current usage: %w", err)
@@ -110,8 +131,8 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			INSERT INTO files (
 				claim_code, original_filename, stored_filename, file_size,
 				mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-				client_encrypted, enc_file_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				client_encrypted, enc_file_id, scan_status, scan_result, scanned_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			RETURNING id, created_at
 		`
 
@@ -123,6 +144,16 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 		var sha256Hash *string
 		if file.SHA256Hash != "" {
 			sha256Hash = &file.SHA256Hash
+		}
+
+		// ADR-015: see Create's comment above — the scan verdict is known
+		// before the record is created.
+		var scanStatus, scanResult *string
+		if file.ScanStatus != "" {
+			scanStatus = &file.ScanStatus
+		}
+		if file.ScanResult != "" {
+			scanResult = &file.ScanResult
 		}
 
 		err = tx.QueryRow(
@@ -141,6 +172,9 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 			sha256Hash,
 			file.ClientEncrypted,
 			nullableBytea(file.EncFileID),
+			scanStatus,
+			scanResult,
+			file.ScannedAt,
 		).Scan(&file.ID, &file.CreatedAt)
 
 		if err != nil {
@@ -165,7 +199,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id, uncounted_bytes
 		FROM files
 		WHERE id = $1
 	`
@@ -201,6 +235,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&scannedAt,
 		&file.ClientEncrypted,
 		&encFileID,
+		&file.UncountedBytes,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -242,7 +277,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id, uncounted_bytes
 		FROM files
 		WHERE claim_code = $1 AND expires_at > NOW()
 	`
@@ -278,6 +313,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 		&scannedAt,
 		&file.ClientEncrypted,
 		&encFileID,
+		&file.UncountedBytes,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -390,45 +426,64 @@ func (r *FileRepository) TryIncrementDownloadWithLimit(ctx context.Context, id i
 	return true, nil // Success
 }
 
-// newReservationToken returns 16 random bytes hex-encoded (32 ASCII chars).
-func newReservationToken() (string, error) {
-	var buf [16]byte
+// newDownloadSessionToken generates a 32-byte crypto/rand bearer token,
+// base64url-encoded (43 ASCII chars, no padding) for the X-Download-Session
+// header, plus the hex-encoded SHA-256 hash under which it is stored and
+// looked up. Only the hash ever touches the database — see the SQLite
+// counterpart for the full rationale.
+func newDownloadSessionToken() (token, hash string, err error) {
+	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("failed to generate reservation token: %w", err)
+		return "", "", fmt.Errorf("failed to generate download session token: %w", err)
 	}
-	return hex.EncodeToString(buf[:]), nil
+	token = base64.RawURLEncoding.EncodeToString(buf[:])
+	return token, hashDownloadSessionToken(token), nil
 }
 
-// ReserveDownload atomically increments in_flight_reservations and inserts a reservation row.
-// See ADR-012 for the semantics; the guard is `download_count + in_flight_reservations < max_downloads`.
+// hashDownloadSessionToken returns the hex-encoded SHA-256 hash used as the
+// download_sessions primary key.
+func hashDownloadSessionToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// ReserveDownload atomically increments in_flight_reservations and inserts an
+// UNCOMMITTED download_sessions row, atomically charging that session's
+// probe-threshold allowance against files.uncounted_bytes in the same
+// transaction. See ADR-014 (amending ADR-012); the guard is
+// `download_count + in_flight_reservations < max_downloads`.
 //
 // Wrapped in withRetry because the transaction uses Serializable isolation; under
 // concurrent claims on a small cap, Postgres will reject one of two racers with
 // serialization_failure (40001) at commit. We re-try with a fresh token on each
 // attempt — the rollback guarantees the previous INSERT did not persist.
-func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, error) {
-	// Fast path: files with no cap don't need a row in download_reservations.
+func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expectedClaimCode string) (string, int64, error) {
+	// Fast path: files with no cap don't need a row in download_sessions.
 	// Outside the retry loop — max_downloads doesn't move under us in any race we care about.
 	var maxDL sql.NullInt64
 	if err := r.pool.QueryRow(ctx, `SELECT max_downloads FROM files WHERE id = $1 AND claim_code = $2`, fileID, expectedClaimCode).Scan(&maxDL); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", repository.ErrClaimCodeChanged
+			return "", 0, repository.ErrClaimCodeChanged
 		}
-		return "", fmt.Errorf("failed to read file metadata for reservation: %w", err)
+		return "", 0, fmt.Errorf("failed to read file metadata for reservation: %w", err)
 	}
 	if !maxDL.Valid || maxDL.Int64 == 0 {
-		return repository.ReservationTokenUnlimited, nil
+		return repository.ReservationTokenUnlimited, 0, nil
 	}
 
-	return withRetry(ctx, 3, func() (string, error) {
-		token, err := newReservationToken()
+	type reserveResult struct {
+		token   string
+		granted int64
+	}
+	result, err := withRetry(ctx, 3, func() (reserveResult, error) {
+		token, hash, err := newDownloadSessionToken()
 		if err != nil {
-			return "", err
+			return reserveResult{}, err
 		}
 
 		tx, err := r.pool.BeginTx(ctx, TxOptions())
 		if err != nil {
-			return "", fmt.Errorf("failed to begin reserve transaction: %w", err)
+			return reserveResult{}, fmt.Errorf("failed to begin reserve transaction: %w", err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
@@ -441,41 +496,329 @@ func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expe
 		`
 		res, err := tx.Exec(ctx, updateQuery, fileID, expectedClaimCode)
 		if err != nil {
-			return "", fmt.Errorf("failed to reserve download slot: %w", err)
+			return reserveResult{}, fmt.Errorf("failed to reserve download slot: %w", err)
 		}
 		if res.RowsAffected() == 0 {
 			var exists bool
 			if err := tx.QueryRow(ctx, `SELECT TRUE FROM files WHERE id = $1 AND claim_code = $2`, fileID, expectedClaimCode).Scan(&exists); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
-					return "", repository.ErrClaimCodeChanged
+					return reserveResult{}, repository.ErrClaimCodeChanged
 				}
-				return "", fmt.Errorf("failed to disambiguate reservation failure: %w", err)
+				return reserveResult{}, fmt.Errorf("failed to disambiguate reservation failure: %w", err)
 			}
-			return "", nil
+			return reserveResult{}, nil
 		}
 
-		if _, err := tx.Exec(ctx, `INSERT INTO download_reservations (token, file_id) VALUES ($1, $2)`, token, fileID); err != nil {
-			return "", fmt.Errorf("failed to insert reservation row: %w", err)
+		// Compute and charge this session's probe-threshold allowance from a
+		// FRESH read of file_size/uncounted_bytes taken inside this
+		// Serializable transaction — not from a snapshot the caller may have
+		// read before this call — so concurrent reservations on the same
+		// file can't each be granted a full allowance before any of them
+		// charges the shared budget (bug-hunter finding).
+		var fileSize, uncountedBytes int64
+		if err := tx.QueryRow(ctx, `SELECT file_size, uncounted_bytes FROM files WHERE id = $1`, fileID).Scan(&fileSize, &uncountedBytes); err != nil {
+			return reserveResult{}, fmt.Errorf("failed to read file size for probe grant: %w", err)
+		}
+		threshold := repository.ProbeThreshold(fileSize)
+		remaining := repository.ProbeBudget(threshold) - uncountedBytes
+		if remaining < 0 {
+			remaining = 0
+		}
+		granted := threshold
+		if granted > remaining {
+			granted = remaining
+		}
+		if granted > 0 {
+			if _, err := tx.Exec(ctx, `UPDATE files SET uncounted_bytes = uncounted_bytes + $1 WHERE id = $2`, granted, fileID); err != nil {
+				return reserveResult{}, fmt.Errorf("failed to charge probe grant: %w", err)
+			}
+		}
+
+		if _, err := tx.Exec(ctx, `INSERT INTO download_sessions (token_hash, file_id, probe_bytes_granted) VALUES ($1, $2, $3)`, hash, fileID, granted); err != nil {
+			return reserveResult{}, fmt.Errorf("failed to insert download session row: %w", err)
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			return "", fmt.Errorf("failed to commit reservation: %w", err)
+			return reserveResult{}, fmt.Errorf("failed to commit reservation: %w", err)
 		}
-		return token, nil
+		return reserveResult{token: token, granted: granted}, nil
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return result.token, result.granted, nil
+}
+
+// ReserveSessionBytes implements repository.FileRepository.ReserveSessionBytes.
+func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64) (bool, error) {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return false, nil
+	}
+	hash := hashDownloadSessionToken(token)
+
+	res, err := r.pool.Exec(ctx, `
+		UPDATE download_sessions
+		SET bytes_reserved = bytes_reserved + $1, last_seen_at = NOW()
+		WHERE token_hash = $2 AND file_id = $3 AND completed_at IS NULL AND bytes_reserved + $1 <= $4
+	`, length, hash, fileID, limit)
+	if err != nil {
+		return false, fmt.Errorf("failed to reserve session bytes: %w", err)
+	}
+	return res.RowsAffected() == 1, nil
+}
+
+// ReleaseSessionBytes implements repository.FileRepository.ReleaseSessionBytes.
+func (r *FileRepository) ReleaseSessionBytes(ctx context.Context, fileID int64, token string, amount int64) error {
+	if token == "" || token == repository.ReservationTokenUnlimited || amount <= 0 {
+		return nil
+	}
+	hash := hashDownloadSessionToken(token)
+	_, err := r.pool.Exec(ctx, `
+		UPDATE download_sessions
+		SET bytes_reserved = GREATEST(bytes_reserved - $1, 0)
+		WHERE token_hash = $2 AND file_id = $3
+	`, amount, hash, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to release session bytes: %w", err)
+	}
+	return nil
+}
+
+// LookupDownloadSession implements repository.FileRepository.LookupDownloadSession.
+func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge time.Duration) (*repository.DownloadSession, error) {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil, nil
+	}
+	hash := hashDownloadSessionToken(token)
+
+	var (
+		createdAt, lastSeenAt      time.Time
+		committedAt, completedAt   sql.NullTime
+		bytesServed, bytesReserved int64
+	)
+	err := r.pool.QueryRow(ctx, `
+		SELECT created_at, last_seen_at, committed_at, completed_at, bytes_served, bytes_reserved
+		FROM download_sessions
+		WHERE token_hash = $1 AND file_id = $2
+	`, hash, fileID).Scan(&createdAt, &lastSeenAt, &committedAt, &completedAt, &bytesServed, &bytesReserved)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up download session: %w", err)
+	}
+
+	// A completed session has already delivered the whole file once; letting
+	// it resolve here would let its token be replayed indefinitely (bounded
+	// only by idleTTL/maxAge, up to SessionMaxAge) to redeliver the file to
+	// anyone holding the token (bug-hunter finding — HIGH). Treat it exactly
+	// like "not found": the caller falls back to ReserveDownload, which
+	// re-applies the max_downloads guard.
+	if completedAt.Valid {
+		return nil, nil
+	}
+
+	// A foreign/expired token gets no oracle: treat it exactly like "not
+	// found" so the caller falls back to a fresh, tokenless download.
+	//
+	// This cutoff check is deliberately Go-side (unlike ReapDownloadSessions'
+	// DB-side NOW() - interval cutoffs): worst case under application/DB
+	// clock skew is that a borderline-fresh token is rejected a little early
+	// or a little late, which just falls back to (or delays falling back to)
+	// a fresh reservation — it can never let a session be double-counted or
+	// push download_count past max_downloads, so the skew risk that matters
+	// for the reaper's cutoffs (bug-hunter M4) doesn't apply here.
+	now := time.Now()
+	if maxAge > 0 && now.Sub(createdAt) > maxAge {
+		return nil, nil
+	}
+	if idleTTL > 0 && now.Sub(lastSeenAt) > idleTTL {
+		return nil, nil
+	}
+
+	return &repository.DownloadSession{
+		FileID:        fileID,
+		Committed:     committedAt.Valid,
+		Completed:     completedAt.Valid,
+		BytesServed:   bytesServed,
+		BytesReserved: bytesReserved,
+		CreatedAt:     createdAt,
+		LastSeenAt:    lastSeenAt,
+	}, nil
+}
+
+// CommitDownloadSession implements repository.FileRepository.CommitDownloadSession.
+// See ADR-014 for the three-outcome semantics.
+//
+// Wrapped in withRetry so a serialization_failure under contention is retried
+// rather than bubbling up as a 500 to a client whose download already committed.
+func (r *FileRepository) CommitDownloadSession(ctx context.Context, fileID int64, token string) (repository.DownloadCommitResult, error) {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return repository.DownloadCommitAlreadyCommitted, nil
+	}
+	hash := hashDownloadSessionToken(token)
+
+	return withRetry(ctx, 3, func() (repository.DownloadCommitResult, error) {
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return 0, fmt.Errorf("failed to begin commit-session transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		res, err := tx.Exec(ctx, `
+			UPDATE download_sessions
+			SET committed_at = NOW(), last_seen_at = NOW()
+			WHERE token_hash = $1 AND file_id = $2 AND committed_at IS NULL
+		`, hash, fileID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to mark download session committed: %w", err)
+		}
+
+		if res.RowsAffected() == 1 {
+			// Refund this session's entire probe grant — it's a real,
+			// credited download now, not an uncounted probe (the UPDATE
+			// above didn't touch probe_bytes_granted).
+			var granted int64
+			if err := tx.QueryRow(ctx, `SELECT probe_bytes_granted FROM download_sessions WHERE token_hash = $1 AND file_id = $2`, hash, fileID).Scan(&granted); err != nil {
+				return 0, fmt.Errorf("failed to read probe grant for refund: %w", err)
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE files
+				SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0),
+				    download_count          = download_count + 1,
+				    uncounted_bytes         = GREATEST(uncounted_bytes - $1, 0)
+				WHERE id = $2
+			`, granted, fileID); err != nil {
+				return 0, fmt.Errorf("failed to finalise download-session counters: %w", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return 0, fmt.Errorf("failed to commit download-session finalisation: %w", err)
+			}
+			return repository.DownloadCommitCredited, nil
+		}
+
+		// Either already committed, or the row is gone entirely (reaped mid-stream).
+		var exists bool
+		err = tx.QueryRow(ctx, `SELECT TRUE FROM download_sessions WHERE token_hash = $1 AND file_id = $2`, hash, fileID).Scan(&exists)
+		switch {
+		case err == nil:
+			if cErr := tx.Commit(ctx); cErr != nil {
+				return 0, fmt.Errorf("failed to commit no-op session commit: %w", cErr)
+			}
+			return repository.DownloadCommitAlreadyCommitted, nil
+		case errors.Is(err, pgx.ErrNoRows):
+			// Reaped-mid-stream recovery: try to atomically take a slot now.
+			// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
+			// Using `download_count < max_downloads` alone would let a late-committing
+			// session jump past a still-live reservation and over-count past the cap
+			// (bug-hunter C1: same-token replay or retry-race could double-credit).
+			recover, err := tx.Exec(ctx, `
+				UPDATE files
+				SET download_count = download_count + 1
+				WHERE id = $1
+				  AND (max_downloads IS NULL OR max_downloads = 0
+				       OR (download_count + in_flight_reservations) < max_downloads)
+			`, fileID)
+			if err != nil {
+				return 0, fmt.Errorf("failed reaped-recovery increment: %w", err)
+			}
+			if recover.RowsAffected() == 0 {
+				slog.Warn("download session committed after reaper cancelled it; cap already taken by another reader — not counting",
+					"file_id", fileID,
+				)
+				if cErr := tx.Commit(ctx); cErr != nil {
+					return 0, fmt.Errorf("failed to commit slot-lost no-op: %w", cErr)
+				}
+				return repository.DownloadCommitSlotLost, nil
+			}
+			// Re-insert a committed row under the same hash so a later
+			// CompleteDownloadSession call can still find it.
+			// probe_bytes_granted defaults to 0: the original row's grant
+			// was already refunded by whatever swept it (ReapDownloadSessions'
+			// phase 1 refunds probe_bytes_granted - bytes_served as it
+			// deletes the row), so refunding again here would over-credit
+			// the file's uncounted-bytes budget.
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO download_sessions (token_hash, file_id, committed_at, last_seen_at)
+				VALUES ($1, $2, NOW(), NOW())
+			`, hash, fileID); err != nil {
+				return 0, fmt.Errorf("failed to re-insert recovered download session: %w", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return 0, fmt.Errorf("failed to commit reaped-recovery: %w", err)
+			}
+			return repository.DownloadCommitCredited, nil
+		default:
+			return 0, fmt.Errorf("failed to disambiguate commit-session failure: %w", err)
+		}
 	})
 }
 
-// CommitDownload finalises a reservation. See ADR-012 §4 for the two-branch semantics.
-//
-// Wrapped in withRetryNoReturn so a serialization_failure under contention is
-// retried rather than bubbling up as a 500 to the user whose download already
-// completed.
+// TouchDownloadSession implements repository.FileRepository.TouchDownloadSession.
+func (r *FileRepository) TouchDownloadSession(ctx context.Context, fileID int64, token string, bytesDelta int64) error {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return nil
+	}
+	hash := hashDownloadSessionToken(token)
+	_, err := r.pool.Exec(ctx, `
+		UPDATE download_sessions
+		SET last_seen_at = NOW(), bytes_served = bytes_served + $1
+		WHERE token_hash = $2 AND file_id = $3
+	`, bytesDelta, hash, fileID)
+	if err != nil {
+		return fmt.Errorf("failed to touch download session: %w", err)
+	}
+	return nil
+}
+
+// CompleteDownloadSession implements repository.FileRepository.CompleteDownloadSession.
+func (r *FileRepository) CompleteDownloadSession(ctx context.Context, fileID int64, token string) (bool, error) {
+	if token == "" || token == repository.ReservationTokenUnlimited {
+		return false, nil
+	}
+	hash := hashDownloadSessionToken(token)
+
+	return withRetry(ctx, 3, func() (bool, error) {
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return false, fmt.Errorf("failed to begin complete-session transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		res, err := tx.Exec(ctx, `
+			UPDATE download_sessions
+			SET completed_at = NOW()
+			WHERE token_hash = $1 AND file_id = $2 AND committed_at IS NOT NULL AND completed_at IS NULL
+		`, hash, fileID)
+		if err != nil {
+			return false, fmt.Errorf("failed to mark download session complete: %w", err)
+		}
+		if res.RowsAffected() != 1 {
+			if err := tx.Commit(ctx); err != nil {
+				return false, fmt.Errorf("failed to commit no-op session completion: %w", err)
+			}
+			return false, nil
+		}
+
+		if _, err := tx.Exec(ctx, `UPDATE files SET completed_downloads = completed_downloads + 1 WHERE id = $1`, fileID); err != nil {
+			return false, fmt.Errorf("failed to increment completed_downloads: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("failed to commit session completion: %w", err)
+		}
+		return true, nil
+	})
+}
+
+// CommitDownload finalises a reservation/session and credits both
+// download_count and completed_downloads in one call. See the interface doc
+// for why this exists alongside CommitDownloadSession/CompleteDownloadSession.
 func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token string) error {
 	if token == "" {
 		return nil
 	}
 	if token == repository.ReservationTokenUnlimited {
-		// No reservation row to delete; just credit the counters. Single-statement
+		// No session row to update; just credit the counters. Single-statement
 		// UPDATE; no serialization-failure risk — no retry needed.
 		_, err := r.pool.Exec(ctx, `
 			UPDATE files
@@ -489,65 +832,26 @@ func (r *FileRepository) CommitDownload(ctx context.Context, fileID int64, token
 		return nil
 	}
 
-	return withRetryNoReturn(ctx, 3, func() error {
-		tx, err := r.pool.BeginTx(ctx, TxOptions())
-		if err != nil {
-			return fmt.Errorf("failed to begin commit transaction: %w", err)
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		res, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE token = $1 AND file_id = $2`, token, fileID)
-		if err != nil {
-			return fmt.Errorf("failed to delete reservation: %w", err)
-		}
-
-		if res.RowsAffected() == 1 {
-			_, err := tx.Exec(ctx, `
-				UPDATE files
-				SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0),
-				    download_count          = download_count + 1,
-				    completed_downloads     = completed_downloads + 1
-				WHERE id = $1
-			`, fileID)
-			if err != nil {
-				return fmt.Errorf("failed to finalise download counters: %w", err)
-			}
-		} else {
-			// Reaped-mid-stream recovery: try to atomically take a slot now.
-			// Guard MUST match ReserveDownload: (download_count + in_flight) < max_downloads.
-			// Using `download_count < max_downloads` alone would let a late-committing
-			// reservation jump past a still-live reservation and over-count past the cap
-			// (bug-hunter C1: same-token replay or retry-race could double-credit).
-			res, err := tx.Exec(ctx, `
-				UPDATE files
-				SET download_count      = download_count + 1,
-				    completed_downloads = completed_downloads + 1
-				WHERE id = $1
-				  AND (max_downloads IS NULL OR max_downloads = 0
-				       OR (download_count + in_flight_reservations) < max_downloads)
-			`, fileID)
-			if err != nil {
-				return fmt.Errorf("failed reaped-recovery increment: %w", err)
-			}
-			if res.RowsAffected() == 0 {
-				slog.Warn("download committed after reaper deleted reservation; cap already taken by another reader — not counting",
-					"file_id", fileID,
-				)
-			}
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("failed to commit download finalisation: %w", err)
-		}
+	result, err := r.CommitDownloadSession(ctx, fileID, token)
+	if err != nil {
+		return err
+	}
+	if result == repository.DownloadCommitSlotLost {
 		return nil
-	})
+	}
+	if _, err := r.CompleteDownloadSession(ctx, fileID, token); err != nil {
+		return err
+	}
+	return nil
 }
 
-// CancelDownload releases a reservation without crediting a download.
+// CancelDownload releases an uncommitted download session without crediting a
+// download. A no-op if the row is missing or already committed.
 func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token string) error {
 	if token == "" || token == repository.ReservationTokenUnlimited {
 		return nil
 	}
+	hash := hashDownloadSessionToken(token)
 
 	return withRetryNoReturn(ctx, 3, func() error {
 		tx, err := r.pool.BeginTx(ctx, TxOptions())
@@ -556,19 +860,37 @@ func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		res, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE token = $1 AND file_id = $2`, token, fileID)
-		if err != nil {
-			return fmt.Errorf("failed to delete reservation: %w", err)
+		var bytesServed, probeGranted int64
+		err = tx.QueryRow(ctx, `
+			SELECT bytes_served, probe_bytes_granted FROM download_sessions
+			WHERE token_hash = $1 AND file_id = $2 AND committed_at IS NULL
+		`, hash, fileID).Scan(&bytesServed, &probeGranted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Missing, or already committed — nothing to cancel.
+			return tx.Commit(ctx)
 		}
-		if res.RowsAffected() == 1 {
-			_, err := tx.Exec(ctx, `
-				UPDATE files
-				SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0)
-				WHERE id = $1
-			`, fileID)
-			if err != nil {
-				return fmt.Errorf("failed to decrement in_flight: %w", err)
-			}
+		if err != nil {
+			return fmt.Errorf("failed to read download session for cancel: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx, `DELETE FROM download_sessions WHERE token_hash = $1 AND file_id = $2`, hash, fileID); err != nil {
+			return fmt.Errorf("failed to delete download session: %w", err)
+		}
+		// Refund only the unspent portion of the grant: it was charged in
+		// full at Reserve time, and bytes the session actually served stay
+		// charged against the file's probe budget even though this download
+		// itself was never credited.
+		refund := probeGranted - bytesServed
+		if refund < 0 {
+			refund = 0
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE files
+			SET in_flight_reservations = GREATEST(in_flight_reservations - 1, 0),
+			    uncounted_bytes         = GREATEST(uncounted_bytes - $1, 0)
+			WHERE id = $2
+		`, refund, fileID); err != nil {
+			return fmt.Errorf("failed to decrement in_flight / refund uncounted_bytes: %w", err)
 		}
 
 		if err := tx.Commit(ctx); err != nil {
@@ -578,96 +900,135 @@ func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token
 	})
 }
 
-// ReapStaleReservations deletes rows older than `ttl` and decrements in_flight_reservations accordingly.
-// The cutoff is `NOW() - ($1 * interval '1 second')` evaluated DB-side — see interface doc for rationale.
-func (r *FileRepository) ReapStaleReservations(ctx context.Context, ttl time.Duration) (int, error) {
-	return withRetry(ctx, 3, func() (int, error) {
-		return r.reapStaleReservationsOnce(ctx, ttl)
+// ReapDownloadSessions implements repository.FileRepository.ReapDownloadSessions.
+// See the interface doc for the two independent sweep classes. The cutoffs are
+// computed DB-side (`NOW() - ($n * interval '1 second')`) — see interface doc
+// for rationale.
+func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (int, int, error) {
+	res, err := withRetry(ctx, 3, func() (reapDownloadSessionsResult, error) {
+		return r.reapDownloadSessionsOnce(ctx, leaseTTL, idleTTL, maxAge)
 	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return res.cancelled, res.expired, nil
 }
 
-func (r *FileRepository) reapStaleReservationsOnce(ctx context.Context, ttl time.Duration) (int, error) {
-	// ttl seconds as a float so make_interval / arithmetic stays in the type Postgres
-	// expects; negative values are allowed (tests use them to mean "reap everything
-	// created before now").
-	ttlSecs := ttl.Seconds()
+// reapDownloadSessionsResult bundles ReapDownloadSessions' two counts through
+// withRetry's single generic return value.
+type reapDownloadSessionsResult struct {
+	cancelled int
+	expired   int
+}
+
+func (r *FileRepository) reapDownloadSessionsOnce(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (reapDownloadSessionsResult, error) {
+	leaseSecs := leaseTTL.Seconds()
+	idleSecs := idleTTL.Seconds()
+	maxAgeSecs := maxAge.Seconds()
 
 	tx, err := r.pool.BeginTx(ctx, TxOptions())
 	if err != nil {
-		return 0, fmt.Errorf("failed to begin reaper transaction: %w", err)
+		return reapDownloadSessionsResult{}, fmt.Errorf("failed to begin reaper transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rows, err := tx.Query(ctx, `
-		SELECT file_id, COUNT(*)
-		FROM download_reservations
-		WHERE created_at < NOW() - ($1 * interval '1 second')
-		GROUP BY file_id
-	`, ttlSecs)
-	if err != nil {
-		return 0, fmt.Errorf("failed to query stale reservations: %w", err)
+	// Resolve every cutoff to a concrete instant ONCE, inside this
+	// transaction, and bind that same value to every statement that needs
+	// it. Letting the SELECT and the DELETE below each independently
+	// evaluate NOW() - interval meant a row whose last_seen_at fell in the
+	// (real, if narrow) gap between the two statements' evaluations could be
+	// swept by the DELETE's later "now" without ever appearing in the
+	// SELECT's bucket — deleted but never refunded (bug-hunter finding).
+	var leaseCutoff, idleCutoff, maxAgeCutoff time.Time
+	if err := tx.QueryRow(ctx, `SELECT NOW() - ($1 * interval '1 second'), NOW() - ($2 * interval '1 second'), NOW() - ($3 * interval '1 second')`,
+		leaseSecs, idleSecs, maxAgeSecs).Scan(&leaseCutoff, &idleCutoff, &maxAgeCutoff); err != nil {
+		return reapDownloadSessionsResult{}, fmt.Errorf("failed to resolve reaper cutoffs: %w", err)
 	}
 
-	type counter struct {
+	// Phase 1: uncommitted rows whose lease has lapsed — treated as abandoned.
+	// Refunds in_flight and, per row, GREATEST(0, probe_bytes_granted -
+	// bytes_served) — computed per row inside SQL (not on the file's
+	// aggregated totals), so one session that over-served its own grant
+	// can't cancel out the refund genuinely owed by another session on the
+	// same file (matches the mock's already-per-row behaviour) — before
+	// deleting.
+	rows, err := tx.Query(ctx, `
+		SELECT file_id, COUNT(*), COALESCE(SUM(GREATEST(probe_bytes_granted - bytes_served, 0)), 0)
+		FROM download_sessions
+		WHERE committed_at IS NULL AND last_seen_at < $1
+		GROUP BY file_id
+	`, leaseCutoff)
+	if err != nil {
+		return reapDownloadSessionsResult{}, fmt.Errorf("failed to query abandoned download sessions: %w", err)
+	}
+
+	type bucket struct {
 		fileID int64
 		n      int
+		refund int64
 	}
-	var buckets []counter
+	var buckets []bucket
 	for rows.Next() {
-		var c counter
-		if err := rows.Scan(&c.fileID, &c.n); err != nil {
+		var b bucket
+		if err := rows.Scan(&b.fileID, &b.n, &b.refund); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("failed to scan reaper row: %w", err)
+			return reapDownloadSessionsResult{}, fmt.Errorf("failed to scan reaper row: %w", err)
 		}
-		buckets = append(buckets, c)
+		buckets = append(buckets, b)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("reaper row iteration error: %w", err)
+		return reapDownloadSessionsResult{}, fmt.Errorf("reaper row iteration error: %w", err)
 	}
 
-	if len(buckets) == 0 {
-		if err := tx.Commit(ctx); err != nil {
-			return 0, fmt.Errorf("failed to commit empty reaper tx: %w", err)
-		}
-		return 0, nil
-	}
-
-	// Delete first, then decrement. The two statements are atomic together
-	// inside this Serializable transaction — outside readers (concurrent
-	// ReserveDownload calls) see either the pre-reaper state or the
-	// post-reaper state, never an intermediate state. Doing DELETE first is
-	// belt-and-suspenders for any future refactor that might split the work.
-	delRes, err := tx.Exec(ctx, `DELETE FROM download_reservations WHERE created_at < NOW() - ($1 * interval '1 second')`, ttlSecs)
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete stale reservations: %w", err)
-	}
-	deleted := delRes.RowsAffected()
-
-	total := 0
-	for _, c := range buckets {
-		_, err := tx.Exec(ctx, `
-			UPDATE files
-			SET in_flight_reservations = GREATEST(in_flight_reservations - $1, 0)
-			WHERE id = $2
-		`, c.n, c.fileID)
+	cancelled := 0
+	if len(buckets) > 0 {
+		// Same pre-resolved leaseCutoff as the SELECT above, so this can
+		// never delete a row the SELECT didn't also see.
+		delRes, err := tx.Exec(ctx, `DELETE FROM download_sessions WHERE committed_at IS NULL AND last_seen_at < $1`, leaseCutoff)
 		if err != nil {
-			return 0, fmt.Errorf("failed to clamp in_flight for file %d: %w", c.fileID, err)
+			return reapDownloadSessionsResult{}, fmt.Errorf("failed to delete abandoned download sessions: %w", err)
 		}
-		total += c.n
+		deleted := delRes.RowsAffected()
+
+		total := 0
+		for _, b := range buckets {
+			if _, err := tx.Exec(ctx, `
+				UPDATE files
+				SET in_flight_reservations = GREATEST(in_flight_reservations - $1, 0),
+				    uncounted_bytes         = GREATEST(uncounted_bytes - $2, 0)
+				WHERE id = $3
+			`, b.n, b.refund, b.fileID); err != nil {
+				return reapDownloadSessionsResult{}, fmt.Errorf("failed to clamp in_flight for file %d: %w", b.fileID, err)
+			}
+			total += b.n
+		}
+		if int(deleted) != total {
+			slog.Warn("reaper delete/count mismatch (abandoned sessions)",
+				"deleted", deleted,
+				"counted", total,
+			)
+		}
+		cancelled = int(deleted)
 	}
+
+	// Phase 2: committed rows idle too long, or past the absolute max age.
+	// Pure record cleanup — the download was already credited at commit time,
+	// so no counter change.
+	expiredRes, err := tx.Exec(ctx, `
+		DELETE FROM download_sessions
+		WHERE committed_at IS NOT NULL
+		  AND (last_seen_at < $1 OR created_at < $2)
+	`, idleCutoff, maxAgeCutoff)
+	if err != nil {
+		return reapDownloadSessionsResult{}, fmt.Errorf("failed to delete expired committed download sessions: %w", err)
+	}
+	expiredCount := expiredRes.RowsAffected()
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("failed to commit reaper tx: %w", err)
+		return reapDownloadSessionsResult{}, fmt.Errorf("failed to commit reaper tx: %w", err)
 	}
-
-	if int(deleted) != total {
-		slog.Warn("reaper delete/count mismatch",
-			"deleted", deleted,
-			"counted", total,
-		)
-	}
-	return int(deleted), nil
+	return reapDownloadSessionsResult{cancelled: cancelled, expired: int(expiredCount)}, nil
 }
 
 // IncrementCompletedDownloads increments the completed downloads counter.
@@ -1029,12 +1390,14 @@ func (r *FileRepository) batchDeleteFiles(ctx context.Context, fileIDs []int64) 
 
 // GetTotalUsage returns the total storage used by active files and partial uploads.
 func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): see CreateWithQuotaCheck.
 	query := `
 		SELECT
 			COALESCE(SUM(file_size), 0) +
 			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
 		FROM files
 		WHERE expires_at > NOW()
+		AND (scan_status IS NULL OR scan_status != 'infected')
 	`
 
 	var totalUsage int64
@@ -1048,8 +1411,11 @@ func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
 
 // GetStats returns statistics about file storage.
 func (r *FileRepository) GetStats(ctx context.Context, uploadDir string) (*repository.FileStats, error) {
+	// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
+	// count toward the file total but never toward storageUsed — see
+	// CreateWithQuotaCheck.
 	query := `
-		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN scan_status IS NULL OR scan_status != 'infected' THEN file_size ELSE 0 END), 0)
 		FROM files
 		WHERE expires_at > NOW()
 	`

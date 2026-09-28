@@ -304,14 +304,22 @@ function formatBytes(bytes) {
 function formatScanStatus(status, result) {
     if (!status) return '<span class="badge" style="background: var(--bg-tertiary); color: var(--text-secondary);">N/A</span>';
     const styles = {
-        'pending':  'background: #f59e0b; color: #000;',
-        'clean':    'background: var(--success-color); color: #fff;',
-        'infected': 'background: var(--error-color); color: #fff;',
-        'error':    'background: #ef4444; color: #fff;',
-        'skipped':  'background: var(--bg-tertiary); color: var(--text-secondary);'
+        'pending':     'background: #f59e0b; color: #000;',
+        'clean':       'background: var(--success-color); color: #fff;',
+        'infected':    'background: var(--error-color); color: #fff;',
+        'error':       'background: #ef4444; color: #fff;',
+        'skipped':     'background: var(--bg-tertiary); color: var(--text-secondary);',
+        // ADR-015: content that was deliberately never inspected (E2E
+        // ciphertext or larger than the scan size limit) — neutral, not an
+        // error state. `result` carries the reason ("client_encrypted" /
+        // "exceeds scan size limit") as the tooltip.
+        'not_scanned': 'background: var(--bg-tertiary); color: var(--text-secondary);'
+    };
+    const labels = {
+        'not_scanned': 'Not Scanned'
     };
     const style = styles[status] || 'background: #6b7280; color: #fff;';
-    const label = escapeHtml(status.charAt(0).toUpperCase() + status.slice(1));
+    const label = escapeHtml(labels[status] || (status.charAt(0).toUpperCase() + status.slice(1)));
     const tooltip = result ? ` title="${escapeHtml(result)}"` : '';
     return `<span class="badge" style="${style}"${tooltip}>${label}</span>`;
 }

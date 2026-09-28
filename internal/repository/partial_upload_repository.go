@@ -68,8 +68,11 @@ type PartialUploadRepository interface {
 	// SetAssemblyCompleted marks assembly as completed with claim code.
 	SetAssemblyCompleted(ctx context.Context, uploadID, claimCode string) error
 
-	// SetAssemblyFailed marks assembly as failed with error message.
-	SetAssemblyFailed(ctx context.Context, uploadID, errorMessage string) error
+	// SetAssemblyFailed marks assembly as failed with an error message and an
+	// optional machine-readable error code (e.g. MALWARE_DETECTED,
+	// SCAN_UNAVAILABLE — see ADR-015). Pass "" for errorCode when there is no
+	// specific machine-readable reason; it leaves the column NULL.
+	SetAssemblyFailed(ctx context.Context, uploadID, errorMessage, errorCode string) error
 
 	// GetProcessing returns all uploads currently in "processing" status.
 	// Used by startup recovery worker to resume interrupted assemblies.
