@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- `migrate-encryption --verify`: a read-only health check of every stored file. It reports each file's storage format and flags missing files, files whose size on disk doesn't match the database, encrypted files when no key is configured, and damaged headers. `--verify-decrypt` also checks that the encryption key opens each file, and `--verify-hash` reads every file in full to confirm its content hash. Nothing is ever modified. Run it (with `--verify-hash`) before upgrading to the release that moves downloads onto the new streaming reader, which checks file sizes and hashes more strictly.
+
 ### Changed
 
 - New settings for chunked-upload assembly: `ASSEMBLY_LEASE_TTL` (default 2m — how long a stalled assembly holds an upload before another worker takes it over; active assemblies renew it), `ASSEMBLY_MAX_ATTEMPTS` (default 5) and `ASSEMBLY_SHUTDOWN_GRACE` (default 30s — how long shutdown waits for in-progress assemblies).
