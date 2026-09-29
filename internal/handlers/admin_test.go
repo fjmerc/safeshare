@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -732,6 +733,24 @@ func TestAdminGetConfigHandler_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// decodeAdminIPResponse asserts the response is JSON (Content-Type and
+// body) and decodes it into adminIPAPIResponse -- code-review follow-up
+// (T43): AdminBlockIPHandler/AdminUnblockIPHandler used to reply with
+// http.Error's plain text on failure, which the admin dashboard's
+// response.json() call couldn't parse, so every specific error message was
+// lost. Handler tests now assert the JSON contract directly.
+func decodeAdminIPResponse(t *testing.T, rr *httptest.ResponseRecorder) adminIPAPIResponse {
+	t.Helper()
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json (body=%s)", ct, rr.Body.String())
+	}
+	var resp adminIPAPIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode JSON response: %v (body=%s)", err, rr.Body.String())
+	}
+	return resp
+}
+
 func TestAdminBlockIPHandler(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cfg := testutil.SetupTestConfig(t)
@@ -744,7 +763,12 @@ func TestAdminBlockIPHandler(t *testing.T) {
 	handler := AdminBlockIPHandler(repos, cfg)
 
 	formData := url.Values{}
-	formData.Set("ip_address", "192.168.1.100")
+	// 203.0.113.0/24 (TEST-NET-3) rather than an RFC1918 address: the
+	// default TRUSTED_PROXY_IPS covers 10.0.0.0/8, 172.16.0.0/12, and
+	// 192.168.0.0/16, and blocking anything inside a trusted-proxy range is
+	// now refused (T43 self-lockout check item 3) -- this test is about the
+	// success path, not that check.
+	formData.Set("ip_address", "203.0.113.100")
 	formData.Set("reason", "Abuse detected")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
@@ -756,9 +780,13 @@ func TestAdminBlockIPHandler(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
+	resp := decodeAdminIPResponse(t, rr)
+	if !resp.Success {
+		t.Errorf("resp.Success = false, want true (message=%q)", resp.Message)
+	}
 
 	// Verify IP is blocked
-	blocked, _ := repos.Admin.IsIPBlocked(ctx, "192.168.1.100")
+	blocked, _ := repos.Admin.IsIPBlocked(ctx, "203.0.113.100")
 	if !blocked {
 		t.Error("IP should be blocked")
 	}
@@ -811,6 +839,338 @@ func TestAdminBlockIPHandler_MissingIP(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
+	resp := decodeAdminIPResponse(t, rr)
+	if resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+	if resp.Message == "" {
+		t.Error("resp.Message is empty, want a reason")
+	}
+}
+
+// TestAdminBlockIPHandler_CIDR is a T43 test: the block-IP handler accepts
+// a CIDR range, not just a bare address.
+func TestAdminBlockIPHandler_CIDR(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "203.0.113.0/24")
+	formData.Set("reason", "range abuse")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345" // unrelated admin IP -- not inside the blocked range
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	resp := decodeAdminIPResponse(t, rr)
+	if !resp.Success {
+		t.Errorf("resp.Success = false, want true (message=%q)", resp.Message)
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "203.0.113.55")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if !blocked {
+		t.Error("address inside the newly-blocked CIDR should be blocked")
+	}
+}
+
+// TestAdminBlockIPHandler_RejectsTooBroadCIDR is a T43 test: an overly
+// broad CIDR is rejected with 400, not silently accepted.
+func TestAdminBlockIPHandler_RejectsTooBroadCIDR(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "0.0.0.0/0")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	if resp := decodeAdminIPResponse(t, rr); resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+}
+
+// TestAdminBlockIPHandler_RefusesSelfLockoutOwnIP is a T43 test: blocking a
+// CIDR that contains the requesting admin's own current IP is refused.
+func TestAdminBlockIPHandler_RefusesSelfLockoutOwnIP(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "203.0.113.0/24")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "203.0.113.42:12345" // admin's own IP falls inside the requested range
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	// 409: a self-lockout refusal is a conflict with the operator's own
+	// continued access, not malformed input (400) or an authorization
+	// failure (403) -- see selfLockoutCheck's callers' comments.
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (blocking own IP must be refused)", rr.Code, http.StatusConflict)
+	}
+	resp := decodeAdminIPResponse(t, rr)
+	if resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+	if resp.Message == "" {
+		t.Error("resp.Message is empty, want a specific reason")
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "203.0.113.42")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if blocked {
+		t.Error("the refused block must not have been persisted")
+	}
+}
+
+// TestAdminBlockIPHandler_RefusesSelfLockoutLoopback is a T43 test: blocking
+// loopback is refused even when it doesn't happen to be the admin's own
+// RemoteAddr, since it would still break local health checks/access.
+func TestAdminBlockIPHandler_RefusesSelfLockoutLoopback(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "127.0.0.1")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (blocking loopback must be refused)", rr.Code, http.StatusConflict)
+	}
+	if resp := decodeAdminIPResponse(t, rr); resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+}
+
+// TestAdminBlockIPHandler_TrustedProxyRangeAllowedWithCaution is a T43 test
+// (code-review follow-up on item 3): the default TRUSTED_PROXY_IPS is whole
+// private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), so refusing
+// any overlap with them would stop a LAN deployment's admin from blocking
+// even a single misbehaving LAN host. Blocking a single host that merely
+// sits inside a broader trusted range must succeed, with a caution appended
+// to the success message rather than being refused outright.
+func TestAdminBlockIPHandler_TrustedProxyRangeAllowedWithCaution(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	// 192.168.1.50 is a single host inside the default trusted
+	// 192.168.0.0/16 -- it doesn't contain that range, the range contains it.
+	formData.Set("ip_address", "192.168.1.50")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345" // unrelated admin IP -- isolates this from the own-IP check
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	resp := decodeAdminIPResponse(t, rr)
+	if !resp.Success {
+		t.Fatalf("resp.Success = false, want true (message=%q)", resp.Message)
+	}
+	if !strings.Contains(resp.Message, "TRUSTED_PROXY_IPS") {
+		t.Errorf("resp.Message = %q, want it to caution about TRUSTED_PROXY_IPS", resp.Message)
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "192.168.1.50")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if !blocked {
+		t.Error("the block should have succeeded (with a caution, not a refusal)")
+	}
+}
+
+// TestAdminBlockIPHandler_RefusesNamedSingleHostTrustedProxy is a T43 test:
+// a trusted entry that's a single host (/32 or /128) is an explicitly named
+// proxy -- blocking it (or a range that contains it) is always refused,
+// regardless of the "merely inside a broader range" carve-out above, since
+// at host granularity "contains" and "is" are the same thing.
+func TestAdminBlockIPHandler_RefusesNamedSingleHostTrustedProxy(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	// A specific reverse-proxy host, alongside the usual private ranges.
+	cfg.TrustedProxyIPs = "203.0.113.5,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "203.0.113.5")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345" // unrelated admin IP -- isolates this from the own-IP check
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (blocking a named single-host trusted proxy must be refused)", rr.Code, http.StatusConflict)
+	}
+	if resp := decodeAdminIPResponse(t, rr); resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "203.0.113.5")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if blocked {
+		t.Error("the refused block must not have been persisted")
+	}
+}
+
+// TestAdminBlockIPHandler_RefusesPrefixContainingTrustedPrefix is a T43
+// test: blocking a range broad enough to fully contain a configured
+// TRUSTED_PROXY_IPS range (e.g. a /16 that contains a trusted /24) is
+// refused, same as blocking the trusted range outright would be.
+func TestAdminBlockIPHandler_RefusesPrefixContainingTrustedPrefix(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	cfg.TrustedProxyIPs = "192.168.5.0/24"
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	// 192.168.0.0/16 fully contains the trusted 192.168.5.0/24.
+	formData.Set("ip_address", "192.168.0.0/16")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (blocking a prefix containing a trusted prefix must be refused)", rr.Code, http.StatusConflict)
+	}
+	if resp := decodeAdminIPResponse(t, rr); resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "192.168.5.100")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if blocked {
+		t.Error("the refused block must not have been persisted")
+	}
+}
+
+// TestAdminBlockIPHandler_DuplicateCanonicalValue is a T43 test: blocking an
+// address that canonicalizes to an already-blocked value is rejected with
+// 409, not a generic 500.
+func TestAdminBlockIPHandler_DuplicateCanonicalValue(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "203.0.113.5", "first", "admin"); err != nil {
+		t.Fatalf("seed BlockIP() error = %v", err)
+	}
+
+	handler := AdminBlockIPHandler(repos, cfg)
+
+	formData := url.Values{}
+	formData.Set("ip_address", "::ffff:203.0.113.5")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "198.51.100.9:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusConflict)
+	}
+	resp := decodeAdminIPResponse(t, rr)
+	if resp.Success {
+		t.Error("resp.Success = true, want false")
+	}
+	if resp.Message == "" {
+		t.Error("resp.Message is empty, want a specific reason")
+	}
 }
 
 func TestAdminUnblockIPHandler(t *testing.T) {
@@ -838,6 +1198,10 @@ func TestAdminUnblockIPHandler(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	resp := decodeAdminIPResponse(t, rr)
+	if !resp.Success {
+		t.Errorf("resp.Success = false, want true (message=%q)", resp.Message)
 	}
 
 	// Verify IP is unblocked
@@ -1802,7 +2166,11 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	handler := AdminBlockIPHandler(repos, cfg)
 
 	formData := url.Values{}
-	formData.Set("ip_address", "10.0.0.1")
+	// Not 10.0.0.1: that falls inside the default TRUSTED_PROXY_IPS
+	// (10.0.0.0/8) and would now be refused by the T43 self-lockout check
+	// (item 3) -- unrelated to what this test is actually checking (the
+	// default-reason behavior).
+	formData.Set("ip_address", "203.0.113.201")
 	// No reason provided
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/ip/block", bytes.NewBufferString(formData.Encode()))
@@ -1812,11 +2180,11 @@ func TestAdminBlockIPHandler_WithoutReason(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
 	}
 
 	// Verify IP is blocked with default reason
-	blocked, _ := repos.Admin.IsIPBlocked(ctx, "10.0.0.1")
+	blocked, _ := repos.Admin.IsIPBlocked(ctx, "203.0.113.201")
 	if !blocked {
 		t.Error("IP should be blocked with default reason")
 	}
@@ -1844,6 +2212,9 @@ func TestAdminUnblockIPHandler_NotBlocked(t *testing.T) {
 	// Should return 404 Not Found for IP not in blocklist
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	if resp := decodeAdminIPResponse(t, rr); resp.Success {
+		t.Error("resp.Success = true, want false")
 	}
 }
 

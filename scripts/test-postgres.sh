@@ -79,14 +79,27 @@ echo -e "${BLUE}PostgreSQL Integration Test Runner${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
+# Prefer Docker Compose v2 (the `docker compose` plugin subcommand); fall
+# back to the standalone v1 `docker-compose` binary if v2 isn't installed
+# (code-review follow-up: environments with only v2 installed -- the
+# now-standard setup -- previously failed here with "command not found").
+if docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE=(docker-compose)
+else
+    echo -e "${RED}Error: neither 'docker compose' (v2) nor 'docker-compose' (v1) is available${NC}"
+    exit 1
+fi
+
 # Cleanup function
 cleanup() {
     if [ "$KEEP_CONTAINERS" = false ]; then
         echo -e "\n${YELLOW}Cleaning up...${NC}"
-        docker-compose -f docker-compose.postgres-test.yml down -v 2>/dev/null || true
+        "${DOCKER_COMPOSE[@]}" -f docker-compose.postgres-test.yml down -v 2>/dev/null || true
     else
         echo -e "\n${YELLOW}Keeping containers running (-k flag set)${NC}"
-        echo -e "To stop containers manually: docker-compose -f docker-compose.postgres-test.yml down -v"
+        echo -e "To stop containers manually: ${DOCKER_COMPOSE[*]} -f docker-compose.postgres-test.yml down -v"
     fi
 }
 
@@ -101,7 +114,7 @@ fi
 
 # Start PostgreSQL container
 echo -e "${BLUE}Step 1: Starting PostgreSQL container...${NC}"
-docker-compose -f docker-compose.postgres-test.yml up -d --wait
+"${DOCKER_COMPOSE[@]}" -f docker-compose.postgres-test.yml up -d --wait
 
 # Wait for PostgreSQL to be ready
 echo -e "${BLUE}Step 2: Waiting for PostgreSQL to be ready...${NC}"

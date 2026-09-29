@@ -546,6 +546,26 @@ async function deleteFile(claimCode) {
     }
 }
 
+// Parses a fetch Response from the block/unblock IP endpoints as JSON when
+// the server actually sent JSON, otherwise falls back to the raw response
+// text as the message (code-review follow-up: AdminBlockIPHandler/
+// AdminUnblockIPHandler now always reply with JSON, but this keeps the UI
+// from silently collapsing to a generic error if a proxy in front of
+// SafeShare ever substitutes its own non-JSON error page, or a future
+// change reintroduces a plain-text error response).
+async function parseAdminIPResponse(response) {
+    const contentType = response.headers.get('Content-Type') || '';
+    if (contentType.includes('application/json')) {
+        try {
+            return await response.json();
+        } catch (error) {
+            // Fall through to the text fallback below.
+        }
+    }
+    const text = (await response.text()).trim();
+    return { success: false, message: text || `Request failed (HTTP ${response.status})` };
+}
+
 // Block IP
 async function blockIP(ipAddress, reason) {
     try {
@@ -561,10 +581,21 @@ async function blockIP(ipAddress, reason) {
             })
         });
 
-        const data = await response.json();
+        const data = await parseAdminIPResponse(response);
 
         if (response.ok && data.success) {
-            showSuccess('IP blocked successfully');
+            // The server appends a caution to the success message when the
+            // blocked address/range sits inside a configured
+            // TRUSTED_PROXY_IPS range (code-review follow-up: this used to
+            // be silently discarded in favor of a fixed success string, so
+            // the admin never saw it). Show it as a warning-style toast
+            // instead of a plain success one so it's noticeably different.
+            const message = data.message || 'IP blocked successfully';
+            if (message.includes('TRUSTED_PROXY_IPS')) {
+                showWarning(message);
+            } else {
+                showSuccess(message);
+            }
             loadDashboardData(currentPage, searchTerm);
         } else {
             showError(data.message || 'Failed to block IP');
@@ -591,7 +622,7 @@ async function unblockIP(ipAddress) {
             body: new URLSearchParams({ ip_address: ipAddress })
         });
 
-        const data = await response.json();
+        const data = await parseAdminIPResponse(response);
 
         if (response.ok && data.success) {
             showSuccess('IP unblocked successfully');

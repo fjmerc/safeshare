@@ -127,6 +127,7 @@ type Config struct {
 	WriteTimeoutSeconds         int
 	TrustProxyHeaders           string // "auto", "true", "false" - controls proxy header trust
 	TrustedProxyIPs             string // Comma-separated list of trusted proxy IPs/CIDR ranges
+	RateLimitIPv6Prefix         int    // Width (bits) of the IPv6 prefix per-client rate limiters/concurrency caps group by (T43). Default 64; valid range 48-128. 128 = per-address (pre-T43 behavior).
 	StripMetadata               bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
 	anonymousMode               bool   // When true, IPs are not stored and redacted from logs
 	AllowPrivateWebhookTargets  bool   // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
@@ -181,6 +182,7 @@ func Load() (*Config, error) {
 		WriteTimeoutSeconds:         getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 		TrustProxyHeaders:           getEnv("TRUST_PROXY_HEADERS", "auto"),
 		TrustedProxyIPs:             getEnv("TRUSTED_PROXY_IPS", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
+		RateLimitIPv6Prefix:         getEnvInt("RATE_LIMIT_IPV6_PREFIX", proxytrust.DefaultRateLimitIPv6PrefixBits),
 		StripMetadata:               getEnvBool("STRIP_METADATA", false),
 		anonymousMode:               getEnvBool("ANONYMOUS_MODE", false),
 		AllowPrivateWebhookTargets:  getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
@@ -324,6 +326,12 @@ func (c *Config) GetTrustProxyHeaders() string {
 // GetTrustedProxyIPs returns the trusted proxy IPs configuration
 func (c *Config) GetTrustedProxyIPs() string {
 	return c.TrustedProxyIPs
+}
+
+// GetRateLimitIPv6Prefix returns the configured IPv6 rate-limit grouping
+// width (RATE_LIMIT_IPV6_PREFIX).
+func (c *Config) GetRateLimitIPv6Prefix() int {
+	return c.RateLimitIPv6Prefix
 }
 
 // IsStripMetadata returns whether metadata stripping is enabled
@@ -825,6 +833,15 @@ func (c *Config) validateProxySettings() error {
 				"prefix", p.String(),
 			)
 		}
+	}
+
+	// T43: RATE_LIMIT_IPV6_PREFIX groups IPv6 clients into rate-limit/
+	// concurrency-cap buckets by their leading N bits. Below 48 groups an
+	// implausibly large address range (a /48 is already a full standard
+	// end-site allocation) into one bucket; above 128 is meaningless.
+	if c.RateLimitIPv6Prefix < proxytrust.MinRateLimitIPv6PrefixBits || c.RateLimitIPv6Prefix > proxytrust.MaxRateLimitIPv6PrefixBits {
+		return fmt.Errorf("RATE_LIMIT_IPV6_PREFIX must be between %d and %d, got %d",
+			proxytrust.MinRateLimitIPv6PrefixBits, proxytrust.MaxRateLimitIPv6PrefixBits, c.RateLimitIPv6Prefix)
 	}
 
 	return nil

@@ -916,6 +916,248 @@ func TestAdminRepository_BlockIP(t *testing.T) {
 	}
 }
 
+// TestAdminRepository_BlockIP_Canonicalization is a T43 test: an entry
+// stored via one spelling of an address must match a request for a
+// differently-spelled but logically identical address.
+func TestAdminRepository_BlockIP_Canonicalization(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "2001:DB8:0000:0000:0000:0000:0000:0001", "test", "admin"); err != nil {
+		t.Fatalf("BlockIP() error = %v", err)
+	}
+
+	blockedIPs, err := repos.Admin.GetBlockedIPs(ctx)
+	if err != nil {
+		t.Fatalf("GetBlockedIPs() error = %v", err)
+	}
+	if len(blockedIPs) != 1 || blockedIPs[0].IPAddress != "2001:db8::1" {
+		t.Fatalf("GetBlockedIPs() = %+v, want a single canonical %q entry", blockedIPs, "2001:db8::1")
+	}
+
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "2001:db8:0:0:0:0:0:1")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if !blocked {
+		t.Error("IsIPBlocked() = false for a differently-spelled equivalent address, want true")
+	}
+
+	if err := repos.Admin.UnblockIP(ctx, "2001:0DB8::0001"); err != nil {
+		t.Fatalf("UnblockIP() with a third spelling error = %v", err)
+	}
+}
+
+// TestAdminRepository_BlockIP_DuplicateCanonicalValue is a T43 test: the
+// UNIQUE(ip_address) constraint plus canonicalization means a second block
+// of the same address under a different spelling is a duplicate, not a
+// second row.
+func TestAdminRepository_BlockIP_DuplicateCanonicalValue(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "203.0.113.5", "first", "admin"); err != nil {
+		t.Fatalf("BlockIP() error = %v", err)
+	}
+
+	err := repos.Admin.BlockIP(ctx, "::ffff:203.0.113.5", "second", "admin")
+	if !errors.Is(err, repository.ErrDuplicateKey) {
+		t.Fatalf("BlockIP() error = %v, want ErrDuplicateKey", err)
+	}
+}
+
+// TestAdminRepository_IsIPBlocked_CIDRContainment is a T43 test: a blocked
+// CIDR range blocks every address inside it via IsIPBlocked, not just an
+// exact match, exercising the PrefixCache-backed containment path against a
+// real PostgreSQL backend.
+func TestAdminRepository_IsIPBlocked_CIDRContainment(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "203.0.113.0/24", "range block", "admin"); err != nil {
+		t.Fatalf("BlockIP() error = %v", err)
+	}
+
+	inside, err := repos.Admin.IsIPBlocked(ctx, "203.0.113.200")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if !inside {
+		t.Error("IsIPBlocked() = false for an address inside the blocked /24, want true")
+	}
+
+	outside, err := repos.Admin.IsIPBlocked(ctx, "203.0.114.1")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if outside {
+		t.Error("IsIPBlocked() = true for an address outside the blocked /24, want false")
+	}
+
+	// Unblocking the range must be reflected even though the PrefixCache
+	// carries a TTL rather than SQLite's pure invalidate-on-write strategy
+	// -- exercise it directly rather than sleeping out the TTL.
+	if err := repos.Admin.UnblockIP(ctx, "203.0.113.0/24"); err != nil {
+		t.Fatalf("UnblockIP() error = %v", err)
+	}
+	stillBlocked, err := repos.Admin.IsIPBlocked(ctx, "203.0.113.200")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() after unblock error = %v", err)
+	}
+	if stillBlocked {
+		t.Error("IsIPBlocked() = true after unblocking the containing CIDR, want false")
+	}
+}
+
+// TestAdminRepository_BlockIP_RejectsTooBroadCIDR is a T43 test.
+func TestAdminRepository_BlockIP_RejectsTooBroadCIDR(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "10.0.0.0/4", "test", "admin"); err == nil {
+		t.Fatal("BlockIP() with an overly broad CIDR succeeded, want error")
+	}
+}
+
+// TestNormalizeBlockedIPs_Postgres is a T43 test for the startup
+// normalization hook against a real PostgreSQL backend: rows inserted
+// directly (bypassing BlockIP's canonicalization, simulating pre-T43 data)
+// are canonicalized in place, and duplicates that collapse to the same
+// canonical value are merged, keeping the oldest row.
+func TestNormalizeBlockedIPs_Postgres(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+	_ = repos // ensures tables were truncated by setupTestRepos
+
+	if _, err := testPool.Exec(ctx, `INSERT INTO blocked_ips (ip_address, reason, blocked_by) VALUES ($1, $2, $3)`,
+		"2001:db8::1", "oldest", "admin"); err != nil {
+		t.Fatalf("seed insert 1: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO blocked_ips (ip_address, reason, blocked_by) VALUES ($1, $2, $3)`,
+		"2001:DB8:0000:0000:0000:0000:0000:0001", "newer-duplicate", "admin"); err != nil {
+		t.Fatalf("seed insert 2: %v", err)
+	}
+
+	if err := NormalizeBlockedIPs(ctx, testPool); err != nil {
+		t.Fatalf("NormalizeBlockedIPs() error = %v", err)
+	}
+
+	rows, err := testPool.Query(ctx, `SELECT ip_address, reason FROM blocked_ips`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	type row struct{ ip, reason string }
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.ip, &r.reason); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rows after merge, want 1: %+v", len(got), got)
+	}
+	if got[0].ip != "2001:db8::1" {
+		t.Errorf("surviving row ip = %q, want %q", got[0].ip, "2001:db8::1")
+	}
+	if got[0].reason != "oldest" {
+		t.Errorf("surviving row reason = %q, want %q (the oldest/first row should be kept)", got[0].reason, "oldest")
+	}
+}
+
+// TestAdminRepository_LegacyBroadCIDR_Postgres is a security-review
+// follow-up (T43): a blocked_ips row broader than the current /8 (v4) bound
+// -- e.g. written before that bound existed -- must NOT be enforced via
+// CIDR containment (pre-T43 blocklist matching was exact-string only, so a
+// row this broad was never actually enforced as a range), must be left
+// untouched (not deleted/rewritten) by NormalizeBlockedIPs, and must still
+// be removable by its exact stored string since it can never canonicalize.
+// Mirrors the SQLite unit tests (internal/repository/sqlite/
+// admin_repository_test.go and admin_normalize_test.go) against a real
+// PostgreSQL backend.
+func TestAdminRepository_LegacyBroadCIDR_Postgres(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if _, err := testPool.Exec(ctx, `INSERT INTO blocked_ips (ip_address, reason, blocked_by) VALUES ($1, $2, $3)`,
+		"10.0.0.0/4", "legacy broad block", "admin"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+
+	// NOT enforced via CIDR containment.
+	blocked, err := repos.Admin.IsIPBlocked(ctx, "10.1.2.3")
+	if err != nil {
+		t.Fatalf("IsIPBlocked() error = %v", err)
+	}
+	if blocked {
+		t.Error("IsIPBlocked() = true for an address inside a legacy too-broad CIDR, want false (not enforced)")
+	}
+
+	// BlockIP rejects a range this broad today.
+	if err := repos.Admin.BlockIP(ctx, "10.0.0.0/4", "test", "admin"); err == nil {
+		t.Error("BlockIP() of a too-broad range unexpectedly succeeded")
+	}
+
+	// NormalizeBlockedIPs leaves it completely untouched.
+	if err := NormalizeBlockedIPs(ctx, testPool); err != nil {
+		t.Fatalf("NormalizeBlockedIPs() error = %v", err)
+	}
+	var ip string
+	if err := testPool.QueryRow(ctx, `SELECT ip_address FROM blocked_ips`).Scan(&ip); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if ip != "10.0.0.0/4" {
+		t.Errorf("legacy broad CIDR row was modified by NormalizeBlockedIPs: ip_address = %q, want unchanged %q", ip, "10.0.0.0/4")
+	}
+
+	// Still removable by its exact stored string.
+	if err := repos.Admin.UnblockIP(ctx, "10.0.0.0/4"); err != nil {
+		t.Fatalf("UnblockIP() by exact stored string error = %v", err)
+	}
+
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM blocked_ips`).Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("blocked_ips row count = %d after removing the only row, want 0", count)
+	}
+}
+
+// TestAdminRepository_UnblockIP_RetriesExactStringWhenCanonicalMisses_Postgres
+// is a code-review follow-up (T43): a row stored non-canonically despite
+// being canonicalizable (e.g. left behind by a startup normalization that
+// errored partway through) must still be removable by UnblockIP retrying
+// with the exact trimmed input when the canonical delete matches nothing.
+func TestAdminRepository_UnblockIP_RetriesExactStringWhenCanonicalMisses_Postgres(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+
+	if _, err := testPool.Exec(ctx, `INSERT INTO blocked_ips (ip_address, reason, blocked_by) VALUES ($1, $2, $3)`,
+		"2001:DB8::1", "un-normalized legacy row", "admin"); err != nil {
+		t.Fatalf("seed insert: %v", err)
+	}
+
+	// Unblock using the exact (non-canonical) spelling stored -- see the
+	// SQLite counterpart's comment for why the input must be the original
+	// spelling, not the canonical form, to actually exercise the retry.
+	if err := repos.Admin.UnblockIP(ctx, "2001:DB8::1"); err != nil {
+		t.Fatalf("UnblockIP() with the exact non-canonical spelling error = %v, want the exact-string retry to find the row", err)
+	}
+
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM blocked_ips`).Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("blocked_ips row count = %d after removing the only row, want 0", count)
+	}
+}
+
 // ============================================================================
 // SettingsRepository Tests
 // ============================================================================

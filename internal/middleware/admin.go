@@ -321,7 +321,10 @@ func RateLimitTOTPVerify(anonymousMode bool) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := getClientIP(r)
+			rawIP := getClientIP(r)
+			// T43: group IPv6 clients by the configured prefix for the
+			// lockout bucket key; logging below still uses the full rawIP.
+			clientIP := utils.RateLimitKey(rawIP)
 
 			// Clean up old entries
 			now := time.Now()
@@ -336,7 +339,7 @@ func RateLimitTOTPVerify(anonymousMode bool) func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("TOTP verification rate limit exceeded",
-							"ip", privacy.RedactIP(clientIP, anonymousMode),
+							"ip", privacy.RedactIP(rawIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
@@ -374,7 +377,10 @@ func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := getClientIP(r)
+			rawIP := getClientIP(r)
+			// T43: group IPv6 clients by the configured prefix for the
+			// lockout bucket key; logging below still uses the full rawIP.
+			clientIP := utils.RateLimitKey(rawIP)
 
 			// Clean up old entries
 			now := time.Now()
@@ -389,7 +395,7 @@ func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("admin login rate limit exceeded",
-							"ip", privacy.RedactIP(clientIP, anonymousMode),
+							"ip", privacy.RedactIP(rawIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
@@ -428,7 +434,10 @@ func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := getClientIP(r)
+			rawIP := getClientIP(r)
+			// T43: group IPv6 clients by the configured prefix for the
+			// lockout bucket key; logging below still uses the full rawIP.
+			clientIP := utils.RateLimitKey(rawIP)
 
 			// Clean up old entries
 			now := time.Now()
@@ -443,7 +452,7 @@ func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
 				if attempt.count >= maxAttempts {
 					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
 						slog.Warn("user login rate limit exceeded",
-							"ip", privacy.RedactIP(clientIP, anonymousMode),
+							"ip", privacy.RedactIP(rawIP, anonymousMode),
 							"attempts", attempt.count,
 						)
 						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)

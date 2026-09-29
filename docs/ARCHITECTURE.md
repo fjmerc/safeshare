@@ -751,6 +751,7 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `MAX_EXPIRATION_HOURS`: Maximum allowed expiration time (default: 168 / 7 days)
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
 - `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
+- `RATE_LIMIT_IPV6_PREFIX`: Width (bits) of the IPv6 prefix per-client rate limiters and concurrency caps (upload/download limits, login attempt limits, in-flight download/decrypt caps) group by, instead of the full address (default: 64; valid range 48-128; 128 = per-address). Does not affect what's logged/stored as the client IP — only limiter bucket keys (T43).
 - `QUOTA_LIMIT_GB`: Maximum total storage quota in GB (default: 0 / unlimited)
 
 ### Trusted Proxy Security

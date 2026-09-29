@@ -3,11 +3,15 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
+	"net/netip"
+	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/ipcanon"
+	"github.com/fjmerc/safeshare/internal/proxytrust"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -17,14 +21,29 @@ import (
 // Hash of "dummy-password-for-timing-attack-prevention" with cost 12.
 const dummyBcryptHash = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4UWYz/XLKF0S3dCy"
 
+// blockedIPsCIDRCacheTTL bounds how stale r.cidrCache can get from an edit
+// that doesn't go through BlockIP/UnblockIP -- e.g. the sqlite3 shell, a
+// direct-DB CLI tool, or a restored backup (security-review follow-up: a
+// ttl of 0 relied entirely on Invalidate() being called by every writer,
+// which none of those are). BlockIP/UnblockIP still call Invalidate()
+// themselves, so the common case (using the admin dashboard/API) sees a
+// change immediately; this ttl only bounds the uncommon case.
+const blockedIPsCIDRCacheTTL = 30 * time.Second
+
 // AdminRepository implements repository.AdminRepository for SQLite.
 type AdminRepository struct {
 	db *sql.DB
+
+	// cidrCache caches the blocked_ips rows that are CIDR ranges (rather
+	// than bare addresses), used by IsIPBlocked's containment check. See
+	// blockedIPsCIDRCacheTTL and ipcanon.PrefixCache's doc for the full
+	// invalidation rationale.
+	cidrCache *ipcanon.PrefixCache
 }
 
 // NewAdminRepository creates a new SQLite admin repository.
 func NewAdminRepository(db *sql.DB) *AdminRepository {
-	return &AdminRepository{db: db}
+	return &AdminRepository{db: db, cidrCache: ipcanon.NewPrefixCache(blockedIPsCIDRCacheTTL)}
 }
 
 // ValidateCredentials checks if the provided username and password are valid.
@@ -200,65 +219,214 @@ func (r *AdminRepository) CleanupExpiredSessions(ctx context.Context) error {
 	return nil
 }
 
-// BlockIP adds an IP address to the blocklist.
-func (r *AdminRepository) BlockIP(ctx context.Context, ipAddress, reason, blockedBy string) error {
-	// Validate IP address format
-	if ipAddress == "" {
-		return fmt.Errorf("IP address cannot be empty")
-	}
+// isUniqueConstraintViolation reports whether err is a SQLite UNIQUE
+// constraint failure. modernc.org/sqlite doesn't expose a typed error for
+// this, so (matching the existing convention elsewhere in this package --
+// see partial_upload_repository.go's isFilesPartialUploadIDViolation) it's
+// a substring check on the driver's error text.
+func isUniqueConstraintViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+}
 
-	// Validate it's a proper IPv4 or IPv6 address
-	if net.ParseIP(ipAddress) == nil {
-		return fmt.Errorf("invalid IP address format")
+// BlockIP adds an IP address or CIDR range to the blocklist. ipAddress is
+// canonicalized before storage (T43): a bare address is normalized the same
+// way GetClientIPWithTrust normalizes every request's client IP (IPv4-mapped
+// unmapped, zone dropped, lowercase, compressed), and a CIDR range (e.g.
+// "203.0.113.0/24") is masked to its canonical form, rejecting a prefix
+// broad enough to risk self-lockout (wider than /8 IPv4 / /32 IPv6) --
+// see ipcanon.CanonicalizeEntry.
+//
+// Returns repository.ErrDuplicateKey if the canonical value is already
+// blocked, including under a different original spelling.
+func (r *AdminRepository) BlockIP(ctx context.Context, ipAddress, reason, blockedBy string) error {
+	canonical, isPrefix, err := ipcanon.CanonicalizeEntry(ipAddress)
+	if err != nil {
+		return fmt.Errorf("invalid IP address or CIDR: %w", err)
 	}
 
 	query := `INSERT INTO blocked_ips (ip_address, reason, blocked_by)
 		VALUES (?, ?, ?)`
 
-	_, err := r.db.ExecContext(ctx, query, ipAddress, reason, blockedBy)
+	_, err = r.db.ExecContext(ctx, query, canonical, reason, blockedBy)
 	if err != nil {
+		if isUniqueConstraintViolation(err) {
+			return repository.ErrDuplicateKey
+		}
 		return fmt.Errorf("failed to block IP: %w", err)
 	}
 
-	slog.Info("IP blocked", "ip", ipAddress, "reason", reason, "blocked_by", blockedBy)
+	if isPrefix {
+		r.cidrCache.Invalidate()
+	}
+
+	slog.Info("IP blocked", "ip", canonical, "is_cidr", isPrefix, "reason", reason, "blocked_by", blockedBy)
 	return nil
 }
 
-// UnblockIP removes an IP address from the blocklist.
-// Returns ErrNotFound if the IP is not in the blocklist.
-func (r *AdminRepository) UnblockIP(ctx context.Context, ipAddress string) error {
-	query := `DELETE FROM blocked_ips WHERE ip_address = ?`
-
-	result, err := r.db.ExecContext(ctx, query, ipAddress)
+// deleteBlockedIPByExactValue deletes the blocked_ips row whose ip_address
+// column exactly equals value, and reports how many rows were affected (0
+// or 1, since ip_address is UNIQUE).
+func (r *AdminRepository) deleteBlockedIPByExactValue(ctx context.Context, value string) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM blocked_ips WHERE ip_address = ?`, value)
 	if err != nil {
-		return fmt.Errorf("failed to unblock IP: %w", err)
+		return 0, fmt.Errorf("failed to unblock IP: %w", err)
 	}
-
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to check affected rows: %w", err)
+		return 0, fmt.Errorf("failed to check affected rows: %w", err)
+	}
+	return rows, nil
+}
+
+// UnblockIP removes an IP address or CIDR range from the blocklist.
+// ipAddress is canonicalized the same way BlockIP canonicalizes it before
+// storage, so e.g. "2001:DB8::1" successfully unblocks a row stored (or
+// later normalized) as "2001:db8::1" (T43).
+//
+// If ipAddress fails to canonicalize, UnblockIP deletes by its exact
+// (trimmed) string instead of rejecting the request (code-review
+// follow-up): a legacy CIDR broader than T43's bounds (e.g. "10.0.0.0/4")
+// can never canonicalize, but is still shown by GetBlockedIPs (and, for
+// containment purposes, intentionally NOT enforced -- see loadCIDRPrefixes),
+// so it must remain removable by the exact string the admin dashboard
+// displays for it.
+//
+// If ipAddress DOES canonicalize but deleting by that canonical value
+// matches nothing, UnblockIP retries once by the exact trimmed input before
+// giving up (code-review follow-up): a row can end up stored in a
+// non-canonical form despite being canonicalizable -- e.g. a startup
+// normalization that errored partway through (NormalizeBlockedIPs' updates
+// aren't atomic across rows), or a row written directly by external tooling
+// that doesn't canonicalize. Without this retry, such a row could only ever
+// be unblocked by typing its exact original (non-canonical) spelling, which
+// an admin working from the canonical GetClientIPWithTrust output they're
+// trying to match would have no reason to know.
+//
+// Returns ErrNotFound if nothing matched either way.
+func (r *AdminRepository) UnblockIP(ctx context.Context, ipAddress string) error {
+	trimmed := strings.TrimSpace(ipAddress)
+	canonical, _, cerr := ipcanon.CanonicalizeEntry(ipAddress)
+
+	target := trimmed
+	if cerr == nil {
+		target = canonical
+	}
+
+	rows, err := r.deleteBlockedIPByExactValue(ctx, target)
+	if err != nil {
+		return err
+	}
+
+	if rows == 0 && target != trimmed {
+		rows, err = r.deleteBlockedIPByExactValue(ctx, trimmed)
+		if err != nil {
+			return err
+		}
 	}
 
 	if rows == 0 {
 		return repository.ErrNotFound
 	}
 
-	slog.Info("IP unblocked", "ip", ipAddress)
+	// Always invalidate: even if this wasn't a CIDR row, a stale cache
+	// costs one extra (cheap) reload query at worst, whereas skipping it
+	// selectively would need to know in advance whether the deleted row was
+	// a CIDR entry.
+	r.cidrCache.Invalidate()
+
+	slog.Info("IP unblocked", "ip", target)
 	return nil
 }
 
-// IsIPBlocked checks if an IP address is blocked.
-// Returns (isBlocked, error).
+// IsIPBlocked checks if an IP address is blocked -- either as an exact
+// (canonicalized) match, or by falling inside any blocked CIDR range.
+// ipAddress is expected to already be a bare client IP (GetClientIPWithTrust
+// already returns one in canonical form), but is canonicalized defensively
+// here too, so a caller passing a differently-formatted address still
+// matches (T43).
 func (r *AdminRepository) IsIPBlocked(ctx context.Context, ipAddress string) (bool, error) {
+	canonical, err := ipcanon.Canonicalize(ipAddress)
+	if err != nil {
+		// Not a parseable bare address: falls back to comparing the raw
+		// string, matching pre-T43 behavior (which also never matched a
+		// canonical stored value for malformed input).
+		canonical = ipAddress
+	}
+
 	query := `SELECT COUNT(*) FROM blocked_ips WHERE ip_address = ?`
 
 	var count int
-	err := r.db.QueryRowContext(ctx, query, ipAddress).Scan(&count)
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, query, canonical).Scan(&count); err != nil {
 		return false, fmt.Errorf("failed to check if IP is blocked: %w", err)
 	}
+	if count > 0 {
+		return true, nil
+	}
 
-	return count > 0, nil
+	addr, err := netip.ParseAddr(canonical)
+	if err != nil {
+		// Unparsable input can't fall inside any CIDR range either.
+		return false, nil
+	}
+
+	prefixes, err := r.cidrCache.Get(ctx, r.loadCIDRPrefixes)
+	if err != nil {
+		return false, fmt.Errorf("failed to load blocked CIDR ranges: %w", err)
+	}
+
+	return proxytrust.Trusted(addr, prefixes), nil
+}
+
+// loadCIDRPrefixes reloads the CIDR-range rows of blocked_ips (rows whose
+// stored value contains "/") for r.cidrCache. Exact-address rows are
+// excluded -- IsIPBlocked already checks those via the indexed exact-match
+// query above.
+//
+// Each row is canonicalized via ipcanon.CanonicalizePrefix -- the same
+// function BlockIP's write path uses -- rather than a bare netip.ParsePrefix
+// (code-review follow-up): this both matches a legacy mapped row like
+// "::ffff:10.0.0.0/100" against plain IPv4 clients (NormalizePrefix), and
+// (see the ErrPrefixTooBroad case below) keeps a too-broad legacy row from
+// suddenly being enforced.
+//
+// A row broader than CanonicalizePrefix's current bounds (e.g. a legacy
+// "0.0.0.0/0" or "::/0" written before T43 introduced those bounds) is
+// deliberately NOT enforced here (security-review follow-up): before T43,
+// blocklist matching was exact-string only, so a row like that was never
+// actually enforced as a range in the first place. Silently starting to
+// enforce it as CIDR containment after an upgrade would newly block far
+// more than the operator ever intended. NormalizeBlockedIPs already warns
+// about any such row once at startup; this method doesn't warn again on
+// every reload (the PostgreSQL cache in particular reloads every few
+// seconds) to avoid log spam -- it's a silent skip.
+func (r *AdminRepository) loadCIDRPrefixes(ctx context.Context) ([]netip.Prefix, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT ip_address FROM blocked_ips WHERE ip_address LIKE '%/%'`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query blocked CIDR ranges: %w", err)
+	}
+	defer rows.Close()
+
+	var prefixes []netip.Prefix
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("failed to scan blocked CIDR range: %w", err)
+		}
+		p, err := ipcanon.CanonicalizePrefix(raw)
+		if err != nil {
+			if errors.Is(err, ipcanon.ErrPrefixTooBroad) {
+				continue // not enforced -- see doc comment above
+			}
+			slog.Warn("blocked_ips row contains an unparsable CIDR range; skipping it for containment checks",
+				"value", raw, "error", err)
+			continue
+		}
+		prefixes = append(prefixes, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating blocked CIDR ranges: %w", err)
+	}
+	return prefixes, nil
 }
 
 // GetBlockedIPs retrieves all blocked IP addresses.

@@ -62,11 +62,16 @@ func (rl *DBRateLimiter) Stop() {
 }
 
 // checkLimit checks if the request is within rate limits using the database.
+// ip is the full client address, used for logging (unchanged by T43); the
+// DB bucket key passed to the repository is ip grouped via
+// utils.RateLimitKey, so IPv6 clients within the configured prefix share a
+// row in the rate_limits table instead of getting one each.
 func (rl *DBRateLimiter) checkLimit(ctx context.Context, ip string, limitType string, limit int) bool {
 	// Standard rate limit window is 1 hour
 	windowDuration := time.Hour
+	limitKey := utils.RateLimitKey(ip)
 
-	allowed, count, err := rl.repo.IncrementAndCheck(ctx, ip, limitType, limit, windowDuration)
+	allowed, count, err := rl.repo.IncrementAndCheck(ctx, limitKey, limitType, limit, windowDuration)
 	if err != nil {
 		// On database error, log and allow the request (fail open for availability)
 		// This is a deliberate choice to prefer availability over strict enforcement
@@ -181,12 +186,16 @@ func DBRateLimitLoginMiddleware(repo repository.RateLimitRepository, limitType s
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 			clientIP := getClientIPForRateLimit(r, config)
+			// T43: the DB bucket key groups IPv6 clients by the configured
+			// prefix; clientIP (full address) is still what gets logged
+			// below.
+			limitKey := utils.RateLimitKey(clientIP)
 			windowDuration := time.Duration(windowMinutes) * time.Minute
 
 			// Atomically increment and check BEFORE processing request
 			// This prevents TOCTOU race conditions where multiple concurrent requests
 			// could all pass the check before any counter is incremented.
-			allowed, count, err := repo.IncrementAndCheck(ctx, clientIP, limitType, maxAttempts, windowDuration)
+			allowed, count, err := repo.IncrementAndCheck(ctx, limitKey, limitType, maxAttempts, windowDuration)
 			if err != nil {
 				slog.Error("failed to check login rate limit", "error", err, "ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()))
 
