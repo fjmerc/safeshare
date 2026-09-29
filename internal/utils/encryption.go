@@ -391,9 +391,11 @@ func DecryptFileStreaming(srcPath, dstPath, keyHex string) error {
 // legitimate short final chunk; io.EOF as clean termination.
 //
 // Do NOT regress this to bare r.Read — see SH-1.2 in the Security Hardening
-// plan. The parallel range-aware loop in DecryptFileStreamingRange and the
-// loops in storage/encrypted_storage.go follow the same invariants; keep them
-// in sync.
+// plan. The loops in storage/encrypted_storage.go follow the same
+// invariants; keep them in sync. (The parallel V1 Range-aware file loop this
+// comment used to also point at, DecryptFileStreamingRange, was retired as
+// dead code in 3c-3 — every claim download's Range path, V1 or V2, now goes
+// through utils.SFSEReader/OpenSFSEReader; see sfse_readseeker.go.)
 func decryptChunkStream(r io.Reader, w io.Writer, gcm cipher.AEAD, encryptedChunkSize int) error {
 	buffer := make([]byte, encryptedChunkSize)
 	for {
@@ -442,207 +444,6 @@ func IsStreamEncrypted(path string) (bool, error) {
 	}
 
 	return string(magic) == StreamEncryptionMagic, nil
-}
-
-// DecryptFileStreamingRange decrypts a specific byte range from a streaming encrypted file.
-// This is optimized for HTTP Range requests - only decrypts the chunks needed for the range.
-//
-// srcPath: path to encrypted file (must have SFSE1 header)
-// writer: destination writer for decrypted data
-// keyHex: 64-character hex string (32 bytes for AES-256)
-// startByte: starting byte offset in the *decrypted* file (0-indexed)
-// endByte: ending byte offset in the *decrypted* file (inclusive)
-//
-// Returns the number of bytes written to the writer.
-func DecryptFileStreamingRange(srcPath string, writer io.Writer, keyHex string, startByte, endByte int64) (int64, error) {
-	// Start timing for performance profiling
-	funcStart := time.Now()
-
-	// Validate range
-	if startByte < 0 || endByte < startByte {
-		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
-	}
-
-	// SH-3.1: cached AES-GCM AEAD; first call builds, subsequent calls are O(1).
-	gcm, err := newGCMFromKeyHex(keyHex)
-	if err != nil {
-		return 0, err
-	}
-
-	// Open source file
-	openStart := time.Now()
-	srcFile, err := os.Open(srcPath)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open source file: %w", err)
-	}
-	defer srcFile.Close()
-	slog.Debug("DecryptFileStreamingRange: file opened", "duration_ms", time.Since(openStart).Milliseconds())
-
-	// Read and validate header
-	magic := make([]byte, len(StreamEncryptionMagic))
-	if _, err := io.ReadFull(srcFile, magic); err != nil {
-		return 0, fmt.Errorf("failed to read magic: %w", err)
-	}
-	if string(magic) != StreamEncryptionMagic {
-		return 0, fmt.Errorf("invalid magic header: expected %s, got %s", StreamEncryptionMagic, string(magic))
-	}
-
-	versionByte := make([]byte, 1)
-	if _, err := io.ReadFull(srcFile, versionByte); err != nil {
-		return 0, fmt.Errorf("failed to read version: %w", err)
-	}
-	if versionByte[0] != StreamEncryptionVersion {
-		return 0, fmt.Errorf("unsupported version: %d", versionByte[0])
-	}
-
-	chunkSizeBytes := make([]byte, 4)
-	if _, err := io.ReadFull(srcFile, chunkSizeBytes); err != nil {
-		return 0, fmt.Errorf("failed to read chunk size: %w", err)
-	}
-	chunkSize := int64(binary.LittleEndian.Uint32(chunkSizeBytes))
-
-	// Calculate which chunks we need to decrypt
-	startChunk := startByte / chunkSize
-	endChunk := endByte / chunkSize
-
-	// Calculate offset within the first chunk
-	offsetInFirstChunk := startByte % chunkSize
-
-	// Each encrypted chunk has: nonce(12) + ciphertext + tag(16)
-	encryptedChunkSize := int(chunkSize) + gcm.NonceSize() + gcm.Overhead()
-	buffer := make([]byte, encryptedChunkSize)
-
-	// PERFORMANCE OPTIMIZATION: Seek to the first chunk we need instead of reading from start
-	// Header size: magic(5) + version(1) + chunk_size(4) = 10 bytes
-	headerSize := int64(10)
-	firstChunkOffset := headerSize + (startChunk * int64(encryptedChunkSize))
-
-	seekStart := time.Now()
-	if _, err := srcFile.Seek(firstChunkOffset, io.SeekStart); err != nil {
-		return 0, fmt.Errorf("failed to seek to chunk %d: %w", startChunk, err)
-	}
-	slog.Debug("DecryptFileStreamingRange: seeked to first chunk",
-		"chunk", startChunk,
-		"offset_bytes", firstChunkOffset,
-		"duration_ms", time.Since(seekStart).Milliseconds())
-
-	var totalWritten int64
-	var totalReadTime, totalDecryptTime, totalWriteTime time.Duration
-	currentChunk := startChunk // Start from the first chunk we need, not 0
-
-	// Range-aware decrypt loop: structurally mirrors decryptChunkStream but
-	// keeps inline because of seek-pinning, partial-chunk windowing
-	// (chunkStart/chunkEnd), and telemetry counters. Keep the io.ReadFull
-	// invariant in sync with the helper — see SH-1.2.
-	for currentChunk <= endChunk {
-		// Read encrypted chunk via io.ReadFull so a short read from the
-		// backing storage (NFS/FUSE/CIFS — or any wrapped reader in future
-		// non-os.File backends) does not feed a partial chunk into gcm.Open
-		// and surface as a spurious "failed to decrypt chunk" on intact
-		// data. ErrUnexpectedEOF is the legitimate short final chunk; EOF
-		// is clean termination.
-		readStart := time.Now()
-		n, err := io.ReadFull(srcFile, buffer)
-		readDuration := time.Since(readStart)
-		totalReadTime += readDuration
-
-		if err == io.EOF {
-			break
-		}
-		if err != nil && err != io.ErrUnexpectedEOF {
-			return totalWritten, fmt.Errorf("failed to read encrypted chunk: %w", err)
-		}
-		if n == 0 {
-			break
-		}
-
-		slog.Debug("DecryptFileStreamingRange: chunk read",
-			"chunk", currentChunk,
-			"bytes_read", n,
-			"duration_ms", readDuration.Milliseconds())
-
-		// Extract nonce
-		if n < gcm.NonceSize() {
-			return totalWritten, fmt.Errorf("chunk too small: %d bytes", n)
-		}
-		nonce := buffer[:gcm.NonceSize()]
-		ciphertext := buffer[gcm.NonceSize():n]
-
-		// Decrypt chunk
-		decryptStart := time.Now()
-		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-		decryptDuration := time.Since(decryptStart)
-		totalDecryptTime += decryptDuration
-
-		if err != nil {
-			return totalWritten, fmt.Errorf("failed to decrypt chunk %d: %w", currentChunk, err)
-		}
-
-		slog.Debug("DecryptFileStreamingRange: chunk decrypted",
-			"chunk", currentChunk,
-			"plaintext_bytes", len(plaintext),
-			"duration_ms", decryptDuration.Milliseconds())
-
-		// Determine what portion of this chunk to write
-		var chunkStart, chunkEnd int64
-		if currentChunk == startChunk {
-			chunkStart = offsetInFirstChunk
-		} else {
-			chunkStart = 0
-		}
-
-		if currentChunk == endChunk {
-			// Calculate offset within the last chunk
-			chunkEnd = (endByte % chunkSize) + 1
-			if chunkEnd > int64(len(plaintext)) {
-				chunkEnd = int64(len(plaintext))
-			}
-		} else {
-			chunkEnd = int64(len(plaintext))
-		}
-
-		// Write the relevant portion
-		if chunkStart < chunkEnd {
-			writeStart := time.Now()
-			written, err := writer.Write(plaintext[chunkStart:chunkEnd])
-			writeDuration := time.Since(writeStart)
-			totalWriteTime += writeDuration
-
-			if err != nil {
-				return totalWritten, fmt.Errorf("failed to write decrypted data: %w", err)
-			}
-			totalWritten += int64(written)
-
-			slog.Debug("DecryptFileStreamingRange: chunk written",
-				"chunk", currentChunk,
-				"bytes_written", written,
-				"duration_ms", writeDuration.Milliseconds())
-		}
-
-		currentChunk++
-
-		if err == io.EOF {
-			break
-		}
-	}
-
-	// Log overall performance summary
-	totalDuration := time.Since(funcStart)
-	chunksProcessed := (endChunk - startChunk) + 1
-
-	slog.Info("DecryptFileStreamingRange: completed",
-		"total_duration_ms", totalDuration.Milliseconds(),
-		"read_time_ms", totalReadTime.Milliseconds(),
-		"decrypt_time_ms", totalDecryptTime.Milliseconds(),
-		"write_time_ms", totalWriteTime.Milliseconds(),
-		"chunks_processed", chunksProcessed,
-		"bytes_written", totalWritten,
-		"chunk_size_mb", chunkSize/(1024*1024),
-		"avg_read_ms_per_chunk", totalReadTime.Milliseconds()/chunksProcessed,
-		"avg_decrypt_ms_per_chunk", totalDecryptTime.Milliseconds()/chunksProcessed,
-		"throughput_mbps", float64(totalWritten)/(1024*1024)/totalDuration.Seconds())
-
-	return totalWritten, nil
 }
 
 // ============================================================================
@@ -923,37 +724,6 @@ func DecryptFileStreamingV2(srcPath, dstPath, keyHex string, encFileID []byte, e
 	}
 	succeeded = true
 	return nil
-}
-
-// DecryptFileStreamingRangeV2 decrypts a specific plaintext byte range from
-// an SFSE2 file. start..end are inclusive plaintext-byte offsets. end == -1
-// means "to end of file".
-//
-// expectedSHA256Hex is verified only when the call covers the entire file
-// (start=0 and end==total_plaintext_len-1); partial-range reads cannot
-// reasonably verify a whole-file hash and pass through with the SHA check
-// disabled. expectedPlaintextLen >= 0 always validates the header's
-// total_plaintext_len even on partial reads (defends against header
-// forgery / zero-byte collapse).
-//
-// Per ADR-011 §6: Range reads authenticate every touched chunk via AAD but
-// cannot detect trailing-chunk truncation if the requested range does not
-// reach the final chunk. SHA-256 verification is skipped for partial reads.
-func DecryptFileStreamingRangeV2(srcPath string, w io.Writer, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen, startByte, endByte int64) (int64, error) {
-	if len(encFileID) != SFSE2EncFileIDSize {
-		return 0, fmt.Errorf("enc_file_id must be %d bytes, got %d", SFSE2EncFileIDSize, len(encFileID))
-	}
-	if startByte < 0 || (endByte >= 0 && endByte < startByte) {
-		return 0, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
-	}
-
-	srcFile, err := os.Open(srcPath)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open source file: %w", err)
-	}
-	defer srcFile.Close()
-
-	return decryptSFSE2Stream(srcFile, w, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen, startByte, endByte)
 }
 
 // decryptSFSE2Stream is the file-based SFSE2 decrypt wrapper. It parses the
@@ -1275,27 +1045,5 @@ func DecryptFileStreamingAny(srcPath, dstPath, keyHex string, encFileID []byte, 
 		return DecryptFileStreamingV2(srcPath, dstPath, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen)
 	default:
 		return fmt.Errorf("%w: %d", ErrUnsupportedSFSEVersion, ver)
-	}
-}
-
-// DecryptFileStreamingRangeAny is the Range counterpart to
-// DecryptFileStreamingAny. Peeks the SFSE version byte and routes to the V1
-// or V2 Range reader. expectedSHA256Hex / expectedPlaintextLen are forwarded
-// to the V2 path only (V1 has no header length to validate). On the V2 path,
-// callers should pass file.SHA256Hash when start=0 and end==fileSize-1 so
-// the integrity check that ADR-011 §6 promises actually fires on full-file
-// downloads served via the Range API.
-func DecryptFileStreamingRangeAny(srcPath string, w io.Writer, keyHex string, encFileID []byte, expectedSHA256Hex string, expectedPlaintextLen, startByte, endByte int64) (int64, error) {
-	ver, err := PeekSFSEVersion(srcPath)
-	if err != nil {
-		return 0, err
-	}
-	switch ver {
-	case StreamEncryptionVersion:
-		return DecryptFileStreamingRange(srcPath, w, keyHex, startByte, endByte)
-	case StreamEncryptionVersionV2:
-		return DecryptFileStreamingRangeV2(srcPath, w, keyHex, encFileID, expectedSHA256Hex, expectedPlaintextLen, startByte, endByte)
-	default:
-		return 0, fmt.Errorf("%w: %d", ErrUnsupportedSFSEVersion, ver)
 	}
 }

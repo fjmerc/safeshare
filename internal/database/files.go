@@ -13,6 +13,20 @@ import (
 	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
+// nullableBlob converts a nil or zero-length []byte to SQL NULL; anything
+// else passes through unchanged. Mirrors repository/sqlite/common.go's
+// helper of the same name (duplicated, not imported — this package and that
+// one are deliberately kept independent; see CreateFile's doc comment for
+// why this hand-rolled legacy DB layer exists at all). Used for
+// enc_file_id, which is genuinely absent (nil) for a plaintext import
+// rather than an empty-but-present value.
+func nullableBlob(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
 // validateStoredFilename validates that a stored filename is safe to use in file paths.
 // This is a defense-in-depth measure duplicated here to avoid circular imports
 // (utils imports database via assembly_recovery.go).
@@ -64,13 +78,18 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			scan_status, scan_result, enc_file_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Format ExpiresAt as RFC3339 for consistent SQLite datetime() parsing
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
 
+	// file.EncFileID is nil for a plaintext (unencrypted) import. Normalized
+	// via nullableBlob (mirrors repository/sqlite/common.go's helper of the
+	// same name — different package, so duplicated rather than imported) so
+	// a non-nil-but-empty []byte{} also maps to SQL NULL, not an empty BLOB,
+	// matching every other enc_file_id write path in this codebase.
 	result, err := db.Exec(
 		query,
 		file.ClaimCode,
@@ -86,6 +105,7 @@ func CreateFile(db *sql.DB, file *models.File) error {
 		file.SHA256Hash,
 		scanning.ScanStatusNotScanned,
 		"imported via CLI",
+		nullableBlob(file.EncFileID),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
@@ -190,7 +210,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 	query := `
 		SELECT
 			id, claim_code, original_filename, stored_filename, file_size,
-			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id, sha256_hash
+			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id, sha256_hash, enc_file_id
 		FROM files
 		WHERE claim_code = ?
 	`
@@ -217,6 +237,7 @@ func GetFileByClaimCode(db *sql.DB, claimCode string) (*models.File, error) {
 		&passwordHash,
 		&userID,
 		&sha256Hash,
+		&file.EncFileID,
 	)
 
 	if err == sql.ErrNoRows {
@@ -660,8 +681,16 @@ func GetStats(db *sql.DB, uploadDir string) (totalFiles int, storageUsed int64, 
 	return totalFiles, storageUsed, nil
 }
 
-// GetAllFiles returns all files in the database (including expired files)
-// This is primarily used for administrative tools like the encryption migration utility
+// GetAllFiles returns all files in the database (including expired files).
+//
+// As of the 3c-3 hardening pass, cmd/migrate-encryption no longer uses this:
+// its legacy-migration and --upgrade-format paths need enc_file_id, which
+// this function doesn't select (see listFilesForVerify in
+// cmd/migrate-encryption/verify.go, which both now use instead, and its doc
+// comment for why that tool keeps its own hand-rolled query rather than
+// this one being widened). GetAllFiles currently has no callers anywhere in
+// this codebase; kept as a general-purpose "every file, including expired"
+// query for any future administrative tool that doesn't need enc_file_id.
 func GetAllFiles(db *sql.DB) ([]*models.File, error) {
 	query := `
 		SELECT

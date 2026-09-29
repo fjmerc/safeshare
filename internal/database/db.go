@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -236,6 +237,112 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	if err := RunMigrations(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	return db, nil
+}
+
+// RequireLocalBackends returns an error if the environment configures a
+// non-default database or storage backend — DATABASE_TYPE=postgresql or
+// STORAGE_TYPE=s3. SafeShare's standalone CLI admin tools (cmd/import-file,
+// cmd/migrate-encryption) only ever read/write the local SQLite file and
+// local uploads directory named by their own --db/--uploads flags. Running
+// one of them against a deployment actually configured for PostgreSQL
+// and/or S3 would silently operate on the wrong data entirely — a local
+// SQLite file and uploads directory the running server never reads from —
+// rather than failing loudly the way pointing --db/--uploads at the wrong
+// path at least has a chance of doing.
+//
+// Checked directly against the same environment variables and default
+// values internal/config.Load uses (DATABASE_TYPE default "sqlite",
+// STORAGE_TYPE default "filesystem") without importing that package: a bare
+// CLI invocation's environment may not satisfy Load's other, unrelated
+// required settings, and these two tools have no other use for the rest of
+// Config.
+func RequireLocalBackends() error {
+	if dbType := os.Getenv("DATABASE_TYPE"); dbType != "" && dbType != "sqlite" {
+		return fmt.Errorf("DATABASE_TYPE=%q is set in the environment, but this tool only supports SQLite (DATABASE_TYPE unset or \"sqlite\") — it would read/write a local SQLite file while the running server actually uses PostgreSQL", dbType)
+	}
+	if storageType := os.Getenv("STORAGE_TYPE"); storageType != "" && storageType != "filesystem" {
+		return fmt.Errorf("STORAGE_TYPE=%q is set in the environment, but this tool only supports the local filesystem backend (STORAGE_TYPE unset or \"filesystem\") — it would read/write local files while the running server actually uses S3", storageType)
+	}
+	return nil
+}
+
+// OpenForCLI opens an existing SafeShare SQLite database with the same
+// connection setup Initialize uses — the connection-hook pragmas (including
+// busy_timeout, critical so a write from this process waits briefly on a
+// lock contended with the live server instead of failing immediately with
+// SQLITE_BUSY), the `_txlock=immediate` DSN parameter (without which
+// BeginImmediateTx silently issues BEGIN DEFERRED instead — modernc.org/sqlite
+// ignores sql.TxOptions.Isolation, so DSN is the only thing that actually
+// controls this), WAL journal mode, and the same connection-pool limits —
+// but it does NOT create or migrate any schema.
+//
+// This is for the standalone admin CLI tools (cmd/import-file,
+// cmd/migrate-encryption), which always connect to a database the server
+// already created, is the schema owner of, and may be concurrently writing
+// to. Before this existed, both tools opened with a bare sql.Open(dbPath)
+// (no busy_timeout — defaults to 0 — and no _txlock=immediate), so any lock
+// conflict with the live server failed immediately instead of waiting, and
+// any transaction opened via BeginImmediateTx quietly downgraded to
+// DEFERRED, reopening exactly the SQLITE_BUSY_SNAPSHOT risk _txlock=immediate
+// exists to prevent (see BeginImmediateTx's doc comment).
+//
+// Fails with a clear error if dbPath doesn't look like a SafeShare database
+// (no `files` table) rather than letting the first real query fail with an
+// oblique "no such table" error.
+func OpenForCLI(dbPath string) (*sql.DB, error) {
+	// sql.Open + the sqlite driver create a new, empty database file at
+	// dbPath if none exists — silently, since Open doesn't actually touch
+	// the file until the first query. Without this check, a mistyped --db
+	// path wouldn't fail until deep inside the first real query, with an
+	// error ("no such table") that gives no hint the path itself was wrong,
+	// and would have already left a stray empty .db (and, in WAL mode,
+	// -wal/-shm) file behind at the typo'd path.
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("database file %s does not exist — check the --db path", dbPath)
+		}
+		return nil, fmt.Errorf("cannot access database file %s: %w", dbPath, err)
+	}
+
+	registerConnectionHook()
+
+	dsn := dbPath + "?_txlock=immediate"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// journal_mode is a database-level pragma the server already sets on
+	// its first Initialize() call; re-asserting it here is idempotent and
+	// cheap (a no-op once already WAL), and keeps a CLI tool pointed at a
+	// database the server hasn't started against yet (a freshly restored
+	// backup, say) behaving the same way once it has.
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set journal_mode: %w", err)
+	}
+
+	var tableName string
+	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'files'`).Scan(&tableName)
+	if err == sql.ErrNoRows {
+		db.Close()
+		return nil, fmt.Errorf("%s does not look like a SafeShare database (no 'files' table found) — check the --db path", dbPath)
+	}
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to verify database schema: %w", err)
 	}
 
 	return db, nil

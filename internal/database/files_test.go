@@ -14,8 +14,21 @@ import (
 func TestCreateFile(t *testing.T) {
 	db := setupTestDB(t)
 
+	// A real user row: files.user_id has a foreign key to users(id), which
+	// production always enforces (registerConnectionHook's PRAGMA
+	// foreign_keys = ON, applied via database.Initialize/OpenForCLI). A
+	// dangling reference to a nonexistent user id would only "work" here by
+	// accident of this specific test's isolated sql.Open(":memory:") never
+	// itself enabling that pragma — which is no longer a safe assumption
+	// once anything else in this test binary calls Initialize/OpenForCLI
+	// (registerConnectionHook is a process-wide, once-only registration).
+	user, err := CreateUser(db, "testcreatefile-user", "testcreatefile@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
 	maxDownloads := 5
-	userID := int64(1)
+	userID := user.ID
 	file := &models.File{
 		ClaimCode:        "TEST123",
 		OriginalFilename: "test.txt",
@@ -29,7 +42,7 @@ func TestCreateFile(t *testing.T) {
 		UserID:           &userID,
 	}
 
-	err := CreateFile(db, file)
+	err = CreateFile(db, file)
 	if err != nil {
 		t.Fatalf("CreateFile() error: %v", err)
 	}

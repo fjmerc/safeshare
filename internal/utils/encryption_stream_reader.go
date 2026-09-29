@@ -252,9 +252,12 @@ func DecryptSFSE1RangeFromReader(r io.Reader, w io.Writer, keyHex string, chunkS
 	buffer := make([]byte, encChunkSize)
 	var totalWritten int64
 
-	// V1 range loop — mirrors the canonical loop in DecryptFileStreamingRange.
-	// Keep io.ReadFull semantics in sync (SH-1.2). ErrUnexpectedEOF is the
-	// legitimate short final chunk; EOF is clean termination.
+	// V1 range loop — used by the S3 storage backend (see
+	// internal/storage/s3/encrypted_storage.go), which cannot Seek an
+	// io.ReadCloser and so cannot use utils.SFSEReader the way file-backed
+	// callers do. Keep io.ReadFull semantics in sync with SFSEReader.loadChunk
+	// (SH-1.2). ErrUnexpectedEOF is the legitimate short final chunk; EOF is
+	// clean termination.
 	for currentChunk := startChunk; currentChunk <= endChunk; currentChunk++ {
 		n, readErr := io.ReadFull(r, buffer)
 		if readErr == io.EOF {
@@ -388,5 +391,3 @@ func decryptSFSE2FullFromReaderPostMagic(r io.Reader, w io.Writer, keyHex string
 	}
 	return decryptSFSE2Core(r, w, gcm, p)
 }
-
-

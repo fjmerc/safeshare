@@ -11,7 +11,15 @@ import (
 func TestCreatePartialUpload(t *testing.T) {
 	db := setupTestDB(t)
 
-	userID := int64(1)
+	// A real user row: partial_uploads.user_id has a foreign key to
+	// users(id), which production always enforces (see TestCreateFile's
+	// comment on the same pattern in files_test.go for why a dangling
+	// reference is no longer safe to rely on here).
+	user, err := CreateUser(db, "testcreatepartialupload-user", "testcreatepartialupload@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID := user.ID
 	upload := &models.PartialUpload{
 		UploadID:       "test-upload-123",
 		UserID:         &userID,
@@ -29,7 +37,7 @@ func TestCreatePartialUpload(t *testing.T) {
 		Completed:      false,
 	}
 
-	err := CreatePartialUpload(db, upload)
+	err = CreatePartialUpload(db, upload)
 	if err != nil {
 		t.Fatalf("CreatePartialUpload() error: %v", err)
 	}
@@ -410,8 +418,25 @@ func TestGetOldCompletedUploads(t *testing.T) {
 func TestGetPartialUploadsByUserID(t *testing.T) {
 	db := setupTestDB(t)
 
-	userID1 := int64(1)
-	userID2 := int64(2)
+	// Real user rows: partial_uploads.user_id has a foreign key to
+	// users(id) (see TestCreatePartialUpload's comment on the same
+	// pattern). This is a fresh :memory: DB with no prior users rows, so
+	// these two inserts get auto-increment ids 1 and 2 respectively,
+	// preserving this test's hardcoded GetPartialUploadsByUserID(db, 1)/(db,
+	// 2) calls below.
+	u1, err := CreateUser(db, "testgetpartialuploadsbyuserid-1", "testgetpartialuploadsbyuserid-1@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser (1): %v", err)
+	}
+	u2, err := CreateUser(db, "testgetpartialuploadsbyuserid-2", "testgetpartialuploadsbyuserid-2@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser (2): %v", err)
+	}
+	if u1.ID != 1 || u2.ID != 2 {
+		t.Fatalf("unexpected user ids: u1=%d u2=%d, want 1 and 2 (test below hardcodes these)", u1.ID, u2.ID)
+	}
+	userID1 := u1.ID
+	userID2 := u2.ID
 
 	// Create uploads for user 1
 	upload1 := &models.PartialUpload{
@@ -428,7 +453,7 @@ func TestGetPartialUploadsByUserID(t *testing.T) {
 		Completed:      false,
 	}
 
-	err := CreatePartialUpload(db, upload1)
+	err = CreatePartialUpload(db, upload1)
 	if err != nil {
 		t.Fatalf("CreatePartialUpload() error: %v", err)
 	}
@@ -712,8 +737,14 @@ func TestCreatePartialUploadWithQuotaCheck_Success(t *testing.T) {
 		t.Fatalf("CreateFile() error: %v", err)
 	}
 
-	// Create partial upload that fits within quota
-	userID := int64(1)
+	// Create partial upload that fits within quota. Real user row:
+	// partial_uploads.user_id has a foreign key to users(id) (see
+	// TestCreatePartialUpload's comment on the same pattern).
+	user, err := CreateUser(db, "testcreatepartialuploadwithquotacheck-user", "testcreatepartialuploadwithquotacheck@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	userID := user.ID
 	upload := &models.PartialUpload{
 		UploadID:       "quota-upload-1",
 		Filename:       "chunked.bin",

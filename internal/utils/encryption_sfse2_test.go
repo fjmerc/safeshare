@@ -366,6 +366,35 @@ func TestSFSE2_Tamper_WrongEncFileID(t *testing.T) {
 
 // --- Range reader -----------------------------------------------------------
 
+// readRangeViaSFSEReader exercises the actual production Range-read path
+// (ADR-017 parts 1-2 moved every claim download, including Range requests,
+// onto utils.SFSEReader driving http.ServeContent — see sfse_readseeker.go)
+// rather than the retired file-based DecryptFileStreamingRangeV2 helper.
+func readRangeViaSFSEReader(t *testing.T, path string, encFileID []byte, plainLen, start, end int64) ([]byte, error) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	r, err := OpenSFSEReader(f, fi, testKeyV2, encFileID, plainLen, "")
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	if _, err := r.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	want := end - start + 1
+	buf := make([]byte, want)
+	n, err := io.ReadFull(r, buf)
+	return buf[:n], err
+}
+
 func TestSFSE2_Range_MultipleSubranges(t *testing.T) {
 	encFileID := newTestEncFileID(t)
 	plaintext := make([]byte, DefaultChunkSize*2+1000)
@@ -386,17 +415,13 @@ func TestSFSE2_Range_MultipleSubranges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			n, err := DecryptFileStreamingRangeV2(encPath, &buf, testKeyV2, encFileID, "", -1, c.start, c.end)
+			got, err := readRangeViaSFSEReader(t, encPath, encFileID, int64(len(plaintext)), c.start, c.end)
 			if err != nil {
 				t.Fatalf("Range[%d..%d]: %v", c.start, c.end, err)
 			}
 			want := plaintext[c.start : c.end+1]
-			if int64(len(want)) != n {
-				t.Fatalf("Range[%d..%d]: wrote %d, want %d", c.start, c.end, n, len(want))
-			}
-			if !bytes.Equal(buf.Bytes(), want) {
-				t.Fatalf("Range[%d..%d]: content mismatch", c.start, c.end)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("Range[%d..%d]: content mismatch (got %d bytes, want %d)", c.start, c.end, len(got), len(want))
 			}
 		})
 	}
@@ -427,8 +452,7 @@ func TestSFSE2_Range_DetectsSpliceInTouchedChunk(t *testing.T) {
 	}
 
 	// Range request that touches the spliced chunk → must fail.
-	var buf bytes.Buffer
-	_, err := DecryptFileStreamingRangeV2(encPathA, &buf, testKeyV2, encFileIDA, "", -1, 0, 100)
+	_, err := readRangeViaSFSEReader(t, encPathA, encFileIDA, int64(len(plaintextA)), 0, 100)
 	if err == nil {
 		t.Fatal("expected Range read to fail on spliced chunk, got nil")
 	}
@@ -482,22 +506,24 @@ func TestSFSE_Dispatcher_RoutesV1AndV2(t *testing.T) {
 		t.Fatalf("V2 dispatcher round-trip mismatch")
 	}
 
-	// Range dispatch.
-	var buf bytes.Buffer
-	n, err := DecryptFileStreamingRangeAny(v1EncPath, &buf, testKeyV2, nil, "", -1, 0, 9)
+	// Range dispatch: OpenSFSEReader is the actual production dispatcher for
+	// Range reads (it reads the version byte itself and branches — see
+	// sfse_readseeker.go) — the retired DecryptFileStreamingRangeAny
+	// file-based helper this used to call duplicated that dispatch outside
+	// the code path claim_range.go actually uses.
+	got1, err := readRangeViaSFSEReader(t, v1EncPath, nil, int64(len(v1Plain)), 0, 9)
 	if err != nil {
 		t.Fatalf("Range(v1): %v", err)
 	}
-	if n != 10 || !bytes.Equal(buf.Bytes(), v1Plain[:10]) {
-		t.Fatalf("Range(v1) mismatch: n=%d, got=%q", n, buf.Bytes())
+	if !bytes.Equal(got1, v1Plain[:10]) {
+		t.Fatalf("Range(v1) mismatch: got=%q", got1)
 	}
-	buf.Reset()
-	n, err = DecryptFileStreamingRangeAny(v2EncPath, &buf, testKeyV2, encFileID, "", int64(len(v2Plain)), 0, 9)
+	got2, err := readRangeViaSFSEReader(t, v2EncPath, encFileID, int64(len(v2Plain)), 0, 9)
 	if err != nil {
 		t.Fatalf("Range(v2): %v", err)
 	}
-	if n != 10 || !bytes.Equal(buf.Bytes(), v2Plain[:10]) {
-		t.Fatalf("Range(v2) mismatch: n=%d, got=%q", n, buf.Bytes())
+	if !bytes.Equal(got2, v2Plain[:10]) {
+		t.Fatalf("Range(v2) mismatch: got=%q", got2)
 	}
 }
 

@@ -14,14 +14,21 @@ RUN go mod download
 COPY . .
 
 # Build binaries (CGO not needed with modernc.org/sqlite)
-# Only build essential binaries: main app + import-file
-# Migration tools (migrate-chunks, migrate-encryption) can be built and run separately if needed
+# Essential binaries: main app, import-file, and migrate-encryption (needed
+# in-image for --upgrade-format — see cmd/migrate-encryption/README.md's
+# "Docker Usage" section; it must run as the same non-root user that owns
+# /app/uploads, which only holds true inside this image, not on the host).
+# migrate-chunks is a one-off historical tool and is not shipped here — it
+# can still be built and run separately if ever needed again.
 RUN CGO_ENABLED=0 GOOS=linux go build -a \
     -ldflags="-w -s" \
     -o safeshare ./cmd/safeshare && \
     CGO_ENABLED=0 GOOS=linux go build -a \
     -ldflags="-w -s" \
-    -o import-file ./cmd/import-file
+    -o import-file ./cmd/import-file && \
+    CGO_ENABLED=0 GOOS=linux go build -a \
+    -ldflags="-w -s" \
+    -o migrate-encryption ./cmd/migrate-encryption
 
 # Runtime stage
 # Pin Alpine version for reproducible builds
@@ -41,13 +48,21 @@ RUN addgroup -g 1000 safeshare && \
 
 WORKDIR /app
 
-# Copy binaries from builder
-COPY --from=builder /build/safeshare .
-COPY --from=builder /build/import-file .
+# Copy binaries from builder, setting ownership at copy time (--chown)
+# rather than with a separate `chown -R /app` afterward: on an overlay
+# filesystem, `chown -R` over files that came from an earlier layer forces
+# the storage driver to duplicate their entire content into the new layer
+# (a well-known Docker sizing gotcha), roughly doubling every binary's
+# contribution to the final image size. --chown avoids that entirely — the
+# ownership is set as part of the same copy, no second full-content layer.
+COPY --from=builder --chown=safeshare:safeshare /build/safeshare .
+COPY --from=builder --chown=safeshare:safeshare /build/import-file .
+COPY --from=builder --chown=safeshare:safeshare /build/migrate-encryption .
 
-# Create data directories
+# Create data directories (nothing here comes from an earlier layer, so a
+# plain chown costs nothing beyond these two empty directories' own size)
 RUN mkdir -p /app/uploads /app/data && \
-    chown -R safeshare:safeshare /app
+    chown safeshare:safeshare /app/uploads /app/data
 
 # Switch to non-root user
 USER safeshare
