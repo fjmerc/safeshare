@@ -356,6 +356,7 @@ MAX_EXPIRATION_HOURS=168              # 7 days
 # Rate Limiting
 RATE_LIMIT_UPLOAD=10                  # Uploads per hour per IP
 RATE_LIMIT_DOWNLOAD=100               # Downloads per hour per IP
+RATE_LIMIT_IPV6_PREFIX=64             # IPv6 clients are rate-limited/capped per this prefix width, not per address (48-128; 128 = per-address)
 
 # Storage
 QUOTA_LIMIT_GB=50                     # Total storage quota (0 = unlimited)

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -36,6 +37,24 @@ func NewRepositories(cfg *config.Config) (*repository.Repositories, func(), erro
 			pool.Close()
 			return nil, nil, fmt.Errorf("failed to run PostgreSQL migrations: %w", err)
 		}
+	}
+
+	// T43: canonicalize any blocked_ips rows left over from before IP
+	// canonicalization existed. Idempotent and cheap, so it's safe to run
+	// on every startup. Best effort: a failure here shouldn't prevent the
+	// app from starting, but (code-review follow-up correcting an earlier,
+	// inaccurate version of this comment) it's not fully harmless either. A
+	// CIDR row is self-correcting: loadCIDRPrefixes canonicalizes every
+	// CIDR-shaped row itself at read time, so containment checks work
+	// correctly even against an un-normalized row. A bare-address row is
+	// NOT self-correcting: IsIPBlocked's exact-match query only
+	// canonicalizes the incoming client IP, not the stored row, so a row
+	// left stored non-canonically simply won't match a canonical client IP
+	// until either this normalization succeeds or the row is fixed by
+	// hand. UnblockIP's exact-string-input fallback still lets such a row
+	// be removed by its literal stored value in the meantime.
+	if err := NormalizeBlockedIPs(context.Background(), pool); err != nil {
+		slog.Error("failed to normalize blocked IP entries at startup", "error", err)
 	}
 
 	// Create cleanup function

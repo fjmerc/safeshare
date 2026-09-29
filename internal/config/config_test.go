@@ -461,6 +461,50 @@ func TestLoad_TrustedProxyIPsValidation(t *testing.T) {
 	}
 }
 
+// TestLoad_RateLimitIPv6PrefixValidation is a T43 test: RATE_LIMIT_IPV6_PREFIX
+// must be validated at config load time (48-128 inclusive) so an
+// out-of-range value fails startup loudly rather than silently producing a
+// nonsensical rate-limit grouping at request time.
+func TestLoad_RateLimitIPv6PrefixValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"default (unset) is valid", "", false},
+		{"minimum boundary 48", "48", false},
+		{"default value 64", "64", false},
+		{"maximum boundary 128 (per-address)", "128", false},
+		{"just below minimum", "47", true},
+		{"just above maximum", "129", true},
+		{"zero", "0", true},
+		{"negative", "-1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnvVars(t)
+			if tt.value != "" {
+				t.Setenv("RATE_LIMIT_IPV6_PREFIX", tt.value)
+			}
+
+			_, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with RATE_LIMIT_IPV6_PREFIX=%q succeeded, want error", tt.value)
+				}
+				if !strings.Contains(err.Error(), "RATE_LIMIT_IPV6_PREFIX") {
+					t.Errorf("Error message = %v, want error mentioning RATE_LIMIT_IPV6_PREFIX", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() with RATE_LIMIT_IPV6_PREFIX=%q failed: %v", tt.value, err)
+			}
+		})
+	}
+}
+
 // TestLoad_ExpirationValidation tests default vs max expiration validation
 func TestLoad_ExpirationValidation(t *testing.T) {
 	clearEnvVars(t)
@@ -1103,7 +1147,7 @@ func clearEnvVars(t *testing.T) {
 		"READ_TIMEOUT", "WRITE_TIMEOUT",
 		"LEGACY_DECRYPT_MAX_BYTES", "DOWNLOAD_DECRYPT_MEMORY_BUDGET",
 		"MAX_ENCRYPTED_DOWNLOADS_PER_IP",
-		"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_IPS",
+		"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_IPS", "RATE_LIMIT_IPV6_PREFIX",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)

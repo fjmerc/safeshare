@@ -170,3 +170,80 @@ func TestGetClientIP_ConfiguredTrust(t *testing.T) {
 		})
 	}
 }
+
+func restoreDefaultRateLimitIPv6Prefix(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		ConfigureRateLimitIPv6Prefix(64)
+	})
+}
+
+func TestRateLimitKey_DefaultPrefix(t *testing.T) {
+	restoreDefaultRateLimitIPv6Prefix(t)
+	ConfigureRateLimitIPv6Prefix(64)
+
+	a := RateLimitKey("2001:db8:1234:5678::1")
+	b := RateLimitKey("2001:db8:1234:5678:aaaa:bbbb:cccc:dddd")
+	if a != b {
+		t.Errorf("RateLimitKey() for two addresses in the same /64 = %q, %q, want equal", a, b)
+	}
+
+	c := RateLimitKey("2001:db8:1234:9999::1")
+	if a == c {
+		t.Errorf("RateLimitKey() for addresses in different /64s both = %q, want different", a)
+	}
+}
+
+func TestRateLimitKey_ConfiguredPrefix(t *testing.T) {
+	restoreDefaultRateLimitIPv6Prefix(t)
+	ConfigureRateLimitIPv6Prefix(48)
+
+	a := RateLimitKey("2001:db8:1234::1")
+	b := RateLimitKey("2001:db8:1234:ffff::1")
+	if a != b {
+		t.Errorf("RateLimitKey() with /48 configured for two addresses in the same /48 = %q, %q, want equal", a, b)
+	}
+
+	c := RateLimitKey("2001:db8:5678::1")
+	if a == c {
+		t.Errorf("RateLimitKey() with /48 configured for addresses in different /48s both = %q, want different", a)
+	}
+}
+
+func TestRateLimitKey_128IsPerAddress(t *testing.T) {
+	restoreDefaultRateLimitIPv6Prefix(t)
+	ConfigureRateLimitIPv6Prefix(128)
+
+	a := RateLimitKey("2001:db8::1")
+	b := RateLimitKey("2001:db8::2")
+	if a == b {
+		t.Error("RateLimitKey() with prefix=128 grouped two distinct addresses together, want per-address")
+	}
+
+	same := RateLimitKey("2001:db8::1")
+	if a != same {
+		t.Error("RateLimitKey() with prefix=128 not stable for the same address")
+	}
+}
+
+func TestRateLimitKey_IPv4AlwaysPerAddress(t *testing.T) {
+	restoreDefaultRateLimitIPv6Prefix(t)
+	ConfigureRateLimitIPv6Prefix(48) // IPv4 must be unaffected by the IPv6 prefix setting
+
+	a := RateLimitKey("203.0.113.5")
+	b := RateLimitKey("203.0.113.6")
+	if a == b {
+		t.Error("RateLimitKey() grouped two distinct IPv4 addresses together, want per-address")
+	}
+	if a != "203.0.113.5" {
+		t.Errorf("RateLimitKey(%q) = %q, want unchanged", "203.0.113.5", a)
+	}
+}
+
+func TestRateLimitKey_UnparsableFallsBackToInput(t *testing.T) {
+	restoreDefaultRateLimitIPv6Prefix(t)
+	got := RateLimitKey("not-an-ip")
+	if got != "not-an-ip" {
+		t.Errorf("RateLimitKey(%q) = %q, want unchanged input", "not-an-ip", got)
+	}
+}

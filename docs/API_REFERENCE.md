@@ -974,7 +974,7 @@ Delete multiple files at once.
 
 ### Block IP Address
 
-Add an IP address to the blocklist.
+Add an IP address or CIDR range to the blocklist.
 
 **Endpoint**: `POST /admin/api/ip/block`
 
@@ -988,13 +988,39 @@ Add an IP address to the blocklist.
 }
 ```
 
+`ip_address` accepts either a bare IPv4/IPv6 address (`192.168.1.100`, `2001:db8::1`) or a CIDR range (`203.0.113.0/24`, `2001:db8:1:2::/64`). It's canonicalized before storage — IPv4-mapped IPv6 addresses are unmapped, zone IDs are dropped, and hex is lowercased/compressed — so the same logical address or range always matches regardless of how it was typed. A CIDR range broader than `/8` (IPv4) or `/32` (IPv6), including `0.0.0.0/0` and `::/0`, is rejected (400) to avoid a typo blocking most of the address space.
+
+Three self-lockout guards refuse a block outright (409) rather than persisting it:
+- it includes loopback (`127.0.0.0/8` or `::1`);
+- it includes the requesting admin's own current client IP;
+- it fully contains a configured `TRUSTED_PROXY_IPS` entry — either the trusted range/host itself (e.g. blocking `10.0.0.0/8` when that's a trusted range, or a `/16` that contains a trusted `/24`), or a range that contains a trusted entry that's itself a single host (an explicitly named reverse proxy). SafeShare relies on that range to resolve real client IPs, so blocking it (or enough of it) would break request handling for every client behind it, not just an attacker.
+
+A target that merely sits *inside* a broader `TRUSTED_PROXY_IPS` range (the common case — the default `TRUSTED_PROXY_IPS` is whole private ranges like `192.168.0.0/16`, and blocking one LAN host under it is normal) is **not** refused, but the 200 response's `message` includes a caution: if that range is your reverse proxy's own peer address, its requests that arrive without a usable forwarded header (see `TRUST_PROXY_HEADERS`) will now be blocked too.
+
 **Response**: 200 OK
+```json
+{
+  "success": true,
+  "message": "IP blocked successfully"
+}
+```
+With a caution (see above):
+```json
+{
+  "success": true,
+  "message": "IP blocked successfully Note: 192.168.1.50 is inside the configured TRUSTED_PROXY_IPS range 192.168.0.0/16. If that range includes your reverse proxy, any of its requests that arrive without a usable forwarded header will now be blocked too."
+}
+```
+
+**Errors** (all responses are `{"success": false, "message": "..."}`):
+- `400 Bad Request` — missing/invalid `ip_address`, or an overly-broad CIDR range
+- `409 Conflict` — the block was refused as a self-lockout risk (loopback, the admin's own IP, or a trusted-proxy range/host — see above), or the canonical address/range is already blocked (possibly under a different original spelling)
 
 ---
 
 ### Unblock IP Address
 
-Remove an IP address from the blocklist.
+Remove an IP address or CIDR range from the blocklist.
 
 **Endpoint**: `POST /admin/api/ip/unblock`
 
@@ -1007,7 +1033,13 @@ Remove an IP address from the blocklist.
 }
 ```
 
-**Response**: 200 OK
+`ip_address` is canonicalized the same way as Block IP Address before lookup, so it doesn't need to be typed identically to how it was originally blocked (and, for a legacy row too broad to canonicalize, falls back to an exact match on the stored string).
+
+**Response**: 200 OK, `{"success": true, "message": "IP unblocked successfully"}`
+
+**Errors** (all responses are `{"success": false, "message": "..."}`):
+- `400 Bad Request` — missing `ip_address`
+- `404 Not Found` — no blocklist entry matched
 
 ---
 

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"log/slog"
-	"net"
 	"sync"
 
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -72,24 +71,19 @@ func SetEncryptedRangeIPTracker(t *InFlightTracker) {
 
 // decryptShareIPKey returns the key used to group a client for both
 // encryptedRangeIPTracker and decryptShare (the per-IP decrypt-memory
-// budget share below): the full address for IPv4, or the /64 prefix for
-// IPv6 — security-audit finding: keying on the full IPv6 address would let
-// a client that legitimately rotates addresses within its own /64 (routine
-// for many residential/mobile IPv6 allocations) trivially bypass both
-// limits by requesting a fresh address per download; grouping by /64
-// treats that as the one client it actually is. An unparsable address (should
-// never happen — it always comes from a real net.Conn's remote address)
-// falls back to the raw string rather than panicking or silently exempting
-// it from tracking.
+// budget share below): the full address for IPv4, or the configured-width
+// IPv6 prefix (RATE_LIMIT_IPV6_PREFIX, default /64) for IPv6 —
+// security-audit finding: keying on the full IPv6 address would let a
+// client that legitimately rotates addresses within its own allocation
+// (routine for many residential/mobile IPv6 networks) trivially bypass both
+// limits by requesting a fresh address per download; grouping by prefix
+// treats that as the one client it actually is.
+//
+// T43: delegates to utils.RateLimitKey, the single shared implementation
+// every per-IP limiter in the codebase uses, instead of duplicating the
+// same full-address-for-v4/prefix-for-v6 logic with its own hardcoded /64.
 func decryptShareIPKey(ip string) string {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return ip
-	}
-	if v4 := parsed.To4(); v4 != nil {
-		return v4.String()
-	}
-	return parsed.Mask(net.CIDRMask(64, 128)).String()
+	return utils.RateLimitKey(ip)
 }
 
 // decryptIPShare bounds how many bytes of the global decrypt-memory budget

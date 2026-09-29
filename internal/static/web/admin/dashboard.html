@@ -217,7 +217,7 @@
         <div id="blockedIPsTab" class="tab-content">
             <div class="table-controls">
                 <form id="blockIPForm" class="inline-form">
-                    <input type="text" name="ip_address" placeholder="IP Address">
+                    <input type="text" name="ip_address" placeholder="IP address or CIDR (e.g. 203.0.113.5 or 2001:db8::/64)" title="A single IPv4/IPv6 address, or a CIDR range to block (max /8 for IPv4, /32 for IPv6). Stored in canonical form. Blocks are per-address, but rate limits group IPv6 clients by /64 -- to stop an IPv6 client that's rotating addresses within its own network, block its /64 (e.g. 2001:db8:1234:5678::/64), not just one address.">
                     <input type="text" name="reason" placeholder="Reason (optional)">
                     <button type="submit" class="btn-primary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

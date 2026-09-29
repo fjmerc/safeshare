@@ -275,7 +275,11 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// this entirely. Acquired here BEFORE Reserve so a 429 path doesn't touch
 		// the reservation table at all.
 		clientIPForCap := getClientIP(r)
-		if !inFlightTracker.TryAcquire(file.ID, clientIPForCap) {
+		// T43: the tracker's bucket key groups IPv6 clients by the
+		// configured prefix (default /64); logging below still uses the
+		// full clientIPForCap.
+		inFlightKey := utils.RateLimitKey(clientIPForCap)
+		if !inFlightTracker.TryAcquire(file.ID, inFlightKey) {
 			slog.Warn("file access denied",
 				"reason", "inflight_cap_per_ip_reached",
 				"claim_code", redactClaimCode(claimCode),
@@ -290,7 +294,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				"TOO_MANY_INFLIGHT", http.StatusTooManyRequests)
 			return
 		}
-		defer inFlightTracker.Release(file.ID, clientIPForCap)
+		defer inFlightTracker.Release(file.ID, inFlightKey)
 
 		// Validate stored filename and build the on-disk path (defense-in-depth
 		// against database corruption/compromise).

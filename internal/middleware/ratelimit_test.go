@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // mockConfigProvider implements ConfigProvider for testing
@@ -594,6 +596,83 @@ func TestRateLimiter_IPv6(t *testing.T) {
 	if rr.Code != http.StatusTooManyRequests {
 		t.Errorf("request 3: got status %d, want 429", rr.Code)
 	}
+}
+
+// TestRateLimiter_IPv6PrefixGrouping is a T43 test: two IPv6 addresses
+// within the same configured prefix share a rate-limit bucket, addresses in
+// different prefixes don't, and configuring 128 (per-address) restores the
+// pre-T43 behavior.
+func TestRateLimiter_IPv6PrefixGrouping(t *testing.T) {
+	t.Cleanup(func() { utils.ConfigureRateLimitIPv6Prefix(64) })
+
+	newHandler := func(cfg *mockConfigProvider) (http.Handler, *RateLimiter) {
+		rl := NewRateLimiter(cfg)
+		return RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})), rl
+	}
+
+	t.Run("same /64 shares a bucket at default prefix", func(t *testing.T) {
+		utils.ConfigureRateLimitIPv6Prefix(64)
+		cfg := &mockConfigProvider{uploadLimit: 2, downloadLimit: 50}
+		handler, rl := newHandler(cfg)
+		defer rl.Stop()
+
+		addrs := []string{"[2001:db8:1234:5678::1]:1", "[2001:db8:1234:5678:aaaa:bbbb:cccc:dddd]:1"}
+		for i, addr := range addrs {
+			req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+			req.RemoteAddr = addr
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("request %d (%s): got status %d, want 200", i, addr, rr.Code)
+			}
+		}
+
+		// The bucket (shared across both addresses) is now exhausted.
+		req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+		req.RemoteAddr = "[2001:db8:1234:5678::2]:1"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusTooManyRequests {
+			t.Errorf("3rd request from same /64: got status %d, want 429", rr.Code)
+		}
+	})
+
+	t.Run("different /64s get separate buckets", func(t *testing.T) {
+		utils.ConfigureRateLimitIPv6Prefix(64)
+		cfg := &mockConfigProvider{uploadLimit: 1, downloadLimit: 50}
+		handler, rl := newHandler(cfg)
+		defer rl.Stop()
+
+		for _, addr := range []string{"[2001:db8:1111::1]:1", "[2001:db8:2222::1]:1"} {
+			req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+			req.RemoteAddr = addr
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Errorf("first request from %s: got status %d, want 200", addr, rr.Code)
+			}
+		}
+	})
+
+	t.Run("prefix 128 restores per-address behavior", func(t *testing.T) {
+		utils.ConfigureRateLimitIPv6Prefix(128)
+		cfg := &mockConfigProvider{uploadLimit: 1, downloadLimit: 50}
+		handler, rl := newHandler(cfg)
+		defer rl.Stop()
+
+		// Same /64, different host -- must NOT share a bucket at prefix=128.
+		for _, addr := range []string{"[2001:db8:1234:5678::1]:1", "[2001:db8:1234:5678::2]:1"} {
+			req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+			req.RemoteAddr = addr
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Errorf("first request from %s at prefix=128: got status %d, want 200", addr, rr.Code)
+			}
+		}
+	})
 }
 
 // Benchmark rate limiter

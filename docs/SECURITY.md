@@ -779,6 +779,41 @@ When an IP is blocked:
 4. **Audit trail**: All blocked attempts logged
 5. **Admin bypass**: Admin dashboard remains accessible
 
+**Canonical matching and CIDR ranges**: an entry accepts a bare IPv4/IPv6
+address or a CIDR range (e.g. `203.0.113.0/24`, `2001:db8:1:2::/64`), and is
+canonicalized before storage — IPv4-mapped IPv6 addresses are unmapped, zone
+IDs are dropped, and hex is lowercased/compressed — so the same logical
+address always matches the blocklist regardless of how it was typed or how
+a proxy represented it on the wire. A CIDR broader than `/8` (IPv4) or `/32`
+(IPv6) is rejected, as is any range that would include loopback or the
+requesting admin's own current IP, to prevent an operator from locking
+themselves out with a typo.
+
+**IPv6 rate limiting**: by default, IPv6 clients are rate-limited and
+concurrency-capped per `/64` prefix rather than per exact address, since many
+residential/mobile IPv6 allocations let a client rotate addresses freely
+within their own `/64`. Configurable via `RATE_LIMIT_IPV6_PREFIX` (default
+`64`, valid range 48–128; `128` restores strict per-address limiting). This
+does not affect what's logged or stored as the client's IP — audit logs and
+`uploader_ip` always keep the full address; only the rate-limit/concurrency
+bucket key is grouped.
+
+Grouping by `/64` is the same tradeoff IPv4 clients behind NAT already have:
+one abuser sharing a `/64` (or a NAT gateway) can exhaust the rate limit or
+trigger a login lockout for every other client sharing that same allocation,
+since they all group into the same bucket. This is expected, not a bug —
+without it, an attacker could bypass every limit for free by requesting a
+new address within their own `/64` on each attempt. If a deployment sees
+this cause real collateral impact (e.g. many legitimate users sharing one
+provider's `/64`), set `RATE_LIMIT_IPV6_PREFIX=128` to restore strict
+per-address limiting, accepting the original address-rotation bypass in
+exchange for finer-grained isolation between clients. The IP-blocklist's
+Block IP action is unaffected either way — it's always per-address or
+per-explicit-CIDR, never implicitly grouped by `/64` — so blocking a
+rotating IPv6 abuser outright requires blocking its `/64` explicitly (e.g.
+`2001:db8:1234:5678::/64`), not just the one address seen in a log line; see
+the admin dashboard's Block IP field for this exact suggestion.
+
 **Blocked access log**:
 ```json
 {

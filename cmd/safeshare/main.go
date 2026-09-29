@@ -53,6 +53,12 @@ func run() error {
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
 	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 
+	// T43: apply the IPv6 rate-limit grouping width process-wide so every
+	// per-IP limiter/concurrency cap (upload/download rate limits, login
+	// attempt limits, in-flight download/decrypt caps) groups IPv6 clients
+	// by the same configured prefix instead of the full address.
+	utils.ConfigureRateLimitIPv6Prefix(cfg.GetRateLimitIPv6Prefix())
+
 	slog.Info("starting safeshare",
 		"port", cfg.Port,
 		"max_file_size", cfg.GetMaxFileSize(),

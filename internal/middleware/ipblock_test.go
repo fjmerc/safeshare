@@ -294,3 +294,109 @@ func TestIPBlockCheck_ProductionChainSpoofResistant(t *testing.T) {
 		t.Errorf("unrelated client with same spoofed leftmost entry: status = %d, want %d", rr2.Code, http.StatusOK)
 	}
 }
+
+// TestIPBlockCheck_CanonicalMatchDifferentSpellings is a T43 test: an entry
+// stored in a differently-cased/formatted spelling than the request's
+// client IP must still match, since both BlockIP and GetClientIPWithTrust
+// canonicalize to the same form.
+func TestIPBlockCheck_CanonicalMatchDifferentSpellings(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	// Stored with uppercase hex and leading zeros -- BlockIP canonicalizes
+	// this to "2001:db8::1" before storage.
+	if err := repos.Admin.BlockIP(ctx, "2001:DB8:0000:0000:0000:0000:0000:0001", "test block", "test"); err != nil {
+		t.Fatalf("failed to block IP: %v", err)
+	}
+
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// The request arrives with the compressed, lowercase form -- the same
+	// canonical form GetClientIPWithTrust always produces.
+	req := httptest.NewRequest(http.MethodGet, "/api/upload", nil)
+	req.RemoteAddr = "[2001:db8::1]:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (canonical forms of the same address must match)", rr.Code, http.StatusForbidden)
+	}
+}
+
+// TestIPBlockCheck_IPv4MappedStoredEntry is a T43 test: a blocklist row
+// stored via an IPv4-mapped IPv6 spelling ("::ffff:a.b.c.d") must still
+// block the plain-IPv4 client that GetClientIPWithTrust normalizes it to.
+func TestIPBlockCheck_IPv4MappedStoredEntry(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "::ffff:203.0.113.9", "test block", "test"); err != nil {
+		t.Fatalf("failed to block IP: %v", err)
+	}
+
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/upload", nil)
+	req.RemoteAddr = "203.0.113.9:12345"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (IPv4-mapped stored entry must match the plain-IPv4 client)", rr.Code, http.StatusForbidden)
+	}
+}
+
+// TestIPBlockCheck_CIDRRange is a T43 test: a CIDR entry blocks every
+// address inside the range, not just an exact match.
+func TestIPBlockCheck_CIDRRange(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cfg := testutil.SetupTestConfig(t)
+	repos, err := sqlite.NewRepositories(cfg, db)
+	if err != nil {
+		t.Fatalf("failed to create repositories: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := repos.Admin.BlockIP(ctx, "203.0.113.0/24", "range block", "test"); err != nil {
+		t.Fatalf("failed to block CIDR: %v", err)
+	}
+
+	middleware := IPBlockCheck(repos, &mockProxyConfig{})
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/upload", nil)
+	req.RemoteAddr = "203.0.113.200:12345"
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("address inside blocked CIDR: status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/upload", nil)
+	req2.RemoteAddr = "203.0.114.1:12345"
+	rr2 := httptest.NewRecorder()
+	handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Errorf("address outside blocked CIDR: status = %d, want %d", rr2.Code, http.StatusOK)
+	}
+}
