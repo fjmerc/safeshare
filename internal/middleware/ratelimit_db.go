@@ -72,7 +72,7 @@ func (rl *DBRateLimiter) checkLimit(ctx context.Context, ip string, limitType st
 		// This is a deliberate choice to prefer availability over strict enforcement
 		slog.Error("rate limit check failed, allowing request",
 			"error", err,
-			"ip", ip,
+			"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 			"limit_type", limitType,
 		)
 		return true
@@ -80,7 +80,7 @@ func (rl *DBRateLimiter) checkLimit(ctx context.Context, ip string, limitType st
 
 	if !allowed {
 		slog.Warn("rate limit exceeded",
-			"ip", ip,
+			"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 			"limit_type", limitType,
 			"limit", limit,
 			"count", count,
@@ -134,56 +134,13 @@ func DBRateLimitMiddleware(rl *DBRateLimiter) func(http.Handler) http.Handler {
 	}
 }
 
-// getClientIPForRateLimit extracts the client IP address from the request with trusted proxy validation.
+// getClientIPForRateLimit extracts the client IP address from the request
+// with trusted proxy validation. Delegates to the single shared
+// implementation in internal/utils (T41: this used to duplicate a
+// leftmost-XFF-entry bug that let clients spoof their rate-limit/audit IP
+// through a trusted proxy).
 func getClientIPForRateLimit(r *http.Request, config ConfigProvider) string {
-	remoteIP := utils.ExtractIP(r.RemoteAddr)
-
-	trustProxyHeaders := config.GetTrustProxyHeaders()
-	trustedProxyIPs := config.GetTrustedProxyIPs()
-
-	shouldTrust := false
-
-	switch trustProxyHeaders {
-	case "true":
-		shouldTrust = true
-		slog.Warn("rate limiter trusting all proxy headers without validation",
-			"trust_mode", "true",
-			"remote_ip", privacy.RedactIP(remoteIP, config.IsAnonymousMode()),
-			"x_forwarded_for", privacy.RedactIP(r.Header.Get("X-Forwarded-For"), config.IsAnonymousMode()),
-			"security_risk", "IP spoofing possible - consider using 'auto' mode",
-		)
-	case "false":
-		shouldTrust = false
-	case "auto":
-		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
-	default:
-		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
-	}
-
-	if !shouldTrust {
-		return remoteIP
-	}
-
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			clientIP := strings.TrimSpace(ips[0])
-			if trustProxyHeaders == "true" {
-				slog.Debug("accepting X-Forwarded-For header without validation",
-					"client_ip", privacy.RedactIP(clientIP, config.IsAnonymousMode()),
-					"remote_ip", privacy.RedactIP(remoteIP, config.IsAnonymousMode()),
-					"full_xff_chain", privacy.RedactIP(xff, config.IsAnonymousMode()),
-				)
-			}
-			return clientIP
-		}
-	}
-
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	return remoteIP
+	return utils.GetClientIPWithTrust(r, config.GetTrustProxyHeaders(), config.GetTrustedProxyIPs(), config.IsAnonymousMode())
 }
 
 // securityCriticalLimitTypes defines limit types that should fail-closed on errors.

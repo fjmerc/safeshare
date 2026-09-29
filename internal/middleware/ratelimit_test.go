@@ -12,6 +12,14 @@ type mockConfigProvider struct {
 	uploadLimit   int
 	downloadLimit int
 	mu            sync.RWMutex
+
+	// trustProxyHeaders and trustedProxyIPs override the "auto" + default
+	// RFC1918 trust settings below when non-empty. Left unset, existing
+	// tests keep their original behavior.
+	trustProxyHeaders string
+	trustedProxyIPs   string
+
+	anonymousMode bool
 }
 
 func (m *mockConfigProvider) GetRateLimitUpload() int {
@@ -27,10 +35,16 @@ func (m *mockConfigProvider) GetRateLimitDownload() int {
 }
 
 func (m *mockConfigProvider) GetTrustProxyHeaders() string {
+	if m.trustProxyHeaders != "" {
+		return m.trustProxyHeaders
+	}
 	return "auto"
 }
 
 func (m *mockConfigProvider) GetTrustedProxyIPs() string {
+	if m.trustedProxyIPs != "" {
+		return m.trustedProxyIPs
+	}
 	return "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 }
 
@@ -47,7 +61,7 @@ func (m *mockConfigProvider) SetDownloadLimit(limit int) {
 }
 
 func (m *mockConfigProvider) IsAnonymousMode() bool {
-	return false
+	return m.anonymousMode
 }
 
 func TestRateLimiter_UploadLimit(t *testing.T) {
@@ -460,6 +474,12 @@ func TestRateLimiter_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_MultipleXForwardedFor is a T41 regression test: a chain
+// with several comma-separated hops must bucket by the rightmost *untrusted*
+// hop (walking from the right, skipping entries that are themselves trusted
+// proxies), never by the leftmost, client-controlled entry. A client that
+// varies the spoofable leftmost entry on every request must not be able to
+// evade the rate limit by doing so.
 func TestRateLimiter_MultipleXForwardedFor(t *testing.T) {
 	cfg := &mockConfigProvider{
 		uploadLimit:   2,
@@ -473,30 +493,28 @@ func TestRateLimiter_MultipleXForwardedFor(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Test with multiple IPs in X-Forwarded-For (should use first)
-	for i := 1; i <= 2; i++ {
+	// Same real client (rightmost, untrusted) on every request; only the
+	// attacker-controlled leftmost entry changes.
+	const realClient = "198.51.100.77"
+	spoofedLeftmost := []string{"203.0.113.11", "203.0.113.22", "203.0.113.33"}
+
+	for i, spoofed := range spoofedLeftmost {
 		req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
-		req.RemoteAddr = "10.0.0.1:12345"
-		req.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.1, 192.0.2.1")
+		req.RemoteAddr = "10.0.0.1:12345" // trusted proxy peer
+		req.Header.Set("X-Forwarded-For", spoofed+", "+realClient)
 		rr := httptest.NewRecorder()
 
 		handler.ServeHTTP(rr, req)
 
-		if rr.Code != http.StatusOK {
-			t.Errorf("request %d: got status %d, want 200", i, rr.Code)
+		if i < 2 {
+			if rr.Code != http.StatusOK {
+				t.Errorf("request %d: got status %d, want 200", i+1, rr.Code)
+			}
+		} else {
+			if rr.Code != http.StatusTooManyRequests {
+				t.Errorf("request %d: got status %d, want 429 (spoofed leftmost XFF entry must not evade rate limiting)", i+1, rr.Code)
+			}
 		}
-	}
-
-	// 3rd request with same first IP should fail
-	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
-	req.RemoteAddr = "10.0.0.1:12345"
-	req.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.1")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusTooManyRequests {
-		t.Errorf("request 3: got status %d, want 429", rr.Code)
 	}
 }
 
@@ -674,5 +692,51 @@ func TestRateLimiter_SeparateBucketsPerLimitType(t *testing.T) {
 	// The download bucket still enforces its own limit.
 	if code := do(http.MethodGet, "/api/claim/code123"); code != http.StatusTooManyRequests {
 		t.Errorf("download over limit: got status %d, want 429", code)
+	}
+}
+
+// TestRateLimiter_ProductionChainSpoofResistant proves the T41 fix at this
+// call site: client -> Cloudflare -> Traefik -> SafeShare. Traefik forwards
+// whatever XFF the client sent plus the Cloudflare edge IP it saw; Cloudflare
+// appends the real client IP to whatever XFF the client sent. So the header
+// this middleware sees is "<attacker-controlled>, <real client>, <cf edge>".
+// Rotating the attacker-controlled leftmost entry must not let a client
+// evade the rate limit; only the real client IP should determine the bucket.
+func TestRateLimiter_ProductionChainSpoofResistant(t *testing.T) {
+	cfg := &mockConfigProvider{
+		uploadLimit:       2,
+		downloadLimit:     50,
+		trustProxyHeaders: "auto",
+		trustedProxyIPs:   "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,cloudflare",
+	}
+
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	const realClient = "203.0.113.42"
+	const cfEdge = "172.64.1.1" // within Cloudflare's published ranges
+	spoofedLeftmost := []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"}
+
+	for i, spoofed := range spoofedLeftmost {
+		req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
+		req.RemoteAddr = "172.20.0.5:54321" // Traefik peer, within trusted RFC1918 range
+		req.Header.Set("X-Forwarded-For", spoofed+", "+realClient+", "+cfEdge)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if i < 2 {
+			if rr.Code != http.StatusOK {
+				t.Errorf("request %d: got status %d, want 200", i+1, rr.Code)
+			}
+		} else {
+			if rr.Code != http.StatusTooManyRequests {
+				t.Errorf("request %d: got status %d, want 429 (spoofed leftmost XFF must not evade rate limiting)", i+1, rr.Code)
+			}
+		}
 	}
 }

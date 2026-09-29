@@ -142,7 +142,7 @@ func getHost(r *http.Request) string {
 
 // getClientIPWithConfig returns the client IP address with trusted proxy validation
 func getClientIPWithConfig(r *http.Request, cfg *config.Config) string {
-	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 }
 
 // getClientIP returns the client IP address using the process-wide proxy

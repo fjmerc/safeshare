@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/fjmerc/safeshare/internal/proxytrust"
 )
 
 // PostgreSQLConfig holds PostgreSQL-specific configuration options.
@@ -776,11 +778,53 @@ func (c *Config) validateChunkedUploadSettings() error {
 	return nil
 }
 
+// proxyPublicSpaceWarnBitsV4 and proxyPublicSpaceWarnBitsV6 are the
+// broadness thresholds past which a TRUSTED_PROXY_IPS entry is flagged at
+// startup as likely covering public address space (e.g. "0.0.0.0/0" or
+// "::/0"). Chosen so that SafeShare's own default RFC1918 ranges (/8, /12,
+// /16) never trigger the warning, while anything broader than the widest
+// private block does.
+const (
+	proxyPublicSpaceWarnBitsV4 = 8
+	proxyPublicSpaceWarnBitsV6 = 32
+)
+
 // validateProxySettings validates reverse proxy header trust configuration
 func (c *Config) validateProxySettings() error {
 	validProxySettings := map[string]bool{"auto": true, "true": true, "false": true}
 	if !validProxySettings[c.TrustProxyHeaders] {
 		return fmt.Errorf("TRUST_PROXY_HEADERS must be 'auto', 'true', or 'false', got '%s'", c.TrustProxyHeaders)
+	}
+
+	// T41: reject unknown keywords or malformed IPs/CIDRs up front rather
+	// than silently ignoring them at request time. proxytrust.ParseListSplit
+	// also expands the "cloudflare" keyword, so this validates that too.
+	local, _, err := proxytrust.ParseListSplit(c.TrustedProxyIPs)
+	if err != nil {
+		return fmt.Errorf("invalid TRUSTED_PROXY_IPS: %w", err)
+	}
+
+	// T41 bug-hunter follow-up: these are deliberately warnings, not
+	// errors -- an operator may have a legitimate reason to run this way
+	// (e.g. a fully internal/dev deployment) -- but both are easy
+	// misconfigurations to make silently, so we surface them once at
+	// startup instead of only in the security docs.
+	if c.TrustProxyHeaders == "true" {
+		slog.Warn("TRUST_PROXY_HEADERS=true: X-Forwarded-For/X-Real-IP are trusted unconditionally, regardless of the immediate peer (RemoteAddr). TRUSTED_PROXY_IPS must still list every hop that can legitimately append to X-Forwarded-For, since it's used to walk the forwarded chain -- see docs/REVERSE_PROXY.md",
+			"trust_proxy_headers", "true",
+		)
+	}
+	for _, p := range local {
+		addr := p.Addr()
+		if addr.Is4() && p.Bits() < proxyPublicSpaceWarnBitsV4 {
+			slog.Warn("TRUSTED_PROXY_IPS contains an IPv4 range broader than /8, which likely includes public address space",
+				"prefix", p.String(),
+			)
+		} else if addr.Is6() && p.Bits() < proxyPublicSpaceWarnBitsV6 {
+			slog.Warn("TRUSTED_PROXY_IPS contains an IPv6 range broader than /32, which likely includes public address space",
+				"prefix", p.String(),
+			)
+		}
 	}
 
 	return nil
