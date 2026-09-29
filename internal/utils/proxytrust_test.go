@@ -10,7 +10,7 @@ const defaultTrustedProxies = "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 func restoreDefaultTrust(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		ConfigureClientIPTrust("auto", defaultTrustedProxies)
+		ConfigureClientIPTrust("auto", defaultTrustedProxies, false)
 	})
 }
 
@@ -78,7 +78,7 @@ func TestTrustsProxyHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restoreDefaultTrust(t)
-			ConfigureClientIPTrust(tt.trustProxyHeaders, tt.trustedProxyIPs)
+			ConfigureClientIPTrust(tt.trustProxyHeaders, tt.trustedProxyIPs, false)
 			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
 			req.RemoteAddr = tt.remoteAddr
 
@@ -154,7 +154,7 @@ func TestGetClientIP_ConfiguredTrust(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			restoreDefaultTrust(t)
-			ConfigureClientIPTrust(tt.trustProxyHeaders, tt.trustedProxyIPs)
+			ConfigureClientIPTrust(tt.trustProxyHeaders, tt.trustedProxyIPs, false)
 			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
 			req.RemoteAddr = tt.remoteAddr
 			if tt.xForwardedFor != "" {

@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/fjmerc/safeshare/internal/models"
 )
 
 // PostgreSQL error codes
@@ -143,6 +145,29 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
+// isFilesPartialUploadIDViolation reports whether err is specifically a
+// UNIQUE violation of idx_files_partial_upload_id — the ADR-016
+// belt-and-suspenders index that makes a double-publish for one upload_id
+// structurally impossible. insertFile itself always returns the raw wrapped
+// error (so both classifications below stay possible via errors.As); its
+// callers pick which check to apply:
+//   - FileRepository.Create/CreateWithQuotaCheck use the broader
+//     isUniqueViolation (any violation on files, in practice claim_code, is
+//     a real duplicate-key situation for that caller).
+//   - PartialUploadRepository.PublishAssembly/FailAssembly use this
+//     narrower check instead: their OTHER possible violation (files.claim_code,
+//     a rare claim-code-generation race) is a different kind of collision —
+//     not "this upload was already published/failed by someone else" — and
+//     must not be misreported as repository.ErrDuplicateKey (code-reviewer /
+//     DB-review finding).
+func isFilesPartialUploadIDViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == UniqueViolation && pgErr.ConstraintName == "idx_files_partial_upload_id"
+	}
+	return false
+}
+
 // withRetry executes a function with exponential backoff retry logic for transient errors.
 func withRetry[T any](ctx context.Context, maxRetries int, fn func() (T, error)) (T, error) {
 	var zero T
@@ -263,6 +288,75 @@ func nullableBytea(b []byte) interface{} {
 		return nil
 	}
 	return b
+}
+
+// pgExecer is satisfied by both *Pool and pgx.Tx, letting insertFile be
+// shared by FileRepository.Create/CreateWithQuotaCheck and
+// PartialUploadRepository.PublishAssembly/FailAssembly's audit-row insert
+// (ADR-016) — all of which run the identical files INSERT, either against
+// the bare pool or an already-open transaction.
+type pgExecer interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+}
+
+// insertFile runs the shared files INSERT against execer (a *Pool or an
+// open pgx.Tx) and sets file.ID/file.CreatedAt from the RETURNING clause.
+func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
+	query := `
+		INSERT INTO files (
+			claim_code, original_filename, stored_filename, file_size,
+			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		RETURNING id, created_at
+	`
+
+	var passwordHash *string
+	if file.PasswordHash != "" {
+		passwordHash = &file.PasswordHash
+	}
+
+	var sha256Hash *string
+	if file.SHA256Hash != "" {
+		sha256Hash = &file.SHA256Hash
+	}
+
+	var scanStatus, scanResult *string
+	if file.ScanStatus != "" {
+		scanStatus = &file.ScanStatus
+	}
+	if file.ScanResult != "" {
+		scanResult = &file.ScanResult
+	}
+
+	err := execer.QueryRow(
+		ctx,
+		query,
+		file.ClaimCode,
+		file.OriginalFilename,
+		file.StoredFilename,
+		file.FileSize,
+		file.MimeType,
+		file.ExpiresAt,
+		file.MaxDownloads,
+		file.UploaderIP,
+		passwordHash,
+		file.UserID,
+		sha256Hash,
+		file.ClientEncrypted,
+		nullableBytea(file.EncFileID),
+		scanStatus,
+		scanResult,
+		file.ScannedAt,
+		file.PartialUploadID,
+	).Scan(&file.ID, &file.CreatedAt)
+
+	if err != nil {
+		return fmt.Errorf("failed to insert file: %w", err)
+	}
+
+	return nil
 }
 
 // parseBlockedExtensions converts a comma-separated string to a slice of extensions.

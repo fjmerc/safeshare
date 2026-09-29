@@ -263,6 +263,11 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			Completed:       false,
 			ClaimCode:       nil,
 			ClientEncrypted: req.ClientEncrypted,
+			// ADR-016: captured at init time so a recovered/taken-over
+			// assembly (which runs with no HTTP request in scope) still
+			// records the real uploader IP on the eventual file row,
+			// instead of a synthetic placeholder.
+			UploaderIP: storeIP(getClientIP(r), cfg),
 		}
 
 		// Use transactional quota check to prevent race conditions (P0 fix)
@@ -649,7 +654,112 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 	}
 }
 
+// respondProcessing writes the standard 202 "still assembling, poll status"
+// response shared by every code path that leaves an upload in "processing".
+func respondProcessing(w http.ResponseWriter, uploadID string) {
+	response := map[string]interface{}{
+		"status":    "processing",
+		"upload_id": uploadID,
+		"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted) // 202 Accepted
+	json.NewEncoder(w).Encode(response)
+}
+
+// respondUploadComplete writes the 200 response for an upload whose status
+// is "completed" and which has a claim code (the caller must check for nil
+// first — a completed row with no claim code is an internal-error state).
+func respondUploadComplete(w http.ResponseWriter, r *http.Request, cfg *config.Config, partialUpload *models.PartialUpload) {
+	downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+
+	var expiresAt time.Time
+	if partialUpload.ExpiresInHours == 0 {
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
+	} else {
+		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
+	}
+
+	response := models.UploadCompleteResponse{
+		ClaimCode:          *partialUpload.ClaimCode,
+		DownloadURL:        downloadURL,
+		OriginalFilename:   partialUpload.Filename,
+		FileSize:           partialUpload.TotalSize,
+		ExpiresAt:          expiresAt,
+		MaxDownloads:       partialUpload.MaxDownloads,
+		CompletedDownloads: 0, // New uploads have 0 downloads
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// respondFailedTerminal writes a 409 for an upload whose "failed" status is
+// terminal (not retryable, or retries exhausted) — the caller must fix the
+// underlying problem (or, for MALWARE_DETECTED/INTEGRITY_ERROR, re-upload
+// from scratch) rather than retry this same /complete call.
+func respondFailedTerminal(w http.ResponseWriter, partialUpload *models.PartialUpload) {
+	code := "ASSEMBLY_FAILED"
+	if partialUpload.ErrorCode != nil && *partialUpload.ErrorCode != "" {
+		code = *partialUpload.ErrorCode
+	}
+	message := "Assembly failed"
+	if partialUpload.ErrorMessage != nil && *partialUpload.ErrorMessage != "" {
+		message = *partialUpload.ErrorMessage
+	}
+	errorResp := models.UploadCompleteErrorResponse{
+		Error: message,
+		Code:  code,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(errorResp)
+}
+
+// respondFromCurrentState re-reads the upload and answers per its current
+// status. Used after losing a CAS race (Reopen or Lock returned false):
+// rather than guess why, re-read once and answer honestly.
+func respondFromCurrentState(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, uploadID string) {
+	ctx := r.Context()
+	partialUpload, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
+	if err != nil {
+		slog.Error("failed to re-read partial upload after lost CAS race", "error", err, "upload_id", uploadID)
+		sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return
+	}
+	if partialUpload == nil {
+		sendError(w, "Upload session not found", "UPLOAD_NOT_FOUND", http.StatusNotFound)
+		return
+	}
+	switch partialUpload.Status {
+	case "completed":
+		if partialUpload.ClaimCode == nil {
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+		respondUploadComplete(w, r, cfg, partialUpload)
+	case "failed":
+		maxAttempts := utils.ResolveAssemblyMaxAttempts()
+		if partialUpload.ErrorRetryable && partialUpload.AssemblyAttempts < maxAttempts {
+			respondProcessing(w, uploadID)
+			return
+		}
+		respondFailedTerminal(w, partialUpload)
+	default: // "uploading" or "processing"
+		respondProcessing(w, uploadID)
+	}
+}
+
 // UploadCompleteHandler handles POST /api/upload/complete/:upload_id
+//
+// ADR-016 state-machine summary (see docs/CHUNKED_UPLOAD.md for the full
+// per-status table): completed -> 200 (or 500 if the row is somehow missing
+// its claim code); processing with a live lease -> 202; processing with an
+// expired lease -> an inline takeover attempt, then 202 either way (a
+// client that's actively polling shouldn't have to wait for the next
+// recovery-worker tick); failed+retryable+attempts<max -> reopen and fall
+// through to a normal assembly attempt; failed otherwise -> 409.
 func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -690,50 +800,41 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
-		// Check if already completed or processing
-		if partialUpload.Status == "completed" {
-			// Already completed - return existing claim code with full file info
-			if partialUpload.ClaimCode != nil {
-				downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+		maxAttempts := utils.ResolveAssemblyMaxAttempts()
 
-				// Calculate expiration time
-				var expiresAt time.Time
-				if partialUpload.ExpiresInHours == 0 {
-					// Never expire - set to 100 years in the future
-					expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
-				} else {
-					expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
-				}
-
-				response := models.UploadCompleteResponse{
-					ClaimCode:          *partialUpload.ClaimCode,
-					DownloadURL:        downloadURL,
-					OriginalFilename:   partialUpload.Filename,
-					FileSize:           partialUpload.TotalSize,
-					ExpiresAt:          expiresAt,
-					MaxDownloads:       partialUpload.MaxDownloads,
-					CompletedDownloads: 0, // New uploads have 0 downloads
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(response)
+		switch partialUpload.Status {
+		case "completed":
+			if partialUpload.ClaimCode == nil {
+				// Should be unreachable (PublishAssembly sets both in the
+				// same transaction) but fail loud rather than silently
+				// falling through to re-assembly of an already-published row.
+				slog.Error("completed partial upload missing claim code", "upload_id", uploadID)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
-		}
-
-		// If already processing, return status (idempotent completion request)
-		if partialUpload.Status == "processing" {
-			response := map[string]interface{}{
-				"status":    "processing",
-				"upload_id": uploadID,
-				"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted) // 202 Accepted
-			json.NewEncoder(w).Encode(response)
+			respondUploadComplete(w, r, cfg, partialUpload)
 			return
+
+		case "processing":
+			leaseExpired := partialUpload.LeaseExpiresAt == nil || time.Now().After(*partialUpload.LeaseExpiresAt)
+			if leaseExpired {
+				// Don't make the client wait out a full recovery-worker
+				// tick: attempt the takeover inline. Best-effort — if it
+				// doesn't start (pool saturated, shutting down, lost the
+				// race to a concurrent attempt), the client just keeps
+				// polling and the background recovery worker will get it.
+				RecoverAssembly(ctx, repos, cfg, *partialUpload)
+			}
+			respondProcessing(w, uploadID)
+			return
+
+		case "failed":
+			if !(partialUpload.ErrorRetryable && partialUpload.AssemblyAttempts < maxAttempts) {
+				respondFailedTerminal(w, partialUpload)
+				return
+			}
+			// Retryable and under the attempt cap: fall through below to
+			// reopen it and run through the normal assembly-start flow.
 		}
 
 		// Check if upload has expired
@@ -742,6 +843,17 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			sendError(w, "Upload session expired", "UPLOAD_EXPIRED", http.StatusGone)
 			return
 		}
+
+		// ADR-016 bug-hunter finding M2: a retryable "failed" row is NOT
+		// reopened here. Reopening (failed -> uploading) before the
+		// preflight checks below meant a subsequent 503/400/507 left the
+		// row stranded in "uploading" — a status the recovery sweep never
+		// looks at, so it sat there until the client's own retry budget ran
+		// out. The failed -> processing transition now happens atomically,
+		// in one step, AFTER slot acquisition and every preflight check
+		// succeed (see LockFailedForProcessing below); if any of them fail,
+		// the row is untouched and stays "failed" (retryable), which is the
+		// correct, recoverable state.
 
 		// SH-1.4: acquire an assembly slot non-blockingly BEFORE the expensive
 		// precondition checks (filesystem stats per chunk, integrity hashes,
@@ -758,9 +870,9 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 		slotHandedOff := false
 		select {
 		case semCh <- struct{}{}:
-			// Slot acquired. Hand off to worker once we reach the go func()
-			// below; if any pre-flight check fails before that point the defer
-			// releases the slot.
+			// Slot acquired. Hand off to worker once we reach launchAssembly
+			// below; if any pre-flight check fails before that point the
+			// defer releases the slot.
 			defer func() {
 				if !slotHandedOff {
 					<-semCh
@@ -810,7 +922,10 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 		if err := utils.VerifyChunkIntegrity(cfg.UploadDir, uploadID, partialUpload.TotalChunks,
 			partialUpload.ChunkSize, partialUpload.TotalSize); err != nil {
 			slog.Error("chunk integrity verification failed", "error", err, "upload_id", uploadID)
-			sendError(w, fmt.Sprintf("Chunk integrity check failed: %v", err), "INTEGRITY_ERROR", http.StatusBadRequest)
+			// Bug-hunter finding: the raw error can include an os.Stat path
+			// (internal chunk-file layout) — full detail stays server-side
+			// in the log above; the client only gets a generic message.
+			sendError(w, "Chunk integrity check failed", "INTEGRITY_ERROR", http.StatusBadRequest)
 			return
 		}
 
@@ -833,40 +948,48 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
-		// Try to atomically lock the upload for processing (prevents race conditions)
-		locked, err := repos.PartialUploads.TryLockForProcessing(ctx, uploadID)
-		if err != nil {
-			slog.Error("failed to lock upload for processing", "error", err, "upload_id", uploadID)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
+		// Try to atomically lock the upload for processing (prevents race conditions).
+		// A retryable "failed" row uses the combined Reopen-and-Lock CAS
+		// (failed -> processing in one step, M2 fix above); anything else
+		// (normally "uploading") uses the plain Lock (uploading -> processing).
+		owner := utils.GetOwnerID() + "/" + uuid.New().String()
+		lease := repository.AssemblyLease{Owner: owner, TTL: utils.ResolveAssemblyLeaseTTL()}
+		var locked bool
+		if partialUpload.Status == "failed" {
+			locked, err = repos.PartialUploads.LockFailedForProcessing(ctx, uploadID, lease, maxAttempts)
+			if err != nil {
+				slog.Error("failed to lock failed upload for processing", "error", err, "upload_id", uploadID)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			locked, err = repos.PartialUploads.TryLockForProcessing(ctx, uploadID, lease)
+			if err != nil {
+				slog.Error("failed to lock upload for processing", "error", err, "upload_id", uploadID)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		if !locked {
-			// Another request is already processing this upload
-			slog.Debug("upload already locked for processing", "upload_id", uploadID)
-			response := map[string]interface{}{
-				"status":    "processing",
-				"upload_id": uploadID,
-				"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusAccepted) // 202 Accepted
-			json.NewEncoder(w).Encode(response)
+			// Lost the race (another request locked/reopened/took over
+			// first, or — for the failed case — a concurrent recovery sweep
+			// already exhausted the attempt budget). Re-read and answer
+			// from current state rather than guessing.
+			slog.Debug("upload lock race lost", "upload_id", uploadID)
+			respondFromCurrentState(w, r, repos, cfg, uploadID)
 			return
 		}
-
-		// Get client IP for logging
-		clientIP := getClientIP(r)
 
 		// Track assembly for graceful shutdown - re-check shutdown status right before spawning
 		if !uploadTracker.StartAssembly(uploadID) {
 			// Symmetric with the SH-1.4 saturation path: release the
-			// processing lock we just acquired so a future retry (after
-			// shutdown completes) can re-claim cleanly. Pre-fix code left
-			// the row stuck in "processing" until the startup recovery
-			// worker reaped it.
-			if _, err := repos.PartialUploads.ReleaseProcessingLock(ctx, uploadID); err != nil {
+			// processing lock we just acquired (status stays 'processing'
+			// with an immediately-expired lease — M2 fix — so the row is
+			// picked up by the next recovery sweep or an inline retry,
+			// rather than stranded in 'uploading' where nothing but a
+			// client's own retry would ever find it).
+			if _, err := repos.PartialUploads.ReleaseProcessingLock(ctx, uploadID, owner); err != nil {
 				slog.Warn("failed to release processing lock on shutdown path",
 					"upload_id", uploadID,
 					"error", err,
@@ -876,17 +999,15 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
-		// Spawn goroutine to assemble file asynchronously. The worker owns
-		// the semaphore slot and the tracker entry; both are released here.
-		// Copy partialUpload to avoid data races (partialUpload is a pointer).
+		// Hand off to launchAssembly, which owns the semaphore slot and the
+		// tracker entry from here. Copy partialUpload to avoid data races
+		// (partialUpload is a pointer) and reflect what TryLockForProcessing
+		// just did (owner set, attempts incremented).
 		partialUploadCopy := *partialUpload
+		partialUploadCopy.Owner = &owner
+		partialUploadCopy.AssemblyAttempts++
 		slotHandedOff = true
-		go func() {
-			defer uploadTracker.FinishAssembly(uploadID)
-			defer func() { <-semCh }() // Release into the SAME channel we acquired from.
-
-			AssembleUploadAsync(repos, cfg, &partialUploadCopy, clientIP)
-		}()
+		launchAssembly(repos, cfg, &partialUploadCopy, lease, semCh)
 
 		// Record metrics
 		metrics.ChunkedUploadsCompletedTotal.Inc()
@@ -898,18 +1019,11 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 			"filename", partialUpload.Filename,
 			"size", partialUpload.TotalSize,
 			"total_chunks", partialUpload.TotalChunks,
-			"client_ip", logIP(clientIP, cfg),
+			"attempt", partialUploadCopy.AssemblyAttempts,
+			"client_ip", logIP(getClientIP(r), cfg),
 		)
 
-		response := map[string]interface{}{
-			"status":    "processing",
-			"upload_id": uploadID,
-			"message":   "File is being assembled. Please poll /api/upload/status/" + uploadID + " for completion.",
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted) // 202 Accepted
-		json.NewEncoder(w).Encode(response)
+		respondProcessing(w, uploadID)
 	}
 }
 
@@ -976,6 +1090,14 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			downloadURL = &url
 		}
 
+		// A row can be error_retryable=true but already at (or over) the
+		// attempt cap — e.g. a concurrent recovery sweep exhausted it
+		// between this read and the client's next POST. Reporting retryable
+		// in that case would send the client into a POST /complete that can
+		// only ever come back 409 (bug-hunter finding L5): fold the attempt
+		// cap into what "retryable" means here so clients don't waste it.
+		retryable := partialUpload.ErrorRetryable && partialUpload.AssemblyAttempts < utils.ResolveAssemblyMaxAttempts()
+
 		// Build response
 		response := models.UploadStatusResponse{
 			UploadID:           uploadID,
@@ -989,6 +1111,8 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			Status:             partialUpload.Status,
 			ErrorMessage:       partialUpload.ErrorMessage,
 			ErrorCode:          partialUpload.ErrorCode,
+			Retryable:          retryable,
+			Attempts:           partialUpload.AssemblyAttempts,
 			DownloadURL:        downloadURL,
 			FileSize:           partialUpload.TotalSize,
 			MaxDownloads:       partialUpload.MaxDownloads,

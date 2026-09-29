@@ -180,11 +180,25 @@ export class DownloadLimitReachedError extends SafeShareError {
 export class ChunkedUploadError extends SafeShareError {
   /** Upload ID if available */
   public readonly uploadId?: string;
+  /**
+   * Machine-readable failure reason reported by the server (e.g.
+   * "MALWARE_DETECTED", "SCAN_UNAVAILABLE", "ASSEMBLY_RETRIES_EXHAUSTED"),
+   * when this error represents a terminal assembly failure (ADR-016). Empty
+   * for other kinds of chunked-upload errors (network, timeout, etc).
+   */
+  public readonly code?: string;
 
-  constructor(message = "Chunked upload failed", uploadId?: string, statusCode?: number, responseBody?: unknown) {
+  constructor(
+    message = "Chunked upload failed",
+    uploadId?: string,
+    statusCode?: number,
+    responseBody?: unknown,
+    code?: string
+  ) {
     super(message, statusCode, responseBody);
     this.name = "ChunkedUploadError";
     this.uploadId = uploadId;
+    this.code = code;
   }
 }
 

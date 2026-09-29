@@ -26,6 +26,7 @@ type File struct {
 	ClientEncrypted    bool       // True when contents were encrypted in the browser before upload (E2E)
 	EncFileID          []byte     // 16-byte random identifier bound into SFSE2 chunk AAD; nil/empty for legacy SFSE1 files (ADR-011)
 	UncountedBytes     int64      // Cumulative bytes served to cancelled, sub-threshold tokenless probes (ADR-014 download-session probe budget)
+	PartialUploadID    *string    // ADR-016: upload_id of the partial_uploads row this file was assembled from, nil for direct (non-chunked) uploads. Unique when set, enforced by idx_files_partial_upload_id — the publish-side half of the assembly fencing invariant (at most one file row per chunked upload).
 }
 
 // UploadResponse is the JSON response returned after a successful upload

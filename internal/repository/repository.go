@@ -40,6 +40,15 @@ var (
 
 	// ErrServiceUnavailable is returned when a service is temporarily unavailable.
 	ErrServiceUnavailable = errors.New("service temporarily unavailable")
+
+	// ErrLeaseLost is returned by an owner-guarded assembly-lease transition
+	// (PublishAssembly, FailAssembly, RenewAssemblyLease, YieldAssemblyLease,
+	// ReleaseProcessingLock) when the caller's owner token no longer matches
+	// the row's current owner/status — another attempt (a takeover after
+	// this worker's lease expired, or a faster concurrent /complete) already
+	// won the race. See ADR-016. Callers must treat this as "stop, someone
+	// else has it" rather than retry.
+	ErrLeaseLost = errors.New("assembly lease lost")
 )
 
 // FileStats contains statistics about file storage.

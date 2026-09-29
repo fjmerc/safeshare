@@ -751,7 +751,63 @@ All configuration via environment variables (see `internal/config/config.go`):
   - "auto" - Only trust headers from RFC1918 + localhost IPs (recommended)
   - "true" - Always trust proxy headers (use only behind trusted reverse proxy)
   - "false" - Never trust proxy headers (use for direct internet exposure)
-- `TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IPs/CIDR ranges
+- `TRUSTED_PROXY_IPS`: Comma-separated list of trusted proxy IPs/CIDR ranges, plus the optional `cloudflare` keyword (expands to Cloudflare's published edge ranges). See "Client IP Resolution" below and `docs/REVERSE_PROXY.md`.
+
+#### Client IP Resolution (T41)
+
+When headers are trusted, SafeShare determines the client IP by walking
+`X-Forwarded-For` **from the right**, skipping any entry that is itself a
+trusted proxy (per `TRUSTED_PROXY_IPS`), and returning the first entry that
+isn't. This is deliberate: the entries closest to SafeShare were appended by
+proxies it trusts, while the leftmost entries are client-supplied and
+therefore spoofable. Taking the leftmost entry (the old behavior) let any
+client set its own rate-limit/audit IP by sending a crafted
+`X-Forwarded-For` header through a trusted proxy chain.
+
+`X-Real-IP` is only consulted when `X-Forwarded-For` is absent entirely.
+Malformed entries stop the walk safely: if a trusted hop was already walked,
+its IP is returned; otherwise the request falls back to `RemoteAddr`. The
+walk is also capped at 32 hops (`maxForwardedForHops`) so an oversized
+header can't force unbounded work or allocation; beyond the cap it's
+treated the same as a malformed entry.
+
+Local (operator-listed) trusted entries can be skipped without limit, but
+the `cloudflare` keyword's entries cannot: at most **one** hop per request
+may ever be attributed to Cloudflare (or the direct connection itself, if
+there's no local reverse proxy between SafeShare and Cloudflare), because a
+Cloudflare Worker can itself originate a request from inside Cloudflare's
+own published ranges — skipping more than one such hop would let a
+malicious Worker launder an attacker-chosen entry past its own egress IP.
+Once that one hop is consumed, the next entry is always the client,
+regardless of what range it falls in.
+
+That one-hop budget alone still isn't enough for two topologies: **Cloudflare
+Tunnel** (the entry SafeShare's own reverse proxy appends there is the
+`cloudflared` daemon's own local address, not a published Cloudflare range,
+so the walk can land on a forged entry past the Worker's own egress hop
+anyway) and a **Worker connecting to the origin directly**, bypassing
+Cloudflare's proxy entirely (`RemoteAddr` itself is a Cloudflare-range
+address with no local proxy in front, so the budget is pre-spent with
+nothing vouching for what follows). For these, whenever the result depends
+on trusting Cloudflare at all — a Cloudflare hop was consumed in the walk,
+or `RemoteAddr`'s budget was pre-spent, including along the `X-Real-IP`
+path — SafeShare additionally requires the candidate to match the
+`CF-Connecting-IP` header (`Cf-Pseudo-IPv4` is deliberately ignored, since a
+Worker can forge it) before accepting it; a mismatch, missing header, or
+malformed header falls back to the Cloudflare hop (or `RemoteAddr`) instead.
+This header is only ever a veto -- it is never itself the returned value.
+
+See `internal/proxytrust` (the `ParseListSplit`/`Trusted` split between
+local and Cloudflare prefix sets) and `internal/utils/ipvalidation.go`
+(`walkForwardedFor`, `applyCFConnectingIPVeto`) for the implementation, and
+`docs/REVERSE_PROXY.md`'s Cloudflare section for the operator-facing
+configuration implication and residual exposure (add every real hop,
+including Cloudflare, to `TRUSTED_PROXY_IPS` — don't rely on
+`TRUST_PROXY_HEADERS=true` alone; Worker-originated requests that go through
+Cloudflare's real proxy are attributed to the Worker's own egress IP, not to
+any value the Worker forges; a Worker that bypasses Cloudflare's proxy
+entirely can still forge `CF-Connecting-IP` itself, which requires
+Authenticated Origin Pulls or Cloudflare Tunnel exclusivity to fully close).
 
 ### Chunked Upload (v2.0.0+)
 - `CHUNKED_UPLOAD_ENABLED`: Enable/disable chunked upload support (default: true)
@@ -880,6 +936,10 @@ Tracks upload sessions with upload_id (UUID), filename, total_size, chunk_size, 
    - Generates claim code
 7. Return claim code to user
 ```
+
+### Reliability (ADR-016)
+
+Assembly (step 6) runs asynchronously in a background worker, guarded by a lease-based state machine (fencing owner token + TTL on `partial_uploads`) rather than a simple status flag: a retryable failure (transient scan/IO/DB error) can be retried by POSTing `/complete` again instead of being stuck forever, and a crashed or stalled worker is recovered by a background sweep (`internal/handlers/assembly_recovery.go`, `internal/utils/assembly_recovery.go`) that takes over its lease — never by two workers racing to finish the same upload, which the owner-fenced `PublishAssembly`/`FailAssembly` transitions make structurally impossible. See [ADR-016](../../SafeShare-Planning/06-Architecture-Decisions/ADR-016-assembly-state-machine.md) and [CHUNKED_UPLOAD.md's state machine section](CHUNKED_UPLOAD.md#assembly-state-machine-adr-016) for the full design.
 
 ### Security Features
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting

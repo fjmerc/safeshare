@@ -39,8 +39,12 @@ const maxTransferDeadline = 6 * time.Hour
 // kept as a floor so this never shortens a deadline the operator chose, and
 // header reads (Slowloris surface) still complete under the original
 // ReadTimeout because handlers only run after headers are parsed.
-func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferBytes int64) {
-	extendTransferDeadlineWithExtra(w, cfg, transferBytes, 0)
+// Returns the absolute deadline that was set, so a caller that needs to
+// further tighten (never loosen) the write deadline over the course of the
+// transfer — see idleDeadlineWriter in claim_range.go — has the correct
+// upper bound to cap it at.
+func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferBytes int64) time.Time {
+	return extendTransferDeadlineWithExtra(w, cfg, transferBytes, 0)
 }
 
 // extendTransferDeadlineWithExtra is extendTransferDeadline plus a fixed
@@ -48,7 +52,7 @@ func extendTransferDeadline(w http.ResponseWriter, cfg *config.Config, transferB
 // read — e.g. a synchronous malware scan, which must be able to run for the
 // full CLAMAV_SCAN_TIMEOUT. If the read deadline passed mid-scan, net/http
 // would cancel the request context and abort the scan.
-func extendTransferDeadlineWithExtra(w http.ResponseWriter, cfg *config.Config, transferBytes int64, extra time.Duration) {
+func extendTransferDeadlineWithExtra(w http.ResponseWriter, cfg *config.Config, transferBytes int64, extra time.Duration) time.Time {
 	if transferBytes < 0 {
 		transferBytes = 0
 	}
@@ -78,6 +82,7 @@ func extendTransferDeadlineWithExtra(w http.ResponseWriter, cfg *config.Config, 
 	if err := rc.SetWriteDeadline(deadline); err != nil {
 		slog.Debug("failed to extend write deadline", "error", err)
 	}
+	return deadline
 }
 
 // buildDownloadURL constructs the full download URL for a claim code
@@ -137,7 +142,7 @@ func getHost(r *http.Request) string {
 
 // getClientIPWithConfig returns the client IP address with trusted proxy validation
 func getClientIPWithConfig(r *http.Request, cfg *config.Config) string {
-	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+	return utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 }
 
 // getClientIP returns the client IP address using the process-wide proxy

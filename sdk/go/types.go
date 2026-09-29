@@ -98,8 +98,15 @@ type UploadStatus struct {
 	// ErrorMessage is the error message (only set when failed).
 	ErrorMessage *string `json:"error_message,omitempty"`
 	// ErrorCode is the machine-readable failure reason (only set when
-	// failed), e.g. "MALWARE_DETECTED", "SCAN_UNAVAILABLE" (ADR-015).
+	// failed), e.g. "MALWARE_DETECTED", "SCAN_UNAVAILABLE", "INTEGRITY_ERROR",
+	// "ASSEMBLY_RETRIES_EXHAUSTED" (ADR-015 / ADR-016).
 	ErrorCode *string `json:"error_code,omitempty"`
+	// Retryable indicates whether a "failed" status can be retried by
+	// POSTing /api/upload/complete again (ADR-016). Meaningless for any
+	// other status.
+	Retryable bool `json:"retryable"`
+	// Attempts is the number of assembly attempts made so far (ADR-016).
+	Attempts int `json:"attempts"`
 	// MaxDownloads is the maximum download limit (nil if unlimited).
 	MaxDownloads *int `json:"max_downloads,omitempty"`
 }

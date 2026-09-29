@@ -1233,6 +1233,8 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.7.0 | Client IP spoofing via X-Forwarded-For behind proxies/CDNs | High |
+| v1.7.0 | Download memory exhaustion and stalled-reader lockout (decrypt admission, legacy cap) | Medium |
 | v2.8.2 | Constant-time token comparison | Medium |
 | v2.8.2 | Session invalidation on password change | High |
 | v2.8.2 | SQL LIKE wildcard injection fix | Medium |

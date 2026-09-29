@@ -51,7 +51,7 @@ func run() error {
 
 	// Apply proxy trust settings process-wide so helpers without config
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
-	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 
 	slog.Info("starting safeshare",
 		"port", cfg.Port,
@@ -199,10 +199,44 @@ func run() error {
 	// the cap; the handler still rate-limits via middleware.
 	handlers.SetInFlightTracker(handlers.NewInFlightTracker(cfg.MaxInFlightPerIPPerFile))
 
+	// ADR-017 (T34): install the process-wide decrypt-memory admission
+	// budget claim downloads acquire from before decrypting an SFSE chunk
+	// buffer or a legacy full file into RAM.
+	handlers.SetDecryptAdmission(utils.NewDecryptAdmission(cfg.DownloadDecryptMemoryBudget))
+
+	// ADR-017: install the operator-configured per-IP concurrency cap for
+	// encrypted claim downloads (MAX_ENCRYPTED_DOWNLOADS_PER_IP, default 8;
+	// 0 disables it). Raise or disable this for Tor/Ghost-mode or any
+	// deployment behind an untrusted/non-forwarding proxy where every
+	// client shares one apparent IP — see docs/TOR_DEPLOYMENT.md.
+	handlers.SetEncryptedRangeIPTracker(handlers.NewInFlightTracker(cfg.MaxEncryptedDownloadsPerIP))
+
 	// SH-1.4: size the chunked-upload assembly worker pool from config. The
 	// handler returns 503 with Retry-After once all slots are in use; raise
 	// ASSEMBLY_WORKERS_MAX to absorb burstier upload completions.
 	handlers.InitAssemblyWorkers(cfg.AssemblyWorkersMax)
+
+	// ADR-016: force-expire every "processing" partial_uploads row's lease
+	// before accepting any HTTP requests. SQLite is single-process, so any
+	// row still "processing" at this point belongs to a worker that died
+	// with the previous process — its lease can never be legitimately
+	// renewed, and expiring it here (rather than waiting out the TTL) lets
+	// the assembly recovery worker's first sweep take it over immediately.
+	//
+	// Guarded to SQLite specifically (bug-hunter finding L4): this binary
+	// currently only ever constructs a SQLite-backed *repository.Repositories
+	// (see sqlite.NewRepositories above) regardless of cfg.DatabaseType, so
+	// the guard is a no-op today. It exists so that if/when this entry point
+	// grows a PostgreSQL-backed path (multi-instance HA — see
+	// docs/HA_DEPLOYMENT.md), a fresh instance starting up doesn't
+	// force-expire leases that other, still-running instances legitimately
+	// hold: PostgreSQL correctness there must rely on the TTL alone, exactly
+	// as ExpireAllLeases's own doc comment already says.
+	if cfg.DatabaseType != "postgresql" {
+		if err := repos.PartialUploads.ExpireAllLeases(context.Background()); err != nil {
+			slog.Error("failed to expire stale assembly leases at startup", "error", err)
+		}
+	}
 
 	// Initialize webhook dispatcher
 	webhookMetrics := webhooks.NewPrometheusMetrics()
@@ -1072,11 +1106,15 @@ func run() error {
 		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL)
 	}()
 
-	// Start assembly recovery worker (recovers interrupted assemblies on startup, runs every 10 minutes)
+	// Start assembly recovery worker (ADR-016): recovers assemblies whose
+	// lease has expired — a crashed/stalled worker, or a row left processing
+	// by a shutdown that ran out of grace time — on startup and on a tick of
+	// max(leaseTTL/2, 15s).
+	assemblyLeaseTTL := utils.ResolveAssemblyLeaseTTL()
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartAssemblyRecoveryWorker(ctx, repos, cfg, handlers.AssembleUploadAsync)
+		utils.StartAssemblyRecoveryWorker(ctx, repos, assemblyLeaseTTL, cfg.AssemblyWorkersMax, handlers.NewAssemblyRecoverer(repos, cfg))
 	}()
 
 	// Start session cleanup worker (clean expired admin and user sessions every 30 minutes)
@@ -1155,15 +1193,32 @@ func run() error {
 		// Cancel context to signal workers to stop
 		cancel()
 
-		// Phase 2: Wait for in-progress uploads to complete (up to 30 seconds)
-		// This is separate from HTTP server shutdown to give uploads more time
-		uploadTimeout := 30 * time.Second
-		if uploadTracker.GetActiveCount() > 0 {
-			slog.Info("phase 2: waiting for in-progress uploads to complete",
-				"timeout_seconds", uploadTimeout.Seconds(),
-				"active_uploads", uploadTracker.GetActiveCount(),
+		// Phase 2: Wait for in-progress uploads AND assembly workers to
+		// complete (up to ASSEMBLY_SHUTDOWN_GRACE, default 30s). This is
+		// separate from HTTP server shutdown to give them more time.
+		//
+		// ADR-016 fix: WaitForUploads already blocks on both wg (uploads)
+		// and assemblyWg (assembly workers) — the bug was gating this call
+		// on GetActiveCount() > 0, which only reflects wg (regular uploads).
+		// A chunked upload with zero regular uploads in flight but an
+		// assembly worker running would skip this wait entirely and race
+		// straight to HTTP shutdown.
+		uploadTimeout := utils.ResolveAssemblyShutdownGrace()
+		slog.Info("phase 2: waiting for in-progress uploads and assemblies to complete",
+			"timeout_seconds", uploadTimeout.Seconds(),
+			"active_uploads", uploadTracker.GetActiveCount(),
+			"active_assemblies", uploadTracker.GetActiveAssemblyCount(),
+		)
+		if !uploadTracker.WaitForUploads(uploadTimeout) {
+			// Grace period elapsed with assembly workers still running: ask
+			// them to abandon their current step and yield their lease
+			// (rather than run indefinitely past shutdown), then give them a
+			// short additional window to actually do so.
+			slog.Warn("phase 2: grace period elapsed; asking assembly workers to yield",
+				"active_assemblies", uploadTracker.GetActiveAssemblyCount(),
 			)
-			uploadTracker.WaitForUploads(uploadTimeout)
+			handlers.CancelAssemblies()
+			uploadTracker.WaitForUploads(5 * time.Second)
 		}
 
 		// Phase 3: Gracefully shutdown HTTP server (give remaining requests 10 seconds)

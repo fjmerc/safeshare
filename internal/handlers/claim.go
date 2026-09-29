@@ -107,10 +107,18 @@ func logTokenHash(token string) string {
 func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		// Accept GET (browser navigation / <a> tag) and POST (programmatic clients
-		// that want to put the password in a form body instead of the URL).
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET or POST requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
+		// ADR-017: every claim response — success, error, 304, HEAD — is
+		// per-recipient and must never be cached by a browser or CDN (T10).
+		// Set this before anything else so it's on literally every response
+		// path below, including the early-return error branches.
+		w.Header().Set("Cache-Control", "private, no-store")
+
+		// Accept GET (browser navigation / <a> tag), POST (programmatic
+		// clients that want to put the password in a form body instead of
+		// the URL), and HEAD (T38: resumable-downloader.js's fetchFileSize
+		// probes size via HEAD before starting a GET).
+		if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodHead {
+			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET, POST, or HEAD requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -215,6 +223,45 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			}
 		}
 
+		// ADR-017: HEAD is answered here, before any reservation/session
+		// work — it must go through every gate GET does (scan status,
+		// password, expiry — all above this point) but never spends a
+		// download or reserves session bytes (T38). It still opens,
+		// classifies, and (for SFSE) primes the file through the exact
+		// same serveFileWithRangeSupport path a GET would use, so a HEAD
+		// response's headers (Content-Length, ETag, Accept-Ranges, ...)
+		// can never promise a download that would then fail — a broken or
+		// truncated stored file fails HEAD the same fail-closed way it
+		// fails GET, instead of silently advertising a size it can't
+		// deliver.
+		if r.Method == http.MethodHead {
+			// Code-review finding: HEAD must not bypass the download-limit
+			// gate a capped GET enforces via ReserveDownload. This is the
+			// same best-effort check ClaimInfoHandler already uses (it
+			// judges the `file` snapshot read at the top of this handler,
+			// not a fresh atomic read) — HEAD never reserves, so it has no
+			// stronger guarantee available, but that's fine: the worst
+			// case is a narrow race where the limit was hit a moment ago
+			// and this HEAD still reports the file as available, exactly
+			// like ClaimInfoHandler already accepts for `/info`.
+			if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
+				slog.Warn("file access denied",
+					"reason", "download_limit_reached",
+					"claim_code", redactClaimCode(claimCode),
+					"filename", file.OriginalFilename,
+					"client_ip", logIP(getClientIP(r), cfg),
+				)
+				sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
+				return
+			}
+			filePath, ok := resolveClaimFilePath(w, r, file, cfg)
+			if !ok {
+				return
+			}
+			serveFileWithRangeSupport(w, r, file, filePath, cfg, time.Time{})
+			return
+		}
+
 		// SH-2.3 / ADR-012: download_count is no longer incremented up-front. The
 		// race-fix property of the original TryIncrementDownloadWithLimit (P1) is
 		// preserved by ReserveDownload, which takes an in_flight_reservations slot
@@ -245,20 +292,12 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		}
 		defer inFlightTracker.Release(file.ID, clientIPForCap)
 
-		// Validate stored filename (defense-in-depth against database corruption/compromise)
-		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
-			slog.Error("stored filename validation failed",
-				"filename", file.StoredFilename,
-				"error", err,
-				"claim_code", redactClaimCode(claimCode),
-				"client_ip", logIP(getClientIP(r), cfg),
-			)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		// Validate stored filename and build the on-disk path (defense-in-depth
+		// against database corruption/compromise).
+		filePath, ok := resolveClaimFilePath(w, r, file, cfg)
+		if !ok {
 			return
 		}
-
-		// Read file from disk
-		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
 
 		// Store original claim code for optimistic locking
 		originalClaimCode := file.ClaimCode
@@ -322,8 +361,8 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			// Serve file with Range support (handles both full and partial downloads).
 			// Returns commitable=true only when the request received the entire file
 			// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
-			extendTransferDeadline(w, cfg, file.FileSize)
-			commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg)
+			transferDeadline := extendTransferDeadline(w, cfg, file.FileSize)
+			commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg, transferDeadline)
 
 			// Commit/Cancel run on a context detached from the request: when the client
 			// disconnects, r.Context() is already cancelled, the transaction can't begin.
@@ -378,6 +417,9 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		// ADR-017 / T10: this response carries per-recipient state
+		// (download_count, scan_status, ...) and must never be cached.
+		w.Header().Set("Cache-Control", "private, no-store")
 		// Only accept GET requests
 		if r.Method != http.MethodGet {
 			sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
@@ -461,6 +503,24 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"filename", file.OriginalFilename,
 		)
 	}
+}
+
+// resolveClaimFilePath validates file's stored filename (defense-in-depth
+// against database corruption/compromise) and returns its on-disk path.
+// Shared by the HEAD short-circuit and the GET/POST flow below it so both
+// apply the exact same check.
+func resolveClaimFilePath(w http.ResponseWriter, r *http.Request, file *models.File, cfg *config.Config) (string, bool) {
+	if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+		slog.Error("stored filename validation failed",
+			"filename", file.StoredFilename,
+			"error", err,
+			"claim_code", redactClaimCode(file.ClaimCode),
+			"client_ip", logIP(getClientIP(r), cfg),
+		)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return "", false
+	}
+	return filepath.Join(cfg.UploadDir, file.StoredFilename), true
 }
 
 // extractDownloadPassword reads the file-download password from one of three

@@ -160,6 +160,17 @@ func (s *ClamAVScanner) ScanReader(ctx context.Context, r io.Reader, size int64)
 
 	result, err := s.scanReader(ctx, r, "<stream>")
 	if err != nil {
+		// If ctx was cancelled (request aborted, shutdown), that's almost
+		// certainly what actually caused the failure below us — the
+		// in-flight goroutine above closes the socket on ctx.Done(), which
+		// otherwise surfaces as a generic "use of closed network connection"
+		// net.OpError that callers can't distinguish from a real clamd/
+		// network problem (bug-hunter finding: ADR-016's assembly worker
+		// couldn't tell "shutdown interrupted this" from "clamd is down").
+		// Prefer ctx.Err() so errors.Is(err, context.Canceled) works.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("scanning: context done: %w", ctxErr)
+		}
 		return nil, err
 	}
 	result.Duration = time.Since(start)

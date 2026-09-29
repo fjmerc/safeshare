@@ -509,14 +509,19 @@ func TestClaimHandler_ContentDisposition(t *testing.T) {
 		expectedHeader   string
 	}{
 		{
+			// ADR-017: claim downloads now build Content-Disposition via
+			// utils.ContentDisposition (RFC 6266), which always adds the
+			// filename*=UTF-8'' extended form alongside the legacy
+			// filename= fallback — not just the bare fallback the old
+			// ad-hoc claim_range.go formatting produced.
 			name:             "normal filename",
 			originalFilename: "document.pdf",
-			expectedHeader:   `attachment; filename="document.pdf"`,
+			expectedHeader:   `attachment; filename="document.pdf"; filename*=UTF-8''document.pdf`,
 		},
 		{
 			name:             "filename with spaces",
 			originalFilename: "my document.pdf",
-			expectedHeader:   `attachment; filename="my document.pdf"`,
+			expectedHeader:   `attachment; filename="my document.pdf"; filename*=UTF-8''my%20document.pdf`,
 		},
 	}
 

@@ -114,6 +114,74 @@ func TestLoad_DefaultConfiguration(t *testing.T) {
 	}
 }
 
+// TestLoad_DownloadDecryptDefaults verifies the ADR-017 decrypt-admission
+// settings' defaults: LegacyDecryptMaxBytes (128MB) is deliberately kept
+// well under DownloadDecryptMemoryBudget (256MB) so a single max-size
+// legacy decrypt can never by itself consume the whole process-wide budget
+// (code-review finding).
+func TestLoad_DownloadDecryptDefaults(t *testing.T) {
+	clearEnvVars(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with defaults failed: %v", err)
+	}
+
+	const wantLegacyMax = 128 * 1024 * 1024
+	const wantBudget = 256 * 1024 * 1024
+	if cfg.LegacyDecryptMaxBytes != wantLegacyMax {
+		t.Errorf("LegacyDecryptMaxBytes = %d, want %d", cfg.LegacyDecryptMaxBytes, wantLegacyMax)
+	}
+	if cfg.DownloadDecryptMemoryBudget != wantBudget {
+		t.Errorf("DownloadDecryptMemoryBudget = %d, want %d", cfg.DownloadDecryptMemoryBudget, wantBudget)
+	}
+	if cfg.LegacyDecryptMaxBytes >= cfg.DownloadDecryptMemoryBudget {
+		t.Errorf("LegacyDecryptMaxBytes (%d) must stay well under DownloadDecryptMemoryBudget (%d) by default", cfg.LegacyDecryptMaxBytes, cfg.DownloadDecryptMemoryBudget)
+	}
+	if cfg.MaxEncryptedDownloadsPerIP != 8 {
+		t.Errorf("MaxEncryptedDownloadsPerIP = %d, want 8", cfg.MaxEncryptedDownloadsPerIP)
+	}
+}
+
+// TestLoad_DownloadDecryptCustom verifies the ADR-017 decrypt-admission
+// settings honor their environment variables.
+func TestLoad_DownloadDecryptCustom(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("LEGACY_DECRYPT_MAX_BYTES", "1048576")         // 1MB
+	t.Setenv("DOWNLOAD_DECRYPT_MEMORY_BUDGET", "134217728") // 128MB
+	t.Setenv("MAX_ENCRYPTED_DOWNLOADS_PER_IP", "20")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with custom decrypt-admission config failed: %v", err)
+	}
+
+	if cfg.LegacyDecryptMaxBytes != 1048576 {
+		t.Errorf("LegacyDecryptMaxBytes = %d, want 1048576", cfg.LegacyDecryptMaxBytes)
+	}
+	if cfg.DownloadDecryptMemoryBudget != 134217728 {
+		t.Errorf("DownloadDecryptMemoryBudget = %d, want 134217728", cfg.DownloadDecryptMemoryBudget)
+	}
+	if cfg.MaxEncryptedDownloadsPerIP != 20 {
+		t.Errorf("MaxEncryptedDownloadsPerIP = %d, want 20", cfg.MaxEncryptedDownloadsPerIP)
+	}
+}
+
+// TestLoad_MaxEncryptedDownloadsPerIP_ZeroDisablesCap verifies 0 is a valid
+// (not rejected) value meaning "disabled," distinct from a negative value.
+func TestLoad_MaxEncryptedDownloadsPerIP_ZeroDisablesCap(t *testing.T) {
+	clearEnvVars(t)
+	t.Setenv("MAX_ENCRYPTED_DOWNLOADS_PER_IP", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with MAX_ENCRYPTED_DOWNLOADS_PER_IP=0 failed: %v", err)
+	}
+	if cfg.MaxEncryptedDownloadsPerIP != 0 {
+		t.Errorf("MaxEncryptedDownloadsPerIP = %d, want 0", cfg.MaxEncryptedDownloadsPerIP)
+	}
+}
+
 // TestLoad_CustomConfiguration tests loading config with custom environment variables
 func TestLoad_CustomConfiguration(t *testing.T) {
 	clearEnvVars(t)
@@ -324,6 +392,11 @@ func TestLoad_InvalidNumericValues(t *testing.T) {
 		{"negative chunked threshold", "CHUNKED_UPLOAD_THRESHOLD", "-1", "CHUNKED_UPLOAD_THRESHOLD must be non-negative"},
 		{"negative partial expiry", "PARTIAL_UPLOAD_EXPIRY_HOURS", "-1", "PARTIAL_UPLOAD_EXPIRY_HOURS must be positive"},
 		{"zero partial expiry", "PARTIAL_UPLOAD_EXPIRY_HOURS", "0", "PARTIAL_UPLOAD_EXPIRY_HOURS must be positive"},
+		{"negative legacy decrypt cap", "LEGACY_DECRYPT_MAX_BYTES", "-1", "LEGACY_DECRYPT_MAX_BYTES must be positive"},
+		{"zero legacy decrypt cap", "LEGACY_DECRYPT_MAX_BYTES", "0", "LEGACY_DECRYPT_MAX_BYTES must be positive"},
+		{"negative decrypt memory budget", "DOWNLOAD_DECRYPT_MEMORY_BUDGET", "-1", "DOWNLOAD_DECRYPT_MEMORY_BUDGET must be positive"},
+		{"zero decrypt memory budget", "DOWNLOAD_DECRYPT_MEMORY_BUDGET", "0", "DOWNLOAD_DECRYPT_MEMORY_BUDGET must be positive"},
+		{"negative max encrypted downloads per IP", "MAX_ENCRYPTED_DOWNLOADS_PER_IP", "-1", "MAX_ENCRYPTED_DOWNLOADS_PER_IP must be 0"},
 	}
 
 	for _, tt := range tests {
@@ -337,6 +410,52 @@ func TestLoad_InvalidNumericValues(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("Error message = %v, want error containing %q", err, tt.errMsg)
+			}
+		})
+	}
+}
+
+// TestLoad_TrustedProxyIPsValidation is a T41 test: TRUSTED_PROXY_IPS is
+// parsed and validated at config load time, so a typo'd CIDR or unknown
+// keyword fails startup loudly instead of silently trusting nothing at
+// request time.
+func TestLoad_TrustedProxyIPsValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+		errMsg  string
+	}{
+		{"default value is valid", "", false, ""},
+		{"single IP", "203.0.113.10", false, ""},
+		{"CIDR", "10.0.0.0/8", false, ""},
+		{"mixed IPs and CIDRs", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", false, ""},
+		{"cloudflare keyword", "10.0.0.0/8,cloudflare", false, ""},
+		{"cloudflare keyword case-insensitive", "CloudFlare", false, ""},
+		{"malformed CIDR", "10.0.0.0/99", true, "invalid TRUSTED_PROXY_IPS"},
+		{"garbage entry", "not-an-ip-or-cidr", true, "invalid TRUSTED_PROXY_IPS"},
+		{"unknown keyword", "aws-cloudfront", true, "invalid TRUSTED_PROXY_IPS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnvVars(t)
+			if tt.value != "" {
+				t.Setenv("TRUSTED_PROXY_IPS", tt.value)
+			}
+
+			_, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with TRUSTED_PROXY_IPS=%q succeeded, want error", tt.value)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Error message = %v, want error containing %q", err, tt.errMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() with TRUSTED_PROXY_IPS=%q failed: %v", tt.value, err)
 			}
 		})
 	}
@@ -982,6 +1101,9 @@ func clearEnvVars(t *testing.T) {
 		"CHUNKED_UPLOAD_ENABLED", "CHUNKED_UPLOAD_THRESHOLD",
 		"CHUNK_SIZE", "PARTIAL_UPLOAD_EXPIRY_HOURS",
 		"READ_TIMEOUT", "WRITE_TIMEOUT",
+		"LEGACY_DECRYPT_MAX_BYTES", "DOWNLOAD_DECRYPT_MEMORY_BUDGET",
+		"MAX_ENCRYPTED_DOWNLOADS_PER_IP",
+		"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_IPS",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)

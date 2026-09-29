@@ -112,6 +112,25 @@ export interface UploadStatus {
   expiresAt: string;
   /** Whether the upload is complete */
   complete: boolean;
+  /** Current status: uploading, processing, completed, failed */
+  status?: string;
+  /** Claim code (only set when completed) */
+  claimCode?: string;
+  /** Error message (only set when failed) */
+  errorMessage?: string;
+  /**
+   * Machine-readable failure reason (only set when failed), e.g.
+   * "MALWARE_DETECTED", "SCAN_UNAVAILABLE", "INTEGRITY_ERROR",
+   * "ASSEMBLY_RETRIES_EXHAUSTED" (ADR-015 / ADR-016).
+   */
+  errorCode?: string;
+  /**
+   * Whether a "failed" status can be retried by POSTing
+   * /api/upload/complete again (ADR-016). Meaningless for any other status.
+   */
+  retryable?: boolean;
+  /** Number of assembly attempts made so far (ADR-016) */
+  attempts?: number;
 }
 
 // ============================================================================

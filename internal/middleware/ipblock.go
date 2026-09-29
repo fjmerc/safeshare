@@ -21,7 +21,7 @@ func IPBlockCheck(repos *repository.Repositories, cfg ProxyConfigProvider) func(
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-			clientIP := utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+			clientIP := utils.GetClientIPWithTrust(r, cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 
 			// Check if IP is blocked
 			blocked, err := repos.Admin.IsIPBlocked(ctx, clientIP)
