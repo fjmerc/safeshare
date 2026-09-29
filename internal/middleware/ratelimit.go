@@ -200,67 +200,10 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 	}
 }
 
-// getClientIP extracts the client IP address from the request with trusted proxy validation
+// getClientIP extracts the client IP address from the request with trusted
+// proxy validation. Delegates to the single shared implementation in
+// internal/utils (T41: this used to duplicate a leftmost-XFF-entry bug that
+// let clients spoof their rate-limit/audit IP through a trusted proxy).
 func (rl *RateLimiter) getClientIP(r *http.Request) string {
-	// Extract IP from RemoteAddr (the immediate connection source)
-	remoteIP := utils.ExtractIP(r.RemoteAddr)
-
-	// Get proxy trust settings
-	trustProxyHeaders := rl.config.GetTrustProxyHeaders()
-	trustedProxyIPs := rl.config.GetTrustedProxyIPs()
-
-	// Determine if we should trust proxy headers
-	shouldTrust := false
-
-	switch trustProxyHeaders {
-	case "true":
-		// Always trust proxy headers (SECURITY WARNING: vulnerable to IP spoofing)
-		shouldTrust = true
-		slog.Warn("rate limiter trusting all proxy headers without validation",
-			"trust_mode", "true",
-			"remote_ip", remoteIP,
-			"x_forwarded_for", r.Header.Get("X-Forwarded-For"),
-			"security_risk", "IP spoofing possible - consider using 'auto' mode",
-		)
-	case "false":
-		// Never trust proxy headers
-		shouldTrust = false
-	case "auto":
-		// Trust only if request comes from a trusted proxy IP
-		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
-	default:
-		// Default to auto mode for safety
-		shouldTrust = utils.IsTrustedProxyIP(remoteIP, trustedProxyIPs)
-	}
-
-	// If we shouldn't trust proxy headers, return RemoteAddr directly
-	if !shouldTrust {
-		return remoteIP
-	}
-
-	// Trust proxy headers - check X-Forwarded-For first
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the chain (the original client)
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			clientIP := strings.TrimSpace(ips[0])
-			if trustProxyHeaders == "true" {
-				// Log when accepting unvalidated proxy headers (security audit trail)
-				slog.Debug("accepting X-Forwarded-For header without validation",
-					"client_ip", clientIP,
-					"remote_ip", remoteIP,
-					"full_xff_chain", xff,
-				)
-			}
-			return clientIP
-		}
-	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	return remoteIP
+	return utils.GetClientIPWithTrust(r, rl.config.GetTrustProxyHeaders(), rl.config.GetTrustedProxyIPs(), rl.config.IsAnonymousMode())
 }

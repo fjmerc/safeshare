@@ -12,6 +12,7 @@ import (
 type proxyTrustConfig struct {
 	trustProxyHeaders string
 	trustedProxyIPs   string
+	anonymousMode     bool
 }
 
 // Defaults match config defaults: "auto" mode with loopback + RFC1918 proxies.
@@ -21,22 +22,24 @@ func init() {
 	currentProxyTrust.Store(&proxyTrustConfig{
 		trustProxyHeaders: "auto",
 		trustedProxyIPs:   "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+		anonymousMode:     false,
 	})
 }
 
 // ConfigureClientIPTrust sets the process-wide proxy trust settings.
 // Call once at startup after loading config, before serving requests.
-func ConfigureClientIPTrust(trustProxyHeaders, trustedProxyIPs string) {
+func ConfigureClientIPTrust(trustProxyHeaders, trustedProxyIPs string, anonymousMode bool) {
 	currentProxyTrust.Store(&proxyTrustConfig{
 		trustProxyHeaders: trustProxyHeaders,
 		trustedProxyIPs:   trustedProxyIPs,
+		anonymousMode:     anonymousMode,
 	})
 }
 
 // GetClientIP extracts the client IP using the configured proxy trust settings.
 func GetClientIP(r *http.Request) string {
 	cfg := currentProxyTrust.Load()
-	return GetClientIPWithTrust(r, cfg.trustProxyHeaders, cfg.trustedProxyIPs)
+	return GetClientIPWithTrust(r, cfg.trustProxyHeaders, cfg.trustedProxyIPs, cfg.anonymousMode)
 }
 
 // TrustsProxyHeaders reports whether proxy-supplied headers (X-Forwarded-For,

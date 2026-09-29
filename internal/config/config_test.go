@@ -415,6 +415,52 @@ func TestLoad_InvalidNumericValues(t *testing.T) {
 	}
 }
 
+// TestLoad_TrustedProxyIPsValidation is a T41 test: TRUSTED_PROXY_IPS is
+// parsed and validated at config load time, so a typo'd CIDR or unknown
+// keyword fails startup loudly instead of silently trusting nothing at
+// request time.
+func TestLoad_TrustedProxyIPsValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+		errMsg  string
+	}{
+		{"default value is valid", "", false, ""},
+		{"single IP", "203.0.113.10", false, ""},
+		{"CIDR", "10.0.0.0/8", false, ""},
+		{"mixed IPs and CIDRs", "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", false, ""},
+		{"cloudflare keyword", "10.0.0.0/8,cloudflare", false, ""},
+		{"cloudflare keyword case-insensitive", "CloudFlare", false, ""},
+		{"malformed CIDR", "10.0.0.0/99", true, "invalid TRUSTED_PROXY_IPS"},
+		{"garbage entry", "not-an-ip-or-cidr", true, "invalid TRUSTED_PROXY_IPS"},
+		{"unknown keyword", "aws-cloudfront", true, "invalid TRUSTED_PROXY_IPS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnvVars(t)
+			if tt.value != "" {
+				t.Setenv("TRUSTED_PROXY_IPS", tt.value)
+			}
+
+			_, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with TRUSTED_PROXY_IPS=%q succeeded, want error", tt.value)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Error message = %v, want error containing %q", err, tt.errMsg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() with TRUSTED_PROXY_IPS=%q failed: %v", tt.value, err)
+			}
+		})
+	}
+}
+
 // TestLoad_ExpirationValidation tests default vs max expiration validation
 func TestLoad_ExpirationValidation(t *testing.T) {
 	clearEnvVars(t)
@@ -1057,6 +1103,7 @@ func clearEnvVars(t *testing.T) {
 		"READ_TIMEOUT", "WRITE_TIMEOUT",
 		"LEGACY_DECRYPT_MAX_BYTES", "DOWNLOAD_DECRYPT_MEMORY_BUDGET",
 		"MAX_ENCRYPTED_DOWNLOADS_PER_IP",
+		"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_IPS",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)

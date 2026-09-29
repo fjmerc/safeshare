@@ -278,12 +278,14 @@ func TestGetClientIP(t *testing.T) {
 			want:       "203.0.113.1",
 		},
 		{
-			name: "X-Forwarded-For multiple IPs (takes first)",
+			// T41: bucket by the rightmost *untrusted* hop, not the
+			// leftmost (client-controlled, spoofable) entry.
+			name: "X-Forwarded-For multiple IPs (takes rightmost untrusted)",
 			headers: map[string]string{
 				"X-Forwarded-For": "203.0.113.1, 198.51.100.1, 192.0.2.1",
 			},
 			remoteAddr: "10.0.0.1:12345",
-			want:       "203.0.113.1",
+			want:       "192.0.2.1",
 		},
 		{
 			name: "X-Real-IP header",
@@ -323,7 +325,7 @@ func TestGetClientIP(t *testing.T) {
 				"X-Forwarded-For": " 203.0.113.1 , 198.51.100.1 ",
 			},
 			remoteAddr: "10.0.0.1:12345",
-			want:       "203.0.113.1",
+			want:       "198.51.100.1",
 		},
 	}
 

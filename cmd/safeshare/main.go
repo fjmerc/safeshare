@@ -51,7 +51,7 @@ func run() error {
 
 	// Apply proxy trust settings process-wide so helpers without config
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
-	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs())
+	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 
 	slog.Info("starting safeshare",
 		"port", cfg.Port,
