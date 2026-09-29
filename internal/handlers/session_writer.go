@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync/atomic"
 
@@ -187,6 +188,220 @@ func (sw *sessionWriter) CommitAttempted() bool {
 // heartbeat goroutine in claim.go to compute the delta for TouchDownloadSession).
 func (sw *sessionWriter) BytesWritten() int64 {
 	return sw.written.Load()
+}
+
+// sessionWriterReadFromChunk bounds how many bytes a single call into the
+// underlying ResponseWriter's own ReadFrom (net/http's sendfile-capable
+// *response, reached once this stream is past the commit gate — see
+// ReadFrom below) is allowed to move before sessionWriter regains control to
+// update `written`. A raw, unbounded ReadFrom call blocks in the kernel for
+// the whole remainder of a large transfer with no opportunity for Go code to
+// run, which would leave BytesWritten() — read concurrently by the
+// heartbeat goroutine in claim_session.go to compute bytes_served deltas —
+// stale for that entire span. Chunking bounds that staleness to roughly one
+// chunk's transfer time while still collapsing the overwhelming majority of
+// a large download into a handful of sendfile syscalls instead of one
+// io.Copy Write call per ~32KB buffer.
+//
+// 1MiB (not larger): keeps the heartbeat's bytes_served view reasonably
+// fresh — at 1MiB, even a slow ~1MB/s connection updates roughly once a
+// second, not once every several — for a syscall-count cost that's still
+// negligible next to the win sendfile itself provides. A 512MB file is
+// ~512 ReadFrom/sendfile calls at this size versus ~16000 buffered Write
+// calls without sendfile at all (32KB io.Copy buffer); each additional
+// syscall from shrinking the chunk 4x (relative to an earlier 4MiB value)
+// costs low-single-digit microseconds, on the order of a millisecond total
+// even for a multi-GB transfer — immaterial next to the ~860ms/512MB
+// (measured) sendfile itself saves over the buffered-copy fallback.
+const sessionWriterReadFromChunk = 1 * 1024 * 1024
+
+// ReadFrom implements io.ReaderFrom so a capped (max_downloads-limited)
+// plaintext download can still reach the sendfile fast path instead of
+// falling back to a buffered io.Copy loop through Write for every chunk —
+// claimServeWriter.ReadFrom (claim_range.go) delegates to this when present.
+//
+// It is built to be provably equivalent to driving the same bytes through
+// repeated Write calls, for every value Write's callers observe:
+// ResponseOK/committed/wholeFile/threshold drive the same commit decision;
+// BytesWritten/Committed/CreditedNow/CommitAttempted end at the same values;
+// and, critically, a stream that ends exactly at or before the free
+// threshold never commits — matching what happens when a Write-based
+// caller's loop simply stops issuing calls at that point, rather than ever
+// calling Write with a (possibly zero-length) final chunk.
+//
+// The proof sketch: cumulative bytes moved is the only thing Write's commit
+// check depends on (not how the caller chose to chunk them), so as long as
+// ReadFrom (a) never lets more than `threshold` bytes flow before either
+// resolving "no more data" or committing, and (b) commits before any byte
+// past that point is delivered, the outcome is identical regardless of the
+// exact chunk boundaries used internally. See the phase comments below for
+// how each part is achieved.
+//
+// Encrypted downloads never reach this: they're served through
+// idleDeadlineWriter, which deliberately hides ReadFrom from its own method
+// set (see that type's doc comment in claim_range.go) so http.ServeContent
+// never discovers a ReadFrom-capable writer for that path — content there is
+// an *utils.SFSEReader anyway, never an *os.File, so there is no sendfile
+// opportunity to gain by not hiding it.
+func (sw *sessionWriter) ReadFrom(src io.Reader) (int64, error) {
+	if sw.err != nil {
+		return 0, sw.err
+	}
+
+	var total int64
+
+	// Phase 1/2: resolve the commit-threshold decision exactly as Write
+	// would, without yet touching the underlying ResponseWriter's own
+	// ReadFrom — going straight to the fast path here would bypass the gate
+	// entirely and let unpaid-for bytes out the door.
+	if sw.ResponseOK() && !sw.committed {
+		remaining := int64(0)
+		if !sw.wholeFile {
+			remaining = sw.threshold - sw.written.Load()
+			if remaining < 0 {
+				remaining = 0
+			}
+		}
+		// wholeFile forces remaining to 0 regardless of the threshold value,
+		// matching Write's `sw.wholeFile ||` short-circuit: ADR-012 Policy A
+		// commits on the very first byte of a whole-file response no matter
+		// how large the probe threshold would otherwise allow.
+
+		if remaining > 0 {
+			// Free-threshold prefix: deliver up to `remaining` bytes through
+			// the ordinary gated Write path. onlyWriter strips ReadFrom from
+			// the destination's method set so io.CopyN's own internal
+			// io.Copy can't rediscover this very method on sw and recurse.
+			// Cumulative written never exceeds threshold while inside this
+			// call, so Write's own commit check can't fire mid-prefix.
+			n, err := io.CopyN(onlyWriter{sw}, src, remaining)
+			total += n
+			if err != nil {
+				if err == io.EOF {
+					// Stream ended at or before the free threshold: a
+					// Write-based caller's loop would likewise simply have
+					// stopped issuing calls here, with no commit ever
+					// attempted. Same outcome, non-sticky (io.EOF here is
+					// success, not failure).
+					return total, nil
+				}
+				// A plain read (src) or write (destination) error — not
+				// sticky, matching Write's treatment of an ordinary
+				// underlying-write failure (only a failed commit poisons
+				// sw.err; see commitNow's doc comment).
+				return total, err
+			}
+		}
+
+		// Exactly `remaining` bytes (or nothing, if wholeFile / the
+		// threshold was already met) have been delivered without
+		// committing, and src's exhaustion is still unknown. Peek exactly
+		// one byte — the minimum possible read — to find out: a stream that
+		// ends precisely here must still never commit, same as Write's
+		// caller never issuing a further call.
+		var one [1]byte
+		pn, perr := io.ReadFull(src, one[:])
+		if pn == 0 {
+			if perr != nil && perr != io.EOF {
+				return total, perr
+			}
+			return total, nil
+		}
+
+		// There is at least one more byte: this is the call that would have
+		// pushed cumulative bytes past threshold (or the very first call at
+		// all, for wholeFile / threshold-0) — commit now, before sending any
+		// of it, exactly like Write commits before writing the chunk that
+		// crosses the boundary.
+		if err := sw.commitNow(); err != nil {
+			sw.err = err
+			return total, err
+		}
+
+		n, err := sw.Write(one[:pn])
+		total += int64(n)
+		if err != nil {
+			return total, err
+		}
+	}
+
+	// Phase 3: committed (or never gated at all — an error response, where
+	// Write never applies the threshold check either). Drain the rest
+	// through the underlying ResponseWriter's own ReadFrom when it has one,
+	// in bounded chunks (see sessionWriterReadFromChunk) so BytesWritten()
+	// doesn't go dark for the whole remainder of a large transfer;
+	// otherwise fall back to a plain buffered copy through Write — still
+	// correct, just without the sendfile fast path.
+	rf, ok := sw.ResponseWriter.(io.ReaderFrom)
+	if !ok {
+		n, err := io.Copy(onlyWriter{sw}, src)
+		return total + n, err
+	}
+
+	// In production, src is always already an *io.LimitedReader: it arrives
+	// here as exactly the one io.LimitReader(content, sendSize) that
+	// http.ServeContent's io.CopyN constructs once (net/http/fs.go) and
+	// hands straight to ReadFrom via io.Copy's ReaderFrom fast path — never
+	// re-wrapped by anything in between. That single layer matters: both
+	// net.sendFile (net/sendfile.go) and net/http's own (*response).ReadFrom
+	// unwrap only ONE level of *io.LimitedReader before requiring what's
+	// left to satisfy syscall.Conn (i.e. be an *os.File) — response.ReadFrom
+	// even says so directly ("to avoid ... having to unnest readers
+	// repeatedly in net.sendFile, just adjust the existing LimitedReader N").
+	// Wrapping src in a second io.LimitReader here — as an earlier version
+	// of this method did, to bound each chunk — makes that unwrap land on
+	// an *io.LimitedReader instead of an *os.File, so the syscall.Conn
+	// assertion fails, sendfile silently declines ("handled=false"), and
+	// every capped plaintext download fell back to a buffered copy instead.
+	// The fix: reuse the identical *io.LimitedReader object across every
+	// chunk, temporarily capping and restoring its own N field instead of
+	// allocating a nested wrapper — exactly the pattern response.ReadFrom
+	// itself uses.
+	//
+	// A src that ISN'T already an *io.LimitedReader (never happens via
+	// http.ServeContent, but true of this package's own unit tests that
+	// call ReadFrom directly) falls back to wrapping once per chunk — safe,
+	// since there's no pre-existing LimitedReader layer to double up on.
+	if lr, isLimited := src.(*io.LimitedReader); isLimited {
+		remaining := lr.N
+		for remaining > 0 {
+			chunk := remaining
+			if chunk > sessionWriterReadFromChunk {
+				chunk = sessionWriterReadFromChunk
+			}
+			lr.N = chunk
+			n, err := rf.ReadFrom(lr)
+			sw.written.Add(n)
+			total += n
+			remaining -= n
+			if err != nil {
+				return total, err
+			}
+			if n == 0 {
+				// The underlying reader gave nothing this call (e.g. the
+				// file turned out shorter than the caller's declared
+				// length) — fail safe and stop instead of spinning.
+				return total, nil
+			}
+		}
+		return total, nil
+	}
+
+	for {
+		n, err := rf.ReadFrom(io.LimitReader(src, sessionWriterReadFromChunk))
+		sw.written.Add(n)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if n == 0 {
+			// A zero-byte chunk with no error means the limited reader had
+			// nothing left to give — src is exhausted. (A full chunk with
+			// src also exhausted just costs one extra, cheap iteration that
+			// discovers the same thing here.)
+			return total, nil
+		}
+	}
 }
 
 // Flush implements http.Flusher by delegating to the wrapped ResponseWriter

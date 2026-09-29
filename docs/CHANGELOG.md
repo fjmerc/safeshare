@@ -35,6 +35,20 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- The `migrate-encryption` admin tool's legacy-file migration, and the `import-file` bulk-import tool when given an encryption key, now both produce SFSE2-encrypted files instead of the older SFSE1 format. SFSE2 authenticates each chunk's identity, position, and whether it's the last chunk, which detects truncation, chunk reordering, and cross-file splicing that SFSE1 could not.
+- New `migrate-encryption --upgrade-format` flag re-seals any existing SFSE1 files to SFSE2 in place, closing that gap for files encrypted before this release. It's crash-safe (an interrupted run can always be safely re-run) and reports a summary of what was upgraded; see `cmd/migrate-encryption/README.md` for usage and the one documented, narrow edge case around running it while the server is actively serving the files being upgraded. `migrate-encryption --verify` now also reports how many stored files are still SFSE1 and eligible for the upgrade. A migrated or re-sealed file now keeps its original file permissions (and, when the tool runs as root, its original owner), instead of always coming out as a fresh, more restrictive file the running server might not be able to read back.
+- `migrate-encryption` now ships inside the Docker image at `/app/migrate-encryption`, alongside `/app/import-file` — run it with `docker exec safeshare /app/migrate-encryption ...` against your running container. See `cmd/migrate-encryption/README.md`'s "Docker Usage" section; running it this way (rather than as a separate process on the Docker host) is what makes the file-ownership behavior above correct by construction.
+
+### Changed
+
+- `import-file` and `migrate-encryption` now refuse to run against a PostgreSQL database or S3 storage (they only support SQLite with local file storage). They also wait and retry if the database is busy instead of failing when the server is running. `import-file --user-id` now checks that the user exists before importing.
+
+### Performance
+
+- Downloads of files with a download limit set (`max_downloads`) now use the server's fast zero-copy delivery path, same as downloads without a limit — previously only unlimited downloads benefited from it. Measured about 5x less CPU time on a 512MB unencrypted download. No behavior change; downloads are counted and tracked exactly as before.
+
 ## [1.7.0] - 2026-09-29
 
 ### Security

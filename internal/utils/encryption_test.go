@@ -509,6 +509,40 @@ func TestIsStreamEncrypted(t *testing.T) {
 	}
 }
 
+// openV1RangeForTest opens srcPath (an SFSE1 file) via the real production
+// Range-read path — utils.OpenSFSEReader driving Seek/Read, exactly as
+// claim_range.go does — and reads the inclusive plaintext range
+// [startByte, endByte]. The file-based DecryptFileStreamingRange these tests
+// used to call directly was retired as dead code (3c-3): every claim
+// download, V1 or V2, has gone through OpenSFSEReader since ADR-017 parts
+// 1-2 landed.
+func openV1RangeForTest(t *testing.T, srcPath, keyHex string, plainLen, startByte, endByte int64) ([]byte, error) {
+	t.Helper()
+	f, err := os.Open(srcPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	r, err := OpenSFSEReader(f, fi, keyHex, nil, plainLen, "")
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	if startByte < 0 || endByte < startByte {
+		return nil, fmt.Errorf("invalid range: start=%d, end=%d", startByte, endByte)
+	}
+	if _, err := r.Seek(startByte, io.SeekStart); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, endByte-startByte+1)
+	n, err := io.ReadFull(r, buf)
+	return buf[:n], err
+}
+
 // TestDecryptFileStreamingRange tests range decryption for HTTP range requests
 func TestDecryptFileStreamingRange(t *testing.T) {
 	testKey := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -589,9 +623,7 @@ func TestDecryptFileStreamingRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-
-			n, err := DecryptFileStreamingRange(encPath, &buf, testKey, tt.startByte, tt.endByte)
+			got, err := openV1RangeForTest(t, encPath, testKey, int64(len(plaintext)), tt.startByte, tt.endByte)
 
 			if tt.wantErr {
 				if err == nil {
@@ -604,15 +636,9 @@ func TestDecryptFileStreamingRange(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			// Verify bytes written
-			expectedLen := int64(len(tt.expected))
-			if n != expectedLen {
-				t.Errorf("Expected %d bytes written, got %d", expectedLen, n)
-			}
-
-			// Verify content
-			if !bytes.Equal(buf.Bytes(), tt.expected) {
-				t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", tt.expected, buf.Bytes())
+			// Verify content (and, implicitly, bytes read)
+			if !bytes.Equal(got, tt.expected) {
+				t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", tt.expected, got)
 			}
 		})
 	}
@@ -638,8 +664,7 @@ func TestDecryptFileStreamingRange_InvalidKey(t *testing.T) {
 	}
 
 	// Try to decrypt with wrong key
-	var buf bytes.Buffer
-	_, err := DecryptFileStreamingRange(encPath, &buf, wrongKey, 0, int64(len(plaintext)-1))
+	_, err := openV1RangeForTest(t, encPath, wrongKey, int64(len(plaintext)), 0, int64(len(plaintext)-1))
 	if err == nil {
 		t.Fatal("Expected error with wrong key, got nil")
 	}
@@ -658,8 +683,7 @@ func TestDecryptFileStreamingRange_NotEncrypted(t *testing.T) {
 	}
 
 	// Try to decrypt as if it were encrypted
-	var buf bytes.Buffer
-	_, err := DecryptFileStreamingRange(plainPath, &buf, testKey, 0, 9)
+	_, err := openV1RangeForTest(t, plainPath, testKey, 10, 0, 9)
 	if err == nil {
 		t.Fatal("Expected error for non-encrypted file, got nil")
 	}

@@ -87,7 +87,7 @@ SafeShare handles Range requests uniformly across storage formats by presenting 
 
 #### Unencrypted (Plaintext) Files
 - The on-disk file is opened and passed directly to `http.ServeContent` — no intermediate buffering.
-- This also lets a full, non-Range GET reach the kernel's `sendfile(2)` fast path all the way through SafeShare's logging/metrics middleware.
+- This also lets a full, non-Range GET reach the kernel's `sendfile(2)` fast path all the way through SafeShare's logging/metrics middleware. As of the 3c-3 hardening pass, `sessionWriter.ReadFrom` (`internal/handlers/session_writer.go`) extends the same `io.ReaderFrom` chain to a file with a download limit set (`max_downloads`) too — provably equivalent to the ordinary buffered-write path for the ADR-014 commit-threshold/session bookkeeping (see that file's tests), and confirmed to actually reach `sendfile(2)`: measured on a real container, a 512MB capped plaintext download now costs ~200ms CPU instead of ~1060ms.
 
 #### Streaming Encrypted Files (SFSE1 / SFSE2)
 - A pooled, seekable decrypting reader (`SFSEReader`) is opened over the file. Opening it validates the header and confirms the on-disk ciphertext size exactly matches what the database-recorded plaintext length implies — a truncated or corrupted file is rejected here, before any response header is written, rather than surfacing mid-stream.
@@ -133,6 +133,7 @@ Unencrypted downloads are not subject to any of these.
 | `internal/handlers/claim_range.go` | `serveFileWithRangeSupport` — ties the above together via `http.ServeContent` |
 | `internal/handlers/claim.go` | `ClaimHandler` — integration point, `HEAD` short-circuit |
 | `internal/handlers/claim_session.go` | ADR-014 download-session/commit-threshold policy for capped files |
+| `internal/handlers/session_writer.go` | `sessionWriter` — commit-threshold gating for capped downloads, including the `ReadFrom` path that reaches the same sendfile mechanism uncapped downloads use |
 
 See ADR-017 for the full design rationale.
 

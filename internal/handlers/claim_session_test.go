@@ -754,14 +754,22 @@ func (p *partialWriteRecorder) Write(b []byte) (int, error) {
 	if remaining <= 0 {
 		return 0, io.ErrClosedPipe
 	}
+	requested := len(b)
 	if len(b) > remaining {
 		b = b[:remaining]
 	}
 	n, err := p.ResponseRecorder.Write(b)
 	p.written += n
-	if err == nil && n < remaining {
-		// Truncated relative to what the caller asked to write — signal the
-		// same "connection dropped" condition io.Copy reacts to.
+	if err == nil && n < requested {
+		// Truncated relative to what the caller actually asked to write in
+		// *this* call (not the remaining budget — sessionWriter.ReadFrom
+		// legitimately issues small, non-budget-sized Write calls, e.g. a
+		// single-byte commit-threshold probe, that fully succeed without
+		// exhausting the remaining budget; comparing against `remaining`
+		// there would misreport a genuine, complete small write as a
+		// dropped connection). Signal the same "connection dropped"
+		// condition io.Copy reacts to only when this call's own bytes were
+		// actually truncated.
 		return n, io.ErrShortWrite
 	}
 	return n, err

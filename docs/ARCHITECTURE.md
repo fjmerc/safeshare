@@ -330,6 +330,13 @@ Both formats coexist via a version-byte dispatcher in
 and routes to the appropriate decrypt path. Legacy SFSE1 files remain readable
 indefinitely with no operator action required.
 
+The admin CLI tools (`cmd/import-file`, `cmd/migrate-encryption`) emit SFSE2
+for every encrypted output as of the 3c-3 hardening pass, matching the web
+upload path — previously they produced SFSE1. `migrate-encryption
+--upgrade-format` re-seals any *existing* SFSE1 files to SFSE2 in place
+(master finding #10); see that command's README for the crash-safety design
+(a DB-commit-then-rename sequence) and `--verify`'s `upgradable` count.
+
 ```mermaid
 flowchart LR
     subgraph Input

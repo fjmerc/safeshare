@@ -84,9 +84,10 @@ var errSFSEReaderClosed = errors.New("SFSEReader: use after Close")
 // pattern: the moment a chunk is decrypted out of order (a Seek jumped
 // ahead, or the stream started mid-file), verification is permanently
 // disabled for the rest of the stream. A Range read therefore relies on
-// per-chunk AEAD authentication plus the open-time ciphertext-size check,
-// exactly like the existing DecryptFileStreamingRangeV2 path — it cannot
-// detect trailing-chunk truncation that the requested range never reaches.
+// per-chunk AEAD authentication plus the open-time ciphertext-size check —
+// it cannot detect trailing-chunk truncation that the requested range never
+// reaches, the same limitation ADR-011 §6 documents for SFSE2 Range reads
+// generally.
 type SFSEReader struct {
 	f       *os.File
 	gcm     cipher.AEAD

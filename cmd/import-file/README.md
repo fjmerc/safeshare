@@ -37,6 +37,13 @@ A command-line utility for importing existing files into SafeShare without re-up
 - SafeShare uploads directory path
 - Encryption key (optional - only if SafeShare uses encryption)
 
+**Local SQLite + local filesystem only.** This tool reads and writes the SQLite
+file and uploads directory named by `--db`/`--uploads` directly — it has no
+PostgreSQL or S3 support. If your deployment is actually configured with
+`DATABASE_TYPE=postgresql` and/or `STORAGE_TYPE=s3`, this tool refuses to run
+at startup (rather than silently operating on a local SQLite file and
+uploads directory the running server never reads from) with a clear error.
+
 ## Installation
 
 ### Docker (Recommended)
@@ -508,8 +515,8 @@ If `QUOTA_LIMIT_GB` is set in SafeShare, the tool will validate quota before imp
 ### How It Works
 
 - **Database `file_size` field**: Stores the original file size before encryption
-- **Physical file on disk**: Larger due to SFSE1 encryption overhead (~0.1-1% for large files)
-- **Why this matters**: `DecryptFileStreamingRange()` uses the database size to calculate byte ranges during downloads
+- **Physical file on disk**: Larger due to SFSE2 encryption overhead (~0.1-1% for large files)
+- **Why this matters**: the claim/download path (`utils.OpenSFSEReader`, driving `http.ServeContent`) uses the database size — and, for SFSE2, the per-chunk AAD file identity in `enc_file_id` — to calculate byte ranges and authenticate each chunk during downloads
 
 ### Example
 
@@ -522,10 +529,11 @@ Overhead: ~11 MB (0.1%)
 
 ### Technical Details
 
-The SFSE1 encryption format adds:
-- Header metadata (version, chunk size, chunk count): ~10 bytes
+As of the 3c-3 hardening pass, `--enckey` imports always emit **SFSE2** (ADR-011) — the same format and helpers (`utils.GenerateEncFileID` + `utils.EncryptFileStreamingV2`) the web upload path uses — never the older SFSE1 or legacy single-shot format. SFSE2 adds:
+- Header metadata (magic, version, chunk size, total plaintext length): 18 bytes
 - Nonce per chunk (12 bytes × number of chunks): ~8 KB for 10 GB file
 - Authentication tag per chunk (16 bytes × number of chunks): ~11 KB for 10 GB file
+- A random 16-byte `enc_file_id`, stored on the files row, bound into every chunk's AAD (authenticates chunk identity, index, and last-chunk position — defeats truncation, reordering, and cross-file splicing; see ADR-011)
 
 This overhead is automatically handled by the import tool and does not affect users - they see and download the original file size.
 

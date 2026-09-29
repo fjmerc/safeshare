@@ -173,11 +173,12 @@ func run() error {
 
 	// Initialize storage backend. SH-2.2 deletes the local-FS
 	// storage.EncryptedStorage wrapper — production handlers call
-	// utils.EncryptFileStreamingV2 / utils.DecryptFileStreamingRangeAny
-	// directly against the underlying filesystem path, so the wrapper layer
-	// was dead code (only its HealthCheck passthrough was reached). Encryption
-	// at rest is unchanged: every upload still flows through SFSE2 in the
-	// upload handlers (see internal/handlers/upload.go and assembly_worker.go).
+	// utils.EncryptFileStreamingV2 directly against the underlying
+	// filesystem path for uploads, and utils.OpenSFSEReader (driving
+	// http.ServeContent) for downloads, so the wrapper layer was dead code
+	// (only its HealthCheck passthrough was reached). Encryption at rest is
+	// unchanged: every upload still flows through SFSE2 in the upload
+	// handlers (see internal/handlers/upload.go and assembly_worker.go).
 	fsStorage, err := filesystem.NewFilesystemStorage(cfg.UploadDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize filesystem storage: %w", err)
