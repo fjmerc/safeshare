@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-29
+
 ### Security
 
 - Fixed an IP spoofing vulnerability (T41) in how SafeShare determines a client's real IP address behind a reverse proxy. When `TRUST_PROXY_HEADERS` trusted the proxy chain, SafeShare previously used the **leftmost** entry in `X-Forwarded-For` — which is supplied by the client and therefore fully attacker-controlled — to identify the visitor for rate limiting, IP blocking, and audit logging. Any client could set its own apparent IP per request simply by sending its own `X-Forwarded-For` header through a trusted proxy, bypassing per-IP rate limits and IP blocks, and poisoning logged IPs. SafeShare now walks `X-Forwarded-For` from the right, skipping entries that are themselves trusted proxies (per `TRUSTED_PROXY_IPS`), and uses the first entry that isn't — the leftmost, client-supplied entry is never trusted. `X-Real-IP` is now only consulted when `X-Forwarded-For` is absent entirely.
