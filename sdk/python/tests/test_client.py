@@ -8,8 +8,15 @@ from pytest_httpx import HTTPXMock
 from safeshare import SafeShareClient
 from safeshare.exceptions import (
     AuthenticationError,
+    DownloadLimitReachedError,
+    FileQuarantinedError,
+    MalwareDetectedError,
     NotFoundError,
     RateLimitError,
+    ScanFailedError,
+    ScanPendingError,
+    ScanUnavailableError,
+    UnscannableUploadError,
     UploadError,
 )
 from safeshare.models import UploadProgress
@@ -244,6 +251,51 @@ class TestFileInfo:
             assert info.original_filename == "test.txt"
             assert info.downloads_remaining == 3
 
+    def test_get_file_info_scan_status(self, httpx_mock: HTTPXMock):
+        """Test that ADR-015 scan_status/download_available fields (T39) are
+        parsed from the /info response."""
+        httpx_mock.add_response(
+            url="https://example.com/api/claim/ABC123/info",
+            json={
+                "claim_code": "ABC123",
+                "original_filename": "test.txt",
+                "file_size": 1024,
+                "created_at": "2025-11-27T12:00:00Z",
+                "expires_at": "2025-11-28T12:00:00Z",
+                "download_count": 0,
+                "max_downloads": None,
+                "downloads_remaining": None,
+                "password_protected": False,
+                "scan_status": "clean",
+                "download_available": True,
+            },
+        )
+
+        with SafeShareClient(base_url="https://example.com") as client:
+            info = client.get_file_info("ABC123")
+            assert info.scan_status == "clean"
+            assert info.download_available is True
+
+    def test_get_file_info_scan_status_absent(self, httpx_mock: HTTPXMock):
+        """scan_status/download_available must be optional so the SDK still
+        parses responses from servers/legacy files that don't send them."""
+        httpx_mock.add_response(
+            url="https://example.com/api/claim/ABC123/info",
+            json={
+                "claim_code": "ABC123",
+                "original_filename": "test.txt",
+                "file_size": 1024,
+                "created_at": "2025-11-27T12:00:00Z",
+                "download_count": 0,
+                "password_protected": False,
+            },
+        )
+
+        with SafeShareClient(base_url="https://example.com") as client:
+            info = client.get_file_info("ABC123")
+            assert info.scan_status is None
+            assert info.download_available is None
+
 
 class TestFileManagement:
     """Test file management operations."""
@@ -291,6 +343,7 @@ class TestFileManagement:
         httpx_mock.add_response(
             url="https://example.com/api/user/files/delete",
             method="DELETE",
+            match_json={"file_id": 1},
             status_code=200,
         )
 
@@ -298,8 +351,20 @@ class TestFileManagement:
             base_url="https://example.com",
             api_token="safeshare_test_token",
         ) as client:
-            # Should not raise
+            # Should not raise, and must send the file ID in the JSON body
             client.delete_file(1)
+
+    def test_error_with_non_string_code_falls_back_to_status(self, httpx_mock: HTTPXMock):
+        """A malformed (non-string) error code must not break error mapping."""
+        httpx_mock.add_response(
+            url="https://example.com/api/claim/abc123/info",
+            status_code=404,
+            json={"error": "not found", "code": ["unexpected"]},
+        )
+
+        with SafeShareClient(base_url="https://example.com") as client:
+            with pytest.raises(NotFoundError):
+                client.get_file_info("abc123")
 
     def test_rename_file(self, httpx_mock: HTTPXMock):
         """Test renaming a file."""
@@ -362,3 +427,49 @@ class TestErrorHandling:
                 import io
 
                 client.upload(io.BytesIO(b"test"), filename="test.txt")
+
+
+class TestScanErrorHandling:
+    """Test ADR-015 malware-scan error_code -> exception mapping (T39).
+
+    Mirrors sdk/go/errors.go's newAPIError code-first dispatch: several of
+    these codes share an HTTP status with an older, differently-meaning
+    error, so the exception class is keyed off error_code, not status_code.
+    """
+
+    @pytest.mark.parametrize(
+        "status_code,code,expected_exc",
+        [
+            (422, "MALWARE_DETECTED", MalwareDetectedError),
+            (410, "FILE_QUARANTINED", FileQuarantinedError),
+            (423, "SCAN_PENDING", ScanPendingError),
+            (503, "SCAN_UNAVAILABLE", ScanUnavailableError),
+            (403, "SCAN_FAILED", ScanFailedError),
+            (422, "UNSCANNABLE_UPLOAD", UnscannableUploadError),
+        ],
+    )
+    def test_scan_error_codes(self, httpx_mock, status_code, code, expected_exc):
+        httpx_mock.add_response(
+            url="https://example.com/api/claim/ABC123/info",
+            status_code=status_code,
+            json={"error": "scan-related failure", "code": code},
+        )
+
+        with SafeShareClient(base_url="https://example.com") as client:
+            with pytest.raises(expected_exc) as excinfo:
+                client.get_file_info("ABC123")
+            assert excinfo.value.error_code == code
+            assert excinfo.value.status_code == status_code
+
+    def test_file_quarantined_not_confused_with_download_limit_reached(self, httpx_mock):
+        """Both FILE_QUARANTINED and the legacy download-limit-reached case
+        use HTTP 410 — the error_code must disambiguate, not the status."""
+        httpx_mock.add_response(
+            url="https://example.com/api/claim/ABC123/info",
+            status_code=410,
+            json={"error": "download limit reached", "code": "download_limit_reached"},
+        )
+
+        with SafeShareClient(base_url="https://example.com") as client:
+            with pytest.raises(DownloadLimitReachedError):
+                client.get_file_info("ABC123")

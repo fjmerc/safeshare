@@ -29,6 +29,12 @@ from safeshare.exceptions import (
     UploadError,
     DownloadError,
     ValidationError,
+    MalwareDetectedError,
+    FileQuarantinedError,
+    ScanPendingError,
+    ScanUnavailableError,
+    ScanFailedError,
+    UnscannableUploadError,
 )
 from safeshare.models import (
     UploadResult,
@@ -36,6 +42,12 @@ from safeshare.models import (
     UserFile,
     ChunkedUploadSession,
     UploadProgress,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_CLEAN,
+    SCAN_STATUS_INFECTED,
+    SCAN_STATUS_ERROR,
+    SCAN_STATUS_SKIPPED,
+    SCAN_STATUS_NOT_SCANNED,
 )
 
 __version__ = "0.1.0"
@@ -48,9 +60,21 @@ __all__ = [
     "UploadError",
     "DownloadError",
     "ValidationError",
+    "MalwareDetectedError",
+    "FileQuarantinedError",
+    "ScanPendingError",
+    "ScanUnavailableError",
+    "ScanFailedError",
+    "UnscannableUploadError",
     "UploadResult",
     "FileInfo",
     "UserFile",
     "ChunkedUploadSession",
     "UploadProgress",
+    "SCAN_STATUS_PENDING",
+    "SCAN_STATUS_CLEAN",
+    "SCAN_STATUS_INFECTED",
+    "SCAN_STATUS_ERROR",
+    "SCAN_STATUS_SKIPPED",
+    "SCAN_STATUS_NOT_SCANNED",
 ]

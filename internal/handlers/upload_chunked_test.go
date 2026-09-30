@@ -1555,12 +1555,20 @@ func TestUploadInitHandler_WithUserContext(t *testing.T) {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
 
-	// Create test user
+	// Create a real user row: partial_uploads.user_id has a foreign key to
+	// users(id) ON DELETE CASCADE, which production always enforces and
+	// which testutil.SetupTestDB now enforces too (T36) — a fabricated,
+	// never-inserted user id would fail the FK constraint when the handler
+	// creates the partial_uploads record.
+	createdUser, err := repos.Users.Create(context.Background(), "chunkuser", "chunk@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
 	testUser := &models.User{
-		ID:       456,
-		Username: "chunkuser",
-		Email:    "chunk@example.com",
-		Role:     "user",
+		ID:       createdUser.ID,
+		Username: createdUser.Username,
+		Email:    createdUser.Email,
+		Role:     createdUser.Role,
 	}
 
 	handler := UploadInitHandler(repos, cfg)

@@ -714,7 +714,11 @@ class SafeShareClient:
         if not self._api_token:
             raise AuthenticationError("API token required for file management")
 
-        response = self._client.delete(
+        # httpx.Client.delete() doesn't accept a body (json/data/content) —
+        # only request() does — so a DELETE-with-JSON-body call must go
+        # through the generic request() method.
+        response = self._client.request(
+            "DELETE",
             "/api/user/files/delete",
             json={"file_id": file_id},
         )

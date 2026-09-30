@@ -158,6 +158,17 @@ func registerConnectionHook() {
 	})
 }
 
+// EnsureConnectionHook registers the process-wide SQLite connection-pragma
+// hook (foreign_keys, busy_timeout, etc. — see registerConnectionHook) if it
+// hasn't been registered yet. It is exported so test helpers that open a
+// *sql.DB directly with sql.Open (rather than via Initialize/OpenForCLI) —
+// see internal/testutil.SetupTestDB — get the same per-connection pragmas
+// production connections do, most importantly PRAGMA foreign_keys = ON.
+// Safe to call from any package, any number of times, and concurrently.
+func EnsureConnectionHook() {
+	registerConnectionHook()
+}
+
 // Initialize opens the SQLite database and creates the schema
 func Initialize(dbPath string) (*sql.DB, error) {
 	// Register connection hook BEFORE opening database

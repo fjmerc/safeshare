@@ -10,6 +10,13 @@ import {
   NotFoundError,
   ValidationError,
   RateLimitError,
+  MalwareDetectedError,
+  FileQuarantinedError,
+  ScanPendingError,
+  ScanUnavailableError,
+  ScanFailedError,
+  UnscannableUploadError,
+  DownloadLimitReachedError,
 } from "../src/errors.js";
 
 // Mock fetch function
@@ -208,6 +215,107 @@ describe("SafeShareClient", () => {
       });
 
       await expect(client.getFileInfo("notfound1234")).rejects.toThrow(NotFoundError);
+    });
+
+    it("should parse scan_status/download_available (T39, ADR-015)", async () => {
+      const mockFetch = createMockFetch([
+        {
+          status: 200,
+          body: {
+            original_filename: "test.txt",
+            file_size: 1024,
+            mime_type: "text/plain",
+            expires_at: "2025-12-31T23:59:59Z",
+            password_required: false,
+            max_downloads: null,
+            download_count: 0,
+            scan_status: "clean",
+            download_available: true,
+          },
+        },
+      ]);
+
+      const client = new SafeShareClient({
+        baseUrl: "https://share.example.com",
+        fetch: mockFetch,
+      });
+
+      const info = await client.getFileInfo("abc12345");
+
+      expect(info.scanStatus).toBe("clean");
+      expect(info.downloadAvailable).toBe(true);
+    });
+
+    it("should leave scan_status/download_available undefined when absent (legacy server)", async () => {
+      const mockFetch = createMockFetch([
+        {
+          status: 200,
+          body: {
+            original_filename: "test.txt",
+            file_size: 1024,
+            mime_type: "text/plain",
+            expires_at: null,
+            password_required: false,
+            max_downloads: null,
+            download_count: 0,
+          },
+        },
+      ]);
+
+      const client = new SafeShareClient({
+        baseUrl: "https://share.example.com",
+        fetch: mockFetch,
+      });
+
+      const info = await client.getFileInfo("abc12345");
+
+      expect(info.scanStatus).toBeUndefined();
+      expect(info.downloadAvailable).toBeUndefined();
+    });
+  });
+
+  describe("scan-related error codes (T39, ADR-015)", () => {
+    // Mirrors sdk/go/errors.go's newAPIError and
+    // sdk/python/safeshare/exceptions.py's raise_for_status: the error_code
+    // ("code" field) must take priority over the HTTP status, since several
+    // codes share a status with an older, differently-meaning error.
+    it.each([
+      [422, "MALWARE_DETECTED", MalwareDetectedError],
+      [410, "FILE_QUARANTINED", FileQuarantinedError],
+      [423, "SCAN_PENDING", ScanPendingError],
+      [503, "SCAN_UNAVAILABLE", ScanUnavailableError],
+      [403, "SCAN_FAILED", ScanFailedError],
+      [422, "UNSCANNABLE_UPLOAD", UnscannableUploadError],
+    ] as const)(
+      "maps status %d + code %s to %s",
+      async (status, code, expectedError) => {
+        const mockFetch = createMockFetch([
+          { status, body: { error: "scan-related failure", code } },
+        ]);
+
+        const client = new SafeShareClient({
+          baseUrl: "https://share.example.com",
+          fetch: mockFetch,
+        });
+
+        await expect(client.getFileInfo("abc12345")).rejects.toThrow(expectedError);
+      }
+    );
+
+    it("does not confuse FILE_QUARANTINED with the legacy download-limit-reached 410", async () => {
+      const mockFetch = createMockFetch([
+        {
+          status: 410,
+          body: { error: "download limit reached", code: "download_limit_reached" },
+        },
+      ]);
+
+      const client = new SafeShareClient({
+        baseUrl: "https://share.example.com",
+        fetch: mockFetch,
+      });
+
+      await expect(client.getFileInfo("abc12345")).rejects.toThrow(DownloadLimitReachedError);
     });
   });
 
