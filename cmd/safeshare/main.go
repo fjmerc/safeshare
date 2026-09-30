@@ -48,6 +48,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	if err := requireWiredBackends(cfg); err != nil {
+		return err
+	}
 
 	// Apply proxy trust settings process-wide so helpers without config
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
