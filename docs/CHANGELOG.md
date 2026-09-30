@@ -51,6 +51,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - Downloads of files with a download limit set (`max_downloads`) now use the server's fast zero-copy delivery path, same as downloads without a limit — previously only unlimited downloads benefited from it. Measured about 5x less CPU time on a 512MB unencrypted download. No behavior change; downloads are counted and tracked exactly as before.
 
+### Fixed
+
+- A resumable download of a file with a download limit set (`max_downloads`) could fail with "Download Limit Reached" (HTTP 410) if the recipient paused right after the server finished sending the last byte but before their browser had actually finished receiving it — a timing window a resumable download manager (including SafeShare's own web UI, and Chromium's built-in one) can hit routinely on a slow or interrupted connection. The server had already marked that download "complete" internally at the moment it finished writing, so the resume request's still-valid session token was rejected outright. Completed sessions are now resumable for a short grace period after completion (default 5 minutes, configurable via `DOWNLOAD_SESSION_COMPLETE_GRACE`, `0` restores the previous behavior), and only for a genuine tail resume (a partial request that starts partway through the file and reaches the end) — a resume inside that window does not count as an additional download or re-trigger the `file.downloaded` webhook. Fixed alongside this: the per-session replay ceiling (roughly two copies of the file, total) previously only counted resumes, not the request that actually created the session, so a split download could extract roughly three copies of a file before hitting it; the ceiling now covers a session's entire lifetime — the request that creates it plus every resume, before or after completion — closing that gap for capped files generally, not just for grace-window resumes. See ADR-014's addendum for the full design.
+
 ## [1.7.1] - 2026-09-30
 
 ### Security

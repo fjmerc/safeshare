@@ -75,6 +75,11 @@ type DownloadSession struct {
 	BytesReserved int64
 	CreatedAt     time.Time
 	LastSeenAt    time.Time
+	// CompletedAt is the zero time unless Completed is true. Set when
+	// LookupDownloadSession resolves a completed session inside the T42 grace
+	// window (see ResolveCompleteGrace) so callers can log/inspect how long
+	// ago the download actually finished.
+	CompletedAt time.Time
 }
 
 // DownloadCommitResult is the outcome of CommitDownloadSession.
@@ -156,38 +161,59 @@ type FileRepository interface {
 
 	// LookupDownloadSession looks up a download_sessions row by (fileID, token).
 	// Returns (nil, nil) — never an error — when the token is absent, belongs to a
-	// different file, has already been completed (bug-hunter finding: without
-	// this, a committed-and-fully-delivered session's token could be replayed
-	// indefinitely — see CommitDownloadSession's AlreadyCommitted outcome — to
-	// redeliver the whole file to anyone holding the token until its TTL lapsed),
-	// or has gone stale under idleTTL/maxAge: ADR-014 deliberately gives callers
-	// no oracle to distinguish these cases from each other, so a bad or spent
-	// token is always treated as a fresh, tokenless download rather than
-	// surfaced as an error.
+	// different file, has gone stale under idleTTL/maxAge, or has already been
+	// completed for longer than completeGrace (see below): ADR-014 deliberately
+	// gives callers no oracle to distinguish these cases from each other, so a
+	// bad or spent token is always treated as a fresh, tokenless download rather
+	// than surfaced as an error.
 	//
-	// A non-nil, not-yet-completed result is not itself a license to stream
-	// unconditionally: see ReserveSessionBytes, which callers must use to bound
-	// how many bytes a single resolved session may redeliver via replayed
-	// requests before it is completed.
-	LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge time.Duration) (*DownloadSession, error)
+	// completeGrace (T42, amending ADR-014 — see ADR-014 addendum) is the window
+	// after a session's completed_at during which a trusted-token resume is
+	// still allowed to resolve it, instead of unconditionally rejecting any
+	// completed session (bug-hunter finding: without SOME cutoff, a
+	// committed-and-fully-delivered session's token could be replayed
+	// indefinitely — see CommitDownloadSession's AlreadyCommitted outcome — to
+	// redeliver the whole file to anyone holding the token). This closes the
+	// gap where a client pauses a download after the server has handed the last
+	// byte to the kernel/network stack but before the client actually received
+	// it: the session is already `completed_at` server-side, so without a grace
+	// window the resume's valid token would be silently treated as unresolved
+	// and the request would 410 once the file's cap is spent. completeGrace <= 0
+	// disables this and restores the original "any completed session is
+	// unconditionally treated as not found" behaviour. A resolved-within-grace
+	// session is safe to resume: CommitDownloadSession and CompleteDownloadSession
+	// are both idempotent no-ops once committed_at/completed_at are already set,
+	// so nothing is double-credited or double-notified — see ReserveSessionBytes
+	// for how replay volume is still bounded during the grace window.
+	//
+	// A non-nil, not-yet-completed (or completed-within-grace) result is not
+	// itself a license to stream unconditionally: see ReserveSessionBytes, which
+	// callers must use to bound how many bytes a single resolved session may
+	// redeliver via replayed requests.
+	LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge, completeGrace time.Duration) (*DownloadSession, error)
 
 	// ReserveSessionBytes atomically charges `length` bytes against a resolved
-	// (LookupDownloadSession-found), not-yet-completed session's bytes_reserved
-	// counter, bounded by `limit` (see SessionByteLimit) — the safety net behind
-	// LookupDownloadSession's completed_at check: it bounds how many bytes a
-	// single committed-but-not-yet-completed session can have in flight across
-	// concurrent or replayed requests before rejecting further ones, rather than
-	// trusting an unbounded number of parallel "trusted" streams. Returns
-	// (false, nil) — not an error — if the row is missing, already completed, or
-	// the charge would exceed limit; the caller must treat that exactly like an
-	// unresolved token (fall back to ReserveDownload). The charge is for the
-	// request's whole requested range up front, before any bytes are known to
-	// have actually gone out — see ReleaseSessionBytes, which callers use at
-	// finalize to give back whatever portion wasn't actually sent (a paused,
-	// aborted, or errored request would otherwise permanently eat into the
-	// ceiling for bytes it never delivered, exhausting it well before 2x the
-	// file size' worth of real replay).
-	ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64) (bool, error)
+	// (LookupDownloadSession-found) session's bytes_reserved counter, bounded by
+	// `limit` (see SessionByteLimit) — the safety net behind LookupDownloadSession's
+	// completed_at check: it bounds how many bytes a single committed session can
+	// have in flight across concurrent or replayed requests before rejecting
+	// further ones, rather than trusting an unbounded number of parallel
+	// "trusted" streams. A not-yet-completed session is always eligible; a
+	// completed session is eligible only while completeGrace > 0 and it is still
+	// within that grace window of its own completed_at (T42) — the same bound
+	// LookupDownloadSession applies, re-checked here atomically so a session
+	// that crosses the grace boundary between the two calls can't sneak past it.
+	// Returns (false, nil) — not an error — if the row is missing, ineligible
+	// (completed outside the grace window, or grace disabled), or the charge
+	// would exceed limit; the caller must treat that exactly like an unresolved
+	// token (fall back to ReserveDownload). The charge is for the request's
+	// whole requested range up front, before any bytes are known to have
+	// actually gone out — see ReleaseSessionBytes, which callers use at finalize
+	// to give back whatever portion wasn't actually sent (a paused, aborted, or
+	// errored request would otherwise permanently eat into the ceiling for bytes
+	// it never delivered, exhausting it well before 2x the file size' worth of
+	// real replay).
+	ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64, completeGrace time.Duration) (bool, error)
 
 	// ReleaseSessionBytes gives back `amount` bytes to a session's
 	// bytes_reserved ceiling — called once a request that called
@@ -280,13 +306,20 @@ type FileRepository interface {
 	//     absolute maxAge, are deleted outright with NO counter change — the
 	//     download was already credited (and its probe_bytes_granted already
 	//     refunded in full) at commit time, so this is just record cleanup, not
-	//     a cancellation.
+	//     a cancellation. A completed row is additionally protected until
+	//     completeGrace has elapsed since its own completed_at (T42): it is
+	//     never deleted by the idle/max-age rule alone while still inside its
+	//     grace window, so a paused-then-resumed download can't have its
+	//     session row swept out from under LookupDownloadSession's grace-window
+	//     check before the client gets a chance to resume. completeGrace <= 0
+	//     disables this protection and a completed row is reaped by the same
+	//     idle/max-age rule as any other committed row, exactly as before T42.
 	//
 	// Replaces ReapStaleReservations (ADR-012); see ADR-014 for why a single TTL
 	// was no longer sufficient (T5: the old 30m reservation TTL was shorter than
 	// the up-to-6h transfer deadline, so the reaper could free a slot that was
 	// still genuinely streaming).
-	ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (cancelled, expired int, err error)
+	ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge, completeGrace time.Duration) (cancelled, expired int, err error)
 
 	// IncrementCompletedDownloads increments the completed downloads counter.
 	// This should only be called for full file downloads (HTTP 200 OK),

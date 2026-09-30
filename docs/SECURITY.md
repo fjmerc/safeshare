@@ -551,6 +551,42 @@ bookkeeping cleanup, not a security control. A genuinely slow-but-active
 transfer renews its own lease as bytes flow, so transfer duration alone never
 causes a released slot or a double-delivered file.
 
+### Post-completion resume grace window (T42)
+The server marks a capped download's session "complete" as soon as it has
+written the entire file to the response — but a client (a resumable download
+manager, including SafeShare's own web UI and most browsers' built-in one)
+can still be interrupted between receiving the last byte and finishing its
+own write to disk. Without any allowance for this, a resume attempt in that
+narrow window would present a perfectly valid session token that the server
+had already retired, and get an unhelpful "Download Limit Reached" instead of
+its remaining bytes. `DOWNLOAD_SESSION_COMPLETE_GRACE` (default 5 minutes,
+clamped to `[1s, 1h]`; an unparseable or negative value fails closed to `0`
+rather than silently defaulting to enabled; `0`, or the words `off` /
+`false` / `disabled` / `none` / `no`, disable it outright) lets a
+trusted-token resume still resolve a session for a short window after it
+completed — but ONLY for a genuine tail resume (a partial `Range` that
+starts after byte 0 and reaches EOF), never a plain re-request of the whole
+file or an arbitrary range; anything else against a completed session is
+treated exactly like an unresolved token.
+
+This does not reopen the replay concern the completed-session check above
+exists for. `ReserveSessionBytes`' ~2×(file size) ceiling now bounds
+`bytes_reserved` for a session's **entire lifetime** — the request that
+creates the session charges its own declared range against the ceiling
+immediately, the same way every resume already did — not just the resumes on
+top of an unaccounted-for first transfer. A normal download plus pause/resume
+retries stays well within that budget; a client that tries to extract more
+than roughly two copies of the file total, through any combination of an
+initial request and resumes, before or after completion, eventually gets a
+charge refused and falls back to a fresh reservation, which then enforces
+`max_downloads` normally. Re-committing/re-completing an already-committed/
+-completed session is an idempotent no-op — `download_count` is never
+incremented and the `file.downloaded` webhook is never re-fired for a
+grace-window resume. The background reaper also protects a just-completed
+session's row from being swept by `DOWNLOAD_SESSION_IDLE_TTL` before its own
+grace window elapses, so the window is never "open" in policy but empty in
+practice. See ADR-014's addendum for the full design.
+
 ## 📊 Enhanced Audit Logging
 
 ### Overview

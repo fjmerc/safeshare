@@ -1092,17 +1092,28 @@ func run() error {
 	// lease TTL (uncommitted sessions) is operator-tunable via
 	// DOWNLOAD_RESERVATION_TTL (default 5m); the idle TTL (committed sessions)
 	// via DOWNLOAD_SESSION_IDLE_TTL (default 1h). The 1-minute tick is fixed so
-	// crash-recovery latency is bounded regardless of either TTL.
+	// crash-recovery latency is bounded regardless of either TTL. The T42
+	// post-completion resume grace window is operator-tunable via
+	// DOWNLOAD_SESSION_COMPLETE_GRACE (default 5m; 0 disables it).
 	reservationTTL := utils.ResolveReservationTTL()
 	sessionIdleTTL := utils.ResolveSessionIdleTTL()
+	completeGrace := utils.ResolveCompleteGrace()
+	// Installed once, here, before the server starts accepting connections
+	// (ListenAndServe runs later, in its own goroutine below) — the claim
+	// handler reads this package-level variable per request instead of
+	// re-resolving DOWNLOAD_SESSION_COMPLETE_GRACE from the environment on
+	// every request (security-audit follow-up to T42; see
+	// handlers.SetCompleteGrace's doc).
+	handlers.SetCompleteGrace(completeGrace)
 	slog.Info("download session reaper configured",
 		"lease_ttl", utils.ReservationTTLDescription(reservationTTL),
 		"idle_ttl", utils.SessionIdleTTLDescription(sessionIdleTTL),
+		"complete_grace", utils.CompleteGraceDescription(completeGrace),
 	)
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL)
+		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL, completeGrace)
 	}()
 
 	// Start assembly recovery worker (ADR-016): recovers assemblies whose
