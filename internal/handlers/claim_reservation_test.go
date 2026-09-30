@@ -259,7 +259,7 @@ func TestReservation_ProcessCrashRecoveredByReaper(t *testing.T) {
 
 	// Reaper sweeps anything older than "now" — reaps the orphan immediately.
 	// Negative ttl ⇒ cutoff > now ⇒ all existing rows match.
-	n, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	n, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestReservation_CommitAfterReapStillSucceeds(t *testing.T) {
 	}
 
 	// Reaper runs (token row gone, in_flight decremented).
-	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour); err != nil {
+	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0); err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 
@@ -533,7 +533,7 @@ func TestReservation_LateCommitRespectsInFlight(t *testing.T) {
 	}
 
 	// (3) Reaper sweeps A — orphan recovery scenario.
-	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour); err != nil {
+	if _, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0); err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
 
@@ -660,7 +660,7 @@ func TestReservation_ReaperRespectsTTLForFreshReservations(t *testing.T) {
 
 	// A 30-minute TTL means "reap anything older than 30 minutes". A
 	// just-inserted row is ~0 seconds old, so the reaper must leave it alone.
-	n, _, err := repos.Files.ReapDownloadSessions(ctx, 30*time.Minute, time.Hour, 24*time.Hour)
+	n, _, err := repos.Files.ReapDownloadSessions(ctx, 30*time.Minute, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}

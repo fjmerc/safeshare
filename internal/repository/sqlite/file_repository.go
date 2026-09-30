@@ -506,17 +506,28 @@ func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expe
 }
 
 // ReserveSessionBytes implements repository.FileRepository.ReserveSessionBytes.
-func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64) (bool, error) {
+//
+// T42: a completed session is also eligible while it is still within
+// completeGrace of its own completed_at — re-checked atomically here (not
+// just trusted from an earlier LookupDownloadSession call) so a session that
+// crosses the grace boundary between the two calls can't sneak past it. The
+// `? > 0` guard on completeGraceSecs means a disabled grace (<= 0) makes the
+// whole clause collapse to the original `completed_at IS NULL` check.
+func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64, completeGrace time.Duration) (bool, error) {
 	if token == "" || token == repository.ReservationTokenUnlimited {
 		return false, nil
 	}
 	hash := hashDownloadSessionToken(token)
+	completeGraceSecs := int64(completeGrace.Seconds())
+	graceModifier := sqliteAgoModifier(completeGrace)
 
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE download_sessions
 		SET bytes_reserved = bytes_reserved + ?, last_seen_at = CURRENT_TIMESTAMP
-		WHERE token_hash = ? AND file_id = ? AND completed_at IS NULL AND bytes_reserved + ? <= ?
-	`, length, hash, fileID, length, limit)
+		WHERE token_hash = ? AND file_id = ?
+		  AND (completed_at IS NULL OR (? > 0 AND completed_at >= datetime('now', ?)))
+		  AND bytes_reserved + ? <= ?
+	`, length, hash, fileID, completeGraceSecs, graceModifier, length, limit)
 	if err != nil {
 		return false, fmt.Errorf("failed to reserve session bytes: %w", err)
 	}
@@ -545,7 +556,7 @@ func (r *FileRepository) ReleaseSessionBytes(ctx context.Context, fileID int64, 
 }
 
 // LookupDownloadSession implements repository.FileRepository.LookupDownloadSession.
-func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge time.Duration) (*repository.DownloadSession, error) {
+func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge, completeGrace time.Duration) (*repository.DownloadSession, error) {
 	if token == "" || token == repository.ReservationTokenUnlimited {
 		return nil, nil
 	}
@@ -568,15 +579,53 @@ func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64
 		return nil, fmt.Errorf("failed to look up download session: %w", err)
 	}
 
-	// A completed session has already delivered the whole file once; letting
-	// it resolve here would let its token be replayed indefinitely (bounded
-	// only by idleTTL/maxAge, up to SessionMaxAge) to redeliver the file to
-	// anyone holding the token (bug-hunter finding — HIGH). Treat it exactly
-	// like "not found": the caller falls back to ReserveDownload, which
-	// re-applies the max_downloads guard (410 once the cap is spent, or a
-	// genuinely new counted download if the cap allows more).
+	// A completed session has already delivered the whole file once.
+	// Unconditionally letting it resolve would let its token be replayed
+	// indefinitely (bounded only by idleTTL/maxAge, up to SessionMaxAge) to
+	// redeliver the file to anyone holding the token (bug-hunter finding —
+	// HIGH). T42 (amending ADR-014): a short completeGrace window after
+	// completed_at is the one exception — it lets a client that paused right
+	// after the server wrote the last byte (but before the client received
+	// it) resume with its still-valid token instead of getting a 410, without
+	// reopening the original replay concern: ReserveSessionBytes re-checks
+	// (and bounds) eligibility atomically, and CommitDownloadSession /
+	// CompleteDownloadSession are idempotent no-ops for an already-committed /
+	// -completed session, so a grace-window resume can never double-credit
+	// download_count or re-fire file.downloaded. completeGrace <= 0 disables
+	// this and restores the original unconditional rejection.
 	if completedAt.Valid {
-		return nil, nil
+		if completeGrace <= 0 {
+			return nil, nil
+		}
+		completed, cErr := time.Parse(time.RFC3339, completedAt.String)
+		if cErr != nil {
+			return nil, fmt.Errorf("failed to parse download session completed_at: %w", cErr)
+		}
+		if time.Since(completed) > completeGrace {
+			return nil, nil
+		}
+		created, cErr := time.Parse(time.RFC3339, createdAt)
+		if cErr != nil {
+			return nil, fmt.Errorf("failed to parse download session created_at: %w", cErr)
+		}
+		lastSeen, cErr := time.Parse(time.RFC3339, lastSeenAt)
+		if cErr != nil {
+			return nil, fmt.Errorf("failed to parse download session last_seen_at: %w", cErr)
+		}
+		// A completed session's lifecycle inside the grace window is governed
+		// solely by completeGrace, not by idleTTL/maxAge — those bound how
+		// long a still-in-flight (not yet completed) session stays resumable,
+		// a different question.
+		return &repository.DownloadSession{
+			FileID:        fileID,
+			Committed:     true,
+			Completed:     true,
+			BytesServed:   bytesServed,
+			BytesReserved: bytesReserved,
+			CreatedAt:     created,
+			LastSeenAt:    lastSeen,
+			CompletedAt:   completed,
+		}, nil
 	}
 
 	created, err := time.Parse(time.RFC3339, createdAt)
@@ -890,10 +939,12 @@ func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token
 
 // ReapDownloadSessions implements repository.FileRepository.ReapDownloadSessions.
 // See the interface doc for the two independent sweep classes.
-func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (int, int, error) {
+func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge, completeGrace time.Duration) (int, int, error) {
 	leaseModifier := sqliteAgoModifier(leaseTTL)
 	idleModifier := sqliteAgoModifier(idleTTL)
 	maxAgeModifier := sqliteAgoModifier(maxAge)
+	graceModifier := sqliteAgoModifier(completeGrace)
+	completeGraceSecs := int64(completeGrace.Seconds())
 
 	tx, err := beginImmediateTx(ctx, r.db)
 	if err != nil {
@@ -912,9 +963,9 @@ func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idl
 	// (real, if narrow) gap between the two statements' evaluations could be
 	// swept by the DELETE's later "now" without ever appearing in the
 	// SELECT's bucket — deleted but never refunded (bug-hunter finding).
-	var leaseCutoff, idleCutoff, maxAgeCutoff string
-	if err := tx.QueryRowContext(ctx, `SELECT datetime('now', ?), datetime('now', ?), datetime('now', ?)`,
-		leaseModifier, idleModifier, maxAgeModifier).Scan(&leaseCutoff, &idleCutoff, &maxAgeCutoff); err != nil {
+	var leaseCutoff, idleCutoff, maxAgeCutoff, graceCutoff string
+	if err := tx.QueryRowContext(ctx, `SELECT datetime('now', ?), datetime('now', ?), datetime('now', ?), datetime('now', ?)`,
+		leaseModifier, idleModifier, maxAgeModifier, graceModifier).Scan(&leaseCutoff, &idleCutoff, &maxAgeCutoff, &graceCutoff); err != nil {
 		return 0, 0, fmt.Errorf("failed to resolve reaper cutoffs: %w", err)
 	}
 
@@ -1004,11 +1055,26 @@ func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idl
 	// Phase 2: committed rows idle too long, or past the absolute max age.
 	// The download was already credited at commit time, so this is pure
 	// record cleanup — no counter change.
+	//
+	// T42: a completed row is additionally protected until completeGrace has
+	// elapsed since its own completed_at, so LookupDownloadSession's grace
+	// window (see its doc comment) always has a row left to find — otherwise
+	// an operator-configured idleTTL shorter than completeGrace could let the
+	// reaper delete a just-completed session before the client gets a chance
+	// to resume with it. The `? <= 0` guard collapses this back to the
+	// original, ungated idle/max-age-only rule when completeGrace is
+	// disabled, matching pre-T42 behaviour exactly.
 	expiredRes, err := tx.ExecContext(ctx, `
 		DELETE FROM download_sessions
 		WHERE committed_at IS NOT NULL
-		  AND (last_seen_at < ? OR created_at < ?)
-	`, idleCutoff, maxAgeCutoff)
+		  AND (
+		        (completed_at IS NOT NULL
+		         AND (? <= 0 OR completed_at < ?)
+		         AND (last_seen_at < ? OR created_at < ?))
+		        OR
+		        (completed_at IS NULL AND (last_seen_at < ? OR created_at < ?))
+		      )
+	`, completeGraceSecs, graceCutoff, idleCutoff, maxAgeCutoff, idleCutoff, maxAgeCutoff)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to delete expired committed download sessions: %w", err)
 	}

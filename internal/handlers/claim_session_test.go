@@ -614,7 +614,14 @@ func TestSession_ResumeAgainstDeletedFileDoesNotCredit(t *testing.T) {
 // spare capacity that's a 410; with spare capacity it must be treated as an
 // entirely new download (fresh token, fresh credit), never a free replay of
 // the finished one.
+//
+// This asserts the behaviour with the T42 grace window explicitly disabled
+// (grace=0): the pre-T42, no-exceptions "a completed session's token never
+// resolves" contract. See claim_session_grace_test.go for the T42-enabled
+// behaviour (a resume inside the grace window succeeds without double-
+// crediting), which is a deliberate, bounded exception to this rule.
 func TestSession_ReplayAfterCompletionDenied(t *testing.T) {
+	SetCompleteGrace(0)
 	t.Run("max_downloads_1_replay_after_completion_is_denied", func(t *testing.T) {
 		const fileSize = 4096
 		repos, handler, code, file, cleanup := setupSessionTest(t, fileSize, 1)
@@ -785,7 +792,13 @@ func (p *partialWriteRecorder) Write(b []byte) (int, error) {
 // ceiling from charged-but-undelivered bytes alone, and the very next resume
 // — the recipient's only legitimate attempt to finish their one download —
 // gets treated as tokenless and 410s against the already-spent cap.
+//
+// The final "replay after completion" assertion runs with the T42 grace
+// window explicitly disabled (grace=0) so it continues to exercise the
+// pre-T42 "no exceptions" contract this test was written for; see
+// claim_session_grace_test.go for the T42-enabled behaviour.
 func TestSession_PauseResumeSequenceEventuallyCompletesOnce(t *testing.T) {
+	SetCompleteGrace(0)
 	const fileSize = 10000 // P = 625, replay ceiling = 20000
 	repos, handler, code, file, cleanup := setupSessionTest(t, fileSize, 1)
 	defer cleanup()
@@ -875,8 +888,16 @@ func TestSession_AbortedRequestsExceedingFileSizeDoNotComplete(t *testing.T) {
 	repos, handler, code, file, cleanup := setupSessionTest(t, fileSize, 1)
 	defer cleanup()
 
+	// limit: 500 + 500 (below) sums to exactly fileSize, satisfying the
+	// cumulative >= fileSize setup requirement further down while staying
+	// inside the 2x-file-size session-wide ceiling once the final,
+	// successful full resume's own fileSize charge is added on top (500 +
+	// 500 + 1000 = 2000 = the ceiling, exactly) — security-audit follow-up:
+	// the ceiling now covers the request that created the session too, not
+	// just resumes, so these two aborted whole-file retries and the final
+	// successful one all draw from the same shared budget.
 	req1 := httptest.NewRequest(http.MethodGet, "/api/claim/"+code, nil)
-	rec1 := &partialWriteRecorder{ResponseRecorder: httptest.NewRecorder(), limit: 600}
+	rec1 := &partialWriteRecorder{ResponseRecorder: httptest.NewRecorder(), limit: 500}
 	handler.ServeHTTP(rec1, req1)
 	token := rec1.Header().Get("X-Download-Session")
 	if token == "" {
