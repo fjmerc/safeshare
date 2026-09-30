@@ -359,16 +359,18 @@ services:
       - CLAMAV_MAX_FILE_SIZE=104857600
       - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
       - MALWARE_SCAN_REJECT_UNSCANNABLE=false
-      # --- PostgreSQL ---
-      - DATABASE_TYPE=postgresql
-      - FEATURE_POSTGRESQL=true
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=${PG_USER}
-      - PG_PASSWORD=${PG_PASSWORD}
-      - PG_DATABASE=safeshare
-      - PG_SSL_MODE=require
-      - PG_MAX_CONNECTIONS=25
+      # --- PostgreSQL (not yet supported) ---
+      # The server does not use PostgreSQL yet and refuses to start with
+      # DATABASE_TYPE=postgresql; keep SQLite until PostgreSQL support ships.
+      # - DATABASE_TYPE=postgresql
+      # - FEATURE_POSTGRESQL=true
+      # - PG_HOST=postgres
+      # - PG_PORT=5432
+      # - PG_USER=${PG_USER}
+      # - PG_PASSWORD=${PG_PASSWORD}
+      # - PG_DATABASE=safeshare
+      # - PG_SSL_MODE=require
+      # - PG_MAX_CONNECTIONS=25
       # --- Access control ---
       - BLOCKED_EXTENSIONS=.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm
       - RATE_LIMIT_UPLOAD=5

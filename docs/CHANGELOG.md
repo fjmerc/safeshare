@@ -45,6 +45,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Changed
 
+- The server now refuses to start when `STORAGE_TYPE=s3` or `DATABASE_TYPE=postgresql` is set. Neither backend is wired into the server yet: previously these settings were accepted and silently ignored, so files and records were stored locally while the configuration said otherwise. Unset them (or use `filesystem` / `sqlite`) to start.
 - `import-file` and `migrate-encryption` now refuse to run against a PostgreSQL database or S3 storage (they only support SQLite with local file storage). They also wait and retry if the database is busy instead of failing when the server is running. `import-file --user-id` now checks that the user exists before importing.
 
 ### Performance
