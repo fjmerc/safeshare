@@ -35,6 +35,15 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-30
+
+### Security
+
+- Fixed the login brute-force lockout for admin and user password logins never actually taking effect. The rate limiter was being created fresh on every login request instead of being shared across requests, so it always started with an empty attempt count and could never reach the lockout threshold — password logins for both admin and user accounts could be brute-forced with unlimited attempts from the same IP. The lockout (5 attempts per 15 minutes per IP) now applies correctly to `/admin/api/login` and `/api/auth/login` (including both the MFA and non-MFA login flows, which share one limiter so switching between them cannot be used to dodge the lockout).
+  - **Caveat:** the lockout is keyed by apparent client IP, and successful logins count toward it too. On a deployment where every client shares one address — a Tor hidden service, an untrusted reverse proxy, a large NAT — five login attempts from *anyone* locks *everyone* out of admin or user password login for 15 minutes. See `docs/TOR_DEPLOYMENT.md` for details.
+- Fixed a server crash under concurrent MFA/SSO login requests. The rate limiters guarding MFA code verification and SSO login were already shared across requests (unlike the admin/user password-login limiters above), but nothing protected their attempt-tracking maps from concurrent access — a burst of MFA or SSO login requests arriving from several IPs at once could hit Go's `fatal error: concurrent map iteration and map write` and take the whole process down, in as little as ~0.2s under load. All login rate limiters (admin, user, TOTP) now share one hardened implementation with proper locking.
+- Fixed a related bug in the same code path: the failed-attempt counter was incremented only after the login handler finished (including its deliberate ~500ms delay on bad credentials), so a burst of parallel requests from one IP could all pass the lockout check before any of them completed, bypassing the lockout under concurrency. Attempts are now reserved atomically before the handler runs.
+
 ## [1.7.0] - 2026-09-29
 
 ### Security
