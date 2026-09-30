@@ -175,6 +175,82 @@ export class DownloadLimitReachedError extends SafeShareError {
 }
 
 /**
+ * Server's malware scan found a threat and rejected the upload before
+ * storing it (error_code "MALWARE_DETECTED", ADR-015). Not retryable with
+ * the same file content.
+ */
+export class MalwareDetectedError extends SafeShareError {
+  constructor(message = "Malware detected", statusCode = 422, responseBody?: unknown) {
+    super(message, statusCode, responseBody);
+    this.name = "MalwareDetectedError";
+  }
+}
+
+/**
+ * The requested file was found infected by a scan and is permanently
+ * unavailable for download (error_code "FILE_QUARANTINED", ADR-015).
+ */
+export class FileQuarantinedError extends SafeShareError {
+  constructor(message = "File quarantined", statusCode = 410, responseBody?: unknown) {
+    super(message, statusCode, responseBody);
+    this.name = "FileQuarantinedError";
+  }
+}
+
+/**
+ * The file's malware scan has not completed yet; the request may succeed
+ * on retry (error_code "SCAN_PENDING", ADR-015). Check the Retry-After
+ * header for how long to wait.
+ */
+export class ScanPendingError extends SafeShareError {
+  constructor(message = "Malware scan pending", statusCode = 423, responseBody?: unknown) {
+    super(message, statusCode, responseBody);
+    this.name = "ScanPendingError";
+  }
+}
+
+/**
+ * The malware scanner could not be reached or timed out; the request may
+ * succeed on retry once the scanner recovers (error_code
+ * "SCAN_UNAVAILABLE", ADR-015).
+ */
+export class ScanUnavailableError extends SafeShareError {
+  constructor(message = "Malware scanner unavailable", statusCode = 503, responseBody?: unknown) {
+    super(message, statusCode, responseBody);
+    this.name = "ScanUnavailableError";
+  }
+}
+
+/**
+ * A file's malware scan previously errored and the server will not serve
+ * it until re-verified (error_code "SCAN_FAILED", ADR-015). Not retryable
+ * by the client.
+ */
+export class ScanFailedError extends SafeShareError {
+  constructor(message = "Malware scan failed", statusCode = 403, responseBody?: unknown) {
+    super(message, statusCode, responseBody);
+    this.name = "ScanFailedError";
+  }
+}
+
+/**
+ * The server rejected an upload outright because its content can never be
+ * scanned — end-to-end encrypted, or larger than the server's scan size
+ * limit — and the server requires all uploads to be scannable (error_code
+ * "UNSCANNABLE_UPLOAD", ADR-015).
+ */
+export class UnscannableUploadError extends SafeShareError {
+  constructor(
+    message = "Upload cannot be scanned for malware",
+    statusCode = 422,
+    responseBody?: unknown
+  ) {
+    super(message, statusCode, responseBody);
+    this.name = "UnscannableUploadError";
+  }
+}
+
+/**
  * Chunked upload specific error
  */
 export class ChunkedUploadError extends SafeShareError {
@@ -208,12 +284,35 @@ export class ChunkedUploadError extends SafeShareError {
 export async function handleErrorResponse(response: Response): Promise<never> {
   let body: unknown;
   let message: string;
+  let code: string | undefined;
 
   try {
     body = await response.json();
     message = (body as { error?: string })?.error || response.statusText;
+    code = (body as { code?: string })?.code;
   } catch {
     message = response.statusText || `HTTP ${response.status}`;
+  }
+
+  // ADR-015 scan-related error codes take priority over the status-code
+  // heuristics below: several of them share an HTTP status with an older,
+  // differently-meaning error (e.g. FILE_QUARANTINED and the legacy
+  // download-limit-reached case both use 410), so the code is the only
+  // reliable disambiguator. Mirrors sdk/go/errors.go's newAPIError and
+  // sdk/python/safeshare/exceptions.py's raise_for_status.
+  switch (code) {
+    case "MALWARE_DETECTED":
+      throw new MalwareDetectedError(message, response.status, body);
+    case "FILE_QUARANTINED":
+      throw new FileQuarantinedError(message, response.status, body);
+    case "SCAN_PENDING":
+      throw new ScanPendingError(message, response.status, body);
+    case "SCAN_UNAVAILABLE":
+      throw new ScanUnavailableError(message, response.status, body);
+    case "SCAN_FAILED":
+      throw new ScanFailedError(message, response.status, body);
+    case "UNSCANNABLE_UPLOAD":
+      throw new UnscannableUploadError(message, response.status, body);
   }
 
   switch (response.status) {
