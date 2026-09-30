@@ -21,9 +21,9 @@ import (
 	"github.com/fjmerc/safeshare/internal/repository"
 )
 
-// createSessionTestFile creates a file with the given claim code and
+// createSessionIntegrationTestFile creates a file with the given claim code and
 // max_downloads cap, for exercising the download-session lifecycle.
-func createSessionTestFile(t *testing.T, repos *repository.Repositories, claimCode string, maxDL int) *models.File {
+func createSessionIntegrationTestFile(t *testing.T, repos *repository.Repositories, claimCode string, maxDL int) *models.File {
 	t.Helper()
 	file := &models.File{
 		ClaimCode:        claimCode,
@@ -79,7 +79,7 @@ func TestFileRepository_ReserveDownload_Unlimited(t *testing.T) {
 func TestFileRepository_ReserveDownload_CapEnforced(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sescapenforce", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sescapenforce", 1)
 
 	token1, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token1 == "" {
@@ -100,7 +100,7 @@ func TestFileRepository_ReserveDownload_CapEnforced(t *testing.T) {
 func TestFileRepository_ReserveDownload_ClaimCodeChanged(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesclaimchanged", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesclaimchanged", 1)
 
 	_, _, err := repos.Files.ReserveDownload(ctx, file.ID, "wrong-claim-code")
 	if err != repository.ErrClaimCodeChanged {
@@ -115,7 +115,7 @@ func TestFileRepository_ReserveDownload_ClaimCodeChanged(t *testing.T) {
 func TestFileRepository_CommitDownloadSession_CreditsAndIdempotent(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesidem", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesidem", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -153,7 +153,7 @@ func TestFileRepository_CommitDownloadSession_CreditsAndIdempotent(t *testing.T)
 func TestFileRepository_TouchDownloadSession_UpdatesBytesServed(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sestouch", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sestouch", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -167,7 +167,7 @@ func TestFileRepository_TouchDownloadSession_UpdatesBytesServed(t *testing.T) {
 		t.Fatalf("TouchDownloadSession (second): %v", err)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestFileRepository_TouchDownloadSession_UpdatesBytesServed(t *testing.T) {
 func TestFileRepository_CompleteDownloadSession_IncrementsCompletedDownloads(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sescomplete", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sescomplete", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -234,13 +234,13 @@ func TestFileRepository_CompleteDownloadSession_IncrementsCompletedDownloads(t *
 	}
 }
 
-// TestFileRepository_LookupDownloadSession_RejectsCompleted — bug-hunter
+// TestFileRepository_LookupDownloadSession_RejectsCompletedNoGrace — bug-hunter
 // finding (HIGH): a completed session's token must resolve as "not found"
 // (no replay oracle), same as sqlite's coverage.
-func TestFileRepository_LookupDownloadSession_RejectsCompleted(t *testing.T) {
+func TestFileRepository_LookupDownloadSession_RejectsCompletedNoGrace(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sescompleted", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sescompleted", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -253,7 +253,7 @@ func TestFileRepository_LookupDownloadSession_RejectsCompleted(t *testing.T) {
 		t.Fatalf("CompleteDownloadSession: %v", err)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -268,14 +268,14 @@ func TestFileRepository_LookupDownloadSession_RejectsCompleted(t *testing.T) {
 func TestFileRepository_LookupDownloadSession_ExpiredByMaxAge(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesexpired", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesexpired", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
 		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 1*time.Nanosecond)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 1*time.Nanosecond, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -289,9 +289,9 @@ func TestFileRepository_LookupDownloadSession_ExpiredByMaxAge(t *testing.T) {
 func TestFileRepository_LookupDownloadSession_NotFound(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesnotfound", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesnotfound", 1)
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, "bogus-token-that-was-never-issued", time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, "bogus-token-that-was-never-issued", time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestFileRepository_LookupDownloadSession_NotFound(t *testing.T) {
 func TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesstalled", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesstalled", 1)
 
 	orphanToken, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || orphanToken == "" {
@@ -315,7 +315,7 @@ func TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost(t *testing
 	}
 
 	// Negative TTL == "reap everything created before now".
-	cancelled, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	cancelled, _, err := repos.Files.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost(t *testing
 func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesidle", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sesidle", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -374,7 +374,7 @@ func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(
 
 	// Negative idle TTL: reaps the committed row immediately via the
 	// idle-cutoff branch, not the lease-cutoff branch.
-	cancelled, expired, err := repos.Files.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, 24*time.Hour)
+	cancelled, expired, err := repos.Files.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(
 			before.DownloadCount, before.CompletedDownloads, after.DownloadCount, after.CompletedDownloads)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(
 func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesreplaybound", 100) // generous cap: isolate the byte bound
+	file := createSessionIntegrationTestFile(t, repos, "sesreplaybound", 100) // generous cap: isolate the byte bound
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -427,7 +427,7 @@ func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 	grantedCount := 0
 	const attempts = 30
 	for i := 0; i < attempts; i++ {
-		granted, err := repos.Files.ReserveSessionBytes(ctx, file.ID, token, rangeLen, limit)
+		granted, err := repos.Files.ReserveSessionBytes(ctx, file.ID, token, rangeLen, limit, 0)
 		if err != nil {
 			t.Fatalf("ReserveSessionBytes attempt %d: %v", i, err)
 		}
@@ -439,7 +439,7 @@ func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 		t.Errorf("grantedCount = %d, want exactly %d (limit=%d, rangeLen=%d, attempts=%d)", grantedCount, maxGrantable, limit, rangeLen, attempts)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 func TestFileRepository_ReleaseSessionBytes_Decrements(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sesrelease", 100)
+	file := createSessionIntegrationTestFile(t, repos, "sesrelease", 100)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
@@ -467,7 +467,7 @@ func TestFileRepository_ReleaseSessionBytes_Decrements(t *testing.T) {
 	}
 
 	limit := repository.SessionByteLimit(file.FileSize)
-	granted, err := repos.Files.ReserveSessionBytes(ctx, file.ID, token, 1000, limit)
+	granted, err := repos.Files.ReserveSessionBytes(ctx, file.ID, token, 1000, limit, 0)
 	if err != nil {
 		t.Fatalf("ReserveSessionBytes: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestFileRepository_ReleaseSessionBytes_Decrements(t *testing.T) {
 		t.Fatalf("ReleaseSessionBytes: %v", err)
 	}
 
-	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestFileRepository_ReleaseSessionBytes_Decrements(t *testing.T) {
 	if err := repos.Files.ReleaseSessionBytes(ctx, file.ID, token, 10000); err != nil {
 		t.Fatalf("ReleaseSessionBytes (over-release): %v", err)
 	}
-	sess, err = repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err = repos.Files.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession (after over-release): %v", err)
 	}
@@ -512,7 +512,7 @@ func TestFileRepository_ReleaseSessionBytes_Decrements(t *testing.T) {
 func TestFileRepository_CancelDownload_ReleasesSlotForAnotherReader(t *testing.T) {
 	repos := setupTestRepos(t)
 	ctx := context.Background()
-	file := createSessionTestFile(t, repos, "sescancelpg", 1)
+	file := createSessionIntegrationTestFile(t, repos, "sescancelpg", 1)
 
 	token, _, err := repos.Files.ReserveDownload(ctx, file.ID, file.ClaimCode)
 	if err != nil || token == "" {
