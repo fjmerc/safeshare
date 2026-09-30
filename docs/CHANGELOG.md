@@ -35,7 +35,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
-## [1.7.1] - 2026-09-29
+## [1.7.1] - 2026-09-30
 
 ### Security
 
