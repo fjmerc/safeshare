@@ -1268,6 +1268,9 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.7.1 | Login brute-force lockout never took effect for admin/user password logins | High |
+| v1.7.1 | Remote crash (`fatal error: concurrent map iteration and map write`) from concurrent TOTP/SSO login requests | High |
+| v1.7.1 | Login lockout counter bypassable via parallel request bursts from one IP | Medium |
 | v1.7.0 | Client IP spoofing via X-Forwarded-For behind proxies/CDNs | High |
 | v1.7.0 | Download memory exhaustion and stalled-reader lockout (decrypt admission, legacy cap) | Medium |
 | v2.8.2 | Constant-time token comparison | Medium |

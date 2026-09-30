@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -307,175 +308,170 @@ func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func
 	}
 }
 
-// RateLimitTOTPVerify rate limits TOTP verification attempts per user/IP
-// Prevents brute-force attacks on 6-digit TOTP codes
+// maxTrackedLoginAttempts caps how many distinct client IPs a single
+// rate-limiter instance (see newLoginRateLimiter) will track at once. This
+// bounds the attempts map's memory under an attacker spraying requests from
+// many source addresses. It's a var, not a const, so tests can shrink it to
+// exercise the cap without allocating 100k entries.
+var maxTrackedLoginAttempts = 100_000
+
+// loginAttempt tracks one client IP's recent attempts against a rate
+// limiter built by newLoginRateLimiter.
+type loginAttempt struct {
+	count       int
+	lastAttempt time.Time
+}
+
+// loginRateLimitConfig parameterizes newLoginRateLimiter for each of the
+// three call sites (admin login, user login, TOTP verify), which were
+// previously near-identical copies of the same logic.
+type loginRateLimitConfig struct {
+	// label names the limiter in log messages, e.g. "admin login" produces
+	// the log message "admin login rate limit exceeded".
+	label string
+	// limitedBody is the response body written on a 429.
+	limitedBody   string
+	maxAttempts   int
+	windowMinutes int
+}
+
+// newLoginRateLimiter builds rate-limiting middleware that tracks failed
+// attempts per client IP in memory.
+//
+// The returned middleware is meant to be constructed once by the caller and
+// reused across every request - never inside a per-request handler closure,
+// which would allocate a fresh, empty attempts map each time and the
+// lockout could never trigger (this was a real bug: see hotfix v1.7.1).
+// Because a single instance is shared across concurrent HTTP requests:
+//
+//   - Access to the attempts map is guarded by mu.
+//   - The attempt is reserved (count incremented, lastAttempt set) under
+//     the same lock as the limit check, before next.ServeHTTP is called.
+//     Incrementing only after the handler returned - the original
+//     behavior - let a burst of parallel requests from one IP all pass the
+//     check before any of them finished (e.g. a slow password hash) and
+//     incremented the count, bypassing the lockout entirely.
+//   - The expired-entry sweep runs at most once a minute rather than on
+//     every request, so per-request cost doesn't grow with the number of
+//     tracked IPs.
+//   - The number of distinct tracked IPs is capped at
+//     maxTrackedLoginAttempts; once reached, a request from a new IP is
+//     rejected (fails closed) with the same 429 used for a real lockout,
+//     and a Warn is logged at most once per sweep interval.
+func newLoginRateLimiter(anonymousMode bool, cfg loginRateLimitConfig) func(http.Handler) http.Handler {
+	window := time.Duration(cfg.windowMinutes) * time.Minute
+
+	var (
+		mu          sync.Mutex
+		attempts    = make(map[string]*loginAttempt)
+		lastSweep   time.Time
+		lastCapWarn time.Time
+	)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rawIP := getClientIP(r)
+			// T43: group IPv6 clients by the configured prefix for the
+			// lockout bucket key; logging below still uses the full rawIP.
+			clientIP := utils.RateLimitKey(rawIP)
+			now := time.Now()
+
+			mu.Lock()
+
+			// Sweep expired entries at most once a minute.
+			if now.Sub(lastSweep) >= time.Minute {
+				for ip, attempt := range attempts {
+					if now.Sub(attempt.lastAttempt) > window {
+						delete(attempts, ip)
+					}
+				}
+				lastSweep = now
+			}
+
+			attempt, exists := attempts[clientIP]
+
+			// The sweep above only runs once a minute, so an entry can
+			// outlive its window by up to that long; reset it here so an
+			// expired window never counts toward the limit.
+			if exists && now.Sub(attempt.lastAttempt) >= window {
+				attempt.count = 0
+			}
+
+			if exists && attempt.count >= cfg.maxAttempts {
+				attemptCount := attempt.count
+				mu.Unlock()
+				slog.Warn(cfg.label+" rate limit exceeded",
+					"ip", privacy.RedactIP(rawIP, anonymousMode),
+					"attempts", attemptCount,
+				)
+				http.Error(w, cfg.limitedBody, http.StatusTooManyRequests)
+				return
+			}
+
+			if !exists {
+				if len(attempts) >= maxTrackedLoginAttempts {
+					shouldWarn := now.Sub(lastCapWarn) >= time.Minute
+					if shouldWarn {
+						lastCapWarn = now
+					}
+					mu.Unlock()
+					if shouldWarn {
+						slog.Warn(cfg.label+" rate limiter tracked-IP cap reached, rejecting new IP",
+							"ip", privacy.RedactIP(rawIP, anonymousMode),
+							"tracked", maxTrackedLoginAttempts,
+						)
+					}
+					http.Error(w, cfg.limitedBody, http.StatusTooManyRequests)
+					return
+				}
+				attempt = &loginAttempt{}
+				attempts[clientIP] = attempt
+			}
+
+			// Reserve this attempt now, under the same lock as the check
+			// above, before calling the (possibly slow) handler.
+			attempt.count++
+			attempt.lastAttempt = now
+			mu.Unlock()
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimitTOTPVerify rate limits TOTP verification attempts per user/IP.
+// Prevents brute-force attacks on 6-digit TOTP codes.
 func RateLimitTOTPVerify(anonymousMode bool) func(http.Handler) http.Handler {
-	type verifyAttempt struct {
-		count       int
-		lastAttempt time.Time
-	}
-
-	attempts := make(map[string]*verifyAttempt)
-	maxAttempts := 5      // Max attempts before lockout
-	windowMinutes := 15   // Lockout window
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rawIP := getClientIP(r)
-			// T43: group IPv6 clients by the configured prefix for the
-			// lockout bucket key; logging below still uses the full rawIP.
-			clientIP := utils.RateLimitKey(rawIP)
-
-			// Clean up old entries
-			now := time.Now()
-			for key, attempt := range attempts {
-				if now.Sub(attempt.lastAttempt) > time.Duration(windowMinutes)*time.Minute {
-					delete(attempts, key)
-				}
-			}
-
-			// Check rate limit
-			if attempt, exists := attempts[clientIP]; exists {
-				if attempt.count >= maxAttempts {
-					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
-						slog.Warn("TOTP verification rate limit exceeded",
-							"ip", privacy.RedactIP(rawIP, anonymousMode),
-							"attempts", attempt.count,
-						)
-						http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
-						return
-					}
-					// Reset if window has passed
-					attempt.count = 0
-				}
-			}
-
-			// Increment attempt counter after the request completes
-			defer func() {
-				if attempts[clientIP] == nil {
-					attempts[clientIP] = &verifyAttempt{}
-				}
-				attempts[clientIP].count++
-				attempts[clientIP].lastAttempt = now
-			}()
-
-			next.ServeHTTP(w, r)
-		})
-	}
+	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
+		label:         "TOTP verification",
+		limitedBody:   "Too many verification attempts. Please try again later.",
+		maxAttempts:   5,
+		windowMinutes: 15,
+	})
 }
 
-// RateLimitAdminLogin rate limits admin login attempts
+// RateLimitAdminLogin rate limits admin login attempts.
 func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
-	type loginAttempt struct {
-		count       int
-		lastAttempt time.Time
-	}
-
-	attempts := make(map[string]*loginAttempt)
-	maxAttempts := 5
-	windowMinutes := 15
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rawIP := getClientIP(r)
-			// T43: group IPv6 clients by the configured prefix for the
-			// lockout bucket key; logging below still uses the full rawIP.
-			clientIP := utils.RateLimitKey(rawIP)
-
-			// Clean up old entries
-			now := time.Now()
-			for ip, attempt := range attempts {
-				if now.Sub(attempt.lastAttempt) > time.Duration(windowMinutes)*time.Minute {
-					delete(attempts, ip)
-				}
-			}
-
-			// Check rate limit
-			if attempt, exists := attempts[clientIP]; exists {
-				if attempt.count >= maxAttempts {
-					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
-						slog.Warn("admin login rate limit exceeded",
-							"ip", privacy.RedactIP(rawIP, anonymousMode),
-							"attempts", attempt.count,
-						)
-						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
-						return
-					}
-					// Reset if window has passed
-					attempt.count = 0
-				}
-			}
-
-			// Increment attempt counter after the request completes
-			// We'll do this in a deferred function
-			defer func() {
-				if attempts[clientIP] == nil {
-					attempts[clientIP] = &loginAttempt{}
-				}
-				attempts[clientIP].count++
-				attempts[clientIP].lastAttempt = now
-			}()
-
-			next.ServeHTTP(w, r)
-		})
-	}
+	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
+		label:         "admin login",
+		limitedBody:   "Too many login attempts. Please try again later.",
+		maxAttempts:   5,
+		windowMinutes: 15,
+	})
 }
 
-// RateLimitUserLogin rate limits user login attempts
+// RateLimitUserLogin rate limits user login attempts.
+//
+// The caller must construct this once and reuse the returned middleware
+// across all requests, including both the MFA and non-MFA login branches,
+// so an attacker can't dodge the lockout by switching branches.
 func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
-	type loginAttempt struct {
-		count       int
-		lastAttempt time.Time
-	}
-
-	attempts := make(map[string]*loginAttempt)
-	maxAttempts := 5
-	windowMinutes := 15
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rawIP := getClientIP(r)
-			// T43: group IPv6 clients by the configured prefix for the
-			// lockout bucket key; logging below still uses the full rawIP.
-			clientIP := utils.RateLimitKey(rawIP)
-
-			// Clean up old entries
-			now := time.Now()
-			for ip, attempt := range attempts {
-				if now.Sub(attempt.lastAttempt) > time.Duration(windowMinutes)*time.Minute {
-					delete(attempts, ip)
-				}
-			}
-
-			// Check rate limit
-			if attempt, exists := attempts[clientIP]; exists {
-				if attempt.count >= maxAttempts {
-					if now.Sub(attempt.lastAttempt) < time.Duration(windowMinutes)*time.Minute {
-						slog.Warn("user login rate limit exceeded",
-							"ip", privacy.RedactIP(rawIP, anonymousMode),
-							"attempts", attempt.count,
-						)
-						http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
-						return
-					}
-					// Reset if window has passed
-					attempt.count = 0
-				}
-			}
-
-			// Increment attempt counter after the request completes
-			// We'll do this in a deferred function
-			defer func() {
-				if attempts[clientIP] == nil {
-					attempts[clientIP] = &loginAttempt{}
-				}
-				attempts[clientIP].count++
-				attempts[clientIP].lastAttempt = now
-			}()
-
-			next.ServeHTTP(w, r)
-		})
-	}
+	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
+		label:         "user login",
+		limitedBody:   "Too many login attempts. Please try again later.",
+		maxAttempts:   5,
+		windowMinutes: 15,
+	})
 }
 
 // isAdminHTMLRequest detects if the request is for an HTML page vs an API endpoint

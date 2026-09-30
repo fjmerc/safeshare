@@ -384,13 +384,7 @@ func run() error {
 	// Login endpoint with MFA support
 	// If MFA is enabled globally, uses the MFA-aware handler
 	// Otherwise, falls back to standard login handler
-	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.MFA != nil && cfg.MFA.Enabled {
-			middleware.RateLimitUserLogin(anonMode)(http.HandlerFunc(handlers.UserLoginWithMFAHandler(repos, cfg))).ServeHTTP(w, r)
-		} else {
-			middleware.RateLimitUserLogin(anonMode)(http.HandlerFunc(handlers.UserLoginHandler(repos, cfg))).ServeHTTP(w, r)
-		}
-	})
+	registerUserLoginRoute(mux, repos, cfg, anonMode)
 
 	// MFA login verification endpoint (no auth required - uses challenge token)
 	// Rate limited to prevent brute-force attacks on TOTP codes
@@ -656,9 +650,7 @@ func run() error {
 			// Not authenticated as admin, serve login page
 			serveAdminPage("admin/login.html")(w, r)
 		})
-		mux.HandleFunc("/admin/api/login", func(w http.ResponseWriter, r *http.Request) {
-			middleware.RateLimitAdminLogin(anonMode)(http.HandlerFunc(handlers.AdminLoginHandler(repos, cfg))).ServeHTTP(w, r)
-		})
+		registerAdminLoginRoute(mux, repos, cfg, anonMode)
 
 		// Admin dashboard routes (auth required)
 		adminAuth := middleware.AdminAuth(repos, anonMode)
