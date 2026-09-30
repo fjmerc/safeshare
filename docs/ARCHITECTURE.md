@@ -1433,6 +1433,8 @@ func (s *S3Storage) SaveFile(ctx context.Context, filename string, data io.Reade
 }
 ```
 
+> **Not yet supported by the server.** The S3 backend exists in `internal/storage/s3`, but the server does not use it yet and refuses to start with `STORAGE_TYPE=s3` (it would otherwise silently store files on local disk). The configuration below describes the intended setup.
+
 **Configuration** (Environment Variables):
 
 ```bash
@@ -1582,6 +1584,8 @@ docker restart safeshare
 ```
 
 **Local Filesystem to S3 Migration**:
+
+> **Not yet supported by the server.** The S3 backend exists in `internal/storage/s3`, but the server does not use it yet and refuses to start with `STORAGE_TYPE=s3` (it would otherwise silently store files on local disk). The configuration below describes the intended setup.
 
 ```bash
 # 1. Sync local files to S3
