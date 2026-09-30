@@ -50,6 +50,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Changed
 
 - **Breaking (Python and TypeScript SDKs):** errors are now matched on the server's error code before the HTTP status. A quarantined file (410) now raises `FileQuarantinedError` instead of `NotFoundError` (Python) or `DownloadLimitReachedError` (TypeScript), and a failed malware scan (403) raises `ScanFailedError` instead of `AuthenticationError` (Python). Check any code that catches those classes around downloads.
+- The server now refuses to start when `STORAGE_TYPE=s3` or `DATABASE_TYPE=postgresql` is set. Neither backend is wired into the server yet: previously these settings were accepted and silently ignored, so files and records were stored locally while the configuration said otherwise. Unset them (or use `filesystem` / `sqlite`) to start.
 - `import-file` and `migrate-encryption` now refuse to run against a PostgreSQL database or S3 storage (they only support SQLite with local file storage). They also wait and retry if the database is busy instead of failing when the server is running. `import-file --user-id` now checks that the user exists before importing.
 
 ### Fixed
@@ -59,6 +60,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Performance
 
 - Downloads of files with a download limit set (`max_downloads`) now use the server's fast zero-copy delivery path, same as downloads without a limit — previously only unlimited downloads benefited from it. Measured about 5x less CPU time on a 512MB unencrypted download. No behavior change; downloads are counted and tracked exactly as before.
+
+### Fixed
+
+- A resumable download of a file with a download limit set (`max_downloads`) could fail with "Download Limit Reached" (HTTP 410) if the recipient paused right after the server finished sending the last byte but before their browser had actually finished receiving it — a timing window a resumable download manager (including SafeShare's own web UI, and Chromium's built-in one) can hit routinely on a slow or interrupted connection. The server had already marked that download "complete" internally at the moment it finished writing, so the resume request's still-valid session token was rejected outright. Completed sessions are now resumable for a short grace period after completion (default 5 minutes, configurable via `DOWNLOAD_SESSION_COMPLETE_GRACE`, `0` restores the previous behavior), and only for a genuine tail resume (a partial request that starts partway through the file and reaches the end) — a resume inside that window does not count as an additional download or re-trigger the `file.downloaded` webhook. Fixed alongside this: the per-session replay ceiling (roughly two copies of the file, total) previously only counted resumes, not the request that actually created the session, so a split download could extract roughly three copies of a file before hitting it; the ceiling now covers a session's entire lifetime — the request that creates it plus every resume, before or after completion — closing that gap for capped files generally, not just for grace-window resumes. See ADR-014's addendum for the full design.
 
 ## [1.7.1] - 2026-09-30
 

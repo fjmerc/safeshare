@@ -97,43 +97,86 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	// Resume path: a client presenting a session token from an earlier
 	// request on this file. Any token that is missing, foreign to this
-	// file, already completed, or stale (past idleTTL/maxAge) gets no
-	// oracle — Lookup returns nil and we silently fall through to the
-	// fresh-reservation path below, exactly as if no token had been sent.
+	// file, stale (past idleTTL/maxAge), or completed for longer than
+	// completeGrace gets no oracle — Lookup returns nil and we silently fall
+	// through to the fresh-reservation path below, exactly as if no token had
+	// been sent.
 	//
 	// A Lookup hit is not by itself enough to trust the token: without a
-	// further bound, a committed-but-not-yet-completed session's token could
-	// be replayed indefinitely within its idle/max-age TTL to redeliver the
-	// whole file to anyone holding it (bug-hunter finding — HIGH). Lookup's
-	// completed_at check closes that for an already-*finished* download;
-	// ReserveSessionBytes closes it for one that's committed but still
-	// in-flight, by atomically bounding total bytes_reserved for the session
-	// to ~2x the file size — generous enough for legitimate overlapping
-	// retries, finite enough that a token can't be curled forever. Neither
-	// call commits anything (see the function doc for why that's deferred to
+	// further bound, a committed session's token could be replayed
+	// indefinitely (within its idle/max-age TTL if still in-flight, or within
+	// completeGrace if already finished — T42) to redeliver the whole file to
+	// anyone holding it (bug-hunter finding — HIGH, extended by T42).
+	// ReserveSessionBytes closes that in both cases by atomically bounding
+	// total bytes_reserved for the session to ~2x the file size — generous
+	// enough for legitimate overlapping retries (or a client resuming just
+	// past the server-side completion point), finite enough that a token
+	// can't be curled forever. Neither call commits or completes anything
+	// itself — CommitDownloadSession/CompleteDownloadSession are both
+	// idempotent no-ops for an already-committed/-completed session, so a
+	// grace-window resume never double-credits download_count or re-fires
+	// file.downloaded (see the function doc for why committing is deferred to
 	// sessionWriter).
 	sessionIdleTTL := utils.ResolveSessionIdleTTL()
+	// T42 (amending ADR-014): the window after a session's own completed_at
+	// during which a trusted-token resume is still allowed to resolve it —
+	// see LookupDownloadSession's doc comment for why an already-completed
+	// session isn't unconditionally rejected anymore, and why that can never
+	// double-credit download_count or re-fire file.downloaded. Read from the
+	// package-level variable main.go installs once at startup via
+	// SetCompleteGrace (security-audit follow-up) — NOT re-resolved from the
+	// environment on every request; see session_grace.go.
+	completeGrace := completeGraceWindow
+	// SessionByteLimit bounds bytes_reserved for the session's ENTIRE
+	// lifetime now (security-audit follow-up to T42, see below) — computed
+	// once and reused by both the trusted-resume charge and the initial
+	// reservation's own charge.
+	byteLimit := repository.SessionByteLimit(file.FileSize)
 	tokenHeader := r.Header.Get("X-Download-Session")
 	var (
-		token        string
-		trustedToken bool
-		justCredited bool
-		probeGrant   int64
+		token            string
+		trustedToken     bool
+		justCredited     bool
+		probeGrant       int64
+		resumedCompleted bool // T42: this resume matched an already-completed session inside its grace window
 	)
 	if tokenHeader != "" {
-		sess, lookupErr := repos.Files.LookupDownloadSession(ctx, file.ID, tokenHeader, sessionIdleTTL, utils.SessionMaxAge)
+		sess, lookupErr := repos.Files.LookupDownloadSession(ctx, file.ID, tokenHeader, sessionIdleTTL, utils.SessionMaxAge, completeGrace)
 		if lookupErr != nil {
 			slog.Warn("failed to look up download session; treating as new tokenless download",
 				"file_id", file.ID, "error", lookupErr)
 		}
+		if sess != nil && sess.Completed {
+			// Security-audit follow-up to T42: a grace-window resume must
+			// only ever be able to deliver the tail bytes a paused client is
+			// actually missing — a partial Range that starts after byte 0
+			// and reaches EOF. Anything else against a completed session (a
+			// plain GET, a Range starting at 0, a Range that doesn't reach
+			// EOF) would let the grace window itself be used to re-request
+			// arbitrary — even whole-file — content, not just complete an
+			// interrupted receive. Reject the shape here, before any bytes
+			// are known to have gone out, exactly like an unresolved token.
+			if !(decisionForSizing.Kind == utils.RangePartial && decisionForSizing.Start > 0 && rangeEndsAtEOF) {
+				sess = nil
+			}
+		}
 		if sess != nil {
-			granted, reserveErr := repos.Files.ReserveSessionBytes(ctx, file.ID, tokenHeader, rangeLen, repository.SessionByteLimit(file.FileSize))
+			granted, reserveErr := repos.Files.ReserveSessionBytes(ctx, file.ID, tokenHeader, rangeLen, byteLimit, completeGrace)
 			if reserveErr != nil {
 				slog.Warn("failed to reserve session bytes; treating as new tokenless download",
 					"file_id", file.ID, "error", reserveErr)
 			} else if granted {
 				token = tokenHeader
 				trustedToken = true
+				resumedCompleted = sess.Completed
+				if resumedCompleted {
+					slog.Info("resumed capped download inside T42 completion grace window",
+						"file_id", file.ID,
+						"token_hash", logTokenHash(tokenHeader),
+						"completed_at", sess.CompletedAt,
+						"grace", completeGrace,
+					)
+				}
 			}
 			// !granted: the session's replay ceiling is spent (or it was
 			// completed/deleted between Lookup and here) — fall through to a
@@ -170,6 +213,34 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		token = newToken
 		probeGrant = granted
+
+		// Security-audit follow-up to T42: charge THIS request's own
+		// declared range against the same bytes_reserved ceiling a trusted
+		// resume already charges against, immediately — before any bytes are
+		// written. Previously only resumes were charged, so the request that
+		// actually creates the session (a plain first download, or the
+		// initial leg of a hostile Range-split) streamed for free against
+		// this ceiling; a client could then use resumes (before OR after
+		// completion) to extract up to another full 2x-file-size on top of
+		// that uncharged first request — up to ~3x the file size total
+		// instead of the intended 2x. Charging here closes that at the
+		// source: byteLimit now bounds bytes_reserved across the session's
+		// ENTIRE lifetime (the request that creates it plus every resume),
+		// not just the resumes. For a single request's own range this charge
+		// always fits (0 + rangeLen <= byteLimit), so an error or a denial
+		// means something is wrong (e.g. the database is unavailable): fail
+		// closed like the ReserveDownload error path above rather than
+		// serving the file uncharged, and release the slot just reserved.
+		chargeGranted, err := repos.Files.ReserveSessionBytes(ctx, file.ID, token, rangeLen, byteLimit, completeGrace)
+		if err != nil || !chargeGranted {
+			slog.Error("failed to charge initial reservation against the session byte ceiling",
+				"file_id", file.ID, "token_hash", logTokenHash(token), "granted", chargeGranted, "error", err)
+			if cancelErr := repos.Files.CancelDownload(context.WithoutCancel(ctx), file.ID, token); cancelErr != nil {
+				slog.Error("failed to cancel download session", "file_id", file.ID, "token_hash", logTokenHash(token), "error", cancelErr)
+			}
+			sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Handed back on every response so the client can present it again on
@@ -221,26 +292,29 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// request's full contribution.
 	heartbeat.FinalFlush(finalizeCtx)
 
-	// A trusted-token (resumed) request charged its whole requested range
-	// against the session's replay ceiling up front, via ReserveSessionBytes,
-	// before any bytes were known to have actually gone out. Give back
-	// whatever portion it didn't manage to send — paused, aborted, or
-	// errored partway. Without this, a normal pause/resume sequence (the web
-	// UI's own resumable-downloader.js resumes with `Range: bytes=<received>-`
-	// on every pause) would permanently eat into the 2x-file-size ceiling for
-	// bytes it never delivered, exhausting it — and turning the *next*
-	// resume into a fresh, tokenless, potentially-410'd request — well before
-	// the recipient's one legitimate download finishes (bug-hunter finding).
-	// Only file content counts as sent; an error body (404/500) delivered none.
+	// Every request against a session — the one that creates it (charged
+	// just above, in the `token == ""` branch) or a later trusted-token
+	// resume (charged via ReserveSessionBytes before this function was
+	// reached) — charges its whole requested range against the session's
+	// replay ceiling up front, before any bytes were known to have actually
+	// gone out. Give back whatever portion it didn't manage to send —
+	// paused, aborted, or errored partway. Without this, a normal
+	// pause/resume sequence (the web UI's own resumable-downloader.js
+	// resumes with `Range: bytes=<received>-` on every pause) would
+	// permanently eat into the 2x-file-size ceiling for bytes it never
+	// delivered, exhausting it — and turning the *next* resume into a fresh,
+	// tokenless, potentially-410'd request — well before the recipient's one
+	// legitimate download finishes (bug-hunter finding). Unconditional since
+	// the security-audit follow-up to T42 made the initial charge
+	// unconditional too — see the `token == ""` branch above. Only file
+	// content counts as sent; an error body (404/500) delivered none.
 	contentSent := int64(0)
 	if sw.ResponseOK() {
 		contentSent = sw.BytesWritten()
 	}
-	if trustedToken {
-		if unsent := rangeLen - contentSent; unsent > 0 {
-			if err := repos.Files.ReleaseSessionBytes(finalizeCtx, file.ID, token, unsent); err != nil {
-				slog.Warn("failed to release unsent session bytes", "file_id", file.ID, "token_hash", logTokenHash(token), "error", err)
-			}
+	if unsent := rangeLen - contentSent; unsent > 0 {
+		if err := repos.Files.ReleaseSessionBytes(finalizeCtx, file.ID, token, unsent); err != nil {
+			slog.Warn("failed to release unsent session bytes", "file_id", file.ID, "token_hash", logTokenHash(token), "error", err)
 		}
 	}
 
@@ -396,6 +470,7 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 		"committed", committed,
 		"completed_now", completedNow,
 		"remaining_downloads", remainingDownloads,
+		"resumed_completed", resumedCompleted,
 	)
 }
 
