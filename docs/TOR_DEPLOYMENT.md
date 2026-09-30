@@ -117,6 +117,10 @@ This is the same reason `TRUST_PROXY_HEADERS=false` is recommended above (a hidd
 
 This limitation is inherent to not being able to distinguish visitors behind a single forwarding point — it applies equally to any non-Tor deployment sitting behind a proxy that doesn't forward (or isn't trusted to forward) real client IPs.
 
+### Login lockout and hidden services
+
+The same blind spot applies to the admin and user login lockout (5 failed password attempts per 15 minutes, per apparent client IP — see `docs/SECURITY.md`). Because every Tor visitor's connection arrives from the same local address, the lockout is effectively shared by every visitor combined, not per real person: five failed login attempts from *any* combination of Tor visitors locks *all* Tor visitors out of admin or user password login for 15 minutes. A successful login attempt still counts toward the same limit, so this can happen without any malicious intent — it only takes five people mistyping a password within the same window. There is currently no per-username or per-session variant of this lockout to fall back on; this is a known limitation, not something `MAX_ENCRYPTED_DOWNLOADS_PER_IP`-style tuning can work around.
+
 ## Security Hardening Checklist
 
 - [ ] **Enable `ANONYMOUS_MODE=true`** — IPs never written to database or logs
