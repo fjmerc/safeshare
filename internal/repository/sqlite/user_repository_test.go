@@ -15,7 +15,14 @@ import (
 func setupUserTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
-	db, err := sql.Open("sqlite3", ":memory:?_txlock=immediate&_busy_timeout=5000")
+	// _foreign_keys=1 is mattn/go-sqlite3's per-connection pragma equivalent
+	// of modernc.org/sqlite's registerConnectionHook (see
+	// internal/database/db.go): without it this test DB silently diverges
+	// from production, which enforces FK constraints on every connection, and
+	// no test here would ever exercise the files.user_id ON DELETE SET NULL /
+	// user_sessions ON DELETE CASCADE behavior UserRepository.Delete relies
+	// on (T36).
+	db, err := sql.Open("sqlite3", ":memory:?_txlock=immediate&_busy_timeout=5000&_foreign_keys=1")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -920,6 +927,65 @@ func TestUserRepository_Delete(t *testing.T) {
 	}
 	if deleted != nil {
 		t.Error("expected user to be deleted")
+	}
+}
+
+// TestUserRepository_Delete_CascadesViaForeignKeys verifies the two FK
+// behaviors UserRepository.Delete's doc comment relies on happening
+// automatically (T36): a session row is removed (files.user_id
+// ON DELETE CASCADE on user_sessions), and an owned file survives but is
+// detached (files.user_id ON DELETE SET NULL) rather than being deleted or
+// left dangling.
+func TestUserRepository_Delete_CascadesViaForeignKeys(t *testing.T) {
+	db := setupUserTestDB(t)
+	defer db.Close()
+
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	user, err := repo.Create(ctx, "cascadeuser", "cascade@example.com", "hashedpassword", "user", false)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// A file owned by this user.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, user_id)
+		VALUES ('cascadeclaim', 'test.txt', 'stored-test.txt', 1024, 'text/plain', '2099-01-01T00:00:00Z', ?)
+	`, user.ID); err != nil {
+		t.Fatalf("failed to insert test file: %v", err)
+	}
+
+	// A session owned by this user.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO user_sessions (user_id, session_token, expires_at)
+		VALUES (?, 'cascade-session-token', '2099-01-01T00:00:00Z')
+	`, user.ID); err != nil {
+		t.Fatalf("failed to insert test session: %v", err)
+	}
+
+	if err := repo.Delete(ctx, user.ID, t.TempDir()); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	// user_sessions row must be gone (ON DELETE CASCADE).
+	var sessionCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_sessions WHERE session_token = 'cascade-session-token'`).Scan(&sessionCount); err != nil {
+		t.Fatalf("failed to count sessions: %v", err)
+	}
+	if sessionCount != 0 {
+		t.Errorf("user_sessions row survived user deletion (count=%d); want 0 (ON DELETE CASCADE)", sessionCount)
+	}
+
+	// files row must survive, but detached (ON DELETE SET NULL), not deleted
+	// and not left dangling on a nonexistent user_id.
+	var fileUserID sql.NullInt64
+	err = db.QueryRowContext(ctx, `SELECT user_id FROM files WHERE claim_code = 'cascadeclaim'`).Scan(&fileUserID)
+	if err != nil {
+		t.Fatalf("expected file row to survive user deletion, got error: %v", err)
+	}
+	if fileUserID.Valid {
+		t.Errorf("files.user_id = %v after owning user was deleted; want NULL (ON DELETE SET NULL)", fileUserID.Int64)
 	}
 }
 

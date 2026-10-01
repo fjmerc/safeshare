@@ -13,6 +13,11 @@ import (
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
+	// Register the process-wide connection-pragma hook (PRAGMA
+	// foreign_keys = ON, busy_timeout, etc.) before opening, so this test DB
+	// enforces the same FK constraints production connections do (T36).
+	registerConnectionHook()
+
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)

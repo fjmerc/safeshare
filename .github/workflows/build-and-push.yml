@@ -297,20 +297,20 @@ jobs:
       - name: Run govulncheck (text output for logs)
         run: govulncheck ./...
 
-  # TypeScript SDK unit tests (vitest). The SDK in sdk/typescript is an
-  # independent npm package shipped separately from the Docker image, so this
-  # job runs in parallel and does NOT gate build-and-push.
+  # SDK unit tests: TypeScript (vitest), Python (pytest), and Go. All three
+  # SDKs under sdk/ are independent packages shipped separately from the
+  # Docker image, so this job runs in parallel and does NOT gate
+  # build-and-push. `sdk-test` is a required status check on develop/main —
+  # do not rename this job.
   sdk-test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: sdk/typescript
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
+      # --- TypeScript SDK ---
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -318,17 +318,50 @@ jobs:
           cache: 'npm'
           cache-dependency-path: sdk/typescript/package-lock.json
 
-      - name: Install dependencies
+      - name: Install TypeScript SDK dependencies
+        working-directory: sdk/typescript
         run: npm ci
 
-      - name: Typecheck
+      - name: Typecheck TypeScript SDK
+        working-directory: sdk/typescript
         run: npm run typecheck
 
-      - name: Build (incl. .d.ts generation)
+      - name: Build TypeScript SDK (incl. .d.ts generation)
+        working-directory: sdk/typescript
         run: npm run build
 
-      - name: Run tests
+      - name: Run TypeScript SDK tests
+        working-directory: sdk/typescript
         run: npm test
+
+      # --- Python SDK ---
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: sdk/python/pyproject.toml
+
+      - name: Install Python SDK dependencies
+        working-directory: sdk/python
+        run: pip install -e '.[dev]'
+
+      - name: Run Python SDK tests
+        working-directory: sdk/python
+        run: pytest -v
+
+      # --- Go SDK (sdk/go is its own module, outside the top-level
+      #     go.mod/go.work covered by the `test` job's ./internal/...) ---
+      - name: Set up Go for Go SDK
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: true
+          cache-dependency-path: sdk/go/go.sum
+
+      - name: Run Go SDK tests
+        working-directory: sdk/go
+        run: go test -v ./...
 
   build-and-push:
     needs: [test, race, test-postgres, test-minio, security-scan]

@@ -19,6 +19,11 @@ import (
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
+	// Register the process-wide connection-pragma hook (PRAGMA
+	// foreign_keys = ON, etc.) before opening, so this test DB enforces the
+	// same FK constraints production connections do (T36).
+	database.EnsureConnectionHook()
+
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
@@ -45,8 +50,16 @@ func TestFileRepository_Create(t *testing.T) {
 	repo := NewFileRepository(db)
 	ctx := context.Background()
 
+	// files.user_id has a real FK to users(id), enforced now that setupTestDB
+	// enables PRAGMA foreign_keys (T36) — a dangling reference to a
+	// nonexistent user id is rejected, so create a real one.
+	user, err := NewUserRepository(db).Create(ctx, "filecreatetest-user", "filecreatetest@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
 	maxDownloads := 5
-	userID := int64(1)
+	userID := user.ID
 	file := &models.File{
 		ClaimCode:        "TEST123",
 		OriginalFilename: "test.txt",
@@ -60,7 +73,7 @@ func TestFileRepository_Create(t *testing.T) {
 		UserID:           &userID,
 	}
 
-	err := repo.Create(ctx, file)
+	err = repo.Create(ctx, file)
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
@@ -1035,6 +1048,42 @@ func createSessionTestFile(t *testing.T, repo *FileRepository, claimCode string,
 		t.Fatalf("Create: %v", err)
 	}
 	return file
+}
+
+// TestFileRepository_Delete_CascadesDownloadSessions verifies
+// download_sessions.file_id ON DELETE CASCADE (T36): deleting a file with a
+// live (uncommitted) download session must remove that session row too,
+// rather than leaving a dangling reference.
+func TestFileRepository_Delete_CascadesDownloadSessions(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sescascade", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+
+	var before int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM download_sessions WHERE file_id = ?`, file.ID).Scan(&before); err != nil {
+		t.Fatalf("count before delete: %v", err)
+	}
+	if before != 1 {
+		t.Fatalf("download_sessions rows before delete = %d, want 1", before)
+	}
+
+	if err := repo.Delete(ctx, file.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var after int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM download_sessions WHERE file_id = ?`, file.ID).Scan(&after); err != nil {
+		t.Fatalf("count after delete: %v", err)
+	}
+	if after != 0 {
+		t.Errorf("download_sessions rows after file delete = %d, want 0 (ON DELETE CASCADE)", after)
+	}
 }
 
 // TestFileRepository_CommitDownloadSession_Idempotent — a second commit call

@@ -15,6 +15,7 @@ import type {
   ChunkUploadResult,
   UploadStatus,
   FileInfo,
+  ScanStatus,
   UserFilesResponse,
   DownloadOptions,
   UpdateExpirationOptions,
@@ -876,6 +877,8 @@ export class SafeShareClient {
       password_required: boolean;
       download_url: string;
       sha256_hash: string;
+      scan_status?: ScanStatus;
+      download_available?: boolean;
     }>("GET", `/api/claim/${claimCode}/info`);
 
     // Calculate downloads remaining from max_downloads and download_count
@@ -892,6 +895,8 @@ export class SafeShareClient {
       expiresAt: response.expires_at,
       passwordProtected: response.password_required,
       downloadsRemaining: downloadsRemaining,
+      scanStatus: response.scan_status,
+      downloadAvailable: response.download_available,
     };
   }
 

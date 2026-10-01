@@ -51,10 +51,19 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
   - SSO callback (`/api/auth/sso/{provider}/callback`) now has its own separate limiter, so a burst against initiation can't exhaust callback's budget or vice versa. It's still refund-only, with success judged by the redirect destination rather than status code, since the callback always responds with a redirect either way.
   - **Considered and rejected: per-username tracking.** A prototype tracked failed attempts per submitted username (independent of IP) to slow a distributed attack against one account, throttling rather than hard-blocking once its threshold was crossed. A second-round security audit found that an attacker could exploit the throttle itself: by requesting a chosen username's login faster than the throttle's per-attempt delay, the attacker could keep that username's "next available slot" scheduled more than the throttle's give-up threshold ahead of real time, so *every* login for that username — including the account owner's own correct password — was rejected the whole time the attack continued, and since those rejections weren't refunded at the IP layer either, the victim's own IP could eventually lock out too. Doing per-account limiting safely needs a way to tell the account's legitimate owner apart from a distributed attacker (e.g. a signed "known device" bypass cookie), which is a separate feature; this release ships per-IP limiting only.
 
+### Added
+
+- Python and TypeScript SDKs: `FileInfo` now carries `scan_status`/`scanStatus` and `download_available`/`downloadAvailable`, matching the Go SDK. Both SDKs also gained typed exceptions/errors for the ADR-015 malware-scan error codes (`MalwareDetectedError`, `FileQuarantinedError`, `ScanPendingError`, `ScanUnavailableError`, `ScanFailedError`, `UnscannableUploadError`), so a scan-related failure (e.g. a quarantined file) can be caught specifically instead of falling through to a generic error — previously several of these shared an HTTP status code with an unrelated legacy error and could be misidentified.
+
 ### Changed
 
+- **Breaking (Python and TypeScript SDKs):** errors are now matched on the server's error code before the HTTP status. A quarantined file (410) now raises `FileQuarantinedError` instead of `NotFoundError` (Python) or `DownloadLimitReachedError` (TypeScript), and a failed malware scan (403) raises `ScanFailedError` instead of `AuthenticationError` (Python). Check any code that catches those classes around downloads.
 - The server now refuses to start when `STORAGE_TYPE=s3` or `DATABASE_TYPE=postgresql` is set. Neither backend is wired into the server yet: previously these settings were accepted and silently ignored, so files and records were stored locally while the configuration said otherwise. Unset them (or use `filesystem` / `sqlite`) to start.
 - `import-file` and `migrate-encryption` now refuse to run against a PostgreSQL database or S3 storage (they only support SQLite with local file storage). They also wait and retry if the database is busy instead of failing when the server is running. `import-file --user-id` now checks that the user exists before importing.
+
+### Fixed
+
+- Python SDK: `delete_file()` always raised `TypeError` instead of deleting the file, because it called `httpx.Client.delete()` with a JSON body — a parameter that method doesn't accept.
 
 ### Performance
 
