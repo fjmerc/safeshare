@@ -1305,6 +1305,10 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.8.0 | IP blocklist entries bypassable via equivalent address spellings (case, leading zeros, IPv4-mapped IPv6) | Medium |
+| v1.8.0 | Per-IP rate limits and login lockouts bypassable by rotating IPv6 addresses within one /64 | Medium |
+| v1.8.0 | TOTP brute-force guard reset by the always-successful WebAuthn challenge route; SSO initiation limit ineffective | Medium |
+| v1.8.0 | Admin tools produced SFSE1 files (no truncation/reorder detection); download-limit replay ceiling ignored the first request | Low |
 | v1.7.1 | Login brute-force lockout never took effect for admin/user password logins | High |
 | v1.7.1 | Remote crash (`fatal error: concurrent map iteration and map write`) from concurrent TOTP/SSO login requests | High |
 | v1.7.1 | Login lockout counter bypassable via parallel request bursts from one IP | Medium |
