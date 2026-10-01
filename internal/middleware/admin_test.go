@@ -837,7 +837,7 @@ func TestUserCSRFProtection_GetRequest(t *testing.T) {
 // TestRateLimitMFAEnrollment_BelowLimit tests the authenticated MFA
 // enrollment limiter (TOTP verify-and-enable / disable) when below
 // threshold. No user is in context in these bare-handler tests, so it
-// falls back to the per-IP key (see mfaEnrollmentKey).
+// falls back to the per-IP key (see authenticatedUserKey).
 func TestRateLimitMFAEnrollment_BelowLimit(t *testing.T) {
 	handler := RateLimitMFAEnrollment(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

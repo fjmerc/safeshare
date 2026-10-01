@@ -49,3 +49,24 @@ func TestRedactIP(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactUsername(t *testing.T) {
+	tests := []struct {
+		name          string
+		username      string
+		anonymousMode bool
+		want          string
+	}{
+		{"enabled returns redacted", "alice", true, "redacted"},
+		{"disabled returns original", "alice", false, "alice"},
+		{"enabled with empty username", "", true, "redacted"},
+		{"disabled with empty username", "", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactUsername(tt.username, tt.anonymousMode); got != tt.want {
+				t.Errorf("RedactUsername(%q, %v) = %q, want %q", tt.username, tt.anonymousMode, got, tt.want)
+			}
+		})
+	}
+}

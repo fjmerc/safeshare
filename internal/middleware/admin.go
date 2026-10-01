@@ -499,6 +499,19 @@ func DefaultLoginSuccess(status int, _ http.Header) bool {
 	return status < http.StatusBadRequest
 }
 
+// MFAVerifyLoginSuccess is the success predicate for /api/auth/mfa/verify
+// in the MFALoginLimiter group: like DefaultLoginSuccess, but a 429 from the
+// handler is refunded too. The handler's own 429s (the per-user MFA failure
+// limit, an exhausted challenge) don't represent a guessed code - the
+// guesses behind them were already counted - and counting them here would
+// let a legitimate owner retrying during a per-user lockout exhaust their
+// own IP's budget for the whole group, locking them out of WebAuthn login
+// as well. The group's own 429 never reaches this predicate: it's written
+// before the handler runs.
+func MFAVerifyLoginSuccess(status int, header http.Header) bool {
+	return status == http.StatusTooManyRequests || DefaultLoginSuccess(status, header)
+}
+
 // AlwaysRefund always reports success, regardless of the response. Used for
 // a route whose response proves nothing about the caller either way (e.g.
 // webauthn/begin, which only starts a challenge) - see MFALoginLimiter.Wrap.
@@ -704,12 +717,13 @@ func ipLoginKey(_ *http.Request, rawIP string) string {
 	return utils.RateLimitKey(rawIP)
 }
 
-// mfaEnrollmentKey is a simpleLimiter keyFn for RateLimitMFAEnrollment: it
-// tracks by authenticated user ID when one is available in context - these
-// routes always run behind UserAuth, so this is the normal case - falling
-// back to client IP only if somehow no user is in context, so the limiter
-// still fails closed rather than not tracking the request at all.
-func mfaEnrollmentKey(r *http.Request, rawIP string) string {
+// authenticatedUserKey is a simpleLimiter keyFn for the authenticated-route
+// limiters (RateLimitMFAEnrollment, RateLimitChangePassword): it tracks by
+// authenticated user ID when one is available in context - these routes
+// always run behind UserAuth, so this is the normal case - falling back to
+// client IP only if somehow no user is in context, so the limiter still
+// fails closed rather than not tracking the request at all.
+func authenticatedUserKey(r *http.Request, rawIP string) string {
 	if user := GetUserFromContext(r); user != nil {
 		return "user:" + strconv.FormatInt(user.ID, 10)
 	}
@@ -786,10 +800,94 @@ func RateLimitSSOCallback(anonymousMode bool) func(http.Handler) http.Handler {
 // RateLimitMFAEnrollment rate-limits the *authenticated* MFA-enrollment
 // routes (TOTP verify-and-enable, TOTP disable) - separate from
 // MFALoginLimiter's unauthenticated login-verification group, and keyed by
-// authenticated user ID rather than IP (see mfaEnrollmentKey), since these
+// authenticated user ID rather than IP (see authenticatedUserKey), since these
 // routes always run behind UserAuth. Refund-only on success.
 func RateLimitMFAEnrollment(anonymousMode bool) func(http.Handler) http.Handler {
-	return simpleLimiter(anonymousMode, "MFA enrollment", "Too many attempts. Please try again later.", 5, 15*time.Minute, mfaEnrollmentKey, DefaultLoginSuccess)
+	return simpleLimiter(anonymousMode, "MFA enrollment", "Too many attempts. Please try again later.", 5, 15*time.Minute, authenticatedUserKey, DefaultLoginSuccess)
+}
+
+// onlyUnauthorizedFails is the success predicate for the password-change
+// limiters: only a 401 (wrong current password) counts as a failure. These
+// routes already sit behind an authenticated session, and their handlers
+// reject malformed input (e.g. a too-short new password, 400) before ever
+// checking the current password - counting those would let a user's own
+// typos lock them out of changing their password without the
+// current-password check ever being probed.
+func onlyUnauthorizedFails(status int, _ http.Header) bool {
+	return status != http.StatusUnauthorized
+}
+
+// RateLimitChangePassword rate-limits the user password-change route
+// (/api/auth/change-password), keyed by authenticated user ID (see
+// authenticatedUserKey), so a stolen session can't be used to guess the
+// account's current password - which it needs for a password change, and
+// which may be reused elsewhere. 5 wrong current passwords per 15 minutes;
+// only a wrong current password counts (see onlyUnauthorizedFails).
+func RateLimitChangePassword(anonymousMode bool) func(http.Handler) http.Handler {
+	return simpleLimiter(anonymousMode, "password change", "Too many attempts. Please try again later.", 5, 15*time.Minute, authenticatedUserKey, onlyUnauthorizedFails)
+}
+
+// legacyAdminPasswordKey is the simpleLimiter keyFn for
+// RateLimitAdminChangePassword: one shared key for every caller. The route
+// checks the single legacy admin password, and any admin session -
+// including a users-table admin's, which doesn't know that password - can
+// reach it, so keying by IP would let a stolen session guess it from as
+// many addresses as the attacker has. A shared key caps guesses globally;
+// only admin sessions can spend that budget.
+func legacyAdminPasswordKey(*http.Request, string) string {
+	return "legacy-admin-password"
+}
+
+// RateLimitAdminChangePassword rate-limits the admin password-change route
+// (/admin/api/settings/password) with one global budget (see
+// legacyAdminPasswordKey). Same budget and failure rule as
+// RateLimitChangePassword.
+func RateLimitAdminChangePassword(anonymousMode bool) func(http.Handler) http.Handler {
+	return simpleLimiter(anonymousMode, "admin password change", "Too many attempts. Please try again later.", 5, 15*time.Minute, legacyAdminPasswordKey, onlyUnauthorizedFails)
+}
+
+// KeyedAttemptLimiter exposes the same reserve/refund failure counting the
+// login limiters above use (see attemptTracker) to code outside this
+// package that can only learn the key to limit by from inside a handler -
+// e.g. the user ID behind an MFA login challenge (T48), which no HTTP
+// middleware wrapping that handler can see. Construct once and share it
+// across requests.
+type KeyedAttemptLimiter struct {
+	tracker     *attemptTracker
+	maxAttempts int
+}
+
+// NewKeyedAttemptLimiter builds a KeyedAttemptLimiter allowing maxAttempts
+// unrefunded attempts per key within window.
+func NewKeyedAttemptLimiter(maxAttempts int, window time.Duration) *KeyedAttemptLimiter {
+	return &KeyedAttemptLimiter{
+		tracker:     newAttemptTracker(window),
+		maxAttempts: maxAttempts,
+	}
+}
+
+// Reserve records one attempt against key before the caller checks the
+// credential, so parallel requests can't all pass before any of them is
+// counted. ok is false when key is already at its limit, or when the
+// tracker is full and key is new (fail closed). Pass token to Refund if
+// the attempt turns out not to be a failure.
+func (l *KeyedAttemptLimiter) Reserve(key string) (ok bool, token uint64) {
+	result, epoch := l.tracker.reserve(key, l.maxAttempts)
+	return result == reserveAllowed, epoch
+}
+
+// Refund gives back one attempt previously reserved for key, unless key's
+// window has reset since (see attemptTracker.refund).
+func (l *KeyedAttemptLimiter) Refund(key string, token uint64) {
+	l.tracker.refund(key, token)
+}
+
+// Reset forgets every tracked key. For tests only, which share one
+// package-level limiter across cases; never call it from a request path.
+func (l *KeyedAttemptLimiter) Reset() {
+	l.tracker.mu.Lock()
+	defer l.tracker.mu.Unlock()
+	l.tracker.attempts = make(map[string]*loginAttempt)
 }
 
 // isAdminHTMLRequest detects if the request is for an HTML page vs an API endpoint
