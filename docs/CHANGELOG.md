@@ -35,6 +35,14 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Fixed an MFA bypass for accounts that use only a security key.** On servers without `ENCRYPTION_KEY`, an account whose only second factor was a security key (WebAuthn) - never set up an authenticator app, or turned it off later - could be logged into with just its password plus a two-factor code anyone can compute, skipping the security key entirely. The login code check now only accepts authenticator-app codes for accounts that actually have an authenticator app enabled. Servers with `ENCRYPTION_KEY` set were not affected, nor were accounts with an authenticator app enabled. If you run without `ENCRYPTION_KEY` and have security-key-only accounts, review their recent logins.
+- **Two-factor codes are now limited per account (T48).** Wrong TOTP or recovery codes at login were previously limited only per client IP (5 per 15 minutes) and per login challenge, so an attacker who already had an account's password could keep guessing codes by rotating IP addresses or simply logging in again for a fresh challenge. Each account now allows at most 5 wrong codes per 15 minutes across all challenges and IPs; a correct code doesn't count. A request turned away by this limit no longer counts against the client IP's own MFA budget either, so an account owner retrying during the lockout can still sign in with a security key. Trade-off, accepted on purpose: someone who already holds the password can block that account's MFA step for up to 15 minutes. This also applies to admin accounts with MFA, and on Tor hidden services it limits MFA brute force per account even though every visitor shares one address.
+- **Changing your password is now rate limited.** The user password-change endpoint now allows 5 wrong current passwords per account per 15 minutes, and the admin password-change endpoint 5 in total per 15 minutes (it checks the single built-in admin password, so the budget is shared rather than per IP), so a stolen session can't be used to guess the current password. Only a wrong current password counts; a rejected new password (too short, mismatched confirmation) doesn't.
+- **Login timing no longer reveals which usernames exist.** User and admin login previously skipped the password-hash check when the username didn't exist, so an unknown username answered measurably faster than a known one. Every login attempt now does the same password-hashing work.
+- **In anonymous mode, the username typed at login is no longer written to logs (T46).** Login log lines in user, MFA-aware and admin login now record the submitted username as `redacted` when `ANONYMOUS_MODE` is on, matching how client IPs are already handled. This covers only the username a client submits at login (which may be mistyped, belong to no account, or even be a password typed into the wrong field); other log lines are unchanged.
+
 ## [1.8.0] - 2026-10-01
 
 ### Security

@@ -44,7 +44,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		// Validate input
 		if req.Username == "" || req.Password == "" {
 			slog.Warn("user login failed - empty username or password",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -65,9 +65,9 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		}
 
 		// Check if user exists and password matches
-		if user == nil || !utils.VerifyPassword(user.PasswordHash, req.Password) {
+		if !verifyUserPassword(user, req.Password) {
 			slog.Warn("user login failed - invalid credentials",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -82,7 +82,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		// Check if user is active
 		if !user.IsActive {
 			slog.Warn("user login failed - account disabled",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -137,7 +137,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		}
 
 		slog.Info("user login successful",
-			"username", req.Username,
+			"username", logUsername(req.Username, cfg),
 			"user_id", user.ID,
 			"ip", logIP(clientIP, cfg),
 		)

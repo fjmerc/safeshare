@@ -38,6 +38,11 @@ func setupMFATestEnv(t *testing.T) (*repository.Repositories, *config.Config) {
 		ChallengeExpiryMinutes: 5,
 	}
 
+	// The per-user MFA failure limiter (T48) is package-level and keyed by
+	// user ID, which repeats across tests' fresh databases - start clean.
+	mfaUserFailureLimiter.Reset()
+	t.Cleanup(mfaUserFailureLimiter.Reset)
+
 	return repos, cfg
 }
 

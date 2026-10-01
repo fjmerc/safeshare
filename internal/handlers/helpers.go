@@ -14,6 +14,8 @@ import (
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/utils"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // slowLinkFloorBytesPerSecond is the slowest client transfer rate the server
@@ -156,6 +158,33 @@ func getClientIP(r *http.Request) string {
 // only log output and database storage are redacted.
 func logIP(ip string, cfg *config.Config) string {
 	return privacy.RedactIP(ip, cfg.IsAnonymousMode())
+}
+
+// logUsername returns a client-submitted username for log output,
+// respecting anonymous mode (T46).
+func logUsername(username string, cfg *config.Config) string {
+	return privacy.RedactUsername(username, cfg.IsAnonymousMode())
+}
+
+// passwordTimingDummyHash is compared against when a login names no
+// usable account (see verifyUserPassword). It's generated at
+// utils.BcryptCost so a dummy compare costs the same as a real one. The
+// error is unreachable: GenerateFromPassword fails only for an invalid
+// cost, and BcryptCost is valid.
+var passwordTimingDummyHash, _ = bcrypt.GenerateFromPassword([]byte("safeshare-password-timing-dummy"), utils.BcryptCost)
+
+// verifyUserPassword reports whether password matches user's stored hash.
+// When user is nil (no such username) or has no password hash, it still
+// runs one full bcrypt comparison against a dummy hash and returns false,
+// so the response time doesn't reveal whether the username exists. An
+// empty hash never matches here, unlike utils.VerifyPassword (whose
+// empty-hash-means-no-password rule is for file passwords).
+func verifyUserPassword(user *models.User, password string) bool {
+	if user == nil || user.PasswordHash == "" {
+		_ = bcrypt.CompareHashAndPassword(passwordTimingDummyHash, []byte(password))
+		return false
+	}
+	return utils.VerifyPassword(user.PasswordHash, password)
 }
 
 // storeIP returns the IP for database storage, respecting anonymous mode.

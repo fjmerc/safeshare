@@ -314,9 +314,10 @@ func run() error {
 	// webauthn/begin, webauthn/finish) shares one budget - see
 	// middleware.MFALoginLimiter. Each route below supplies its own success
 	// predicate via Wrap: webauthn/begin proves nothing about the caller and
-	// must never count as a genuine attempt either way (middleware.AlwaysRefund).
-	mfaLoginLimiter := middleware.NewMFALoginLimiter(anonMode)
-	mfaVerifyLoginHandler := mfaLoginLimiter.Wrap("MFA login verification", middleware.DefaultLoginSuccess)(
+	// must never count as a genuine attempt either way (middleware.AlwaysRefund),
+	// and /mfa/verify's own 429s are refunded (middleware.MFAVerifyLoginSuccess).
+	mfaLoginLimiter :=middleware.NewMFALoginLimiter(anonMode)
+	mfaVerifyLoginHandler := mfaLoginLimiter.Wrap("MFA login verification", middleware.MFAVerifyLoginSuccess)(
 		http.HandlerFunc(handlers.MFAVerifyLoginHandler(repos, cfg)))
 	webauthnLoginBeginHandler := mfaLoginLimiter.Wrap("WebAuthn login begin", middleware.AlwaysRefund)(
 		http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg)))
@@ -426,8 +427,12 @@ func run() error {
 		userAuth(http.HandlerFunc(handlers.UserGetCurrentHandler(repos))).ServeHTTP(w, r)
 	})
 
+	// Built once, outside the per-request closure (see registerUserLoginRoute
+	// for why), and inside userAuth so it can key by the authenticated user.
+	changePasswordHandler := userAuth(middleware.RateLimitChangePassword(anonMode)(
+		http.HandlerFunc(handlers.UserChangePasswordHandler(repos))))
 	mux.HandleFunc("/api/auth/change-password", func(w http.ResponseWriter, r *http.Request) {
-		userAuth(http.HandlerFunc(handlers.UserChangePasswordHandler(repos))).ServeHTTP(w, r)
+		changePasswordHandler.ServeHTTP(w, r)
 	})
 
 	// User file management routes (with token audit logging)
@@ -724,8 +729,11 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminUpdateSecuritySettingsHandler(repos, cfg)))).ServeHTTP(w, r)
 		})
 
+		// Built once, outside the per-request closure (see registerUserLoginRoute).
+		adminChangePasswordHandler := adminAuth(csrfProtection(middleware.RateLimitAdminChangePassword(anonMode)(
+			http.HandlerFunc(handlers.AdminChangePasswordHandler(cfg)))))
 		mux.HandleFunc("/admin/api/settings/password", func(w http.ResponseWriter, r *http.Request) {
-			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminChangePasswordHandler(cfg)))).ServeHTTP(w, r)
+			adminChangePasswordHandler.ServeHTTP(w, r)
 		})
 
 		mux.HandleFunc("/admin/api/partial-uploads/cleanup", func(w http.ResponseWriter, r *http.Request) {
