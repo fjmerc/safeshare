@@ -728,10 +728,11 @@ export SESSION_EXPIRY_HOURS=24  # Optional, defaults to 24 hours
 - **Logged failures**: All CSRF validation failures are logged with IP
 
 #### 3. Rate Limiting
-- **Login protection**: 5 attempts per 15 minutes per IP
-- **In-memory tracking**: Efficient sliding window algorithm
-- **Auto cleanup**: Old attempts automatically removed
-- **HTTP 429 response**: Clear feedback when limit exceeded
+- **Login protection**: 5 *failed* attempts per 15 minutes, per client IP, for admin login and user login. Only failures count — a successful login **refunds that one request's own reservation**, not a full reset, so legitimate use (including repeated logins from a shared address, e.g. behind Tor or a NAT) never accumulates toward the lockout, while an attacker who controls one account can't wipe out failed guesses at a different account by interleaving their own successful logins (a full reset was tried and rejected in review for exactly this reason - see CHANGELOG `[Unreleased]`). Any non-success response counts as a failure (wrong credentials, malformed request, wrong HTTP method), not just a rejected password, so the endpoint can't be probed for free. A lockout lasts 15 minutes from the last failed attempt that actually counted - a request rejected because the IP is already locked out does not itself extend that window. This is **per-IP only**: there is currently no separate per-account (per-username) limit (a prototype was built and then removed - see CHANGELOG `[Unreleased]` for why it's unsafe without a way to distinguish the account's real owner from an attacker).
+- **Separate limiters for MFA login verification, MFA enrollment, and SSO.** `/api/auth/mfa/verify`, `.../webauthn/begin`, and `.../webauthn/finish` share one 5/15-minute per-IP budget; `webauthn/begin` participates in that shared budget's cap but never itself adds or subtracts from its failure count, since starting a challenge proves nothing about the caller. The authenticated MFA-enrollment routes (TOTP verify-and-enable, TOTP disable) have their own limiter, keyed by user ID. SSO login-initiation has its own limiter that counts every request regardless of outcome (20/15 minutes per IP), since initiation always redirects and doesn't prove anything either way; SSO callback has a separate refund-only limiter, judging success by the redirect destination rather than the (always-3xx) status code.
+- **In-memory tracking**: a per-key (client IP, or user ID for MFA enrollment) counter that resets once `window` has passed since its last counted attempt - not a "sliding window" in the classical rate-limiting sense; a rejected, over-limit attempt never extends that window (see "Login protection" above)
+- **Auto cleanup**: old attempts automatically removed
+- **HTTP 429 response**: clear feedback when the per-key limit is exceeded
 
 #### 4. Audit Logging
 All admin actions are logged with full context:
