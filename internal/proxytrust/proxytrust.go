@@ -74,14 +74,18 @@ func NormalizeAddr(addr netip.Addr) netip.Addr {
 	return addr
 }
 
-// normalizePrefix unmaps an IPv4-mapped IPv6 prefix (e.g. "::ffff:10.0.0.0/104")
+// NormalizePrefix unmaps an IPv4-mapped IPv6 prefix (e.g. "::ffff:10.0.0.0/104")
 // down to its equivalent plain-IPv4 prefix ("10.0.0.0/8"), adjusting the
 // prefix length to account for the 96 fixed bits of the "::ffff:" preamble.
 // A mapped prefix shorter than /96 doesn't correspond to any coherent IPv4
 // range (part of the fixed "::ffff:" preamble itself would be variable), so
 // that's rejected as a configuration error rather than silently producing a
 // prefix that matches nothing (bug-hunter finding, T41 follow-up).
-func normalizePrefix(p netip.Prefix) (netip.Prefix, error) {
+//
+// Exported (T43) so internal/ipcanon can apply the same CIDR normalization
+// to IP-blocklist entries that ParseListSplit applies to TRUSTED_PROXY_IPS
+// entries, instead of duplicating this logic.
+func NormalizePrefix(p netip.Prefix) (netip.Prefix, error) {
 	addr := p.Addr()
 	bits := p.Bits()
 	if addr.Is4In6() {
@@ -135,7 +139,7 @@ func ParseListSplit(trustedProxyIPs string) (local, cloudflare []netip.Prefix, e
 			if perr != nil {
 				return nil, nil, fmt.Errorf("invalid CIDR %q: %w", entry, perr)
 			}
-			np, nerr := normalizePrefix(p)
+			np, nerr := NormalizePrefix(p)
 			if nerr != nil {
 				return nil, nil, fmt.Errorf("invalid CIDR %q: %w", entry, nerr)
 			}
@@ -175,4 +179,68 @@ func Trusted(addr netip.Addr, prefixes []netip.Prefix) bool {
 		}
 	}
 	return false
+}
+
+// PrefixContains reports whether a fully contains b -- i.e. every address in
+// b is also in a, including the case a == b. Two CIDR prefixes never
+// partially overlap (that's a property of the address space being a binary
+// trie): if they overlap at all, one is always a full subset of the other,
+// so combined with a simple Overlaps() check, this is enough to tell "a is
+// the broader/equal one" apart from "b is the broader one" (T43 code-review
+// follow-up: used by the admin IP-blocklist's self-lockout check to
+// distinguish blocking a trusted range/host outright from merely blocking
+// an address that happens to sit inside a broader trusted range).
+//
+// a and b should both already be masked (e.g. via Prefix.Masked(), which
+// every caller in this codebase already applies before storing or comparing
+// a prefix). Prefixes of different address families never contain each
+// other.
+func PrefixContains(a, b netip.Prefix) bool {
+	if a.Addr().Is4() != b.Addr().Is4() {
+		return false
+	}
+	return a.Bits() <= b.Bits() && a.Contains(b.Addr())
+}
+
+// DefaultRateLimitIPv6PrefixBits is the width of the IPv6 prefix
+// RateLimitGroupKey groups clients by when no operator-configured value is
+// available (RATE_LIMIT_IPV6_PREFIX default; T43).
+const DefaultRateLimitIPv6PrefixBits = 64
+
+// MinRateLimitIPv6PrefixBits and MaxRateLimitIPv6PrefixBits bound the valid
+// range for RATE_LIMIT_IPV6_PREFIX. The lower bound (48) keeps a single
+// configured value from grouping an implausibly large swath of distinct
+// customers/allocations (a /48 is already a full standard end-site
+// allocation) into one rate-limit bucket; 128 (the upper bound) means
+// per-address, i.e. the same behavior as pre-T43 IPv6 handling.
+const (
+	MinRateLimitIPv6PrefixBits = 48
+	MaxRateLimitIPv6PrefixBits = 128
+)
+
+// RateLimitGroupKey returns the key used to group a client address for
+// per-client rate limiting and concurrency caps (login attempt limits,
+// upload/download rate limits, in-flight download/decrypt caps): the full
+// address for IPv4, and addr's leading ipv6PrefixBits-bit prefix for IPv6 --
+// so a client that legitimately rotates addresses within one allocation
+// (routine for many residential/mobile IPv6 networks) is grouped as the one
+// client it actually is, instead of getting a fresh limiter bucket per
+// address (T43). ipv6PrefixBits == 128 (or any value >= 128) disables
+// grouping and returns the full address, matching plain per-address IPv4
+// behavior.
+//
+// addr should already be normalized via NormalizeAddr. An invalid
+// (zero-value) addr returns its own (empty) String().
+func RateLimitGroupKey(addr netip.Addr, ipv6PrefixBits int) string {
+	if !addr.IsValid() || addr.Is4() || ipv6PrefixBits >= MaxRateLimitIPv6PrefixBits {
+		return addr.String()
+	}
+	if ipv6PrefixBits < 0 {
+		ipv6PrefixBits = DefaultRateLimitIPv6PrefixBits
+	}
+	prefix, err := addr.Prefix(ipv6PrefixBits)
+	if err != nil {
+		return addr.String()
+	}
+	return prefix.Addr().String()
 }

@@ -138,6 +138,21 @@ export interface UploadStatus {
 // ============================================================================
 
 /**
+ * Malware scan status values reported on FileInfo.scanStatus (ADR-015).
+ * Mirrors internal/scanning's ScanStatus* constants and sdk/go's
+ * FileInfo.ScanStatus doc comment. `"" | undefined` covers
+ * scanning-disabled and pre-ADR-015 legacy files.
+ */
+export type ScanStatus =
+  | "pending"
+  | "clean"
+  | "infected"
+  | "error"
+  | "skipped"
+  | "not_scanned"
+  | "";
+
+/**
  * Public file information (available without authentication)
  */
 export interface FileInfo {
@@ -153,6 +168,19 @@ export interface FileInfo {
   passwordProtected: boolean;
   /** Number of downloads remaining (null if unlimited) */
   downloadsRemaining: number | null;
+  /**
+   * Malware scan status ("clean", "infected", "pending", "error",
+   * "skipped", "not_scanned", or "" for scanning-disabled/legacy files).
+   * See ADR-015. Optional/undefined for servers that predate this field.
+   */
+  scanStatus?: ScanStatus;
+  /**
+   * False when the scan gate currently blocks downloading this file
+   * (infected, pending, or errored — see ADR-015); download() will throw
+   * FileQuarantinedError, ScanPendingError, or ScanFailedError in that
+   * case. Optional/undefined for servers that predate this field.
+   */
+  downloadAvailable?: boolean;
 }
 
 /**

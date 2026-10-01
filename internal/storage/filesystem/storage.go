@@ -176,8 +176,9 @@ func (fs *FilesystemStorage) Store(ctx context.Context, filename string, reader 
 // uniformly without a type-switch on the backend.
 //
 // DEPLOYMENT ASSUMPTION (do not silently violate):
-// Production claim handlers route filesystem reads via path-based
-// utils.DecryptFileStreamingRangeAny with DB-sourced enc_file_id and
+// Production claim handlers route filesystem reads through
+// utils.OpenSFSEReader (driving http.ServeContent — see
+// internal/handlers/claim_range.go) with DB-sourced enc_file_id and
 // SHA-256 already in scope — i.e. the substitution defence is provided
 // one layer up, not by this wrapper. If a future deployment uses a
 // SHARED filesystem (NFS, Ceph, S3-FUSE, multi-tenant mount with sidecar

@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -308,22 +309,225 @@ func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func
 	}
 }
 
-// maxTrackedLoginAttempts caps how many distinct client IPs a single
-// rate-limiter instance (see newLoginRateLimiter) will track at once. This
-// bounds the attempts map's memory under an attacker spraying requests from
-// many source addresses. It's a var, not a const, so tests can shrink it to
-// exercise the cap without allocating 100k entries.
+// maxTrackedLoginAttempts caps how many distinct keys (client IPs, or user
+// IDs - see attemptTracker) a single attemptTracker will track at once.
+// This bounds the attempts map's memory under an attacker spraying
+// requests from many source addresses. It's a var, not a const, so tests
+// can shrink it to exercise the cap without allocating 100k entries.
 var maxTrackedLoginAttempts = 100_000
 
-// loginAttempt tracks one client IP's recent attempts against a rate
-// limiter built by newLoginRateLimiter.
+// maxAttemptCount is a cheap hardening cap on loginAttempt.count, applied
+// after every increment in attemptTracker.reserve. In normal operation
+// count can never exceed maxAttempts (reserve stops incrementing once a
+// key is over limit - see reserve's doc comment), so this should never
+// actually bind; it exists purely as defense in depth against a future
+// change to that invariant letting count grow without bound.
+const maxAttemptCountMultiplier = 2
+
+// loginAttempt tracks one key's (client IP or user ID) recent attempts
+// against a rate limiter, plus the generation (epoch) its current window
+// belongs to - see attemptTracker.reserve and .refund.
 type loginAttempt struct {
 	count       int
 	lastAttempt time.Time
+	epoch       uint64
 }
 
-// loginRateLimitConfig parameterizes newLoginRateLimiter for each of the
-// three call sites (admin login, user login, TOTP verify), which were
+// attemptTracker is a lock-protected map of loginAttempt entries keyed by
+// an arbitrary string. The various rate limiters below each own one or
+// more instances, one per tracked dimension (e.g. one per-IP).
+type attemptTracker struct {
+	mu          sync.Mutex
+	attempts    map[string]*loginAttempt
+	lastSweep   time.Time
+	lastCapWarn time.Time
+	window      time.Duration
+	// nextEpoch hands out window generations. It only ever increases, so an
+	// entry that is swept and later recreated never reuses an epoch that a
+	// refund from its previous life could still be carrying.
+	nextEpoch uint64
+}
+
+func newAttemptTracker(window time.Duration) *attemptTracker {
+	return &attemptTracker{
+		attempts: make(map[string]*loginAttempt),
+		window:   window,
+	}
+}
+
+// reserveResult reports the outcome of attemptTracker.reserve.
+type reserveResult int
+
+const (
+	// reserveAllowed means the attempt was recorded; the caller may proceed.
+	reserveAllowed reserveResult = iota
+	// reserveOverLimit means key is already at or over maxAttempts.
+	reserveOverLimit
+	// reserveCapReached means key is new and the tracker's key cap
+	// (maxTrackedLoginAttempts) has already been reached.
+	reserveCapReached
+)
+
+// reserve records one attempt against key, before the caller's handler
+// runs, and returns the outcome plus key's current epoch (a generation
+// counter, bumped whenever the entry's window resets - see refund).
+//
+// A key already at or over maxAttempts is rejected WITHOUT incrementing
+// count or touching lastAttempt (reserveOverLimit) - matching the original
+// v1.7.1 design. This matters: lastAttempt is what the window-expiry check
+// below measures from, so a lockout must expire exactly `window` after the
+// last COUNTED attempt. Incrementing (or touching lastAttempt) on a
+// rejected, over-limit request - which an earlier version of this design
+// did - let an attacker who keeps sending requests faster than the window
+// keep sliding the window's start forward indefinitely, extending their
+// own victim's lockout (and, transitively, the victim's own IP, once their
+// legitimate login attempts also start getting rejected) far past the
+// intended 15 minutes.
+//
+// Only failures should ever be reserve()'d without a matching refund (see
+// attemptTracker.refund): a success refunds its own one reservation, so an
+// attacker who already controls one account can't interleave failed
+// guesses at a victim with logins to their own account to wipe the
+// victim-guess count for free (a full reset-to-zero-on-success design was
+// tried and rejected in review for exactly this reason).
+//
+// The reservation happens under the same lock as the limit check, before
+// next.ServeHTTP is called, so a burst of parallel requests from one key
+// can't all pass the check before any of them finished (e.g. a slow
+// password hash) and bypass the lockout (see hotfix v1.7.1).
+//
+// The expired-entry sweep runs at most once a minute rather than on every
+// request, so per-request cost doesn't grow with the number of tracked
+// keys. The number of distinct tracked keys is capped at
+// maxTrackedLoginAttempts; once reached, a new key is rejected
+// (reserveCapReached) rather than growing the map without bound.
+func (t *attemptTracker) reserve(key string, maxAttempts int) (reserveResult, uint64) {
+	now := time.Now()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Sweep expired entries at most once a minute.
+	if now.Sub(t.lastSweep) >= time.Minute {
+		for k, attempt := range t.attempts {
+			if now.Sub(attempt.lastAttempt) > t.window {
+				delete(t.attempts, k)
+			}
+		}
+		t.lastSweep = now
+	}
+
+	attempt, exists := t.attempts[key]
+
+	// The sweep above only runs once a minute, so an entry can outlive its
+	// window by up to that long; reset it here so an expired window never
+	// counts toward the limit. Bumping epoch invalidates any refund still
+	// in flight from the window that just ended - see refund.
+	if exists && now.Sub(attempt.lastAttempt) >= t.window {
+		attempt.count = 0
+		t.nextEpoch++
+		attempt.epoch = t.nextEpoch
+	}
+
+	if exists && attempt.count >= maxAttempts {
+		// Over limit: do not record this attempt at all (see doc comment).
+		return reserveOverLimit, attempt.epoch
+	}
+
+	if !exists {
+		if len(t.attempts) >= maxTrackedLoginAttempts {
+			return reserveCapReached, 0
+		}
+		t.nextEpoch++
+		attempt = &loginAttempt{epoch: t.nextEpoch}
+		t.attempts[key] = attempt
+	}
+
+	attempt.count++
+	if maxCount := maxAttempts * maxAttemptCountMultiplier; attempt.count > maxCount {
+		attempt.count = maxCount
+	}
+	attempt.lastAttempt = now
+	return reserveAllowed, attempt.epoch
+}
+
+// refund gives back exactly one previously reserved attempt for key
+// (count--, never below 0), but only if epoch still matches the entry's
+// current generation - i.e. the window hasn't reset since the matching
+// reserve() call. Called after a response proves success, so a caller who
+// eventually authenticates correctly isn't penalized for that one attempt.
+//
+// The epoch check guards against a refund arriving late (e.g. a very slow
+// handler) after the key's window has already reset: without it, that
+// stale refund would decrement the NEW window's count, silently forgiving
+// one of the new window's real failures - a success from one window
+// reaching backward (well, forward) to erase a failure that has nothing to
+// do with it.
+func (t *attemptTracker) refund(key string, epoch uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	attempt, ok := t.attempts[key]
+	if !ok || attempt.epoch != epoch {
+		return
+	}
+	if attempt.count > 0 {
+		attempt.count--
+	}
+}
+
+// shouldWarnCap reports whether a cap-reached warning should be logged now,
+// rate-limited to once a minute (mirroring the sweep interval) so a
+// sustained attack against the key cap doesn't spam the log.
+func (t *attemptTracker) shouldWarnCap(now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if now.Sub(t.lastCapWarn) < time.Minute {
+		return false
+	}
+	t.lastCapWarn = now
+	return true
+}
+
+// DefaultLoginSuccess is the default success predicate: any response that
+// isn't a client or server error counts as success. Every login handler in
+// this codebase follows the same convention - success falls through to the
+// default 200 OK, failure calls WriteHeader with an explicit 4xx/5xx - so
+// this one predicate is correct for all of them except the SSO callback
+// (see ssoLoginSuccess). Exported so main.go can pass it to
+// MFALoginLimiter.Wrap.
+func DefaultLoginSuccess(status int, _ http.Header) bool {
+	return status < http.StatusBadRequest
+}
+
+// AlwaysRefund always reports success, regardless of the response. Used for
+// a route whose response proves nothing about the caller either way (e.g.
+// webauthn/begin, which only starts a challenge) - see MFALoginLimiter.Wrap.
+// Such a route still participates in the shared reserve/cap check (so it's
+// blocked like everything else once the group is over its limit), but
+// never itself adds to, or subtracts from, the group's failure count.
+func AlwaysRefund(int, http.Header) bool {
+	return true
+}
+
+// ssoLoginSuccess is the success predicate for RateLimitSSOCallback.
+//
+// SSOCallbackHandler (internal/handlers/sso_auth.go) responds with
+// http.StatusFound for every outcome, success and failure alike: a failure
+// redirects to "/login?error=<code>", a success redirects to the validated
+// post-login return URL (or "/dashboard" by default). Status code alone
+// can't tell them apart, so this also inspects the Location header.
+func ssoLoginSuccess(status int, header http.Header) bool {
+	if status >= http.StatusBadRequest {
+		return false
+	}
+	if status >= 300 && status < 400 {
+		return !strings.HasPrefix(header.Get("Location"), "/login?error=")
+	}
+	return true
+}
+
+// loginRateLimitConfig parameterizes newLoginRateLimiter for the two
+// password-login call sites (admin login, user login), which were
 // previously near-identical copies of the same logic.
 type loginRateLimitConfig struct {
 	// label names the limiter in log messages, e.g. "admin login" produces
@@ -335,119 +539,76 @@ type loginRateLimitConfig struct {
 	windowMinutes int
 }
 
-// newLoginRateLimiter builds rate-limiting middleware that tracks failed
-// attempts per client IP in memory.
+// newLoginRateLimiter builds rate-limiting middleware for a password-login
+// route: it tracks failed attempts per client IP.
+//
+// This is per-IP only - there is currently no per-username limit. A
+// per-username (per-account) limit needs a way to distinguish a distributed
+// attacker from the account's legitimate owner (e.g. a signed "known
+// device" bypass cookie) to avoid becoming a denial-of-service vector in
+// its own right: an earlier version of this limiter let an attacker who
+// kept requesting faster than the per-username throttle's delay keep
+// pushing that schedule more than the throttle's give-up threshold ahead of
+// real time, so every login for that username - including the account
+// owner's own correct password - got rejected, and since those rejections
+// weren't refunded at the IP layer either, the victim's own IP eventually
+// locked out too. That's a separate design; this change is per-IP only.
 //
 // The returned middleware is meant to be constructed once by the caller and
 // reused across every request - never inside a per-request handler closure,
 // which would allocate a fresh, empty attempts map each time and the
 // lockout could never trigger (this was a real bug: see hotfix v1.7.1).
-// Because a single instance is shared across concurrent HTTP requests:
 //
-//   - Access to the attempts map is guarded by mu.
-//   - The attempt is reserved (count incremented, lastAttempt set) under
-//     the same lock as the limit check, before next.ServeHTTP is called.
-//     Incrementing only after the handler returned - the original
-//     behavior - let a burst of parallel requests from one IP all pass the
-//     check before any of them finished (e.g. a slow password hash) and
-//     incremented the count, bypassing the lockout entirely.
-//   - The expired-entry sweep runs at most once a minute rather than on
-//     every request, so per-request cost doesn't grow with the number of
-//     tracked IPs.
-//   - The number of distinct tracked IPs is capped at
-//     maxTrackedLoginAttempts; once reached, a request from a new IP is
-//     rejected (fails closed) with the same 429 used for a real lockout,
-//     and a Warn is logged at most once per sweep interval.
+// Only failures count: a successful response (DefaultLoginSuccess) refunds
+// this one request's own reservation rather than resetting the counter to
+// zero (see attemptTracker.reserve's doc comment for why a full reset is
+// unsafe). Any non-success response counts as a failure, including a 405
+// (wrong method) or 400 (malformed body); this is the conservative choice
+// named in the design brief - anything that isn't a proven-good credential
+// exchange should count against the limiter, since silently ignoring it
+// would open a way to probe the endpoint for free.
 func newLoginRateLimiter(anonymousMode bool, cfg loginRateLimitConfig) func(http.Handler) http.Handler {
-	window := time.Duration(cfg.windowMinutes) * time.Minute
-
-	var (
-		mu          sync.Mutex
-		attempts    = make(map[string]*loginAttempt)
-		lastSweep   time.Time
-		lastCapWarn time.Time
-	)
+	ipTracker := newAttemptTracker(time.Duration(cfg.windowMinutes) * time.Minute)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := getClientIP(r)
-			now := time.Now()
+			rawIP := getClientIP(r)
+			// T43: group IPv6 clients by the configured prefix for the
+			// lockout bucket key; logging below still uses the full rawIP.
+			ipKey := utils.RateLimitKey(rawIP)
 
-			mu.Lock()
-
-			// Sweep expired entries at most once a minute.
-			if now.Sub(lastSweep) >= time.Minute {
-				for ip, attempt := range attempts {
-					if now.Sub(attempt.lastAttempt) > window {
-						delete(attempts, ip)
-					}
-				}
-				lastSweep = now
-			}
-
-			attempt, exists := attempts[clientIP]
-
-			// The sweep above only runs once a minute, so an entry can
-			// outlive its window by up to that long; reset it here so an
-			// expired window never counts toward the limit.
-			if exists && now.Sub(attempt.lastAttempt) >= window {
-				attempt.count = 0
-			}
-
-			if exists && attempt.count >= cfg.maxAttempts {
-				attemptCount := attempt.count
-				mu.Unlock()
+			result, epoch := ipTracker.reserve(ipKey, cfg.maxAttempts)
+			switch result {
+			case reserveOverLimit:
 				slog.Warn(cfg.label+" rate limit exceeded",
-					"ip", privacy.RedactIP(clientIP, anonymousMode),
-					"attempts", attemptCount,
+					"ip", privacy.RedactIP(rawIP, anonymousMode),
 				)
+				http.Error(w, cfg.limitedBody, http.StatusTooManyRequests)
+				return
+			case reserveCapReached:
+				if ipTracker.shouldWarnCap(time.Now()) {
+					slog.Warn(cfg.label+" rate limiter tracked-IP cap reached, rejecting new IP",
+						"ip", privacy.RedactIP(rawIP, anonymousMode),
+						"tracked", maxTrackedLoginAttempts,
+					)
+				}
 				http.Error(w, cfg.limitedBody, http.StatusTooManyRequests)
 				return
 			}
 
-			if !exists {
-				if len(attempts) >= maxTrackedLoginAttempts {
-					shouldWarn := now.Sub(lastCapWarn) >= time.Minute
-					if shouldWarn {
-						lastCapWarn = now
-					}
-					mu.Unlock()
-					if shouldWarn {
-						slog.Warn(cfg.label+" rate limiter tracked-IP cap reached, rejecting new IP",
-							"ip", privacy.RedactIP(clientIP, anonymousMode),
-							"tracked", maxTrackedLoginAttempts,
-						)
-					}
-					http.Error(w, cfg.limitedBody, http.StatusTooManyRequests)
-					return
-				}
-				attempt = &loginAttempt{}
-				attempts[clientIP] = attempt
+			captured := &statusCapturingWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(captured, r)
+
+			if DefaultLoginSuccess(captured.statusCode, captured.Header()) {
+				ipTracker.refund(ipKey, epoch)
 			}
-
-			// Reserve this attempt now, under the same lock as the check
-			// above, before calling the (possibly slow) handler.
-			attempt.count++
-			attempt.lastAttempt = now
-			mu.Unlock()
-
-			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// RateLimitTOTPVerify rate limits TOTP verification attempts per user/IP.
-// Prevents brute-force attacks on 6-digit TOTP codes.
-func RateLimitTOTPVerify(anonymousMode bool) func(http.Handler) http.Handler {
-	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
-		label:         "TOTP verification",
-		limitedBody:   "Too many verification attempts. Please try again later.",
-		maxAttempts:   5,
-		windowMinutes: 15,
-	})
-}
-
-// RateLimitAdminLogin rate limits admin login attempts.
+// RateLimitAdminLogin rate limits admin login attempts, per client IP. Only
+// failed attempts count (a successful login refunds this request's own
+// reservation) - see newLoginRateLimiter's doc comment.
 func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
 	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
 		label:         "admin login",
@@ -457,11 +618,14 @@ func RateLimitAdminLogin(anonymousMode bool) func(http.Handler) http.Handler {
 	})
 }
 
-// RateLimitUserLogin rate limits user login attempts.
+// RateLimitUserLogin rate limits user login attempts, per client IP.
 //
 // The caller must construct this once and reuse the returned middleware
 // across all requests, including both the MFA and non-MFA login branches,
 // so an attacker can't dodge the lockout by switching branches.
+//
+// Only failed attempts count; a successful login refunds this request's own
+// reservation - see newLoginRateLimiter's doc comment.
 func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
 	return newLoginRateLimiter(anonymousMode, loginRateLimitConfig{
 		label:         "user login",
@@ -469,6 +633,163 @@ func RateLimitUserLogin(anonymousMode bool) func(http.Handler) http.Handler {
 		maxAttempts:   5,
 		windowMinutes: 15,
 	})
+}
+
+// MFALoginLimiter rate-limits the unauthenticated MFA-login-verification
+// routes (/api/auth/mfa/verify, .../webauthn/begin, .../webauthn/finish)
+// against one shared per-IP budget - matching the pre-refactor design where
+// a single totpRateLimit instance covered all three, so a burst spread
+// across them from one IP still draws from one pool (rather than each
+// route getting its own separate 5-attempt allowance, which would let an
+// attacker multiply their effective budget by switching routes). Each
+// route supplies its own success predicate via Wrap, since a response
+// doesn't mean the same thing on all three - see Wrap and AlwaysRefund.
+type MFALoginLimiter struct {
+	tracker       *attemptTracker
+	maxAttempts   int
+	anonymousMode bool
+}
+
+// NewMFALoginLimiter builds an MFALoginLimiter. Like the other limiters in
+// this package, construct it once and reuse it - see newLoginRateLimiter's
+// doc comment for why.
+func NewMFALoginLimiter(anonymousMode bool) *MFALoginLimiter {
+	return &MFALoginLimiter{
+		tracker:       newAttemptTracker(15 * time.Minute),
+		maxAttempts:   5,
+		anonymousMode: anonymousMode,
+	}
+}
+
+// Wrap builds the middleware for one route in the group. label names it in
+// log messages; isSuccess decides whether a response refunds this
+// request's reservation. Pass DefaultLoginSuccess for a route whose
+// response genuinely proves the caller supplied correct credentials
+// (/mfa/verify, webauthn/finish), or AlwaysRefund for one that doesn't
+// (webauthn/begin - see AlwaysRefund).
+func (l *MFALoginLimiter) Wrap(label string, isSuccess func(int, http.Header) bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rawIP := getClientIP(r)
+			key := utils.RateLimitKey(rawIP)
+
+			result, epoch := l.tracker.reserve(key, l.maxAttempts)
+			switch result {
+			case reserveOverLimit:
+				slog.Warn(label+" rate limit exceeded", "ip", privacy.RedactIP(rawIP, l.anonymousMode))
+				http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
+				return
+			case reserveCapReached:
+				if l.tracker.shouldWarnCap(time.Now()) {
+					slog.Warn(label+" rate limiter tracked-IP cap reached, rejecting new IP",
+						"ip", privacy.RedactIP(rawIP, l.anonymousMode),
+						"tracked", maxTrackedLoginAttempts,
+					)
+				}
+				http.Error(w, "Too many verification attempts. Please try again later.", http.StatusTooManyRequests)
+				return
+			}
+
+			captured := &statusCapturingWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(captured, r)
+			if isSuccess(captured.statusCode, captured.Header()) {
+				l.tracker.refund(key, epoch)
+			}
+		})
+	}
+}
+
+// ipLoginKey is a simpleLimiter keyFn that tracks by client IP alone.
+func ipLoginKey(_ *http.Request, rawIP string) string {
+	return utils.RateLimitKey(rawIP)
+}
+
+// mfaEnrollmentKey is a simpleLimiter keyFn for RateLimitMFAEnrollment: it
+// tracks by authenticated user ID when one is available in context - these
+// routes always run behind UserAuth, so this is the normal case - falling
+// back to client IP only if somehow no user is in context, so the limiter
+// still fails closed rather than not tracking the request at all.
+func mfaEnrollmentKey(r *http.Request, rawIP string) string {
+	if user := GetUserFromContext(r); user != nil {
+		return "user:" + strconv.FormatInt(user.ID, 10)
+	}
+	return "ip:" + utils.RateLimitKey(rawIP)
+}
+
+// simpleLimiter is the common reserve/refund pattern shared by the
+// remaining constructors below (SSO initiation, SSO callback, MFA
+// enrollment), which don't need per-username tracking. keyFn derives the
+// tracked key from the request; isSuccess decides whether a response
+// refunds the reservation - nil means never refund (every request counts,
+// regardless of outcome; see RateLimitSSOInitiation).
+func simpleLimiter(anonymousMode bool, label, limitedBody string, maxAttempts int, window time.Duration, keyFn func(r *http.Request, rawIP string) string, isSuccess func(int, http.Header) bool) func(http.Handler) http.Handler {
+	tracker := newAttemptTracker(window)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rawIP := getClientIP(r)
+			key := keyFn(r, rawIP)
+
+			result, epoch := tracker.reserve(key, maxAttempts)
+			switch result {
+			case reserveOverLimit:
+				slog.Warn(label+" rate limit exceeded", "ip", privacy.RedactIP(rawIP, anonymousMode))
+				http.Error(w, limitedBody, http.StatusTooManyRequests)
+				return
+			case reserveCapReached:
+				if tracker.shouldWarnCap(time.Now()) {
+					slog.Warn(label+" rate limiter tracked-key cap reached, rejecting new key",
+						"ip", privacy.RedactIP(rawIP, anonymousMode),
+						"tracked", maxTrackedLoginAttempts,
+					)
+				}
+				http.Error(w, limitedBody, http.StatusTooManyRequests)
+				return
+			}
+
+			if isSuccess == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			captured := &statusCapturingWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(captured, r)
+			if isSuccess(captured.statusCode, captured.Header()) {
+				tracker.refund(key, epoch)
+			}
+		})
+	}
+}
+
+// RateLimitSSOInitiation rate-limits the SSO login-initiation route
+// (.../sso/{provider}/login). Every request counts, regardless of outcome -
+// there's no success/failure distinction here: even a "successful"
+// initiation (redirecting to the IdP) doesn't prove anything about the
+// caller, and every initiation call inserts an SSO-state row that must
+// itself be bounded regardless of what happens next. This is a flat
+// per-IP cap, higher than the credential-login limiters (20/15min) since
+// legitimate repeated visits (retrying a broken SSO flow, multiple tabs)
+// are common and shouldn't need special-casing.
+func RateLimitSSOInitiation(anonymousMode bool) func(http.Handler) http.Handler {
+	return simpleLimiter(anonymousMode, "SSO login initiation", "Too many login attempts. Please try again later.", 20, 15*time.Minute, ipLoginKey, nil)
+}
+
+// RateLimitSSOCallback rate-limits the SSO callback route
+// (.../sso/{provider}/callback), kept separate from RateLimitSSOInitiation
+// so a burst of initiations can't also exhaust the callback's budget (or
+// vice versa). Refund-only on success - see ssoLoginSuccess for why
+// success/failure here is judged by the redirect Location, not the
+// (always-3xx) status code.
+func RateLimitSSOCallback(anonymousMode bool) func(http.Handler) http.Handler {
+	return simpleLimiter(anonymousMode, "SSO callback", "Too many login attempts. Please try again later.", 5, 15*time.Minute, ipLoginKey, ssoLoginSuccess)
+}
+
+// RateLimitMFAEnrollment rate-limits the *authenticated* MFA-enrollment
+// routes (TOTP verify-and-enable, TOTP disable) - separate from
+// MFALoginLimiter's unauthenticated login-verification group, and keyed by
+// authenticated user ID rather than IP (see mfaEnrollmentKey), since these
+// routes always run behind UserAuth. Refund-only on success.
+func RateLimitMFAEnrollment(anonymousMode bool) func(http.Handler) http.Handler {
+	return simpleLimiter(anonymousMode, "MFA enrollment", "Too many attempts. Please try again later.", 5, 15*time.Minute, mfaEnrollmentKey, DefaultLoginSuccess)
 }
 
 // isAdminHTMLRequest detects if the request is for an HTML page vs an API endpoint

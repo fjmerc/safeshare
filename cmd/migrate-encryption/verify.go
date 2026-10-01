@@ -43,19 +43,27 @@ const verifyBucketSkippedLargeLegacy = "skipped_large_legacy"
 // this tool must never risk sharing a write-capable query path with the
 // rest of the codebase.
 type verifyFileRow struct {
-	ID             int64
-	ClaimCode      string
-	StoredFilename string
-	FileSize       int64
-	SHA256Hash     string
-	EncFileID      []byte
+	ID               int64
+	ClaimCode        string
+	OriginalFilename string
+	StoredFilename   string
+	FileSize         int64
+	SHA256Hash       string
+	EncFileID        []byte
 }
 
 // listFilesForVerify reads file rows directly from db (opened read-only by
 // the caller). includeExpired controls whether expired rows are included.
+//
+// Also reused by the mutating commands in this package (migrateEncryption's
+// legacy branch and runUpgradeFormat — see upgrade.go) as their file
+// listing: both need enc_file_id, same as --verify, and per this function's
+// original rationale, this tool deliberately keeps one hand-rolled query for
+// anything needing enc_file_id rather than widening the shared
+// database.GetAllFiles helper other tools/paths also depend on.
 func listFilesForVerify(db *sql.DB, includeExpired bool) ([]verifyFileRow, error) {
 	query := `
-		SELECT id, claim_code, stored_filename, file_size, sha256_hash, enc_file_id
+		SELECT id, claim_code, original_filename, stored_filename, file_size, sha256_hash, enc_file_id
 		FROM files
 	`
 	if !includeExpired {
@@ -73,7 +81,7 @@ func listFilesForVerify(db *sql.DB, includeExpired bool) ([]verifyFileRow, error
 	for rows.Next() {
 		var row verifyFileRow
 		var sha256Hash sql.NullString
-		if err := rows.Scan(&row.ID, &row.ClaimCode, &row.StoredFilename, &row.FileSize, &sha256Hash, &row.EncFileID); err != nil {
+		if err := rows.Scan(&row.ID, &row.ClaimCode, &row.OriginalFilename, &row.StoredFilename, &row.FileSize, &sha256Hash, &row.EncFileID); err != nil {
 			return nil, fmt.Errorf("failed to scan file row: %w", err)
 		}
 		if sha256Hash.Valid {
@@ -109,6 +117,14 @@ type verifyReport struct {
 
 const (
 	verifyBucketMissingFile = "missing_file"
+
+	// verifyBucketUpgradableToSFSE2 counts files classified as SFSE1 — every
+	// one of them is a candidate for `--upgrade-format` (master finding #10:
+	// SFSE1 has no per-chunk AAD, so it can't detect truncation, reordering,
+	// or cross-file splicing the way SFSE2 can). Counted unconditionally
+	// (not gated on --verify-hash/--verify-decrypt) since it only needs the
+	// format classification, not a content read.
+	verifyBucketUpgradableToSFSE2 = "upgradable_to_sfse2"
 )
 
 // runVerify never writes to db or to any file under uploadsDir — it only
@@ -132,6 +148,17 @@ func runVerify(db *sql.DB, uploadsDir, encryptionKey string, includeExpired, ver
 	}
 
 	for _, row := range rows {
+		if err := utils.ValidateStoredFilename(row.StoredFilename); err != nil {
+			report.Counts["problem"]++
+			report.Problems = append(report.Problems, verifyProblem{
+				ClaimCodePrefix: redactClaimCode(row.ClaimCode),
+				StoredFilename:  row.StoredFilename,
+				DBSize:          row.FileSize,
+				DiskSize:        -1,
+				Issue:           "invalid stored_filename, refusing to touch disk: " + err.Error(),
+			})
+			continue
+		}
 		path := filepath.Join(uploadsDir, row.StoredFilename)
 
 		f, err := os.Open(path)
@@ -156,6 +183,9 @@ func runVerify(db *sql.DB, uploadsDir, encryptionKey string, includeExpired, ver
 			continue
 		}
 		report.Counts[format.String()]++
+		if format == utils.FormatSFSE1 {
+			report.Counts[verifyBucketUpgradableToSFSE2]++
+		}
 		if infoBucket != "" {
 			report.Counts[infoBucket]++
 		}
@@ -416,6 +446,9 @@ func printVerifyReport(w io.Writer, report *verifyReport) {
 	}
 	if n := report.Counts[verifyBucketSkippedLargeLegacy]; n > 0 {
 		fmt.Fprintf(w, "  %-12s %d (legacy file over the --verify-hash whole-buffer size cap; not decrypted)\n", "skipped:", n)
+	}
+	if n := report.Counts[verifyBucketUpgradableToSFSE2]; n > 0 {
+		fmt.Fprintf(w, "  %-12s %d (SFSE1 — no per-chunk AAD; run with --upgrade-format to re-seal as SFSE2, see master finding #10)\n", "upgradable:", n)
 	}
 
 	if len(report.Problems) == 0 {

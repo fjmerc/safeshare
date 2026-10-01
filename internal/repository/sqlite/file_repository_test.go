@@ -19,6 +19,11 @@ import (
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
+	// Register the process-wide connection-pragma hook (PRAGMA
+	// foreign_keys = ON, etc.) before opening, so this test DB enforces the
+	// same FK constraints production connections do (T36).
+	database.EnsureConnectionHook()
+
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
@@ -45,8 +50,16 @@ func TestFileRepository_Create(t *testing.T) {
 	repo := NewFileRepository(db)
 	ctx := context.Background()
 
+	// files.user_id has a real FK to users(id), enforced now that setupTestDB
+	// enables PRAGMA foreign_keys (T36) — a dangling reference to a
+	// nonexistent user id is rejected, so create a real one.
+	user, err := NewUserRepository(db).Create(ctx, "filecreatetest-user", "filecreatetest@example.com", "hash", "user", false)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
 	maxDownloads := 5
-	userID := int64(1)
+	userID := user.ID
 	file := &models.File{
 		ClaimCode:        "TEST123",
 		OriginalFilename: "test.txt",
@@ -60,7 +73,7 @@ func TestFileRepository_Create(t *testing.T) {
 		UserID:           &userID,
 	}
 
-	err := repo.Create(ctx, file)
+	err = repo.Create(ctx, file)
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
@@ -1037,6 +1050,42 @@ func createSessionTestFile(t *testing.T, repo *FileRepository, claimCode string,
 	return file
 }
 
+// TestFileRepository_Delete_CascadesDownloadSessions verifies
+// download_sessions.file_id ON DELETE CASCADE (T36): deleting a file with a
+// live (uncommitted) download session must remove that session row too,
+// rather than leaving a dangling reference.
+func TestFileRepository_Delete_CascadesDownloadSessions(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sescascade", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+
+	var before int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM download_sessions WHERE file_id = ?`, file.ID).Scan(&before); err != nil {
+		t.Fatalf("count before delete: %v", err)
+	}
+	if before != 1 {
+		t.Fatalf("download_sessions rows before delete = %d, want 1", before)
+	}
+
+	if err := repo.Delete(ctx, file.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var after int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM download_sessions WHERE file_id = ?`, file.ID).Scan(&after); err != nil {
+		t.Fatalf("count after delete: %v", err)
+	}
+	if after != 0 {
+		t.Errorf("download_sessions rows after file delete = %d, want 0 (ON DELETE CASCADE)", after)
+	}
+}
+
 // TestFileRepository_CommitDownloadSession_Idempotent — a second commit call
 // against an already-committed session must report AlreadyCommitted and must
 // not touch the counters again.
@@ -1182,7 +1231,7 @@ func TestFileRepository_ReapDownloadSessions_LeaseRenewalPreventsReap(t *testing
 
 	// A 1-second lease TTL would reap the row based on created_at, but the
 	// renewed last_seen_at must keep it alive.
-	cancelled, _, err := repo.ReapDownloadSessions(ctx, 1*time.Second, time.Hour, 24*time.Hour)
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, 1*time.Second, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -1190,7 +1239,7 @@ func TestFileRepository_ReapDownloadSessions_LeaseRenewalPreventsReap(t *testing
 		t.Errorf("cancelled = %d, want 0 (lease was renewed)", cancelled)
 	}
 
-	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -1229,7 +1278,7 @@ func TestFileRepository_ReapDownloadSessions_StalledLeaseThenSlotLost(t *testing
 
 	// Negative TTL == "reap everything created before now" (same convention
 	// as the ADR-012 reservation reaper tests).
-	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -1280,7 +1329,7 @@ func TestFileRepository_LookupDownloadSession_ExpiredByMaxAge(t *testing.T) {
 
 	// A 1-nanosecond maxAge is exceeded by the time this call reaches the
 	// DB, regardless of how fresh the row actually is.
-	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 1*time.Nanosecond)
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 1*time.Nanosecond, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -1317,7 +1366,7 @@ func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(
 
 	// Negative idle TTL: "idle past everything created before now" — reaps
 	// the committed row immediately via the idle-cutoff branch.
-	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, 24*time.Hour)
+	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}
@@ -1339,7 +1388,7 @@ func TestFileRepository_ReapDownloadSessions_CommittedIdleExpiryNoCounterChange(
 
 	// The row itself is gone — a resume attempt with this token now finds
 	// nothing (falls back to "new download" at the handler layer).
-	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -1371,12 +1420,325 @@ func TestFileRepository_LookupDownloadSession_RejectsCompleted(t *testing.T) {
 		t.Fatalf("CompleteDownloadSession: %v", err)
 	}
 
-	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
 	if sess != nil {
 		t.Error("LookupDownloadSession resolved a completed session; want nil (no replay oracle)")
+	}
+}
+
+// TestFileRepository_LookupDownloadSession_ResumesCompletedWithinGrace — T42
+// (amending ADR-014): a completed session's token must still resolve while
+// inside completeGrace of its own completed_at, so a client that paused right
+// after the server finished writing (but before it finished receiving) can
+// resume instead of hitting a 410.
+func TestFileRepository_LookupDownloadSession_ResumesCompletedWithinGrace(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgraceresume", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("LookupDownloadSession returned nil for a completed session still inside its grace window")
+	}
+	if !sess.Committed || !sess.Completed {
+		t.Errorf("Committed=%v Completed=%v, want both true", sess.Committed, sess.Completed)
+	}
+	if sess.CompletedAt.IsZero() {
+		t.Error("CompletedAt is zero, want the time CompleteDownloadSession ran")
+	}
+}
+
+// TestFileRepository_LookupDownloadSession_RejectsCompletedPastGrace — the
+// grace window is bounded: once completeGrace has elapsed since completed_at,
+// Lookup goes back to treating the token exactly like "not found", same as
+// the maxAge/idleTTL cutoffs.
+func TestFileRepository_LookupDownloadSession_RejectsCompletedPastGrace(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgraceexpired", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	// A 1-nanosecond grace is exceeded by the time this call reaches the DB,
+	// regardless of how fresh completed_at actually is (same convention as
+	// TestFileRepository_LookupDownloadSession_ExpiredByMaxAge).
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 1*time.Nanosecond)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess != nil {
+		t.Error("LookupDownloadSession resolved a completed session past its grace window; want nil")
+	}
+}
+
+// TestFileRepository_ReserveSessionBytes_AllowsCompletedWithinGrace — T42:
+// ReserveSessionBytes re-checks grace-window eligibility atomically (not just
+// trusting an earlier Lookup), and the replay it allows is still bounded by
+// `limit` (SessionByteLimit), exactly like an in-flight committed session.
+func TestFileRepository_ReserveSessionBytes_AllowsCompletedWithinGrace(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracereserve", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	limit := repository.SessionByteLimit(file.FileSize)
+	granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, 100, limit, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("ReserveSessionBytes: %v", err)
+	}
+	if !granted {
+		t.Error("ReserveSessionBytes did not grant bytes for a completed session inside its grace window")
+	}
+
+	// Bounded: a request for more than the remaining ceiling must be refused.
+	granted, err = repo.ReserveSessionBytes(ctx, file.ID, token, limit, limit, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("ReserveSessionBytes (over limit): %v", err)
+	}
+	if granted {
+		t.Error("ReserveSessionBytes granted bytes past the 2x-file-size ceiling for a grace-window resume")
+	}
+}
+
+// TestFileRepository_ReserveSessionBytes_RejectsCompletedWhenGraceDisabled —
+// grace=0 restores the pre-T42 behaviour: a completed session is never
+// eligible for ReserveSessionBytes, regardless of how recently it completed.
+func TestFileRepository_ReserveSessionBytes_RejectsCompletedWhenGraceDisabled(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracedisabled", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	limit := repository.SessionByteLimit(file.FileSize)
+	granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, 100, limit, 0)
+	if err != nil {
+		t.Fatalf("ReserveSessionBytes: %v", err)
+	}
+	if granted {
+		t.Error("ReserveSessionBytes granted bytes for a completed session with grace disabled (0)")
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_ProtectsCompletedWithinGrace — T42:
+// a just-completed session must survive the reaper for as long as its own
+// completeGrace window is open, even if idleTTL/maxAge alone would otherwise
+// reap it — otherwise a resume could find LookupDownloadSession's grace
+// window "open" in policy but the row already gone in practice.
+func TestFileRepository_ReapDownloadSessions_ProtectsCompletedWithinGrace(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracereap", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	// Negative idle/max-age would reap ANY committed row immediately under
+	// the pre-T42 rule — but a 5-minute grace must still protect this
+	// just-completed session.
+	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, -1*time.Second, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 0 || expired != 0 {
+		t.Errorf("cancelled=%d expired=%d, want 0/0 (grace must protect the row)", cancelled, expired)
+	}
+
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("session was reaped despite being inside its completeGrace window")
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_ReapsCompletedPastGrace — once
+// completeGrace has elapsed, the reaper's normal idle/max-age rule applies
+// again to a completed row exactly as it does to any other committed row.
+func TestFileRepository_ReapDownloadSessions_ReapsCompletedPastGrace(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracereaped", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	// 1-nanosecond grace is already elapsed, so the idle/max-age cutoffs
+	// (also both negative, i.e. "everything created before now") take over.
+	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, -1*time.Second, 1*time.Nanosecond)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 0 {
+		t.Errorf("cancelled = %d, want 0 (this is the committed/completed path)", cancelled)
+	}
+	if expired < 1 {
+		t.Fatalf("expired = %d, want >= 1 (grace elapsed, row should be reaped)", expired)
+	}
+}
+
+// TestFileRepository_ReapDownloadSessions_GraceDisabledMatchesPreT42Behaviour
+// — grace=0 must reap a completed row under the same idle/max-age rule as
+// before T42, with no special protection at all.
+func TestFileRepository_ReapDownloadSessions_GraceDisabledMatchesPreT42Behaviour(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracedisabledreap", 1)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if _, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CommitDownloadSession: %v", err)
+	}
+	if _, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil {
+		t.Fatalf("CompleteDownloadSession: %v", err)
+	}
+
+	cancelled, expired, err := repo.ReapDownloadSessions(ctx, time.Hour, -1*time.Second, -1*time.Second, 0)
+	if err != nil {
+		t.Fatalf("ReapDownloadSessions: %v", err)
+	}
+	if cancelled != 0 {
+		t.Errorf("cancelled = %d, want 0", cancelled)
+	}
+	if expired < 1 {
+		t.Fatalf("expired = %d, want >= 1 (grace disabled restores pre-T42 idle/max-age reap)", expired)
+	}
+}
+
+// TestFileRepository_GraceWindowResume_NoDoubleCount — end-to-end T42 safety
+// argument: replaying commit/complete against an already-completed session
+// found inside the grace window must not touch download_count or
+// completed_downloads a second time. This is what makes the fix safe: the
+// handler always calls CommitDownloadSession then (conditionally)
+// CompleteDownloadSession on every request, trusted-token resume or not.
+func TestFileRepository_GraceWindowResume_NoDoubleCount(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+	file := createSessionTestFile(t, repo, "sesgracenodouble", 5)
+
+	token, _, err := repo.ReserveDownload(ctx, file.ID, file.ClaimCode)
+	if err != nil || token == "" {
+		t.Fatalf("ReserveDownload: token=%q err=%v", token, err)
+	}
+	if result, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil || result != repository.DownloadCommitCredited {
+		t.Fatalf("CommitDownloadSession: result=%v err=%v", result, err)
+	}
+	if first, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil || !first {
+		t.Fatalf("CompleteDownloadSession: first=%v err=%v", first, err)
+	}
+
+	before, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (before resume): %v", err)
+	}
+	if before.DownloadCount != 1 || before.CompletedDownloads != 1 {
+		t.Fatalf("before resume: download_count=%d completed_downloads=%d, want 1/1", before.DownloadCount, before.CompletedDownloads)
+	}
+
+	// Simulate the handler's grace-window resume path: Lookup resolves the
+	// completed session, ReserveSessionBytes grants replay room, and the
+	// request's own finalize logic always calls both Commit and Complete
+	// again regardless of what Lookup found.
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("LookupDownloadSession (resume): %v", err)
+	}
+	if sess == nil || !sess.Completed {
+		t.Fatalf("expected a resolved, completed session; got %+v", sess)
+	}
+	limit := repository.SessionByteLimit(file.FileSize)
+	if granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, 100, limit, 5*time.Minute); err != nil || !granted {
+		t.Fatalf("ReserveSessionBytes (resume): granted=%v err=%v", granted, err)
+	}
+	if result, err := repo.CommitDownloadSession(ctx, file.ID, token); err != nil || result != repository.DownloadCommitAlreadyCommitted {
+		t.Fatalf("CommitDownloadSession (resume): result=%v err=%v, want AlreadyCommitted", result, err)
+	}
+	if first, err := repo.CompleteDownloadSession(ctx, file.ID, token); err != nil || first {
+		t.Fatalf("CompleteDownloadSession (resume): first=%v err=%v, want first=false (no re-fire)", first, err)
+	}
+
+	after, err := repo.GetByID(ctx, file.ID)
+	if err != nil {
+		t.Fatalf("GetByID (after resume): %v", err)
+	}
+	if after.DownloadCount != before.DownloadCount {
+		t.Errorf("download_count changed on grace-window resume: before=%d after=%d", before.DownloadCount, after.DownloadCount)
+	}
+	if after.CompletedDownloads != before.CompletedDownloads {
+		t.Errorf("completed_downloads changed on grace-window resume: before=%d after=%d", before.CompletedDownloads, after.CompletedDownloads)
 	}
 }
 
@@ -1409,7 +1771,7 @@ func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 	grantedCount := 0
 	const attempts = 30
 	for i := 0; i < attempts; i++ {
-		granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, rangeLen, limit)
+		granted, err := repo.ReserveSessionBytes(ctx, file.ID, token, rangeLen, limit, 0)
 		if err != nil {
 			t.Fatalf("ReserveSessionBytes attempt %d: %v", i, err)
 		}
@@ -1421,7 +1783,7 @@ func TestFileRepository_ReserveSessionBytes_BoundedByLimit(t *testing.T) {
 		t.Errorf("grantedCount = %d, want exactly %d (limit=%d, rangeLen=%d, attempts=%d)", grantedCount, maxGrantable, limit, rangeLen, attempts)
 	}
 
-	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour)
+	sess, err := repo.LookupDownloadSession(ctx, file.ID, token, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("LookupDownloadSession: %v", err)
 	}
@@ -1480,7 +1842,7 @@ func TestFileRepository_ReapDownloadSessions_RefundsPerRowNotAggregate(t *testin
 		t.Fatalf("uncounted_bytes before reap = %d, want 512", before.UncountedBytes)
 	}
 
-	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour)
+	cancelled, _, err := repo.ReapDownloadSessions(ctx, -1*time.Second, time.Hour, 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("ReapDownloadSessions: %v", err)
 	}

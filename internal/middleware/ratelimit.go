@@ -37,6 +37,9 @@ type RateLimiter struct {
 // type needs its own bucket: sharing one slice per IP meant the chunks of a
 // single large upload counted against the upload and download limits, locking
 // the IP out of new uploads and downloads for an hour.
+//
+// ip is expected to already be grouped via utils.RateLimitKey (T43) so IPv6
+// clients within the same configured prefix share one bucket.
 func bucketKey(limitType, ip string) string {
 	return limitType + "|" + ip
 }
@@ -179,8 +182,11 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Check rate limit
-			if !rl.checkLimit(ip, limitType, limit) {
+			// Check rate limit. T43: the bucket key groups IPv6 clients by
+			// the configured prefix (default /64) so address rotation
+			// within one allocation doesn't grant a fresh budget; logging
+			// below still uses the full ip, not this grouped key.
+			if !rl.checkLimit(utils.RateLimitKey(ip), limitType, limit) {
 				slog.Warn("rate limit exceeded",
 					"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 					"limit_type", limitType,

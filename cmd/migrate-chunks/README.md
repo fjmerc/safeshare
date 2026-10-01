@@ -239,8 +239,14 @@ After successful migration:
 
 2. **Check profiling logs:**
    ```bash
-   # Look for performance improvements in logs
-   docker logs safeshare 2>&1 | grep "DecryptFileStreamingRange: completed"
+   # Look for performance improvements in logs. As of the 3c-3 hardening
+   # pass, claim downloads (Range or full-file) are served via
+   # utils.SFSEReader driving http.ServeContent, not the retired
+   # DecryptFileStreamingRange helper this used to grep for — look for
+   # "SFSE2 decrypt complete" instead (only emitted for SFSE2 content; note
+   # it's slog.Debug-level, so the server must be run with debug logging
+   # enabled for this to appear).
+   docker logs safeshare 2>&1 | grep "SFSE2 decrypt complete"
    ```
 
 3. **Monitor client timeouts:**

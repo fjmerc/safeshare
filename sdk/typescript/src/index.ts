@@ -39,6 +39,7 @@ export type {
   ChunkUploadResult,
   UploadStatus,
   FileInfo,
+  ScanStatus,
   UserFile,
   UserFilesResponse,
   DownloadOptions,
@@ -67,4 +68,10 @@ export {
   PasswordRequiredError,
   DownloadLimitReachedError,
   ChunkedUploadError,
+  MalwareDetectedError,
+  FileQuarantinedError,
+  ScanPendingError,
+  ScanUnavailableError,
+  ScanFailedError,
+  UnscannableUploadError,
 } from "./errors.js";

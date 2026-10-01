@@ -551,6 +551,42 @@ bookkeeping cleanup, not a security control. A genuinely slow-but-active
 transfer renews its own lease as bytes flow, so transfer duration alone never
 causes a released slot or a double-delivered file.
 
+### Post-completion resume grace window (T42)
+The server marks a capped download's session "complete" as soon as it has
+written the entire file to the response — but a client (a resumable download
+manager, including SafeShare's own web UI and most browsers' built-in one)
+can still be interrupted between receiving the last byte and finishing its
+own write to disk. Without any allowance for this, a resume attempt in that
+narrow window would present a perfectly valid session token that the server
+had already retired, and get an unhelpful "Download Limit Reached" instead of
+its remaining bytes. `DOWNLOAD_SESSION_COMPLETE_GRACE` (default 5 minutes,
+clamped to `[1s, 1h]`; an unparseable or negative value fails closed to `0`
+rather than silently defaulting to enabled; `0`, or the words `off` /
+`false` / `disabled` / `none` / `no`, disable it outright) lets a
+trusted-token resume still resolve a session for a short window after it
+completed — but ONLY for a genuine tail resume (a partial `Range` that
+starts after byte 0 and reaches EOF), never a plain re-request of the whole
+file or an arbitrary range; anything else against a completed session is
+treated exactly like an unresolved token.
+
+This does not reopen the replay concern the completed-session check above
+exists for. `ReserveSessionBytes`' ~2×(file size) ceiling now bounds
+`bytes_reserved` for a session's **entire lifetime** — the request that
+creates the session charges its own declared range against the ceiling
+immediately, the same way every resume already did — not just the resumes on
+top of an unaccounted-for first transfer. A normal download plus pause/resume
+retries stays well within that budget; a client that tries to extract more
+than roughly two copies of the file total, through any combination of an
+initial request and resumes, before or after completion, eventually gets a
+charge refused and falls back to a fresh reservation, which then enforces
+`max_downloads` normally. Re-committing/re-completing an already-committed/
+-completed session is an idempotent no-op — `download_count` is never
+incremented and the `file.downloaded` webhook is never re-fired for a
+grace-window resume. The background reaper also protects a just-completed
+session's row from being swept by `DOWNLOAD_SESSION_IDLE_TTL` before its own
+grace window elapses, so the window is never "open" in policy but empty in
+practice. See ADR-014's addendum for the full design.
+
 ## 📊 Enhanced Audit Logging
 
 ### Overview
@@ -692,10 +728,11 @@ export SESSION_EXPIRY_HOURS=24  # Optional, defaults to 24 hours
 - **Logged failures**: All CSRF validation failures are logged with IP
 
 #### 3. Rate Limiting
-- **Login protection**: 5 attempts per 15 minutes per IP
-- **In-memory tracking**: Efficient sliding window algorithm
-- **Auto cleanup**: Old attempts automatically removed
-- **HTTP 429 response**: Clear feedback when limit exceeded
+- **Login protection**: 5 *failed* attempts per 15 minutes, per client IP, for admin login and user login. Only failures count — a successful login **refunds that one request's own reservation**, not a full reset, so legitimate use (including repeated logins from a shared address, e.g. behind Tor or a NAT) never accumulates toward the lockout, while an attacker who controls one account can't wipe out failed guesses at a different account by interleaving their own successful logins (a full reset was tried and rejected in review for exactly this reason - see CHANGELOG `[Unreleased]`). Any non-success response counts as a failure (wrong credentials, malformed request, wrong HTTP method), not just a rejected password, so the endpoint can't be probed for free. A lockout lasts 15 minutes from the last failed attempt that actually counted - a request rejected because the IP is already locked out does not itself extend that window. This is **per-IP only**: there is currently no separate per-account (per-username) limit (a prototype was built and then removed - see CHANGELOG `[Unreleased]` for why it's unsafe without a way to distinguish the account's real owner from an attacker).
+- **Separate limiters for MFA login verification, MFA enrollment, and SSO.** `/api/auth/mfa/verify`, `.../webauthn/begin`, and `.../webauthn/finish` share one 5/15-minute per-IP budget; `webauthn/begin` participates in that shared budget's cap but never itself adds or subtracts from its failure count, since starting a challenge proves nothing about the caller. The authenticated MFA-enrollment routes (TOTP verify-and-enable, TOTP disable) have their own limiter, keyed by user ID. SSO login-initiation has its own limiter that counts every request regardless of outcome (20/15 minutes per IP), since initiation always redirects and doesn't prove anything either way; SSO callback has a separate refund-only limiter, judging success by the redirect destination rather than the (always-3xx) status code.
+- **In-memory tracking**: a per-key (client IP, or user ID for MFA enrollment) counter that resets once `window` has passed since its last counted attempt - not a "sliding window" in the classical rate-limiting sense; a rejected, over-limit attempt never extends that window (see "Login protection" above)
+- **Auto cleanup**: old attempts automatically removed
+- **HTTP 429 response**: clear feedback when the per-key limit is exceeded
 
 #### 4. Audit Logging
 All admin actions are logged with full context:
@@ -778,6 +815,41 @@ When an IP is blocked:
 3. **Download prevention**: HTTP 403 on download attempts
 4. **Audit trail**: All blocked attempts logged
 5. **Admin bypass**: Admin dashboard remains accessible
+
+**Canonical matching and CIDR ranges**: an entry accepts a bare IPv4/IPv6
+address or a CIDR range (e.g. `203.0.113.0/24`, `2001:db8:1:2::/64`), and is
+canonicalized before storage — IPv4-mapped IPv6 addresses are unmapped, zone
+IDs are dropped, and hex is lowercased/compressed — so the same logical
+address always matches the blocklist regardless of how it was typed or how
+a proxy represented it on the wire. A CIDR broader than `/8` (IPv4) or `/32`
+(IPv6) is rejected, as is any range that would include loopback or the
+requesting admin's own current IP, to prevent an operator from locking
+themselves out with a typo.
+
+**IPv6 rate limiting**: by default, IPv6 clients are rate-limited and
+concurrency-capped per `/64` prefix rather than per exact address, since many
+residential/mobile IPv6 allocations let a client rotate addresses freely
+within their own `/64`. Configurable via `RATE_LIMIT_IPV6_PREFIX` (default
+`64`, valid range 48–128; `128` restores strict per-address limiting). This
+does not affect what's logged or stored as the client's IP — audit logs and
+`uploader_ip` always keep the full address; only the rate-limit/concurrency
+bucket key is grouped.
+
+Grouping by `/64` is the same tradeoff IPv4 clients behind NAT already have:
+one abuser sharing a `/64` (or a NAT gateway) can exhaust the rate limit or
+trigger a login lockout for every other client sharing that same allocation,
+since they all group into the same bucket. This is expected, not a bug —
+without it, an attacker could bypass every limit for free by requesting a
+new address within their own `/64` on each attempt. If a deployment sees
+this cause real collateral impact (e.g. many legitimate users sharing one
+provider's `/64`), set `RATE_LIMIT_IPV6_PREFIX=128` to restore strict
+per-address limiting, accepting the original address-rotation bypass in
+exchange for finer-grained isolation between clients. The IP-blocklist's
+Block IP action is unaffected either way — it's always per-address or
+per-explicit-CIDR, never implicitly grouped by `/64` — so blocking a
+rotating IPv6 abuser outright requires blocking its `/64` explicitly (e.g.
+`2001:db8:1234:5678::/64`), not just the one address seen in a log line; see
+the admin dashboard's Block IP field for this exact suggestion.
 
 **Blocked access log**:
 ```json
@@ -1233,6 +1305,10 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.8.0 | IP blocklist entries bypassable via equivalent address spellings (case, leading zeros, IPv4-mapped IPv6) | Medium |
+| v1.8.0 | Per-IP rate limits and login lockouts bypassable by rotating IPv6 addresses within one /64 | Medium |
+| v1.8.0 | TOTP brute-force guard reset by the always-successful WebAuthn challenge route; SSO initiation limit ineffective | Medium |
+| v1.8.0 | Admin tools produced SFSE1 files (no truncation/reorder detection); download-limit replay ceiling ignored the first request | Low |
 | v1.7.1 | Login brute-force lockout never took effect for admin/user password logins | High |
 | v1.7.1 | Remote crash (`fatal error: concurrent map iteration and map write`) from concurrent TOTP/SSO login requests | High |
 | v1.7.1 | Login lockout counter bypassable via parallel request bursts from one IP | Medium |

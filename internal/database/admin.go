@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/ipcanon"
 	"github.com/fjmerc/safeshare/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -168,12 +169,27 @@ func CleanupExpiredSessions(db *sql.DB) error {
 	return nil
 }
 
-// BlockIP adds an IP address to the blocklist
+// BlockIP adds an IP address or CIDR range to the blocklist. ipAddress is
+// canonicalized before storage (T43) -- see ipcanon.CanonicalizeEntry.
+//
+// NOTE: this legacy *sql.DB helper package predates the repository pattern
+// and is retained only for internal/integration's existing tests.
+// Production code uses repository.AdminRepository (see
+// internal/repository/sqlite and internal/repository/postgres), whose
+// IsIPBlocked also matches CIDR-range containment; this helper does not.
+// (Deliberately not marked as a formal "Deprecated:" doc comment, since
+// that would flag its one legitimate remaining caller as a staticcheck
+// SA1019 lint violation.)
 func BlockIP(db *sql.DB, ipAddress, reason, blockedBy string) error {
+	canonical, _, err := ipcanon.CanonicalizeEntry(ipAddress)
+	if err != nil {
+		return fmt.Errorf("invalid IP address or CIDR: %w", err)
+	}
+
 	query := `INSERT INTO blocked_ips (ip_address, reason, blocked_by)
 		VALUES (?, ?, ?)`
 
-	_, err := db.Exec(query, ipAddress, reason, blockedBy)
+	_, err = db.Exec(query, canonical, reason, blockedBy)
 	if err != nil {
 		return fmt.Errorf("failed to block IP: %w", err)
 	}
@@ -181,11 +197,18 @@ func BlockIP(db *sql.DB, ipAddress, reason, blockedBy string) error {
 	return nil
 }
 
-// UnblockIP removes an IP address from the blocklist
+// UnblockIP removes an IP address or CIDR range from the blocklist.
+// ipAddress is canonicalized the same way BlockIP canonicalizes it before
+// storage (T43). See BlockIP's note.
 func UnblockIP(db *sql.DB, ipAddress string) error {
+	canonical, _, err := ipcanon.CanonicalizeEntry(ipAddress)
+	if err != nil {
+		return fmt.Errorf("invalid IP address or CIDR: %w", err)
+	}
+
 	query := `DELETE FROM blocked_ips WHERE ip_address = ?`
 
-	result, err := db.Exec(query, ipAddress)
+	result, err := db.Exec(query, canonical)
 	if err != nil {
 		return fmt.Errorf("failed to unblock IP: %w", err)
 	}
@@ -202,12 +225,19 @@ func UnblockIP(db *sql.DB, ipAddress string) error {
 	return nil
 }
 
-// IsIPBlocked checks if an IP address is blocked
+// IsIPBlocked checks if an IP address is blocked by exact (canonicalized)
+// match. Unlike repository.AdminRepository.IsIPBlocked, this legacy helper
+// does NOT check CIDR-range containment -- see BlockIP's note.
 func IsIPBlocked(db *sql.DB, ipAddress string) (bool, error) {
+	canonical, err := ipcanon.Canonicalize(ipAddress)
+	if err != nil {
+		canonical = ipAddress
+	}
+
 	query := `SELECT COUNT(*) FROM blocked_ips WHERE ip_address = ?`
 
 	var count int
-	err := db.QueryRow(query, ipAddress).Scan(&count)
+	err = db.QueryRow(query, canonical).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check if IP is blocked: %w", err)
 	}

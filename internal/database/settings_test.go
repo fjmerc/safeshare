@@ -11,6 +11,10 @@ import (
 func setupSettingsTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
+	// Register the process-wide connection-pragma hook (PRAGMA
+	// foreign_keys = ON, etc.) before opening (T36).
+	registerConnectionHook()
+
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
@@ -46,6 +50,10 @@ func setupTestDBWithFile(t *testing.T) (*sql.DB, string) {
 	}
 	tmpFile.Close()
 	dbPath := tmpFile.Name()
+
+	// Register the process-wide connection-pragma hook (PRAGMA
+	// foreign_keys = ON, etc.) before opening (T36).
+	registerConnectionHook()
 
 	// Initialize database
 	db, err := sql.Open("sqlite", dbPath)

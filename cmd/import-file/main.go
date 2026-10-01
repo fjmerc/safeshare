@@ -54,6 +54,17 @@ type ImportOptions struct {
 	PublicURL  string
 	UploaderIP string
 
+	// DB is the single shared connection opened once in run() via
+	// database.OpenForCLI and reused by every function that needs it
+	// (loadSettings, the per-file quota checks, encryptAndRegisterFile) —
+	// previously each of those opened (and rarely closed promptly) its own
+	// pool against the same file, and none of them used the server's
+	// connection setup (busy_timeout, _txlock=immediate), so a write here
+	// could fail immediately instead of waiting on a lock briefly
+	// contended with the live server. nil in tests that call these
+	// functions directly without going through run().
+	DB *sql.DB
+
 	// Behavior flags
 	DryRun   bool
 	Verify   bool
@@ -148,10 +159,29 @@ func run(args []string) error {
 		return nil
 	}
 
+	// This tool only supports a local SQLite database and local filesystem
+	// uploads directory — refuse early, before touching anything, if the
+	// environment says the running server actually uses PostgreSQL and/or
+	// S3 (see database.RequireLocalBackends's doc comment).
+	if err := database.RequireLocalBackends(); err != nil {
+		return err
+	}
+
 	// Validate required parameters
 	if err := validateOptions(opts); err != nil {
 		return fmt.Errorf("%v\n\nUse -h for usage information", err)
 	}
+
+	// Open the database once, with the same connection setup the live
+	// server uses (busy_timeout, _txlock=immediate, WAL) — see
+	// database.OpenForCLI's doc comment — and reuse this single connection
+	// pool for every DB access below instead of each one opening its own.
+	db, err := database.OpenForCLI(opts.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+	opts.DB = db
 
 	// Load settings from database (blocked extensions, quota)
 	if err := loadSettings(opts); err != nil {
@@ -252,16 +282,11 @@ func shouldEncrypt(opts *ImportOptions) bool {
 	return opts.EncryptKey != "" && len(opts.EncryptKey) == 64
 }
 
-// loadSettings loads blocked extensions and quota from database
+// loadSettings loads blocked extensions and quota from database. Uses the
+// shared opts.DB connection (opened once in run() via database.OpenForCLI).
 func loadSettings(opts *ImportOptions) error {
-	db, err := sql.Open("sqlite", opts.DBPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
 	// Load settings from database
-	settings, err := database.GetSettings(db)
+	settings, err := database.GetSettings(opts.DB)
 	if err != nil {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
@@ -333,17 +358,7 @@ func importSingleFile(opts *ImportOptions) *ImportResult {
 
 	// Check quota
 	if opts.QuotaLimitGB > 0 {
-		db, err := sql.Open("sqlite", opts.DBPath)
-		if err != nil {
-			return &ImportResult{
-				SourcePath: opts.SourceFile,
-				Success:    false,
-				Error:      fmt.Sprintf("failed to open database: %v", err),
-			}
-		}
-		defer db.Close()
-
-		if err := checkQuotaAvailable(db, sourceInfo.Size(), opts.QuotaLimitGB); err != nil {
+		if err := checkQuotaAvailable(opts.DB, sourceInfo.Size(), opts.QuotaLimitGB); err != nil {
 			return &ImportResult{
 				SourcePath:  opts.SourceFile,
 				DisplayName: displayName,
@@ -456,22 +471,11 @@ func importDirectory(opts *ImportOptions) *BatchSummary {
 			continue
 		}
 
-		// Check quota
+		// Check quota — reuses the shared opts.DB connection rather than
+		// opening (and closing) a fresh pool against the same database file
+		// for every single file in the batch.
 		if opts.QuotaLimitGB > 0 {
-			db, err := sql.Open("sqlite", opts.DBPath)
-			if err != nil {
-				result := &ImportResult{
-					SourcePath: path,
-					Success:    false,
-					Error:      fmt.Sprintf("failed to open database: %v", err),
-				}
-				summary.Results = append(summary.Results, result)
-				summary.Failed++
-				continue
-			}
-
-			if err := checkQuotaAvailable(db, info.Size(), opts.QuotaLimitGB); err != nil {
-				db.Close()
+			if err := checkQuotaAvailable(opts.DB, info.Size(), opts.QuotaLimitGB); err != nil {
 				result := &ImportResult{
 					SourcePath:  path,
 					DisplayName: displayName,
@@ -485,7 +489,6 @@ func importDirectory(opts *ImportOptions) *BatchSummary {
 				}
 				continue
 			}
-			db.Close()
 		}
 
 		// Import file
@@ -521,13 +524,28 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		OriginalSize: originalSize,
 	}
 
-	// Open database
-	db, err := sql.Open("sqlite", opts.DBPath)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to open database: %v", err)
-		return result
+	// Uses the shared opts.DB connection (opened once in run() via
+	// database.OpenForCLI) rather than opening its own pool per file.
+	db := opts.DB
+
+	// --user-id: verify the user actually exists before doing any
+	// encryption work. files.user_id has a foreign key to users(id), which
+	// database.OpenForCLI's connection setup always enforces (PRAGMA
+	// foreign_keys = ON) — a nonexistent id would otherwise only surface as
+	// an opaque "FOREIGN KEY constraint failed" from CreateFile at the very
+	// end, after this file has already been fully encrypted (or copied)
+	// and hashed for nothing.
+	if opts.UserID > 0 {
+		user, err := database.GetUserByID(db, int64(opts.UserID))
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to look up --user-id %d: %v", opts.UserID, err)
+			return result
+		}
+		if user == nil {
+			result.Error = fmt.Sprintf("--user-id %d does not exist", opts.UserID)
+			return result
+		}
 	}
-	defer db.Close()
 
 	// Generate UUID for stored filename
 	storedFilename := uuid.New().String()
@@ -536,15 +554,29 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 	// Process the file (encrypt or copy based on encryption key)
 	useEncryption := shouldEncrypt(opts)
 	var processTime time.Duration
+	// encFileID is the SFSE2 AAD file identity (ADR-011), generated fresh for
+	// every encrypted import via the same helper the web upload path uses
+	// (internal/handlers/upload.go's streamFileToStorage) so this CLI import
+	// path produces files indistinguishable in format from a browser upload.
+	// Left nil for a plaintext (unencrypted) import.
+	var encFileID []byte
 
 	if useEncryption {
-		// Encrypt the file
+		// Encrypt the file. Always emits SFSE2 (never SFSE1/legacy) — same
+		// helpers as the web upload path: GenerateEncFileID +
+		// EncryptFileStreamingV2, reused rather than reimplemented here.
 		if !opts.Quiet && !opts.JSON {
 			fmt.Printf("  ├─ Encrypting... ")
 		}
 		startTime := time.Now()
 
-		err = utils.EncryptFileStreaming(sourcePath, destPath, opts.EncryptKey)
+		var err error
+		encFileID, err = utils.GenerateEncFileID()
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to generate enc_file_id: %v", err)
+			return result
+		}
+		err = utils.EncryptFileStreamingV2(sourcePath, destPath, opts.EncryptKey, encFileID)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to encrypt file: %v", err)
 			return result
@@ -600,7 +632,7 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 
 		var err error
 		if useEncryption {
-			err = verifyEncryptedFile(sourcePath, destPath, opts.EncryptKey)
+			err = verifyEncryptedFile(sourcePath, destPath, opts.EncryptKey, encFileID, originalSize)
 		} else {
 			err = verifyUnencryptedFile(sourcePath, destPath)
 		}
@@ -681,6 +713,7 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 		ExpiresAt:        expiresAt,
 		UploaderIP:       opts.UploaderIP,
 		SHA256Hash:       sha256Hash,
+		EncFileID:        encFileID,
 	}
 
 	// Set optional fields
@@ -725,8 +758,13 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 	return result
 }
 
-// verifyEncryptedFile verifies encrypted file integrity by decrypting and comparing hashes
-func verifyEncryptedFile(sourcePath, encryptedPath, encryptionKey string) error {
+// verifyEncryptedFile verifies encrypted file integrity by decrypting and comparing hashes.
+// encFileID and plaintextLen are the SFSE2 AAD identity and expected plaintext
+// length generated/recorded for this import (see encryptAndRegisterFile) —
+// passing them lets DecryptFileStreamingV2 authenticate every chunk's AAD and
+// cross-check the header's total_plaintext_len, not just the whole-file hash
+// comparison this function already does below.
+func verifyEncryptedFile(sourcePath, encryptedPath, encryptionKey string, encFileID []byte, plaintextLen int64) error {
 	// Calculate hash of original file
 	originalHash, err := hashFile(sourcePath)
 	if err != nil {
@@ -737,8 +775,8 @@ func verifyEncryptedFile(sourcePath, encryptedPath, encryptionKey string) error 
 	tempDecrypted := filepath.Join(os.TempDir(), uuid.New().String())
 	defer os.Remove(tempDecrypted)
 
-	// Decrypt encrypted file
-	if err := utils.DecryptFileStreaming(encryptedPath, tempDecrypted, encryptionKey); err != nil {
+	// Decrypt encrypted file (SFSE2 — see encryptAndRegisterFile)
+	if err := utils.DecryptFileStreamingV2(encryptedPath, tempDecrypted, encryptionKey, encFileID, originalHash, plaintextLen); err != nil {
 		return fmt.Errorf("failed to decrypt: %w", err)
 	}
 

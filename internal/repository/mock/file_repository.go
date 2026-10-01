@@ -83,6 +83,7 @@ type mockDownloadSession struct {
 	lastSeenAt    time.Time
 	committed     bool
 	completed     bool
+	completedAt   time.Time
 	bytesServed   int64
 	probeGranted  int64
 	bytesReserved int64
@@ -544,7 +545,12 @@ func (r *FileRepository) ReserveDownload(ctx context.Context, fileID int64, expe
 }
 
 // ReserveSessionBytes implements repository.FileRepository.ReserveSessionBytes
-func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64) (bool, error) {
+//
+// T42: a completed session is also eligible while it is still within
+// completeGrace of its own completedAt — re-checked here (not just trusted
+// from an earlier LookupDownloadSession call) so a session that crosses the
+// grace boundary between the two calls can't sneak past it.
+func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, token string, length, limit int64, completeGrace time.Duration) (bool, error) {
 	if r.ReserveSessionBytesError != nil {
 		return false, r.ReserveSessionBytesError
 	}
@@ -562,7 +568,10 @@ func (r *FileRepository) ReserveSessionBytes(ctx context.Context, fileID int64, 
 	}
 
 	s, present := r.sessions[token]
-	if !present || s.fileID != fileID || s.completed {
+	if !present || s.fileID != fileID {
+		return false, nil
+	}
+	if s.completed && !(completeGrace > 0 && time.Since(s.completedAt) <= completeGrace) {
 		return false, nil
 	}
 	if s.bytesReserved+length > limit {
@@ -603,7 +612,7 @@ func (r *FileRepository) ReleaseSessionBytes(ctx context.Context, fileID int64, 
 }
 
 // LookupDownloadSession implements repository.FileRepository.LookupDownloadSession
-func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge time.Duration) (*repository.DownloadSession, error) {
+func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64, token string, idleTTL, maxAge, completeGrace time.Duration) (*repository.DownloadSession, error) {
 	if r.LookupDownloadSessionError != nil {
 		return nil, r.LookupDownloadSessionError
 	}
@@ -626,9 +635,27 @@ func (r *FileRepository) LookupDownloadSession(ctx context.Context, fileID int64
 	}
 	// A completed session has already delivered the whole file once —
 	// replaying its token must not resolve to a streamable session (see
-	// ReserveSessionBytes and ADR-014 bug-hunter finding).
+	// ReserveSessionBytes and ADR-014 bug-hunter finding), EXCEPT for a short
+	// completeGrace window right after completed_at (T42): that lets a client
+	// that paused just after the server finished writing — but before it
+	// finished receiving — resume with its still-valid token instead of
+	// getting a 410. completeGrace <= 0 disables this and restores the
+	// original unconditional rejection.
 	if s.completed {
-		return nil, nil
+		if completeGrace <= 0 || time.Since(s.completedAt) > completeGrace {
+			return nil, nil
+		}
+		// Governed solely by completeGrace inside the window, not idleTTL/maxAge.
+		return &repository.DownloadSession{
+			FileID:        fileID,
+			Committed:     true,
+			Completed:     true,
+			BytesServed:   s.bytesServed,
+			BytesReserved: s.bytesReserved,
+			CreatedAt:     s.createdAt,
+			LastSeenAt:    s.lastSeenAt,
+			CompletedAt:   s.completedAt,
+		}, nil
 	}
 	now := time.Now()
 	if maxAge > 0 && now.Sub(s.createdAt) > maxAge {
@@ -764,6 +791,7 @@ func (r *FileRepository) CompleteDownloadSession(ctx context.Context, fileID int
 		return false, nil
 	}
 	s.completed = true
+	s.completedAt = time.Now()
 	r.sessions[token] = s
 	if file, ok := r.files[fileID]; ok {
 		file.CompletedDownloads++
@@ -855,7 +883,7 @@ func (r *FileRepository) CancelDownload(ctx context.Context, fileID int64, token
 }
 
 // ReapDownloadSessions implements repository.FileRepository.ReapDownloadSessions
-func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge time.Duration) (int, int, error) {
+func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idleTTL, maxAge, completeGrace time.Duration) (int, int, error) {
 	if r.ReapDownloadSessionsError != nil {
 		return 0, 0, r.ReapDownloadSessionsError
 	}
@@ -873,6 +901,21 @@ func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idl
 	leaseCutoff := now.Add(-leaseTTL)
 	idleCutoff := now.Add(-idleTTL)
 	maxAgeCutoff := now.Add(-maxAge)
+	graceCutoff := now.Add(-completeGrace)
+
+	// reapCommitted mirrors the sqlite/postgres Phase 2 predicate: a
+	// completed row is additionally protected until completeGrace has
+	// elapsed since its own completedAt (T42), so a just-finished session
+	// survives long enough for LookupDownloadSession's grace window to find
+	// it. completeGrace <= 0 restores the original idle/max-age-only rule for
+	// every committed row, completed or not.
+	reapCommitted := func(s mockDownloadSession) bool {
+		agedOut := s.lastSeenAt.Before(idleCutoff) || s.createdAt.Before(maxAgeCutoff)
+		if s.completed && completeGrace > 0 {
+			return s.completedAt.Before(graceCutoff) && agedOut
+		}
+		return agedOut
+	}
 
 	cancelled, expired := 0, 0
 	for token, s := range r.sessions {
@@ -896,7 +939,7 @@ func (r *FileRepository) ReapDownloadSessions(ctx context.Context, leaseTTL, idl
 				}
 			}
 			cancelled++
-		case s.committed && (s.lastSeenAt.Before(idleCutoff) || s.createdAt.Before(maxAgeCutoff)):
+		case s.committed && reapCommitted(s):
 			// Idle/aged-out committed session: pure record cleanup, no counter change.
 			delete(r.sessions, token)
 			expired++

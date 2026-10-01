@@ -48,10 +48,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	if err := requireWiredBackends(cfg); err != nil {
+		return err
+	}
 
 	// Apply proxy trust settings process-wide so helpers without config
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
 	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
+
+	// T43: apply the IPv6 rate-limit grouping width process-wide so every
+	// per-IP limiter/concurrency cap (upload/download rate limits, login
+	// attempt limits, in-flight download/decrypt caps) groups IPv6 clients
+	// by the same configured prefix instead of the full address.
+	utils.ConfigureRateLimitIPv6Prefix(cfg.GetRateLimitIPv6Prefix())
 
 	slog.Info("starting safeshare",
 		"port", cfg.Port,
@@ -173,11 +182,12 @@ func run() error {
 
 	// Initialize storage backend. SH-2.2 deletes the local-FS
 	// storage.EncryptedStorage wrapper — production handlers call
-	// utils.EncryptFileStreamingV2 / utils.DecryptFileStreamingRangeAny
-	// directly against the underlying filesystem path, so the wrapper layer
-	// was dead code (only its HealthCheck passthrough was reached). Encryption
-	// at rest is unchanged: every upload still flows through SFSE2 in the
-	// upload handlers (see internal/handlers/upload.go and assembly_worker.go).
+	// utils.EncryptFileStreamingV2 directly against the underlying
+	// filesystem path for uploads, and utils.OpenSFSEReader (driving
+	// http.ServeContent) for downloads, so the wrapper layer was dead code
+	// (only its HealthCheck passthrough was reached). Encryption at rest is
+	// unchanged: every upload still flows through SFSE2 in the upload
+	// handlers (see internal/handlers/upload.go and assembly_worker.go).
 	fsStorage, err := filesystem.NewFilesystemStorage(cfg.UploadDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize filesystem storage: %w", err)
@@ -300,7 +310,23 @@ func run() error {
 	optionalUserAuth := middleware.OptionalUserAuth(repos, anonMode)
 	userAuth := middleware.UserAuth(repos, anonMode)
 	tokenAudit := middleware.APITokenAuditLog(repos, anonMode)
-	totpRateLimit := middleware.RateLimitTOTPVerify(anonMode) // Rate limit for TOTP verification
+	// Unauthenticated MFA-login-verification group (/api/auth/mfa/verify,
+	// webauthn/begin, webauthn/finish) shares one budget - see
+	// middleware.MFALoginLimiter. Each route below supplies its own success
+	// predicate via Wrap: webauthn/begin proves nothing about the caller and
+	// must never count as a genuine attempt either way (middleware.AlwaysRefund).
+	mfaLoginLimiter := middleware.NewMFALoginLimiter(anonMode)
+	mfaVerifyLoginHandler := mfaLoginLimiter.Wrap("MFA login verification", middleware.DefaultLoginSuccess)(
+		http.HandlerFunc(handlers.MFAVerifyLoginHandler(repos, cfg)))
+	webauthnLoginBeginHandler := mfaLoginLimiter.Wrap("WebAuthn login begin", middleware.AlwaysRefund)(
+		http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg)))
+	webauthnLoginFinishHandler := mfaLoginLimiter.Wrap("WebAuthn login finish", middleware.DefaultLoginSuccess)(
+		http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg)))
+
+	// Authenticated MFA-enrollment routes (TOTP verify-and-enable, TOTP
+	// disable) get their own instance, keyed by user ID rather than IP - see
+	// middleware.RateLimitMFAEnrollment.
+	mfaEnrollmentRateLimit := middleware.RateLimitMFAEnrollment(anonMode)
 
 	// Select authentication middleware for uploads based on configuration
 	var uploadAuthMw func(http.Handler) http.Handler
@@ -382,7 +408,7 @@ func run() error {
 	// MFA login verification endpoint (no auth required - uses challenge token)
 	// Rate limited to prevent brute-force attacks on TOTP codes
 	mux.HandleFunc("/api/auth/mfa/verify", func(w http.ResponseWriter, r *http.Request) {
-		totpRateLimit(http.HandlerFunc(handlers.MFAVerifyLoginHandler(repos, cfg))).ServeHTTP(w, r)
+		mfaVerifyLoginHandler.ServeHTTP(w, r)
 	})
 
 	// User dashboard routes (auth required)
@@ -484,7 +510,7 @@ func run() error {
 	// MFA routes (TOTP enrollment and status)
 	// Note: MFA routes require user authentication and user-specific CSRF protection
 	mfaCSRF := middleware.UserCSRFProtection(repos, anonMode)
-	// Note: totpRateLimit already defined above with other middleware
+	// Note: mfaEnrollmentRateLimit already defined above with other middleware
 
 	mux.HandleFunc("/api/user/mfa/status", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(http.HandlerFunc(handlers.MFAStatusHandler(repos, cfg))).ServeHTTP(w, r)
@@ -496,13 +522,13 @@ func run() error {
 
 	mux.HandleFunc("/api/user/mfa/totp/verify", func(w http.ResponseWriter, r *http.Request) {
 		// Rate limit TOTP verification to prevent brute-force attacks
-		userAuth(mfaCSRF(totpRateLimit(http.HandlerFunc(handlers.MFATOTPVerifyHandler(repos, cfg))))).ServeHTTP(w, r)
+		userAuth(mfaCSRF(mfaEnrollmentRateLimit(http.HandlerFunc(handlers.MFATOTPVerifyHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/user/mfa/totp", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			// Rate limit TOTP disable to prevent brute-force attacks
-			userAuth(mfaCSRF(totpRateLimit(http.HandlerFunc(handlers.MFATOTPDisableHandler(repos, cfg))))).ServeHTTP(w, r)
+			userAuth(mfaCSRF(mfaEnrollmentRateLimit(http.HandlerFunc(handlers.MFATOTPDisableHandler(repos, cfg))))).ServeHTTP(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -542,18 +568,21 @@ func run() error {
 
 	// WebAuthn login flow routes (no auth required - uses challenge token)
 	mux.HandleFunc("/api/auth/mfa/webauthn/begin", func(w http.ResponseWriter, r *http.Request) {
-		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginBeginHandler(repos, cfg))).ServeHTTP(w, r)
+		webauthnLoginBeginHandler.ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/api/auth/mfa/webauthn/finish", func(w http.ResponseWriter, r *http.Request) {
-		totpRateLimit(http.HandlerFunc(handlers.MFAWebAuthnLoginFinishHandler(repos, cfg))).ServeHTTP(w, r)
+		webauthnLoginFinishHandler.ServeHTTP(w, r)
 	})
 
 	// SSO authentication routes
 	// Public routes: providers list, login initiation, callback
 	// Protected routes: link/unlink account, get linked providers
-	// Rate limited to prevent state exhaustion and provider enumeration
-	ssoRateLimit := middleware.RateLimitUserLogin(anonMode) // Reuse user login rate limiting
+	// Initiation and callback are rate limited separately - see
+	// middleware.RateLimitSSOInitiation / middleware.RateLimitSSOCallback -
+	// so a burst against one can't also exhaust the other's budget.
+	ssoInitiationRateLimit := middleware.RateLimitSSOInitiation(anonMode)
+	ssoCallbackRateLimit := middleware.RateLimitSSOCallback(anonMode)
 
 	// GET /api/auth/sso/providers - List enabled SSO providers (public)
 	mux.HandleFunc("/api/auth/sso/providers", handlers.ListSSOProvidersHandler(repos, cfg))
@@ -566,9 +595,9 @@ func run() error {
 		// Route based on path suffix
 		switch {
 		case strings.HasSuffix(path, "/login"):
-			ssoRateLimit(http.HandlerFunc(handlers.SSOLoginHandler(repos, cfg))).ServeHTTP(w, r)
+			ssoInitiationRateLimit(http.HandlerFunc(handlers.SSOLoginHandler(repos, cfg))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/callback"):
-			ssoRateLimit(http.HandlerFunc(handlers.SSOCallbackHandler(repos, cfg))).ServeHTTP(w, r)
+			ssoCallbackRateLimit(http.HandlerFunc(handlers.SSOCallbackHandler(repos, cfg))).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Not found", http.StatusNotFound)
 		}
@@ -1085,17 +1114,28 @@ func run() error {
 	// lease TTL (uncommitted sessions) is operator-tunable via
 	// DOWNLOAD_RESERVATION_TTL (default 5m); the idle TTL (committed sessions)
 	// via DOWNLOAD_SESSION_IDLE_TTL (default 1h). The 1-minute tick is fixed so
-	// crash-recovery latency is bounded regardless of either TTL.
+	// crash-recovery latency is bounded regardless of either TTL. The T42
+	// post-completion resume grace window is operator-tunable via
+	// DOWNLOAD_SESSION_COMPLETE_GRACE (default 5m; 0 disables it).
 	reservationTTL := utils.ResolveReservationTTL()
 	sessionIdleTTL := utils.ResolveSessionIdleTTL()
+	completeGrace := utils.ResolveCompleteGrace()
+	// Installed once, here, before the server starts accepting connections
+	// (ListenAndServe runs later, in its own goroutine below) — the claim
+	// handler reads this package-level variable per request instead of
+	// re-resolving DOWNLOAD_SESSION_COMPLETE_GRACE from the environment on
+	// every request (security-audit follow-up to T42; see
+	// handlers.SetCompleteGrace's doc).
+	handlers.SetCompleteGrace(completeGrace)
 	slog.Info("download session reaper configured",
 		"lease_ttl", utils.ReservationTTLDescription(reservationTTL),
 		"idle_ttl", utils.SessionIdleTTLDescription(sessionIdleTTL),
+		"complete_grace", utils.CompleteGraceDescription(completeGrace),
 	)
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL)
+		utils.StartReservationReaper(ctx, repos, reservationTTL, sessionIdleTTL, completeGrace)
 	}()
 
 	// Start assembly recovery worker (ADR-016): recovers assemblies whose

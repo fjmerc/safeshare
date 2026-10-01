@@ -32,6 +32,14 @@ func TimeNow() time.Time {
 func SetupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
+	// Register the process-wide SQLite connection-pragma hook (PRAGMA
+	// foreign_keys = ON, busy_timeout, etc. — see
+	// database.registerConnectionHook) before opening. Without this, test
+	// databases silently diverge from production: FK constraints (e.g.
+	// download_sessions.file_id ON DELETE CASCADE) are never enforced, so no
+	// test exercises cascade behavior and dangling-FK bugs slip through (T36).
+	database.EnsureConnectionHook()
+
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)

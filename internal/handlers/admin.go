@@ -3,18 +3,22 @@ package handlers
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/ipcanon"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/proxytrust"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/fjmerc/safeshare/internal/webhooks"
@@ -713,7 +717,115 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 	}
 }
 
-// AdminBlockIPHandler blocks an IP address
+// loopbackPrefixes are the ranges selfLockoutCheck refuses to let an admin
+// block: doing so would very likely break local health checks and/or the
+// admin's own access when the deployment sits behind a reverse proxy or
+// tunnel on loopback (T43).
+var loopbackPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("::1/128"),
+}
+
+// adminIPAPIResponse is the JSON body AdminBlockIPHandler and
+// AdminUnblockIPHandler always reply with, success or failure -- admin.js's
+// blockIP/unblockIP read response.json().message on any non-success reply
+// (code-review follow-up: they used to get http.Error's plain-text body,
+// which response.json() can't parse, so every failure surfaced as the same
+// generic "Failed to block/unblock IP" regardless of the real reason).
+type adminIPAPIResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// writeAdminIPResponse writes an adminIPAPIResponse with the given status.
+func writeAdminIPResponse(w http.ResponseWriter, status int, success bool, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(adminIPAPIResponse{Success: success, Message: message}) //nolint:errcheck // best-effort; client may have disconnected
+}
+
+// selfLockoutCheck returns a non-nil err if blocking entry (canonical,
+// isPrefix) would block loopback, fully contain a configured
+// TRUSTED_PROXY_IPS entry, or include the requesting admin's own current
+// client IP -- all three would very likely lock the operator out of the
+// admin dashboard entirely (directly, or by breaking the proxy-trust chain
+// GetClientIPWithTrust relies on), with no way to undo it except direct
+// DB/file access (T43). adminIP is the admin's own current client IP (as
+// seen by this request); trustedProxies is the parsed TRUSTED_PROXY_IPS list
+// (local ranges, plus Cloudflare's published ranges if the "cloudflare"
+// keyword is configured -- see proxytrust.ParseList). Either being
+// unparsable/empty just skips that particular check rather than failing the
+// request.
+//
+// The TRUSTED_PROXY_IPS check (code-review follow-up) is deliberately
+// narrower than "any overlap": the default value is whole private ranges
+// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), and refusing any overlap with
+// those would stop an admin on a LAN deployment from blocking even a single
+// misbehaving LAN host. After T41, blocking an address inside a trusted
+// range only matters for requests that fall back to that proxy's own peer
+// address -- i.e. ones with no, or no usable, forwarded header (see
+// GetClientIPWithTrust) -- so:
+//
+//   - Refusing is limited to a target that fully contains a trusted entry
+//     (proxytrust.PrefixContains): blocking the trusted range/host itself
+//     (e.g. 10.0.0.0/8, or a /16 that contains a trusted /24), or blocking a
+//     range that contains a trusted entry which is itself a single host
+//     (/32 or /128) -- an explicitly named proxy, where "contains" and
+//     "equals" are the same thing at that granularity.
+//   - A target that merely sits inside a broader trusted range (e.g. a
+//     single LAN host under the default 192.168.0.0/16) is allowed, but
+//     flagged via the non-empty caution return value so the caller can warn
+//     the admin: if that range is (or includes) their actual reverse
+//     proxy's peer address, its own no-forwarded-header requests will now be
+//     blocked.
+//
+// Two CIDR prefixes never partially overlap (see PrefixContains's doc), so
+// "overlaps but doesn't fully contain" and "is fully contained by" are the
+// same condition -- checking Overlaps then PrefixContains(target, tp)
+// is sufficient to tell the two cases apart.
+func selfLockoutCheck(canonical string, isPrefix bool, adminIP string, trustedProxies []netip.Prefix) (caution string, err error) {
+	var target netip.Prefix
+	if isPrefix {
+		p, perr := netip.ParsePrefix(canonical)
+		if perr != nil {
+			return "", nil // canonical is already validated by the caller; defensive only
+		}
+		target = p
+	} else {
+		addr, aerr := netip.ParseAddr(canonical)
+		if aerr != nil {
+			return "", nil
+		}
+		target = netip.PrefixFrom(addr, addr.BitLen())
+	}
+
+	for _, lb := range loopbackPrefixes {
+		if target.Overlaps(lb) {
+			return "", fmt.Errorf("refusing to block %s: it includes loopback (127.0.0.0/8 or ::1), which would likely break local health checks and/or admin access", canonical)
+		}
+	}
+
+	for _, tp := range trustedProxies {
+		if !target.Overlaps(tp) {
+			continue
+		}
+		if proxytrust.PrefixContains(target, tp) {
+			return "", fmt.Errorf("refusing to block %s: it fully contains a TRUSTED_PROXY_IPS entry (%s) that SafeShare relies on to resolve real client IPs, which would break request handling for every client behind it", canonical, tp)
+		}
+		// target sits inside the broader tp -- allowed, but worth a warning.
+		caution = fmt.Sprintf("Note: %s is inside the configured TRUSTED_PROXY_IPS range %s. If that range includes your reverse proxy, any of its requests that arrive without a usable forwarded header will now be blocked too.", canonical, tp)
+	}
+
+	if adminAddr, aerr := netip.ParseAddr(adminIP); aerr == nil {
+		if target.Contains(adminAddr) {
+			return "", fmt.Errorf("refusing to block %s: it includes your own current IP address, which would lock you out of the admin dashboard", canonical)
+		}
+	}
+
+	return caution, nil
+}
+
+// AdminBlockIPHandler blocks an IP address or CIDR range.
 func AdminBlockIPHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -724,21 +836,54 @@ func AdminBlockIPHandler(repos *repository.Repositories, cfg *config.Config) htt
 		ctx := r.Context()
 
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			writeAdminIPResponse(w, http.StatusBadRequest, false, "Bad request")
 			return
 		}
 
-		ipAddress := r.FormValue("ip_address")
+		ipAddress := strings.TrimSpace(r.FormValue("ip_address"))
 		reason := r.FormValue("reason")
 
 		if ipAddress == "" {
-			http.Error(w, "Missing ip_address parameter", http.StatusBadRequest)
+			writeAdminIPResponse(w, http.StatusBadRequest, false, "Missing ip_address parameter")
 			return
 		}
 
-		// Security fix: Validate IP format at handler level (defense in depth)
-		if net.ParseIP(ipAddress) == nil {
-			http.Error(w, "Invalid IP address format", http.StatusBadRequest)
+		// T43: accepts a bare IP address or a CIDR range, canonicalized
+		// (and, for a CIDR, bounds-checked against self-lockout-by-typo --
+		// e.g. "10.0.0.0/4") by ipcanon.CanonicalizeEntry. The canonical
+		// form is what selfLockoutCheck below and repos.Admin.BlockIP both
+		// operate on.
+		canonical, isPrefix, err := ipcanon.CanonicalizeEntry(ipAddress)
+		if err != nil {
+			writeAdminIPResponse(w, http.StatusBadRequest, false, "Invalid IP address or CIDR range: "+err.Error())
+			return
+		}
+
+		// Best-effort: TRUSTED_PROXY_IPS is validated at startup
+		// (config.validateProxySettings), so a parse failure here should
+		// never happen in practice -- but if it somehow does, log and skip
+		// that part of the check rather than failing the whole request.
+		trustedProxies, tpErr := proxytrust.ParseList(cfg.GetTrustedProxyIPs())
+		if tpErr != nil {
+			slog.Warn("failed to parse TRUSTED_PROXY_IPS for self-lockout check; skipping that check",
+				"error", tpErr,
+			)
+			trustedProxies = nil
+		}
+
+		caution, err := selfLockoutCheck(canonical, isPrefix, getClientIP(r), trustedProxies)
+		if err != nil {
+			slog.Warn("admin blocked-IP request refused: would self-lock-out",
+				"requested", ipAddress,
+				"canonical", canonical,
+				"admin_ip", logIP(getClientIP(r), cfg),
+				"error", err,
+			)
+			// 409: the request conflicts with the operator's own continued
+			// access, not an authorization failure (403) or malformed input
+			// (400) -- same status family as the "already blocked"
+			// conflict below.
+			writeAdminIPResponse(w, http.StatusConflict, false, err.Error())
 			return
 		}
 
@@ -746,31 +891,44 @@ func AdminBlockIPHandler(repos *repository.Repositories, cfg *config.Config) htt
 			reason = "Blocked by admin"
 		}
 
-		err := repos.Admin.BlockIP(ctx, ipAddress, reason, "admin")
+		// Pass the already-canonicalized value rather than the raw
+		// ipAddress (code-review nit): BlockIP re-canonicalizes whatever
+		// it's given (so other callers can still pass raw input), but this
+		// call site already computed it above for selfLockoutCheck, so
+		// canonicalizing it a second time inside BlockIP would be redundant
+		// (canonicalizing an already-canonical value is a no-op, just
+		// wasted work).
+		err = repos.Admin.BlockIP(ctx, canonical, reason, "admin")
 		if err != nil {
+			if errors.Is(err, repository.ErrDuplicateKey) {
+				writeAdminIPResponse(w, http.StatusConflict, false, "This IP address or range is already blocked")
+				return
+			}
 			slog.Error("failed to block IP",
-				"ip_address", ipAddress,
+				"ip_address", canonical,
 				"error", err,
 			)
-			http.Error(w, "Failed to block IP", http.StatusInternalServerError)
+			writeAdminIPResponse(w, http.StatusInternalServerError, false, "Failed to block IP")
 			return
 		}
 
 		slog.Info("admin blocked IP",
-			"blocked_ip", ipAddress,
+			"blocked_ip", canonical,
+			"is_cidr", isPrefix,
 			"reason", reason,
 			"admin_ip", logIP(getClientIP(r), cfg),
+			"trusted_proxy_caution", caution != "",
 		)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "IP blocked successfully",
-		})
+		message := "IP blocked successfully"
+		if caution != "" {
+			message += " " + caution
+		}
+		writeAdminIPResponse(w, http.StatusOK, true, message)
 	}
 }
 
-// AdminUnblockIPHandler unblocks an IP address
+// AdminUnblockIPHandler unblocks an IP address or CIDR range.
 func AdminUnblockIPHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -788,18 +946,26 @@ func AdminUnblockIPHandler(repos *repository.Repositories, cfg *config.Config) h
 		}
 
 		if ipAddress == "" {
-			http.Error(w, "Missing ip_address parameter", http.StatusBadRequest)
+			writeAdminIPResponse(w, http.StatusBadRequest, false, "Missing ip_address parameter")
 			return
 		}
 
+		// repos.Admin.UnblockIP canonicalizes ipAddress itself, falling
+		// back to an exact match on the raw string if it can't canonicalize
+		// (e.g. a legacy CIDR broader than T43's bounds -- see UnblockIP's
+		// doc comment) -- so the only errors it can return now are a real
+		// "not found" or a genuine backend failure, not a validation error.
 		err := repos.Admin.UnblockIP(ctx, ipAddress)
 		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				writeAdminIPResponse(w, http.StatusNotFound, false, "IP not found in blocked list")
+				return
+			}
 			slog.Error("failed to unblock IP",
 				"ip_address", ipAddress,
 				"error", err,
 			)
-			// Security fix: Use generic error message to avoid leaking internal details
-			http.Error(w, "IP not found in blocked list", http.StatusNotFound)
+			writeAdminIPResponse(w, http.StatusInternalServerError, false, "Failed to unblock IP")
 			return
 		}
 
@@ -808,11 +974,7 @@ func AdminUnblockIPHandler(repos *repository.Repositories, cfg *config.Config) h
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "IP unblocked successfully",
-		})
+		writeAdminIPResponse(w, http.StatusOK, true, "IP unblocked successfully")
 	}
 }
 

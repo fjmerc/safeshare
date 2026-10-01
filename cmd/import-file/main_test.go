@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fjmerc/safeshare/internal/database"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // TestValidateOptions tests command-line option validation
@@ -414,6 +417,57 @@ func TestHashFile(t *testing.T) {
 }
 
 // TestRun_Version tests version flag
+// TestRun_RefusesNonLocalBackends verifies run() refuses to proceed (before
+// ever touching --db/--uploads) when the environment indicates the live
+// server actually uses PostgreSQL and/or S3 — this tool only ever operates
+// on a local SQLite file and local uploads directory. See
+// database.RequireLocalBackends.
+func TestRun_RefusesNonLocalBackends(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	uploadsDir := filepath.Join(tempDir, "uploads")
+	testFile := filepath.Join(tempDir, "test.txt")
+
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(testFile, []byte("x"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// A real SafeShare DB, so a failure here can only be attributed to the
+	// backend guard, not to some downstream DB-open problem.
+	db, err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("database.Initialize: %v", err)
+	}
+	db.Close()
+
+	tests := []struct {
+		name         string
+		databaseType string
+		storageType  string
+	}{
+		{name: "postgresql database", databaseType: "postgresql"},
+		{name: "s3 storage", storageType: "s3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_TYPE", tt.databaseType)
+			t.Setenv("STORAGE_TYPE", tt.storageType)
+
+			err := run([]string{
+				"-source", testFile,
+				"-db", dbPath,
+				"-uploads", uploadsDir,
+			})
+			if err == nil {
+				t.Fatal("run() succeeded, want refusal error")
+			}
+		})
+	}
+}
+
 func TestRun_Version(t *testing.T) {
 	// Capture output by redirecting stdout
 	// For now, just test that it doesn't return an error
@@ -506,6 +560,155 @@ func TestCheckQuotaAvailable(t *testing.T) {
 	// This test requires a real database for quota checking
 	// Skip this test as it requires database integration
 	t.Skip("Quota checking requires database integration - tested via integration tests")
+}
+
+// TestEncryptAndRegisterFile_EmitsSFSE2 is a regression test (3c-3 scope
+// item 1): with an encryption key, the import tool must emit SFSE2 — not
+// SFSE1 and not legacy single-shot AES-GCM — using the same
+// GenerateEncFileID/EncryptFileStreamingV2 helpers as the web upload path
+// (internal/handlers/upload.go), and must persist enc_file_id on the files
+// row so a normal claim download (utils.OpenSFSEReader) can decrypt it.
+func TestEncryptAndRegisterFile_EmitsSFSE2(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	uploadsDir := filepath.Join(tempDir, "uploads")
+	sourcePath := filepath.Join(tempDir, "source.txt")
+
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll uploads: %v", err)
+	}
+	content := []byte("SafeShare import-file SFSE2 regression test content")
+	if err := os.WriteFile(sourcePath, content, 0644); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+
+	db, err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("database.Initialize: %v", err)
+	}
+	defer db.Close()
+
+	const encKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	opts := &ImportOptions{
+		DBPath:       dbPath,
+		UploadsDir:   uploadsDir,
+		EncryptKey:   encKey,
+		ExpiresHours: 24,
+		UploaderIP:   "import-tool-test",
+		QuotaLimitGB: 0,
+		DB:           db,
+	}
+
+	result := encryptAndRegisterFile(sourcePath, "source.txt", int64(len(content)), opts)
+	if !result.Success {
+		t.Fatalf("encryptAndRegisterFile failed: %s", result.Error)
+	}
+
+	row, err := database.GetFileByClaimCode(db, result.ClaimCode)
+	if err != nil {
+		t.Fatalf("GetFileByClaimCode: %v", err)
+	}
+	if row == nil {
+		t.Fatal("GetFileByClaimCode returned nil")
+	}
+	if len(row.EncFileID) != utils.SFSE2EncFileIDSize {
+		t.Fatalf("enc_file_id length = %d, want %d (SFSE2 not persisted)", len(row.EncFileID), utils.SFSE2EncFileIDSize)
+	}
+	if row.SHA256Hash == "" {
+		t.Error("sha256_hash not persisted")
+	}
+	if row.FileSize != int64(len(content)) {
+		t.Errorf("file_size = %d, want %d (must be the plaintext size, not the ciphertext size)", row.FileSize, len(content))
+	}
+
+	storedPath := filepath.Join(uploadsDir, row.StoredFilename)
+	ver, err := utils.PeekSFSEVersion(storedPath)
+	if err != nil {
+		t.Fatalf("PeekSFSEVersion: %v", err)
+	}
+	if ver != utils.StreamEncryptionVersionV2 {
+		t.Fatalf("stored file SFSE version = 0x%02x, want SFSE2 (0x%02x)", ver, utils.StreamEncryptionVersionV2)
+	}
+
+	// Full round trip through the exact same reader claim_range.go uses in
+	// production, proving a normal claim download would decrypt this file
+	// correctly.
+	f, err := os.Open(storedPath)
+	if err != nil {
+		t.Fatalf("Open stored file: %v", err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	reader, err := utils.OpenSFSEReader(f, fi, encKey, row.EncFileID, row.FileSize, row.SHA256Hash)
+	if err != nil {
+		t.Fatalf("OpenSFSEReader: %v", err)
+	}
+	defer reader.Close()
+
+	got := make([]byte, len(content))
+	if _, err := reader.Read(got); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("round-tripped content = %q, want %q", got, content)
+	}
+}
+
+// TestEncryptAndRegisterFile_RejectsNonexistentUserID is the regression
+// test for the database-review finding that --user-id was never checked
+// against the users table before encrypting — with foreign_keys now always
+// on (database.OpenForCLI), a nonexistent id would otherwise only surface
+// as an opaque "FOREIGN KEY constraint failed" from the final CreateFile
+// call, after the file had already been fully encrypted and hashed for
+// nothing. The check must happen first and produce a clear error.
+func TestEncryptAndRegisterFile_RejectsNonexistentUserID(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	uploadsDir := filepath.Join(tempDir, "uploads")
+	sourcePath := filepath.Join(tempDir, "source.txt")
+
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll uploads: %v", err)
+	}
+	content := []byte("must not be encrypted: the --user-id below does not exist")
+	if err := os.WriteFile(sourcePath, content, 0644); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+
+	db, err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("database.Initialize: %v", err)
+	}
+	defer db.Close()
+
+	opts := &ImportOptions{
+		DBPath:       dbPath,
+		UploadsDir:   uploadsDir,
+		ExpiresHours: 24,
+		UploaderIP:   "import-tool-test",
+		UserID:       999999, // no such user
+		DB:           db,
+	}
+
+	result := encryptAndRegisterFile(sourcePath, "source.txt", int64(len(content)), opts)
+	if result.Success {
+		t.Fatal("encryptAndRegisterFile succeeded with a nonexistent --user-id, want failure")
+	}
+	if result.Error == "" {
+		t.Error("result.Error is empty, want a clear message about the missing user")
+	}
+
+	entries, err := os.ReadDir(uploadsDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("uploads dir has %d entries, want 0 (file should never have been written)", len(entries))
+	}
 }
 
 // TestValidateDiskSpace tests disk space validation

@@ -330,6 +330,13 @@ Both formats coexist via a version-byte dispatcher in
 and routes to the appropriate decrypt path. Legacy SFSE1 files remain readable
 indefinitely with no operator action required.
 
+The admin CLI tools (`cmd/import-file`, `cmd/migrate-encryption`) emit SFSE2
+for every encrypted output as of the 3c-3 hardening pass, matching the web
+upload path — previously they produced SFSE1. `migrate-encryption
+--upgrade-format` re-seals any *existing* SFSE1 files to SFSE2 in place
+(master finding #10); see that command's README for the crash-safety design
+(a DB-commit-then-rename sequence) and `--verify`'s `upgradable` count.
+
 ```mermaid
 flowchart LR
     subgraph Input
@@ -744,6 +751,7 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `MAX_EXPIRATION_HOURS`: Maximum allowed expiration time (default: 168 / 7 days)
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
 - `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
+- `RATE_LIMIT_IPV6_PREFIX`: Width (bits) of the IPv6 prefix per-client rate limiters and concurrency caps (upload/download limits, login attempt limits, in-flight download/decrypt caps) group by, instead of the full address (default: 64; valid range 48-128; 128 = per-address). Does not affect what's logged/stored as the client IP — only limiter bucket keys (T43).
 - `QUOTA_LIMIT_GB`: Maximum total storage quota in GB (default: 0 / unlimited)
 
 ### Trusted Proxy Security
@@ -1425,6 +1433,8 @@ func (s *S3Storage) SaveFile(ctx context.Context, filename string, data io.Reade
 }
 ```
 
+> **Not yet supported by the server.** The S3 backend exists in `internal/storage/s3`, but the server does not use it yet and refuses to start with `STORAGE_TYPE=s3` (it would otherwise silently store files on local disk). The configuration below describes the intended setup.
+
 **Configuration** (Environment Variables):
 
 ```bash
@@ -1574,6 +1584,8 @@ docker restart safeshare
 ```
 
 **Local Filesystem to S3 Migration**:
+
+> **Not yet supported by the server.** The S3 backend exists in `internal/storage/s3`, but the server does not use it yet and refuses to start with `STORAGE_TYPE=s3` (it would otherwise silently store files on local disk). The configuration below describes the intended setup.
 
 ```bash
 # 1. Sync local files to S3

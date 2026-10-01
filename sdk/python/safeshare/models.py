@@ -9,6 +9,18 @@ from typing import Callable, List, Optional
 
 from pydantic import BaseModel, Field
 
+# Malware scan status values reported via FileInfo.scan_status (ADR-015).
+# Mirrors internal/scanning's ScanStatus* constants and sdk/go's FileInfo.
+# ScanStatus doc comment. scan_status is kept as a plain Optional[str]
+# (rather than a strict Literal/enum) on FileInfo for forward compatibility
+# with any new server-side status this SDK version doesn't know about yet.
+SCAN_STATUS_PENDING = "pending"
+SCAN_STATUS_CLEAN = "clean"
+SCAN_STATUS_INFECTED = "infected"
+SCAN_STATUS_ERROR = "error"
+SCAN_STATUS_SKIPPED = "skipped"
+SCAN_STATUS_NOT_SCANNED = "not_scanned"
+
 
 class UploadResult(BaseModel):
     """Result of a successful file upload."""
@@ -35,6 +47,24 @@ class FileInfo(BaseModel):
     downloads_remaining: Optional[int] = None
     password_protected: bool = False
     sha256_hash: Optional[str] = None
+    scan_status: Optional[str] = Field(
+        default=None,
+        description=(
+            "Malware scan status: 'clean', 'infected', 'pending', 'error', "
+            "'skipped', 'not_scanned', or '' / None for scanning-disabled or "
+            "pre-ADR-015 legacy files. See ADR-015 and the SCAN_STATUS_* "
+            "constants in this module."
+        ),
+    )
+    download_available: Optional[bool] = Field(
+        default=None,
+        description=(
+            "False when the scan gate currently blocks downloading this "
+            "file (infected, pending, or errored — see ADR-015); download() "
+            "will raise FileQuarantinedError, ScanPendingError, or "
+            "ScanFailedError in that case."
+        ),
+    )
 
 
 class UserFile(BaseModel):
