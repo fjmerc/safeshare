@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -286,7 +288,7 @@ func recordInfectedUpload(ctx context.Context, repos *repository.Repositories, c
 }
 
 // validateAndGetUploadedFile validates the request and retrieves the uploaded file
-func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *config.Config) (multipart.File, *multipart.FileHeader, error) {
+func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *config.Config) (_ multipart.File, _ *multipart.FileHeader, retErr error) {
 	// Content-Length is -1 for chunked transfer encoding and is client-
 	// controlled, so clamp to the configured maximum: an upload can never
 	// legitimately exceed it (MaxBytesReader below enforces that), and a
@@ -297,19 +299,44 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	}
 	extendTransferDeadline(w, cfg, expectedBytes)
 
-	// Parse multipart form with size limit
-	r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
-	if err := r.ParseMultipartForm(cfg.GetMaxFileSize()); err != nil {
-		sendError(w, "File too large or invalid form data", "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
-		return nil, nil, err
+	// The body is spooled to the upload volume below (not held in memory),
+	// so check up front that it can fit there. This is best-effort: it only
+	// covers a declared Content-Length (a chunked-encoding body is capped by
+	// MaxBytesReader instead), and concurrent uploads each pass it on their
+	// own. The caller's check after spooling is the real one - by then the
+	// spooled copy is already on disk, so it asks for room for the stored
+	// copy on top of it - and running out mid-spool fails with 507.
+	if r.ContentLength > 0 {
+		if err := checkStorageAvailability(w, r, cfg, expectedBytes, cfg.GetQuotaLimitGB() > 0); err != nil {
+			return nil, nil, err
+		}
 	}
 
-	// Get the file from the form
-	file, header, err := r.FormFile("file")
+	// Stream the multipart body, spooling the file part to disk (T29).
+	r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
+	file, header, err := spoolUploadForm(r, "file", cfg.UploadDir)
 	if err != nil {
-		sendError(w, "No file provided", "NO_FILE", http.StatusBadRequest)
+		var spoolErr *spoolError
+		switch {
+		case errors.Is(err, syscall.ENOSPC):
+			sendError(w, "Insufficient storage space", "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+		case errors.As(err, &spoolErr):
+			slog.Error("failed to spool upload", "error", err)
+			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		case errors.Is(err, errNoFormFile):
+			sendError(w, "No file provided", "NO_FILE", http.StatusBadRequest)
+		default:
+			sendError(w, "File too large or invalid form data", "FILE_TOO_LARGE", http.StatusRequestEntityTooLarge)
+		}
 		return nil, nil, err
 	}
+	// The spooled file is an open descriptor: close it if any check below
+	// rejects the upload (the caller only takes ownership on success).
+	defer func() {
+		if retErr != nil {
+			file.Close()
+		}
+	}()
 
 	// Validate filename for control characters (header injection prevention)
 	if err := utils.ValidateUploadFilename(header.Filename); err != nil {

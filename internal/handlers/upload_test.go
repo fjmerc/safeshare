@@ -71,8 +71,8 @@ func TestUploadHandler_ValidUpload(t *testing.T) {
 		t.Error("expires_at is zero")
 	}
 
-	// Verify file was saved to disk
-	files, err := os.ReadDir(cfg.UploadDir)
+	// Verify file was saved to disk (and the upload spool left nothing behind)
+	files, err := storedFiles(cfg.UploadDir)
 	if err != nil {
 		t.Fatalf("failed to read upload dir: %v", err)
 	}
@@ -860,7 +860,7 @@ func TestUploadHandler_WithEncryption(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &resp)
 
 	// Verify file exists on disk
-	files, _ := os.ReadDir(cfg.UploadDir)
+	files, _ := storedFiles(cfg.UploadDir)
 	if len(files) != 1 {
 		t.Fatalf("expected 1 file, got %d", len(files))
 	}

@@ -294,6 +294,8 @@ docker run -d \
 ✅ **Zero-knowledge server** - Server cannot read encrypted files
 ✅ **Backward compatible** - Works with existing plain files
 
+**Plaintext while an upload is in progress:** files are encrypted as they're stored, so their unencrypted bytes exist briefly on the uploads volume while an upload is being processed - a simple upload in the spool directory (`.spool/`, unlinked as soon as it's created, so no file is left once processing ends, even if the server crashes), a chunked upload's chunks in `.partial/` until it's assembled, and - when metadata stripping is on with `ENCRYPTION_KEY` - a short-lived temp file in the system temp directory. Deleting a file frees its blocks but doesn't overwrite them, so the data can stay recoverable from the disk until it's reused. Put the uploads volume (and the container's temp directory) on encrypted storage if unencrypted data must never reach disk at all. The uploads volume should be a local filesystem: on NFS, unlinking an open file leaves a visible `.nfs*` placeholder behind instead.
+
 ### Key Management
 ⚠️ **IMPORTANT**: Store the encryption key securely!
 - **Development**: Use environment variable
