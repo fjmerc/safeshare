@@ -446,9 +446,12 @@ curl -X POST \
 2. If password-protected, password field will appear
 3. Enter password and click Download
 
+The web UI sends the password in a POST body (never in the URL) and hands
+the transfer to the browser's download manager.
+
 **Download with password (API):**
 ```bash
-curl -O "http://localhost:8080/api/claim/ABC123?password=MySecretPass123"
+curl -O -H "X-File-Password: MySecretPass123" "http://localhost:8080/api/claim/ABC123"
 ```
 
 ### API Response Fields
@@ -556,7 +559,7 @@ causes a released slot or a double-delivered file.
 ### Post-completion resume grace window (T42)
 The server marks a capped download's session "complete" as soon as it has
 written the entire file to the response — but a client (a resumable download
-manager, including SafeShare's own web UI and most browsers' built-in one)
+manager, including most browsers' built-in one)
 can still be interrupted between receiving the last byte and finishing its
 own write to disk. Without any allowance for this, a resume attempt in that
 narrow window would present a perfectly valid session token that the server

@@ -113,10 +113,11 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 		// path below, including the early-return error branches.
 		w.Header().Set("Cache-Control", "private, no-store")
 
-		// Accept GET (browser navigation / <a> tag), POST (programmatic
-		// clients that want to put the password in a form body instead of
-		// the URL), and HEAD (T38: resumable-downloader.js's fetchFileSize
-		// probes size via HEAD before starting a GET).
+		// Accept GET (browser navigation / <a> tag), POST (a password in a
+		// form body instead of the URL - the web UI's own password-protected
+		// downloads, and programmatic clients), and HEAD (T38: checking a
+		// file's size or availability, e.g. the web UI's password check
+		// before it starts a download).
 		if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodHead {
 			sendErrorResponse(w, r, "Method Not Allowed", "This endpoint only accepts GET, POST, or HEAD requests.", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 			return

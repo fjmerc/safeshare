@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Large downloads no longer run the browser out of memory (T31).** The web UI used to download a file into page memory before saving it, needing about twice the file's size in RAM, so files over a gigabyte or two could fail or crash the tab. Downloads from the Pickup tab are now handed to the browser's own download manager, which saves them straight to disk with its usual progress, pause and resume (measured: a 600 MB download now peaks at 5 MB of page memory). The password of a password-protected file is sent in the request body, never in the URL, and a wrong password is still reported on the page before anything downloads. Trade-offs: the in-page progress bar and Pause/Cancel buttons are gone (the browser shows its own), the browser can't resume an interrupted password-protected download (start it again), and resuming a file with a download limit may be refused once its downloads are used up. End-to-end encrypted files are unchanged: they're still decrypted in the page, which needs the whole file in memory.
+
 ### Security
 
 - **Abandoned chunked uploads no longer hold storage quota for a day (T30).** Starting a chunked upload (`POST /api/upload/init`) reserves the file's full size against `QUOTA_LIMIT_GB` up front, so the upload can't run out of room halfway. That reservation used to last until the upload was cleaned up - 24 hours by default (`PARTIAL_UPLOAD_EXPIRY_HOURS`) - even if no data was ever sent, so a handful of upload starts that went nowhere could fill the quota and turn away everyone else's uploads with `507 QUOTA_EXCEEDED`. Now an upload that stores no new chunk for an hour stops reserving its full size and counts only the data it has actually sent. It can still be resumed: its next chunk reserves the rest again, or fails with `507 QUOTA_EXCEEDED` if the quota has filled in the meantime. Re-sending a chunk that's already stored doesn't count as progress. Uploads that keep sending data are unaffected, and so are servers without a quota.

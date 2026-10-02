@@ -299,8 +299,8 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// replay ceiling up front, before any bytes were known to have actually
 	// gone out. Give back whatever portion it didn't manage to send —
 	// paused, aborted, or errored partway. Without this, a normal
-	// pause/resume sequence (the web UI's own resumable-downloader.js
-	// resumes with `Range: bytes=<received>-` on every pause) would
+	// pause/resume sequence (a resumable downloader resumes with
+	// `Range: bytes=<received>-` on every pause) would
 	// permanently eat into the 2x-file-size ceiling for bytes it never
 	// delivered, exhausting it — and turning the *next* resume into a fresh,
 	// tokenless, potentially-410'd request — well before the recipient's one

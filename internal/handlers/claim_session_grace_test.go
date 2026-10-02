@@ -61,8 +61,8 @@ func TestSession_GraceWindowResume_PartialContentNoDoubleCount(t *testing.T) {
 		t.Fatalf("before resume: download_count=%d completed_downloads=%d, want 1/1", before.DownloadCount, before.CompletedDownloads)
 	}
 
-	// Simulate a paused-then-resumed download manager (e.g.
-	// resumable-downloader.js / Chromium's own): it already has every byte
+	// Simulate a paused-then-resumed download manager that sends the
+	// session token back: it already has every byte
 	// except the tail, and asks for the rest with the token from the first
 	// response — exactly what happens when the server finished writing but
 	// the client hadn't finished reading yet. This is a genuine tail resume

@@ -419,24 +419,6 @@
                         ⬇️ Download File
                     </button>
 
-                    <!-- Download Progress (hidden by default) -->
-                    <div id="downloadProgress" class="progress-container hidden">
-                        <div class="progress-header">
-                            <span id="downloadProgressText" aria-live="polite">Downloading...</span>
-                            <div style="display: flex; gap: 0.5rem;">
-                                <button id="pauseDownloadButton" class="btn-small btn-neutral">⏸ Pause</button>
-                                <button id="cancelDownloadButton" class="btn-small btn-danger-outline">✖ Cancel</button>
-                            </div>
-                        </div>
-                        <div class="progress-bar">
-                            <div id="downloadProgressFill" class="progress-fill"></div>
-                        </div>
-                        <div class="progress-stats">
-                            <span id="downloadSpeed">0 MB/s</span>
-                            <span id="downloadETA">Calculating...</span>
-                        </div>
-                    </div>
-
                     <button id="newPickupButton" class="btn-secondary">Check Another File</button>
                 </div>
             </div>
@@ -483,6 +465,11 @@
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Target for Pickup downloads (T31): a file response becomes a browser
+         download; an error page loads here, out of sight, instead of
+         replacing this page. -->
+    <iframe id="downloadFrame" name="downloadFrame" title="Download" hidden tabindex="-1" aria-hidden="true"></iframe>
 
     <!-- Share Modal -->
     <div id="shareModal" class="share-modal hidden">
@@ -534,8 +521,6 @@
     <script src="/assets/crypto.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
-    <!-- Resumable Download Handler -->
-    <script src="/assets/resumable-downloader.js"></script>
     <script src="/assets/app.js"></script>
 </body>
 </html>

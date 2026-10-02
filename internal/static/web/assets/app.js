@@ -72,15 +72,6 @@
     const e2eKeyPrompt = document.getElementById('e2eKeyPrompt');
     const e2eKeyInput = document.getElementById('e2eKeyInput');
 
-    // DOM Elements - Download Progress
-    const downloadProgress = document.getElementById('downloadProgress');
-    const downloadProgressFill = document.getElementById('downloadProgressFill');
-    const downloadProgressText = document.getElementById('downloadProgressText');
-    const downloadSpeed = document.getElementById('downloadSpeed');
-    const downloadETA = document.getElementById('downloadETA');
-    const pauseDownloadButton = document.getElementById('pauseDownloadButton');
-    const cancelDownloadButton = document.getElementById('cancelDownloadButton');
-
     // DOM Elements - User Menu
     const userMenu = document.getElementById('userMenu');
     const userMenuTrigger = document.getElementById('userMenuTrigger');
@@ -99,7 +90,6 @@
 
     // State - Pickup
     let currentFileInfo = null;
-    let currentDownloader = null; // Current ResumableDownloader instance
 
     // State - User
     let currentUser = null;
@@ -599,53 +589,6 @@
 
         // Pickup Tab - Download button
         downloadButton.addEventListener('click', handleDownload);
-
-        // Pickup Tab - Pause/Resume download button (toggle)
-        if (pauseDownloadButton) {
-            pauseDownloadButton.addEventListener('click', async () => {
-                if (currentDownloader) {
-                    if (currentDownloader.isPaused) {
-                        // Currently paused, so resume
-                        // Store local reference before await (race condition: event handler may null currentDownloader)
-                        const downloader = currentDownloader;
-                        pauseDownloadButton.textContent = '⏸ Pause';
-                        pauseDownloadButton.classList.remove('btn-success');
-                        pauseDownloadButton.classList.add('btn-neutral');
-                        showToast('Resuming download...', 'success', 2000);
-                        try {
-                            const blob = await downloader.resume();
-                            if (blob) {
-                                downloader.triggerBrowserDownload(blob);
-                            }
-                        } catch (error) {
-                            console.error('Resume failed:', error);
-                            showToast('Failed to resume download', 'error', 3000);
-                        }
-                    } else {
-                        // Currently downloading, so pause
-                        currentDownloader.pause();
-                        pauseDownloadButton.textContent = '▶️ Resume';
-                        pauseDownloadButton.classList.remove('btn-neutral');
-                        pauseDownloadButton.classList.add('btn-success');
-                        showToast('Download paused', 'info', 2000);
-                    }
-                }
-            });
-        }
-
-        // Pickup Tab - Cancel download button
-        if (cancelDownloadButton) {
-            cancelDownloadButton.addEventListener('click', () => {
-                if (currentDownloader && confirm('Are you sure you want to cancel this download? Progress will be lost.')) {
-                    currentDownloader.cancel();
-                    // Reset UI
-                    downloadProgress.classList.add('hidden');
-                    downloadButton.classList.remove('hidden');
-                    currentDownloader = null;
-                    showToast('Download cancelled', 'info', 2000);
-                }
-            });
-        }
 
         // Pickup Tab - New pickup button
         newPickupButton.addEventListener('click', resetPickupForm);
@@ -2078,16 +2021,7 @@
             }
         }
 
-        // SH-1.5: separate the password from the URL. For same-origin
-        // downloads we pass it via X-File-Password header (no leak into
-        // proxy logs / browser history / Referer). The cross-origin <a>
-        // tag fallback still has to use the URL since browser navigation
-        // can't carry custom headers — the server emits Deprecation +
-        // Referrer-Policy on that path. Tracked for full removal in
-        // v1.6.0 via a signed-token exchange.
-        let downloadUrl = currentFileInfo.download_url;
         let downloadPassword = null;
-
         if (currentFileInfo.password_required) {
             const password = document.getElementById('downloadPassword').value.trim();
             if (!password) {
@@ -2097,114 +2031,97 @@
             downloadPassword = password;
         }
 
-        // Check if download URL is cross-origin
-        // Cross-origin downloads should bypass ResumableDownloader to avoid Service Worker issues
+        // T31: hand the transfer to the browser's own download manager
+        // instead of assembling the file in page memory (which needed about
+        // twice the file size in RAM and failed outright for large files).
+        // The browser streams it straight to disk with its own progress.
+        // Accepted trade-off: the browser's resume can't continue an
+        // interrupted download of a password-protected file (it re-requests
+        // without the password) or reuse a capped file's download session
+        // (it doesn't send X-Download-Session back), so those start over.
+        //
+        // Always use this page's origin: download_url is built from
+        // PUBLIC_URL, which may not be the address this page was loaded from
+        // (LAN IP, Tor), and the CSP only allows forms to post to 'self'.
+        const claimPath = `/api/claim/${encodeURIComponent(currentFileInfo.claim_code)}`;
+
+        downloadButton.disabled = true;
         try {
-            const downloadUrlObj = new URL(downloadUrl);
-            const currentOrigin = window.location.origin;
-
-            if (downloadUrlObj.origin !== currentOrigin) {
-                // Cross-origin download - browser <a> tag, cannot set headers.
-                // Fall back to query-string password (deprecated server-side).
-                let aHrefUrl = downloadUrl;
-                if (downloadPassword) {
-                    aHrefUrl += `?password=${encodeURIComponent(downloadPassword)}`;
+            if (downloadPassword) {
+                // Catch a wrong password up front so it gets a clear message.
+                // HEAD runs every check a download does (password, expiry,
+                // download limit) without counting as a download (ADR-017).
+                const check = await fetch(claimPath, {
+                    method: 'HEAD',
+                    headers: { 'X-File-Password': downloadPassword },
+                });
+                if (!check.ok) {
+                    const messages = {
+                        401: 'Incorrect password',
+                        404: 'File not found or expired',
+                        410: 'This file has reached its download limit',
+                        429: 'Too many downloads right now. Please wait a moment and try again.',
+                    };
+                    showToast(messages[check.status] || `Download failed (HTTP ${check.status})`, 'error', 5000);
+                    return;
                 }
-                console.log('Cross-origin download detected - using <a> tag download');
-                console.log(`Download origin: ${downloadUrlObj.origin}, Current origin: ${currentOrigin}`);
-
-                // Use <a> tag for cross-origin downloads (avoids pop-up blockers)
-                // This completely bypasses Service Worker and uses native browser download
-                const link = document.createElement('a');
-                link.href = aHrefUrl;
-                link.download = currentFileInfo.original_filename; // Suggest filename
-                link.target = '_blank';
-                link.rel = 'noopener noreferrer'; // Security best practice
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-
-                showToast('Download started', 'success', 3000);
-                return; // Exit early - don't use ResumableDownloader for cross-origin
             }
-        } catch (error) {
-            console.error('Error checking download URL origin:', error);
-            // If URL parsing fails, fall through to ResumableDownloader
-        }
-
-        // Hide download button, show progress
-        downloadButton.classList.add('hidden');
-        downloadProgress.classList.remove('hidden');
-        pauseDownloadButton.textContent = '⏸ Pause';
-
-        try {
-            // Create downloader instance
-            currentDownloader = new ResumableDownloader(
-                downloadUrl,
-                currentFileInfo.original_filename,
-                currentFileInfo.file_size,
-                { password: downloadPassword } // SH-1.5: header transport
-            );
-
-            // Set up event listeners
-            currentDownloader.on('progress', (progress) => {
-                // Update progress bar
-                downloadProgressFill.style.width = `${progress.percentage}%`;
-                downloadProgressText.textContent = `${Math.round(progress.percentage)}% complete`;
-
-                // Update speed and ETA
-                downloadSpeed.textContent = formatFileSize(progress.speed) + '/s';
-
-                if (progress.estimatedTimeRemaining && progress.estimatedTimeRemaining > 0) {
-                    downloadETA.textContent = `ETA: ${formatTimeRemaining(progress.estimatedTimeRemaining)}`;
-                } else {
-                    downloadETA.textContent = 'Calculating...';
-                }
-            });
-
-            currentDownloader.on('complete', (data) => {
-                // Note: The browser save is triggered by downloadWithProgress()
-                // (initial path) or the pause-button handler (resume path).
-                // This event handler only handles UI updates
-
-                // Reset UI
-                downloadProgress.classList.add('hidden');
-                downloadButton.classList.remove('hidden');
-
-                showToast('Download complete!', 'success', 3000);
-
-                // Reset downloader
-                currentDownloader = null;
-            });
-
-            currentDownloader.on('error', (error) => {
-                console.error('Download error:', error);
-                showToast(`Download failed: ${error.error}`, 'error', 5000);
-
-                // Reset UI
-                downloadProgress.classList.add('hidden');
-                downloadButton.classList.remove('hidden');
-
-                currentDownloader = null;
-            });
-
-            currentDownloader.on('paused', () => {
-                showToast('Download paused - resume to continue', 'info', 2000);
-            });
-
-            // Start download
-            await currentDownloader.downloadWithProgress();
-
+            startNativeDownload(claimPath, downloadPassword);
+            showToast("Starting download - check your browser's downloads", 'info', 4000);
         } catch (error) {
             console.error('Download failed:', error);
             showToast('Download failed. Please try again.', 'error', 5000);
-
-            // Reset UI
-            downloadProgress.classList.add('hidden');
-            downloadButton.classList.remove('hidden');
-
-            currentDownloader = null;
+        } finally {
+            // Re-enable after a moment, so a double click can't start two
+            // transfers (which would spend two downloads of a capped file).
+            setTimeout(() => { downloadButton.disabled = false; }, 2000);
         }
+    }
+
+    /**
+     * Start a download handled entirely by the browser (T31). It's submitted
+     * into a hidden iframe: a file response just becomes a download and the
+     * frame never loads, while an error response loads in the frame - out of
+     * sight instead of replacing this page - and its load event reports the
+     * failure. A password goes in a POST body (SH-1.5), never in the URL,
+     * where it would end up in history and proxy logs.
+     */
+    function startNativeDownload(claimPath, password) {
+        // The frame is in index.html, so its own initial about:blank load
+        // has long happened by now and can't be mistaken for an error page.
+        const frame = document.getElementById('downloadFrame');
+        if (!frame.dataset.listening) {
+            frame.dataset.listening = '1';
+            frame.addEventListener('load', () => {
+                if (!frame.dataset.pending) return;
+                try {
+                    // Still blank: not a response to our form.
+                    if (frame.contentWindow.location.href === 'about:blank') return;
+                } catch (error) {
+                    // An error page blocked by X-Frame-Options can't be
+                    // inspected - that is itself the failure we're watching for.
+                }
+                delete frame.dataset.pending;
+                showToast("The download couldn't be started. Please try again.", 'error', 5000);
+            });
+        }
+
+        const form = document.createElement('form');
+        form.method = password ? 'POST' : 'GET';
+        form.action = claimPath;
+        form.target = 'downloadFrame';
+        form.hidden = true;
+        if (password) {
+            const field = document.createElement('input');
+            field.type = 'hidden';
+            field.name = 'password';
+            field.value = password;
+            form.appendChild(field);
+        }
+        document.body.appendChild(form);
+        frame.dataset.pending = '1';
+        form.submit();
+        document.body.removeChild(form);
     }
 
     // Reset pickup form
