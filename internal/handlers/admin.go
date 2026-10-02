@@ -83,15 +83,20 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 			// Try to get user from users table with admin role
 			user, userErr := repos.Users.GetByUsername(ctx, username)
 
-			// Check if user exists, password matches, has admin role, and is active
-			if userErr == nil && user != nil &&
-				utils.VerifyPassword(user.PasswordHash, password) &&
+			if userErr != nil {
+				user = nil
+			}
+
+			// Check password (verifyUserPassword runs bcrypt even for an
+			// unknown username, so timing doesn't reveal which exist), admin
+			// role, and active status
+			if verifyUserPassword(user, password) &&
 				user.Role == "admin" &&
 				user.IsActive {
 				// User authenticated successfully with admin role
 				authenticatedUser = user
 				slog.Info("admin login successful via users table",
-					"username", username,
+					"username", logUsername(username, cfg),
 					"user_id", user.ID,
 					"ip", logIP(clientIP, cfg),
 				)
@@ -101,7 +106,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 		// If both authentication methods failed
 		if !isAdminCredentials && authenticatedUser == nil {
 			slog.Warn("admin login failed - invalid credentials",
-				"username", username,
+				"username", logUsername(username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 
@@ -161,7 +166,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 					}
 
 					slog.Info("MFA challenge created for admin login",
-						"username", username,
+						"username", logUsername(username, cfg),
 						"user_id", authenticatedUser.ID,
 						"available_methods", availableMethods,
 						"ip", logIP(clientIP, cfg),
@@ -227,7 +232,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 			}
 
 			slog.Info("admin login successful via admin_credentials",
-				"username", username,
+				"username", logUsername(username, cfg),
 				"ip", logIP(clientIP, cfg),
 				"user_agent", userAgent,
 			)

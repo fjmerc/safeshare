@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -48,7 +50,26 @@ const (
 
 	// maxChallengesPerIP prevents single-IP DoS attacks
 	maxChallengesPerIP = 10
+
+	// mfaUserMaxFailures and mfaUserFailureWindow bound wrong MFA codes per
+	// user account across all challenges and client IPs (T48) - see
+	// mfaUserFailureLimiter.
+	mfaUserMaxFailures   = 5
+	mfaUserFailureWindow = 15 * time.Minute
 )
+
+// mfaUserFailureLimiter counts wrong MFA codes (TOTP or recovery) per user
+// account (T48). The per-IP limiter on /api/auth/mfa/verify and the
+// per-challenge attempt cap both reset for an attacker who already has
+// the password and rotates IPs or simply logs in again for a fresh
+// challenge; this one follows the account. Trade-off, accepted on
+// purpose: someone who already holds the password can lock the owner out
+// of the MFA step for up to mfaUserFailureWindow - which fails closed,
+// and the password is compromised at that point anyway. WebAuthn login
+// (MFAWebAuthnLoginFinishHandler) is deliberately not covered: a signed
+// assertion can't be guessed, and leaving it open lets an owner who has a
+// security key still log in while this limit is in effect.
+var mfaUserFailureLimiter = middleware.NewKeyedAttemptLimiter(mfaUserMaxFailures, mfaUserFailureWindow)
 
 // ErrTooManyChallenges is returned when the challenge store is at capacity
 var ErrTooManyChallenges = errors.New("too many pending MFA challenges")
@@ -273,7 +294,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		// Validate input
 		if req.Username == "" || req.Password == "" {
 			slog.Warn("user login failed - empty username or password",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -294,9 +315,9 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		}
 
 		// Check if user exists and password matches
-		if user == nil || !utils.VerifyPassword(user.PasswordHash, req.Password) {
+		if !verifyUserPassword(user, req.Password) {
 			slog.Warn("user login failed - invalid credentials",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -311,7 +332,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		// Check if user is active - use same error message to prevent enumeration
 		if !user.IsActive {
 			slog.Warn("user login failed - account disabled",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
 			time.Sleep(500 * time.Millisecond)
@@ -368,7 +389,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				// User must set up MFA first - we'll create the session but flag this
 				// The frontend can then prompt them to set up MFA
 				slog.Info("user login - MFA required but not configured",
-					"username", req.Username,
+					"username", logUsername(req.Username, cfg),
 					"user_id", user.ID,
 					"ip", logIP(clientIP, cfg),
 				)
@@ -402,7 +423,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 			}
 
 			slog.Info("MFA challenge created for login",
-				"username", req.Username,
+				"username", logUsername(req.Username, cfg),
 				"user_id", user.ID,
 				"available_methods", availableMethods,
 				"ip", logIP(clientIP, cfg),
@@ -529,6 +550,34 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
+		// Per-user failure limit (T48), checked after the challenge and its
+		// IP binding are validated but before IncrementAttempts, so a
+		// per-user 429 neither burns a per-challenge attempt nor deletes the
+		// challenge. The attempt is reserved up front (so parallel requests
+		// can't all slip past) and refunded on every path except a code that
+		// was actually checked and turned out wrong - a server error or an
+		// exhausted challenge never counts against the account.
+		userLimitKey := "user:" + strconv.FormatInt(challenge.UserID, 10)
+		allowed, userLimitToken := mfaUserFailureLimiter.Reserve(userLimitKey)
+		if !allowed {
+			slog.Warn("MFA login verification failed - too many failed attempts for user",
+				"user_id", challenge.UserID,
+				"ip", logIP(clientIP, cfg),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Too many failed attempts. Please try again later.",
+			})
+			return
+		}
+		countUserFailure := false
+		defer func() {
+			if !countUserFailure {
+				mfaUserFailureLimiter.Refund(userLimitKey, userLimitToken)
+			}
+		}()
+
 		// Check if too many attempts
 		if !mfaLoginStore.IncrementAttempts(req.ChallengeID) {
 			mfaLoginStore.Delete(req.ChallengeID)
@@ -575,35 +624,49 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 				)
 			}
 		} else {
-			// Verify TOTP
-			storedSecret, err := repos.MFA.GetTOTPSecret(ctx, user.ID)
+			// Verify TOTP. Only an enabled TOTP enrollment can satisfy this
+			// branch: GetTOTPSecret returns "" when the user never enrolled
+			// TOTP (e.g. a security-key-only account) or disabled it, and
+			// pquerna/otp accepts a code computed from an empty secret, so
+			// without this check anyone with the password of such an
+			// account could pass MFA (when no ENCRYPTION_KEY is set).
+			totpEnabled, err := repos.MFA.IsTOTPEnabled(ctx, user.ID)
 			if err != nil {
-				slog.Error("failed to get TOTP secret", "error", err, "user_id", user.ID)
+				slog.Error("failed to check TOTP status", "error", err, "user_id", user.ID)
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
 
-			// Decrypt if needed
 			var secret string
-			if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-				encrypted, err := base64.StdEncoding.DecodeString(storedSecret)
+			if totpEnabled {
+				storedSecret, err := repos.MFA.GetTOTPSecret(ctx, user.ID)
 				if err != nil {
-					slog.Error("failed to decode TOTP secret", "error", err, "user_id", user.ID)
+					slog.Error("failed to get TOTP secret", "error", err, "user_id", user.ID)
 					http.Error(w, "Internal server error", http.StatusInternalServerError)
 					return
 				}
-				decrypted, err := utils.DecryptFile(encrypted, cfg.EncryptionKey)
-				if err != nil {
-					slog.Error("failed to decrypt TOTP secret", "error", err, "user_id", user.ID)
-					http.Error(w, "Internal server error", http.StatusInternalServerError)
-					return
+
+				// Decrypt if needed
+				if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
+					encrypted, err := base64.StdEncoding.DecodeString(storedSecret)
+					if err != nil {
+						slog.Error("failed to decode TOTP secret", "error", err, "user_id", user.ID)
+						http.Error(w, "Internal server error", http.StatusInternalServerError)
+						return
+					}
+					decrypted, err := utils.DecryptFile(encrypted, cfg.EncryptionKey)
+					if err != nil {
+						slog.Error("failed to decrypt TOTP secret", "error", err, "user_id", user.ID)
+						http.Error(w, "Internal server error", http.StatusInternalServerError)
+						return
+					}
+					secret = string(decrypted)
+				} else {
+					secret = storedSecret
 				}
-				secret = string(decrypted)
-			} else {
-				secret = storedSecret
 			}
 
-			valid = totp.Validate(req.Code, secret)
+			valid = secret != "" && totp.Validate(req.Code, secret)
 
 			// Synthetic bcrypt compare so the TOTP branch (microseconds)
 			// takes bcrypt-scale time like the recovery branch, preventing
@@ -612,6 +675,7 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 		}
 
 		if !valid {
+			countUserFailure = true
 			codeType := "TOTP"
 			if req.IsRecovery {
 				codeType = "recovery"
