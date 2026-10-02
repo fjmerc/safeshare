@@ -483,11 +483,16 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		// Bound the body by the requested chunk size (not config default)
 		maxChunkSize := partialUpload.ChunkSize + 1024 // requested chunk size + 1KB overhead
-		extendTransferDeadline(w, cfg, maxChunkSize)
-		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
+		transferDeadline := extendTransferDeadline(w, cfg, maxChunkSize)
+		// A client that stops sending is cut off within about a minute (T50).
+		body := newIdleDeadlineReader(w, http.MaxBytesReader(w, r.Body, maxChunkSize), transferDeadline)
+		r.Body = body
 		chunkPart, err := nextFormFilePart(r, "chunk")
 		if err != nil {
-			if errors.Is(err, errNoFormFile) {
+			body.finish(err)
+			if isUploadTimeout(err) {
+				sendUploadTimeout(w, r)
+			} else if errors.Is(err, errNoFormFile) {
 				sendError(w, "No chunk file provided", "NO_CHUNK", http.StatusBadRequest)
 			} else {
 				sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
@@ -503,9 +508,20 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 		// chunk still gets the exact size mismatch below, and a body over the
 		// limit gets 413 - the same responses as before chunks were streamed.
 		tmpPath, chunkSize, checksum, err := utils.StreamChunkToTemp(cfg.UploadDir, uploadID, chunkNumber, chunkPart, maxChunkSize)
+		if err == nil {
+			if derr := body.drainRest(); derr != nil {
+				os.Remove(tmpPath)
+				err = &utils.ChunkReadError{Err: derr}
+			}
+		}
+		body.finish(err)
 		if err != nil {
 			var readErr *utils.ChunkReadError
 			switch {
+			// Must come before the ChunkReadError case, which also matches
+			// a timeout (it wraps the read error) and would answer 413.
+			case isUploadTimeout(err):
+				sendUploadTimeout(w, r)
 			case errors.Is(err, utils.ErrChunkTooLarge), errors.As(err, &readErr):
 				sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
 			case errors.Is(err, syscall.ENOSPC):

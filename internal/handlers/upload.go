@@ -297,7 +297,7 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	if expectedBytes <= 0 || expectedBytes > cfg.GetMaxFileSize() {
 		expectedBytes = cfg.GetMaxFileSize()
 	}
-	extendTransferDeadline(w, cfg, expectedBytes)
+	transferDeadline := extendTransferDeadline(w, cfg, expectedBytes)
 
 	// The body is spooled to the upload volume below (not held in memory),
 	// so check up front that it can fit there. This is best-effort: it only
@@ -313,11 +313,22 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	}
 
 	// Stream the multipart body, spooling the file part to disk (T29).
-	r.Body = http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize())
+	// A client that stops sending is cut off within about a minute instead
+	// of holding its spool file until the full transfer deadline (T50).
+	body := newIdleDeadlineReader(w, http.MaxBytesReader(w, r.Body, cfg.GetMaxFileSize()), transferDeadline)
+	r.Body = body
 	file, header, err := spoolUploadForm(r, "file", cfg.UploadDir)
+	if err == nil {
+		if err = body.drainRest(); err != nil {
+			file.Close()
+		}
+	}
+	body.finish(err)
 	if err != nil {
 		var spoolErr *spoolError
 		switch {
+		case isUploadTimeout(err):
+			sendUploadTimeout(w, r)
 		case errors.Is(err, syscall.ENOSPC):
 			sendError(w, "Insufficient storage space", "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 		case errors.As(err, &spoolErr):

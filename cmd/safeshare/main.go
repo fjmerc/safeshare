@@ -316,7 +316,7 @@ func run() error {
 	// predicate via Wrap: webauthn/begin proves nothing about the caller and
 	// must never count as a genuine attempt either way (middleware.AlwaysRefund),
 	// and /mfa/verify's own 429s are refunded (middleware.MFAVerifyLoginSuccess).
-	mfaLoginLimiter :=middleware.NewMFALoginLimiter(anonMode)
+	mfaLoginLimiter := middleware.NewMFALoginLimiter(anonMode)
 	mfaVerifyLoginHandler := mfaLoginLimiter.Wrap("MFA login verification", middleware.MFAVerifyLoginSuccess)(
 		http.HandlerFunc(handlers.MFAVerifyLoginHandler(repos, cfg)))
 	webauthnLoginBeginHandler := mfaLoginLimiter.Wrap("WebAuthn login begin", middleware.AlwaysRefund)(
@@ -1088,14 +1088,18 @@ func run() error {
 	protocols.SetUnencryptedHTTP2(true)
 
 	server := &http.Server{
-		Addr:           ":" + cfg.Port,
-		Handler:        handler,
-		ReadTimeout:    time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
-		WriteTimeout:   time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
-		IdleTimeout:    120 * time.Second, // Increased from 60s for HTTP/2 connection reuse
-		MaxHeaderBytes: 1 << 20,           // 1MB header limit
-		Protocols:      protocols,
-		HTTP2:          &http.HTTP2Config{MaxConcurrentStreams: 250},
+		Addr:    ":" + cfg.Port,
+		Handler: handler,
+		// Headers arrive in one go from any real client or proxy; without
+		// this, a client trickling its headers is held for the full
+		// ReadTimeout (120s by default).
+		ReadHeaderTimeout: 20 * time.Second,
+		ReadTimeout:       time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       120 * time.Second, // Increased from 60s for HTTP/2 connection reuse
+		MaxHeaderBytes:    1 << 20,           // 1MB header limit
+		Protocols:         protocols,
+		HTTP2:             &http.HTTP2Config{MaxConcurrentStreams: 250},
 	}
 
 	// Start cleanup workers with WaitGroup for graceful shutdown
