@@ -216,9 +216,9 @@ docker run -p 8081:8080 safeshare:latest
    - See [CDN & Caching Issues](#cdn--caching-issues)
 
 2. **Connection interruption:**
-   - SafeShare supports HTTP Range requests
-   - Browser can resume interrupted downloads
-   - Try downloading again (will resume from where it stopped)
+   - SafeShare supports HTTP Range requests, and the web UI hands downloads to the browser's own download manager, which can usually resume an interrupted download
+   - It can't resume a password-protected download (the browser re-requests it without the password), and resuming a file with a download limit may be refused once its one allowed download has been used; in either case, start the download again from the Pickup tab
+   - For very large files on unreliable connections, `curl -C -` resumes uncapped files; for a file with a download limit, send the `X-Download-Session` header from the first response back on the resume (see `docs/HTTP_RANGE_SUPPORT.md`)
 
 3. **File corruption:**
    ```bash
