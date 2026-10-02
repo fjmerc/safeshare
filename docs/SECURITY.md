@@ -294,6 +294,8 @@ docker run -d \
 ✅ **Zero-knowledge server** - Server cannot read encrypted files
 ✅ **Backward compatible** - Works with existing plain files
 
+**Plaintext while an upload is in progress:** files are encrypted as they're stored, so their unencrypted bytes exist briefly on the uploads volume while an upload is being processed - a simple upload in the spool directory (`.spool/`, unlinked as soon as it's created, so no file is left once processing ends, even if the server crashes), a chunked upload's chunks in `.partial/` until it's assembled, and - when metadata stripping is on with `ENCRYPTION_KEY` - a short-lived temp file in the system temp directory. Deleting a file frees its blocks but doesn't overwrite them, so the data can stay recoverable from the disk until it's reused. Put the uploads volume (and the container's temp directory) on encrypted storage if unencrypted data must never reach disk at all. The uploads volume should be a local filesystem: on NFS, unlinking an open file leaves a visible `.nfs*` placeholder behind instead.
+
 ### Key Management
 ⚠️ **IMPORTANT**: Store the encryption key securely!
 - **Development**: Use environment variable
@@ -1308,6 +1310,9 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.9.0 | Stalled upload bodies held connections and partly received uploads for up to 6h; slow request headers held for 120s | Medium |
+| v1.9.0 | Uploads buffered in RAM (512 MB upload peaked at ~2 GB): memory-exhaustion risk from large or concurrent uploads | Medium |
+| v1.9.0 | Upload status endpoint had no rate limit | Low |
 | v1.8.1 | MFA bypass: security-key-only accounts accepted a TOTP code for an empty secret (servers without ENCRYPTION_KEY) | High |
 | v1.8.1 | MFA codes limited only per IP/challenge; password-change endpoints unlimited; login timing revealed valid usernames | Medium |
 | v1.8.0 | IP blocklist entries bypassable via equivalent address spellings (case, leading zeros, IPv4-mapped IPv6) | Medium |

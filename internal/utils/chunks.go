@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -93,39 +94,105 @@ func parseChunkFileName(name string) (int, bool) {
 	return n, true
 }
 
+// ErrChunkTooLarge is returned by StreamChunkToTemp when its source holds
+// more than the allowed number of bytes.
+var ErrChunkTooLarge = errors.New("chunk exceeds expected size")
+
+// ChunkReadError wraps a failure reading a chunk's source - typically the
+// client's request body (disconnect, MaxBytesReader limit) - as opposed to
+// a local write failure, so callers can answer with a client error rather
+// than a 500.
+type ChunkReadError struct{ Err error }
+
+func (e *ChunkReadError) Error() string { return "failed to read chunk data: " + e.Err.Error() }
+func (e *ChunkReadError) Unwrap() error { return e.Err }
+
+// errRecordingReader remembers the last non-EOF error its reader returned,
+// so a failed io.Copy can be attributed to the read side or the write side.
+type errRecordingReader struct {
+	r   io.Reader
+	err error
+}
+
+func (e *errRecordingReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && err != io.EOF {
+		e.err = err
+	}
+	return n, err
+}
+
+// StreamChunkToTemp copies src into a new temp file in the upload's chunks
+// directory, hashing it on the way, so a chunk never has to be held in
+// memory. At most maxSize bytes are accepted: a longer source returns
+// ErrChunkTooLarge. On success the caller owns tmpPath and must either
+// CommitChunk it or remove it; on error no temp file is left behind.
+//
+// The temp name doesn't match parseChunkFileName, so an uncommitted chunk is
+// invisible to chunk counts and integrity checks.
+func StreamChunkToTemp(uploadDir, uploadID string, chunkNumber int, src io.Reader, maxSize int64) (tmpPath string, size int64, checksum string, err error) {
+	chunksDir := GetUploadChunksDir(uploadDir, uploadID)
+	if err := os.MkdirAll(chunksDir, 0700); err != nil {
+		return "", 0, "", fmt.Errorf("failed to create chunks directory: %w", err)
+	}
+
+	// CreateTemp opens with 0600 (avoid os.WriteFile to prevent implicit sync).
+	file, err := os.CreateTemp(chunksDir, fmt.Sprintf(".%s%d.tmp-*", chunkFilePrefix, chunkNumber))
+	if err != nil {
+		return "", 0, "", fmt.Errorf("failed to create chunk file: %w", err)
+	}
+	// A local copy: the error returns below zero the named tmpPath before
+	// this deferred cleanup runs.
+	path := file.Name()
+	defer func() {
+		if err != nil {
+			os.Remove(path)
+		}
+	}()
+
+	hasher := sha256.New()
+	// Read one byte past maxSize so an oversized source is detected rather
+	// than silently truncated.
+	reader := &errRecordingReader{r: io.LimitReader(src, maxSize+1)}
+	size, copyErr := io.Copy(io.MultiWriter(file, hasher), reader)
+	closeErr := file.Close()
+
+	switch {
+	case reader.err != nil:
+		return "", 0, "", &ChunkReadError{Err: reader.err}
+	case copyErr != nil:
+		return "", 0, "", fmt.Errorf("failed to write chunk data: %w", copyErr)
+	case closeErr != nil:
+		return "", 0, "", fmt.Errorf("failed to close chunk file: %w", closeErr)
+	case size > maxSize:
+		return "", 0, "", ErrChunkTooLarge
+	}
+	return path, size, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// CommitChunk atomically moves a temp file from StreamChunkToTemp into place
+// as the chunk's final file, replacing any previous one.
+func CommitChunk(tmpPath, uploadDir, uploadID string, chunkNumber int) error {
+	if err := os.Rename(tmpPath, GetChunkPath(uploadDir, uploadID, chunkNumber)); err != nil {
+		return fmt.Errorf("failed to finalize chunk file: %w", err)
+	}
+	return nil
+}
+
 // SaveChunk saves a chunk to disk atomically: the data goes to a temp file in
 // the same directory that is renamed over the final path only once fully
 // written. A failed or interrupted write (ENOSPC, crash, client retry racing
 // the original request) therefore never leaves a truncated chunk_N behind,
 // which used to make every retry of that chunk fail with CHUNK_CORRUPTION.
 func SaveChunk(uploadDir, uploadID string, chunkNumber int, data []byte) error {
-	// Create chunks directory if it doesn't exist
-	chunksDir := GetUploadChunksDir(uploadDir, uploadID)
-	if err := os.MkdirAll(chunksDir, 0700); err != nil {
-		return fmt.Errorf("failed to create chunks directory: %w", err)
-	}
-
-	// Temp name doesn't match parseChunkFileName, so it's invisible to counts.
-	// CreateTemp opens with 0600 (avoid os.WriteFile to prevent implicit sync).
 	chunkPath := GetChunkPath(uploadDir, uploadID, chunkNumber)
-	file, err := os.CreateTemp(chunksDir, fmt.Sprintf(".%s%d.tmp-*", chunkFilePrefix, chunkNumber))
+	tmpPath, _, _, err := StreamChunkToTemp(uploadDir, uploadID, chunkNumber, bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return fmt.Errorf("failed to create chunk file: %w", err)
+		return err
 	}
-	tmpPath := file.Name()
-
-	if _, err := file.Write(data); err != nil {
-		file.Close()
+	if err := CommitChunk(tmpPath, uploadDir, uploadID, chunkNumber); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("failed to write chunk data: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to close chunk file: %w", err)
-	}
-	if err := os.Rename(tmpPath, chunkPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to finalize chunk file: %w", err)
+		return err
 	}
 
 	// Intentionally NO file.Sync() - let OS flush asynchronously

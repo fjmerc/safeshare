@@ -498,8 +498,14 @@ class ChunkedUploader {
         });
 
         if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to get status');
+            const body = await response.json().catch(() => ({}));
+            const error = new Error(body.error || 'Failed to get status');
+            error.status = response.status;
+            const retryAfter = parseInt(response.headers.get('Retry-After'), 10);
+            if (Number.isFinite(retryAfter)) {
+                error.retryAfterSeconds = retryAfter;
+            }
+            throw error;
         }
 
         return await response.json();
@@ -526,6 +532,16 @@ class ChunkedUploader {
         // has been unreachable for minutes and we give up.
         const maxConsecutiveErrors = 30;
         let consecutiveErrors = 0;
+        // A 429 from /status means this client (or others behind the same
+        // IP - NAT, Tor) polled too often, not that the server is down or the
+        // upload failed: assembly carries on regardless. So it neither counts
+        // toward maxConsecutiveErrors nor consumes assembly attempts; we just
+        // poll more slowly. The status rate limit is an hourly window, so
+        // only give up after being limited for longer than that - otherwise
+        // the claim code (which only /status returns) would be lost for an
+        // upload that actually succeeded.
+        const maxRateLimitedMs = 70 * 60 * 1000;
+        let rateLimitedSince = null;
         let attempts = 0;
         const startTime = Date.now();
 
@@ -622,6 +638,7 @@ class ChunkedUploader {
                 // Status is still "processing" - continue polling
                 // Wait before next poll
                 consecutiveErrors = 0;
+                rateLimitedSince = null;
                 await this.sleep(pollInterval);
                 attempts++;
 
@@ -637,6 +654,24 @@ class ChunkedUploader {
                 // retried as network errors.
                 if (error.terminal) {
                     throw this._reportError(error, { stage: 'assembly', error: error.message, code: error.code || null });
+                }
+
+                if (error.status === 429) {
+                    if (rateLimitedSince === null) {
+                        rateLimitedSince = Date.now();
+                    } else if (Date.now() - rateLimitedSince > maxRateLimitedMs) {
+                        throw this._reportError(
+                            new Error('Assembly status polling was rate limited for over an hour'),
+                            { stage: 'assembly_polling', error: error.message }
+                        );
+                    }
+                    // Honour Retry-After within reason: the server's value is
+                    // the whole window (an hour), far too long to wait for a
+                    // claim code; 15-60s keeps well under the limit.
+                    const waitSeconds = Math.min(Math.max(error.retryAfterSeconds || 0, 15), 60);
+                    console.warn(`Status polling rate limited; retrying in ${waitSeconds}s`);
+                    await this.sleep(waitSeconds * 1000);
+                    continue;
                 }
 
                 // For network errors, retry with exponential backoff against a
