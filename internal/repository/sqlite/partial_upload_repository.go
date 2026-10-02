@@ -145,17 +145,10 @@ func (r *PartialUploadRepository) createWithQuotaCheckOnce(ctx context.Context, 
 		_ = tx.Rollback()
 	}()
 
-	// Check quota within transaction (atomic with insert)
-	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
+	// Check quota within transaction (atomic with insert). The new upload
+	// reserves its full size upfront (see storageUsageQuery).
 	var currentUsage int64
-	query := `
-		SELECT
-			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = 0), 0)
-		FROM files
-		WHERE datetime(expires_at) > datetime('now')
-	`
-	if err := tx.QueryRowContext(ctx, query).Scan(&currentUsage); err != nil {
+	if err := tx.QueryRowContext(ctx, storageUsageQuery).Scan(&currentUsage); err != nil {
 		return fmt.Errorf("failed to get current usage: %w", err)
 	}
 
@@ -286,6 +279,86 @@ func (r *PartialUploadRepository) IncrementChunksReceived(ctx context.Context, u
 		return fmt.Errorf("failed to increment chunks received: %w", err)
 	}
 
+	return nil
+}
+
+// RecordChunkProgress implements repository.PartialUploadRepository.RecordChunkProgress.
+func (r *PartialUploadRepository) RecordChunkProgress(ctx context.Context, uploadID string, receivedBytes int64) error {
+	if uploadID == "" {
+		return fmt.Errorf("upload_id cannot be empty")
+	}
+	if receivedBytes < 0 {
+		return fmt.Errorf("received bytes cannot be negative")
+	}
+
+	query := `
+		UPDATE partial_uploads
+		SET last_activity = ?,
+		    received_bytes = MAX(COALESCE(received_bytes, 0), MIN(?, total_size))
+		WHERE upload_id = ? AND completed = 0 AND COALESCE(status, 'uploading') = 'uploading'
+	`
+
+	_, err := r.db.ExecContext(ctx, query, time.Now().Format(time.RFC3339), receivedBytes, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to record chunk progress: %w", err)
+	}
+
+	return nil
+}
+
+// RenewReservation implements repository.PartialUploadRepository.RenewReservation.
+func (r *PartialUploadRepository) RenewReservation(ctx context.Context, uploadID string, quotaLimitBytes int64) error {
+	if uploadID == "" {
+		return fmt.Errorf("upload_id cannot be empty")
+	}
+	if quotaLimitBytes < 0 {
+		return fmt.Errorf("quota limit cannot be negative")
+	}
+
+	tx, err := beginImmediateTx(ctx, r.db)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// Re-read under the write lock: a parallel chunk may already have
+	// renewed it, in which case it's held again and there's nothing to do.
+	var lapsed int
+	var remaining int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(completed = 0 AND `+reservationLapsed+`, 0),
+			total_size - COALESCE(received_bytes, 0)
+		FROM partial_uploads
+		WHERE upload_id = ?
+	`, uploadID).Scan(&lapsed, &remaining)
+	if err == sql.ErrNoRows || (err == nil && lapsed == 0) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read partial upload: %w", err)
+	}
+
+	// The lapsed upload is counted at received_bytes in the usage, so the
+	// rest of its size has to fit on top of it (overflow-safe).
+	var currentUsage int64
+	if err := tx.QueryRowContext(ctx, storageUsageQuery).Scan(&currentUsage); err != nil {
+		return fmt.Errorf("failed to get current usage: %w", err)
+	}
+	if currentUsage > quotaLimitBytes || remaining > quotaLimitBytes-currentUsage {
+		return repository.ErrQuotaExceeded
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE partial_uploads SET last_activity = ? WHERE upload_id = ?`,
+		time.Now().Format(time.RFC3339), uploadID); err != nil {
+		return fmt.Errorf("failed to renew reservation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
 	return nil
 }
 

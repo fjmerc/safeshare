@@ -344,7 +344,7 @@ Logs example:
   - chunk_size (matches expected)
   - File extensions (blocked extensions)
   - Disk space before accepting chunks
-- Quota tracking includes partial uploads
+- Quota tracking includes partial uploads: `/init` reserves the upload's full size against `QUOTA_LIMIT_GB` (507 `QUOTA_EXCEEDED` if it doesn't fit). The reservation is held while the upload makes progress; once it has stored no new chunk for an hour, it counts only the bytes received so far, so an upload that's started and abandoned can't keep the quota tied up until cleanup. Its next new chunk (or `/complete`) re-reserves the rest, or gets 507 `QUOTA_EXCEEDED` if the quota has filled in the meantime (the web client stops and reports the error). A client so slow that a single chunk takes over an hour can hit this mid-upload when the quota is nearly full. Re-sending an already-stored chunk doesn't renew the reservation.
 - Maximum 10,000 chunks per file (prevents DoS)
 
 ## Frontend Integration

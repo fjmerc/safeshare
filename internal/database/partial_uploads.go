@@ -94,7 +94,8 @@ func createPartialUploadWithQuotaCheckOnce(db *sql.DB, upload *models.PartialUpl
 	}()
 
 	// Check quota within transaction (atomic with insert)
-	// Note: Uses total_size for partial uploads (not received_bytes) since we reserve full size upfront
+	// Legacy path, not used for quota enforcement: the repository layer
+	// (storageUsageQuery) releases lapsed reservations (T30); this does not.
 	// This prevents quota leakage when uploads fail partway through
 	var currentUsage int64
 	// Note: datetime(expires_at) normalizes RFC3339 format (from Go) to SQLite datetime format
