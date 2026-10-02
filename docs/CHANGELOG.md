@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-02
+
 ### Fixed
 
 - **The web uploader no longer gives up on a large upload just because its status checks were rate limited.** After a chunked upload, the browser polls `/api/upload/status` until the server finishes assembling the file - and that status response is the only place the claim code is returned. A `429 Too Many Requests` from it was treated like a network failure: after 30 in a row (about 5 minutes) the uploader reported the upload as failed, even though the server went on to finish it, so the claim code was lost. This could happen when many uploads share one IP address (a busy NAT, or a Tor hidden service, where every visitor appears as the same address). The uploader now treats a 429 as "poll more slowly": it waits 15-60 seconds between checks and keeps going for over an hour before giving up.

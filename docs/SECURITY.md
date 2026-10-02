@@ -1310,6 +1310,9 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.9.0 | Stalled upload bodies held connections and partly received uploads for up to 6h; slow request headers held for 120s | Medium |
+| v1.9.0 | Uploads buffered in RAM (512 MB upload peaked at ~2 GB): memory-exhaustion risk from large or concurrent uploads | Medium |
+| v1.9.0 | Upload status endpoint had no rate limit | Low |
 | v1.8.1 | MFA bypass: security-key-only accounts accepted a TOTP code for an empty secret (servers without ENCRYPTION_KEY) | High |
 | v1.8.1 | MFA codes limited only per IP/challenge; password-change endpoints unlimited; login timing revealed valid usernames | Medium |
 | v1.8.0 | IP blocklist entries bypassable via equivalent address spellings (case, leading zeros, IPv4-mapped IPv6) | Medium |
