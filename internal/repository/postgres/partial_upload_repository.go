@@ -4,6 +4,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -116,14 +117,7 @@ func (r *PartialUploadRepository) CreateWithQuotaCheck(ctx context.Context, uplo
 
 		// Check quota within transaction
 		var currentUsage int64
-		query := `
-			SELECT
-				COALESCE(SUM(file_size), 0) +
-				COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
-			FROM files
-			WHERE expires_at > NOW()
-		`
-		if err := tx.QueryRow(ctx, query).Scan(&currentUsage); err != nil {
+		if err := tx.QueryRow(ctx, storageUsageQuery).Scan(&currentUsage); err != nil {
 			return fmt.Errorf("failed to get current usage: %w", err)
 		}
 
@@ -256,6 +250,86 @@ func (r *PartialUploadRepository) IncrementChunksReceived(ctx context.Context, u
 	}
 
 	return nil
+}
+
+// RecordChunkProgress implements repository.PartialUploadRepository.RecordChunkProgress.
+func (r *PartialUploadRepository) RecordChunkProgress(ctx context.Context, uploadID string, receivedBytes int64) error {
+	if uploadID == "" {
+		return fmt.Errorf("upload_id cannot be empty")
+	}
+	if receivedBytes < 0 {
+		return fmt.Errorf("received bytes cannot be negative")
+	}
+
+	query := `
+		UPDATE partial_uploads
+		SET last_activity = NOW(),
+		    received_bytes = GREATEST(COALESCE(received_bytes, 0), LEAST($1, total_size))
+		WHERE upload_id = $2 AND completed = false AND COALESCE(status, 'uploading') = 'uploading'
+	`
+
+	_, err := r.pool.Exec(ctx, query, receivedBytes, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to record chunk progress: %w", err)
+	}
+
+	return nil
+}
+
+// RenewReservation implements repository.PartialUploadRepository.RenewReservation.
+func (r *PartialUploadRepository) RenewReservation(ctx context.Context, uploadID string, quotaLimitBytes int64) error {
+	if uploadID == "" {
+		return fmt.Errorf("upload_id cannot be empty")
+	}
+	if quotaLimitBytes < 0 {
+		return fmt.Errorf("quota limit cannot be negative")
+	}
+
+	return withRetryNoReturn(ctx, 3, func() error {
+		tx, err := r.pool.BeginTx(ctx, TxOptions())
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }() // Safe to ignore: no-op after commit
+
+		// Re-read with the row locked: a parallel chunk may already have
+		// renewed it, in which case it's held again and there's nothing to do.
+		var lapsed bool
+		var remaining int64
+		err = tx.QueryRow(ctx, `
+			SELECT
+				COALESCE(completed = false AND `+reservationLapsed+`, false),
+				total_size - COALESCE(received_bytes, 0)
+			FROM partial_uploads
+			WHERE upload_id = $1
+			FOR UPDATE
+		`, uploadID).Scan(&lapsed, &remaining)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !lapsed) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read partial upload: %w", err)
+		}
+
+		// The lapsed upload is counted at received_bytes in the usage, so the
+		// rest of its size has to fit on top of it (overflow-safe).
+		var currentUsage int64
+		if err := tx.QueryRow(ctx, storageUsageQuery).Scan(&currentUsage); err != nil {
+			return fmt.Errorf("failed to get current usage: %w", err)
+		}
+		if currentUsage > quotaLimitBytes || remaining > quotaLimitBytes-currentUsage {
+			return repository.ErrQuotaExceeded
+		}
+
+		if _, err := tx.Exec(ctx, `UPDATE partial_uploads SET last_activity = NOW() WHERE upload_id = $1`, uploadID); err != nil {
+			return fmt.Errorf("failed to renew reservation: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+		return nil
+	})
 }
 
 // Delete removes a partial upload record.

@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Abandoned chunked uploads no longer hold storage quota for a day (T30).** Starting a chunked upload (`POST /api/upload/init`) reserves the file's full size against `QUOTA_LIMIT_GB` up front, so the upload can't run out of room halfway. That reservation used to last until the upload was cleaned up - 24 hours by default (`PARTIAL_UPLOAD_EXPIRY_HOURS`) - even if no data was ever sent, so a handful of upload starts that went nowhere could fill the quota and turn away everyone else's uploads with `507 QUOTA_EXCEEDED`. Now an upload that stores no new chunk for an hour stops reserving its full size and counts only the data it has actually sent. It can still be resumed: its next chunk reserves the rest again, or fails with `507 QUOTA_EXCEEDED` if the quota has filled in the meantime. Re-sending a chunk that's already stored doesn't count as progress. Uploads that keep sending data are unaffected, and so are servers without a quota.
+
 ## [1.9.0] - 2026-10-02
 
 ### Fixed

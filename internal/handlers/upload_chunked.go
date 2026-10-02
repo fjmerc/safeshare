@@ -274,7 +274,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 		if quotaConfigured {
 			quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
 			if err := repos.PartialUploads.CreateWithQuotaCheck(ctx, partialUpload, quotaBytes); err != nil {
-				if err == repository.ErrQuotaExceeded || strings.Contains(err.Error(), "quota exceeded") {
+				if errors.Is(err, repository.ErrQuotaExceeded) {
 					slog.Warn("quota exceeded for chunked upload (transactional check)",
 						"file_size", req.TotalSize,
 						"quota_limit_gb", cfg.GetQuotaLimitGB(),
@@ -591,10 +591,8 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 					"checksum", checksum,
 				)
 
-				// Update activity time
-				if err := repos.PartialUploads.UpdateActivity(ctx, uploadID); err != nil {
-					slog.Error("failed to update partial upload activity", "error", err)
-				}
+				// No activity update: re-sending a stored chunk mustn't keep
+				// the upload's quota reservation alive (T30).
 
 				// Count actual chunks from disk instead of relying on DB counter
 				chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
@@ -639,6 +637,12 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
+		// An upload that hasn't stored a chunk for a while has lost its quota
+		// reservation (T30): re-reserve the rest before taking more data.
+		if !renewLapsedReservation(w, r, repos, cfg, current) {
+			return
+		}
+
 		// Move the chunk into place
 		if err := utils.CommitChunk(tmpPath, cfg.UploadDir, uploadID, chunkNumber); err != nil {
 			if errors.Is(err, syscall.ENOSPC) {
@@ -651,23 +655,24 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 		}
 		committed = true
 
-		// Update last_activity to prevent cleanup worker from removing active uploads
-		if err := repos.PartialUploads.UpdateActivity(ctx, uploadID); err != nil {
-			slog.Error("failed to update partial upload activity", "error", err)
-			// Non-fatal error - continue processing
-		}
-
-		// NOTE: We no longer increment chunks_received in the database on every chunk upload.
-		// This caused severe database lock contention (31-35% SQLITE_BUSY errors with concurrency=3).
-		// Instead, chunk count is calculated on-demand from disk when status is requested.
-		// This eliminates all database writes during upload, allowing higher concurrency.
-
 		// Count actual chunks from disk instead of relying on DB counter
+		// (incrementing chunks_received per chunk caused heavy SQLITE_BUSY
+		// contention with parallel chunks).
 		chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
 		if err != nil {
 			slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
 			// Use 0 as fallback if we can't count chunks
 			chunksReceived = 0
+		}
+
+		// One write per chunk: refresh last_activity (so the cleanup worker
+		// leaves the upload alone and its quota reservation stays held) and
+		// record roughly how much it has received - what a lapsed reservation
+		// still counts against the quota (T30). Every chunk counts as a full
+		// chunk; the repository caps it at the upload's size.
+		if err := repos.PartialUploads.RecordChunkProgress(ctx, uploadID, int64(chunksReceived)*partialUpload.ChunkSize); err != nil {
+			slog.Warn("failed to record chunk progress", "error", err, "upload_id", uploadID)
+			// Non-fatal error - continue processing
 		}
 
 		response := models.UploadChunkResponse{
@@ -695,6 +700,34 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			"filename", chunkPart.FileName(),
 		)
 	}
+}
+
+// renewLapsedReservation re-reserves the rest of an upload's size against the
+// quota if its reservation has lapsed (T30), writing 507 QUOTA_EXCEEDED (or
+// 500) and returning false if that fails. The time check here is only a cheap
+// filter - the repository decides, and it's a no-op while the reservation is
+// still held - so it starts early enough to absorb clock skew between this
+// process and the database.
+func renewLapsedReservation(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, upload *models.PartialUpload) bool {
+	if cfg.GetQuotaLimitGB() <= 0 || time.Since(upload.LastActivity) < repository.PartialUploadReservationIdle/2 {
+		return true
+	}
+	quotaBytes := cfg.GetQuotaLimitGB() * 1024 * 1024 * 1024
+	err := repos.PartialUploads.RenewReservation(r.Context(), upload.UploadID, quotaBytes)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, repository.ErrQuotaExceeded) {
+		slog.Warn("quota exceeded renewing a lapsed chunked upload reservation",
+			"upload_id", upload.UploadID,
+			"quota_limit_gb", cfg.GetQuotaLimitGB(),
+		)
+		sendSmartError(w, "Storage quota exceeded", "QUOTA_EXCEEDED", http.StatusInsufficientStorage)
+		return false
+	}
+	slog.Error("failed to renew upload reservation", "error", err, "upload_id", upload.UploadID)
+	sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+	return false
 }
 
 // respondProcessing writes the standard 202 "still assembling, poll status"
@@ -988,6 +1021,13 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 				"reason", errMsg,
 			)
 			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			return
+		}
+
+		// Locking moves the upload out of "uploading", which counts its full
+		// size against the quota again; if its reservation had lapsed, that
+		// has to fit first (T30).
+		if partialUpload.Status == "uploading" && !renewLapsedReservation(w, r, repos, cfg, partialUpload) {
 			return
 		}
 

@@ -53,18 +53,7 @@ func (r *FileRepository) CreateWithQuotaCheck(ctx context.Context, file *models.
 
 		// Check quota within transaction
 		var currentUsage int64
-		// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows
-		// are already inserted with file_size=0, but exclude them explicitly
-		// too, so a future insert bug can't silently reintroduce quota inflation.
-		query := `
-			SELECT
-				COALESCE(SUM(file_size), 0) +
-				COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
-			FROM files
-			WHERE expires_at > NOW()
-			AND (scan_status IS NULL OR scan_status != 'infected')
-		`
-		if err := tx.QueryRow(ctx, query).Scan(&currentUsage); err != nil {
+		if err := tx.QueryRow(ctx, storageUsageQuery).Scan(&currentUsage); err != nil {
 			return fmt.Errorf("failed to get current usage: %w", err)
 		}
 
@@ -1345,18 +1334,8 @@ func (r *FileRepository) batchDeleteFiles(ctx context.Context, fileIDs []int64) 
 
 // GetTotalUsage returns the total storage used by active files and partial uploads.
 func (r *FileRepository) GetTotalUsage(ctx context.Context) (int64, error) {
-	// Defense in depth (bug-hunter finding, ADR-015): see CreateWithQuotaCheck.
-	query := `
-		SELECT
-			COALESCE(SUM(file_size), 0) +
-			COALESCE((SELECT SUM(total_size) FROM partial_uploads WHERE completed = false), 0)
-		FROM files
-		WHERE expires_at > NOW()
-		AND (scan_status IS NULL OR scan_status != 'infected')
-	`
-
 	var totalUsage int64
-	err := r.pool.QueryRow(ctx, query).Scan(&totalUsage)
+	err := r.pool.QueryRow(ctx, storageUsageQuery).Scan(&totalUsage)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get total usage: %w", err)
 	}

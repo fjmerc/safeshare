@@ -7,6 +7,14 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 )
 
+// PartialUploadReservationIdle is how long a chunked upload in the uploading
+// state keeps its full size reserved against the storage quota without
+// storing a new chunk (T30). After that, quota counts only the bytes it has
+// actually received, so an /init that never sends data can't hold quota for
+// the whole PARTIAL_UPLOAD_EXPIRY_HOURS. The next new chunk re-reserves the
+// rest (RenewReservation), or fails with 507 if the quota has since filled.
+const PartialUploadReservationIdle = time.Hour
+
 // AssemblyLease describes the fencing token and TTL an assembly worker
 // presents when it acquires (or renews) the right to process a partial
 // upload. See ADR-016.
@@ -40,11 +48,25 @@ type PartialUploadRepository interface {
 	// Exists checks if a partial upload record exists in the database.
 	Exists(ctx context.Context, uploadID string) (bool, error)
 
-	// UpdateActivity updates the last_activity timestamp.
+	// UpdateActivity updates the last_activity timestamp. Chunk uploads use
+	// RecordChunkProgress instead, which also tracks received_bytes (T30).
 	UpdateActivity(ctx context.Context, uploadID string) error
 
 	// IncrementChunksReceived increments chunks_received and received_bytes.
 	IncrementChunksReceived(ctx context.Context, uploadID string, chunkBytes int64) error
+
+	// RecordChunkProgress marks a newly stored chunk of an upload still in the
+	// uploading state: it refreshes last_activity and raises received_bytes to
+	// receivedBytes (capped at total_size, never lowered, so out-of-order
+	// updates from parallel chunks are harmless).
+	RecordChunkProgress(ctx context.Context, uploadID string, receivedBytes int64) error
+
+	// RenewReservation re-reserves the rest of an upload's size against the
+	// quota once its reservation has lapsed (see PartialUploadReservationIdle).
+	// It is a no-op for an upload whose reservation is still held, so parallel
+	// chunks can't charge it twice. Returns ErrQuotaExceeded if the remaining
+	// bytes no longer fit.
+	RenewReservation(ctx context.Context, uploadID string, quotaLimitBytes int64) error
 
 	// Delete removes a partial upload record.
 	Delete(ctx context.Context, uploadID string) error
