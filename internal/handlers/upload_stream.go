@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -248,4 +250,158 @@ func nextFormFilePart(r *http.Request, fileField string) (*multipart.Part, error
 		}
 	}
 	return nil, errTooManyFormParts
+}
+
+// defaultIdleReadInterval is how long an upload body may go without
+// delivering any bytes before its read deadline fires - see
+// idleDeadlineReader. A package var (not a const) so tests can shrink it.
+var defaultIdleReadInterval = 60 * time.Second
+
+// minUploadReadRate is the slowest sustained average rate, in bytes per
+// second, idleDeadlineReader tolerates for an upload body: 4 KiB/s. Lower
+// than the download floor (minDecryptWriteRate) on purpose: uploads had no
+// rate floor at all before, and slow uplinks (mobile, Tor) must keep
+// working. A package var so tests can change it.
+var minUploadReadRate int64 = 4 * 1024
+
+// idleDeadlineReader wraps an upload request body so that a client that
+// stops sending - or drips bytes too slowly to matter - is cut off within
+// about a minute, instead of holding the connection and everything already
+// received (a spool file, a chunk temp file) until the request's full
+// transfer deadline, up to 6h (T50). It's the read-side counterpart of
+// idleDeadlineWriter (claim_range.go) and uses the same three bounds: the
+// absolute transfer deadline, now + idle after every successful read, and
+// an average-rate floor of start + idle + read/minUploadReadRate.
+//
+// The deadline is armed at construction, before the first Read, so a client
+// that never sends a byte of body is covered too. Once the body has been
+// consumed, the caller must call drainRest and then finish: the request carries on (malware
+// scan, encryption, database writes) and the short idle deadline would
+// otherwise fire mid-way - net/http cancels a request's context when its
+// connection's read deadline passes.
+type idleDeadlineReader struct {
+	io.ReadCloser
+	rc       *http.ResponseController
+	idle     time.Duration
+	minRate  int64
+	absolute time.Time
+	start    time.Time
+	read     int64
+	lastSet  time.Time // deadline most recently applied
+	done     bool      // finish restored the absolute deadline; stop re-arming
+}
+
+// newIdleDeadlineReader wraps body and arms its read deadline. absolute is
+// the transfer deadline already set for the request (see
+// extendTransferDeadline) and is never loosened.
+func newIdleDeadlineReader(w http.ResponseWriter, body io.ReadCloser, absolute time.Time) *idleDeadlineReader {
+	idr := &idleDeadlineReader{
+		ReadCloser: body,
+		rc:         http.NewResponseController(w),
+		idle:       defaultIdleReadInterval,
+		minRate:    minUploadReadRate,
+		absolute:   absolute,
+		start:      time.Now(),
+	}
+	idr.applyDeadline()
+	return idr
+}
+
+// Read re-arms the deadline before each read, so the idle window measures
+// only time spent waiting on the client - not time the handler spent
+// between reads (e.g. a slow disk write).
+func (idr *idleDeadlineReader) Read(p []byte) (int, error) {
+	if !idr.done {
+		idr.applyDeadline()
+	}
+	n, err := idr.ReadCloser.Read(p)
+	idr.read += int64(n)
+	return n, err
+}
+
+// computeDeadline returns the earliest of the three bounds described on the
+// type. It starts from now + idle, which is never zero, and only tightens
+// with absolute when that's set (a zero deadline would mean "none at all").
+func (idr *idleDeadlineReader) computeDeadline() time.Time {
+	deadline := time.Now().Add(idr.idle)
+	if !idr.absolute.IsZero() && idr.absolute.Before(deadline) {
+		deadline = idr.absolute
+	}
+	rate := max(idr.minRate, 1)
+	if avgFloor := idr.start.Add(idr.idle).Add(time.Duration(idr.read/rate) * time.Second); avgFloor.Before(deadline) {
+		deadline = avgFloor
+	}
+	return deadline
+}
+
+// applyDeadline sets the computed deadline, skipping it when it would only
+// push the current one later by under a second: reads arrive in small
+// pieces (multipart reads at most 4 KiB at a time), and on HTTP/2 every
+// SetReadDeadline is a round trip to the connection's serve loop.
+func (idr *idleDeadlineReader) applyDeadline() {
+	deadline := idr.computeDeadline()
+	if !idr.lastSet.IsZero() && !deadline.Before(idr.lastSet) && deadline.Sub(idr.lastSet) < time.Second {
+		return
+	}
+	idr.lastSet = deadline
+	if err := idr.rc.SetReadDeadline(deadline); err != nil {
+		slog.Debug("failed to apply idle read deadline", "error", err)
+	}
+}
+
+// finish is called once the handler has stopped reading the body, with the
+// error (if any) reading it ended with. Normally it puts the read deadline
+// back to the absolute transfer deadline (see the type doc). After a
+// timeout it leaves the short, already-expired deadline in place instead:
+// net/http may still read the rest of the body before writing the
+// response (it does for a small remainder), and with the long deadline
+// restored that read would block on the stalled client for hours - the
+// 408 would never even be sent. See sendUploadTimeout.
+//
+// After any other error the short deadline is kept too: the handler only
+// sends an error response, and net/http may first read the unread rest of
+// the body (always for a chunked-encoding body), which must not wait on the
+// client for the full transfer deadline. Only a successfully read body -
+// read to its end, see drainRest - gets the absolute deadline back, which
+// protects the processing that follows (net/http cancels the request's
+// context if the read deadline passes once the body has hit EOF).
+func (idr *idleDeadlineReader) finish(err error) {
+	if err != nil {
+		return
+	}
+	idr.done = true
+	idr.lastSet = idr.absolute
+	if err := idr.rc.SetReadDeadline(idr.absolute); err != nil {
+		slog.Debug("failed to restore absolute read deadline", "error", err)
+	}
+}
+
+// drainRest reads and discards whatever is left of the body (a multipart
+// epilogue, or parts after the one the handler needed), still under the
+// idle deadline and the body's size limit, so the body is fully consumed
+// before finish restores the long deadline.
+func (idr *idleDeadlineReader) drainRest() error {
+	_, err := io.Copy(io.Discard, idr)
+	return err
+}
+
+// isUploadTimeout reports whether err comes from an upload body's read
+// deadline firing (see idleDeadlineReader).
+func isUploadTimeout(err error) bool {
+	return errors.Is(err, os.ErrDeadlineExceeded)
+}
+
+// sendUploadTimeout answers an upload whose body stalled with 408 and closes
+// the connection: the rest of the body was never read, so the connection
+// can't be reused, and Connection: close also stops net/http from trying to
+// read that remainder before sending the response.
+//
+// Only on HTTP/1.x: on HTTP/2 the unread body is handled by resetting the
+// stream, and Connection: close would instead shut down the whole
+// connection, which (behind a reverse proxy) carries other users' requests.
+func sendUploadTimeout(w http.ResponseWriter, r *http.Request) {
+	if r.ProtoMajor == 1 {
+		w.Header().Set("Connection", "close")
+	}
+	sendError(w, "Upload stalled and timed out", "UPLOAD_TIMEOUT", http.StatusRequestTimeout)
 }

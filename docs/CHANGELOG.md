@@ -35,6 +35,11 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Stalled uploads are cut off within about a minute (T50).** An upload's request body could previously take up to its full transfer deadline (as long as 6 hours for a large file) regardless of whether any data was still arriving, so a client that sent most of a file and then stopped kept the connection - and the partly received upload on disk - for that whole time. Upload and chunk requests now time out with `408 UPLOAD_TIMEOUT` once no data has arrived for 60 seconds, or once the body is averaging under 4 KiB/s; uploads that keep moving are unaffected, and the overall deadline still applies as before. Likewise, a client that sends its request headers too slowly is now disconnected after 20 seconds (previously the full `READ_TIMEOUT`, 120 seconds by default). The web client retries a timed-out chunk automatically; with the SDKs, the upload call returns the error (previously it would have hung for far longer), and retrying the upload works.
+- **The chunked-upload status endpoint is now rate limited (T32).** `GET /api/upload/status/{id}` had no rate limit, even though each call scans the upload's stored chunks. It's now limited per client IP at 600× `RATE_LIMIT_UPLOAD` per hour (6,000/hour with the default of 10), far above what the web client and SDKs send while polling an upload (about 1,800/hour per upload).
+
 ### Performance
 
 - **Uploads no longer hold the file in memory.** A regular (non-chunked) upload used to be buffered entirely in RAM - several times over - before being stored: a 512 MB upload peaked at about 2 GB of server memory. It's now streamed to a temporary file on the uploads volume, so server memory stays flat regardless of file size (measured: 2082 MB → 27 MB peak for a 512 MB upload). Chunked uploads likewise stream each chunk straight to disk instead of holding it in memory several times over (measured: 257 MB → 50 MB peak for a 200 MB upload sent four chunks at a time). Large uploads therefore no longer risk running the server out of memory, and the upload size limit is no longer bounded by available RAM. The temporary file lives under `.spool/` in the uploads directory and is never left behind, even if the server crashes mid-upload.

@@ -23,7 +23,50 @@ type ConfigProvider interface {
 // requestRecord tracks requests for an IP
 type requestRecord struct {
 	timestamps []time.Time
-	mu         sync.Mutex
+	// coarse holds per-minute request counts over the last hour, used
+	// instead of timestamps for limits above coarseLimitThreshold (see
+	// checkLimit): a fixed ~1 KB per bucket instead of a timestamp per
+	// request. Allocated only for buckets that use it.
+	coarse *coarseWindow
+	mu     sync.Mutex
+}
+
+// coarseWindow is a ring of per-minute request counts, slot = minute % 60.
+type coarseWindow struct {
+	minutes [60]int64
+	counts  [60]uint32
+}
+
+// inWindow reports whether a slot stamped with slotMinute counts toward the
+// hour ending at nowMinute. A slot stamped after nowMinute (the wall clock
+// stepped backwards) doesn't count, rather than counting until real time
+// catches up.
+func inWindow(nowMinute, slotMinute int64) bool {
+	d := nowMinute - slotMinute
+	return d >= 0 && d < 60
+}
+
+// coarseLimitThreshold is the hourly limit above which a bucket counts
+// requests per minute rather than storing a timestamp per request. Keeping
+// every timestamp costs ~24-48 bytes per request for an hour - ~150 KB per
+// client IP at the upload-status limit - so a flood spread across many
+// addresses could otherwise grow memory with request volume. Per-minute
+// counts make the window approximate to within a minute, which doesn't
+// matter at these limits.
+const coarseLimitThreshold = 1000
+
+// coarseActive reports whether r has any per-minute count within the hour
+// ending at nowMinute. Caller holds r.mu.
+func (r *requestRecord) coarseActive(nowMinute int64) bool {
+	if r.coarse == nil {
+		return false
+	}
+	for i := range r.coarse.minutes {
+		if r.coarse.counts[i] > 0 && inWindow(nowMinute, r.coarse.minutes[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // RateLimiter manages rate limiting per IP address and limit type
@@ -83,7 +126,7 @@ func (rl *RateLimiter) cleanupOldEntries() {
 			}
 
 			// Remove empty records
-			if len(record.timestamps) == 0 {
+			if len(record.timestamps) == 0 && !record.coarseActive(now.Unix()/60) {
 				rl.records.Delete(key)
 			}
 
@@ -113,6 +156,10 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	record.mu.Lock()
 	defer record.mu.Unlock()
 
+	if limit > coarseLimitThreshold {
+		return record.checkCoarse(now, limit)
+	}
+
 	// Remove timestamps older than 1 hour (optimized to reuse backing array)
 	oldCount := len(record.timestamps)
 	newTimestamps := record.timestamps[:0] // Reuse backing array
@@ -138,6 +185,37 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	record.timestamps = append(record.timestamps, now)
 	return true
 }
+
+// checkCoarse is checkLimit's per-minute-count variant (see
+// coarseLimitThreshold). Caller holds r.mu.
+func (r *requestRecord) checkCoarse(now time.Time, limit int) bool {
+	if r.coarse == nil {
+		r.coarse = &coarseWindow{}
+	}
+	c := r.coarse
+	minute := now.Unix() / 60
+	slot := minute % 60
+	if c.minutes[slot] != minute {
+		c.minutes[slot] = minute
+		c.counts[slot] = 0
+	}
+	total := 0
+	for i := range c.minutes {
+		if inWindow(minute, c.minutes[i]) {
+			total += int(c.counts[i])
+		}
+	}
+	if total >= limit {
+		return false
+	}
+	c.counts[slot]++
+	return true
+}
+
+// minStatusRateLimitPerHour is the floor for the upload-status rate limit
+// (see RateLimitMiddleware): enough for a client polling every 2 seconds
+// (~1800/hour) on several uploads at once.
+const minStatusRateLimitPerHour = 6000
 
 // RateLimitMiddleware creates a middleware that enforces rate limits
 func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
@@ -169,6 +247,18 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// call grants unbounded /complete attempts.
 				limit = rl.config.GetRateLimitUpload() * 10
 				limitType = "complete"
+			} else if strings.HasPrefix(r.URL.Path, "/api/upload/status/") {
+				// T32: status was unlimited, and each call lists the
+				// upload's chunk directory. Clients poll it every ~2s while
+				// an upload assembles (~1800/hour per upload), so the cap
+				// is far above that - 600x the upload limit, and never under
+				// 6000/hour, so a low RATE_LIMIT_UPLOAD can't break a
+				// client's own polling - leaving room for several large
+				// uploads assembling at once from one address, while still
+				// bounding a client that hammers it. (The sliding window
+				// keeps one timestamp per request: ~150 KB for a full bucket.)
+				limit = max(rl.config.GetRateLimitUpload()*600, minStatusRateLimitPerHour)
+				limitType = "status"
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"

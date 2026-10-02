@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -817,5 +818,89 @@ func TestRateLimiter_ProductionChainSpoofResistant(t *testing.T) {
 				t.Errorf("request %d: got status %d, want 429 (spoofed leftmost XFF must not evade rate limiting)", i+1, rr.Code)
 			}
 		}
+	}
+}
+
+// TestRateLimiter_UploadStatusLimit covers T32: /api/upload/status/ is rate
+// limited at 600x the upload limit (here 600 x 10), in its own bucket.
+func TestRateLimiter_UploadStatusLimit(t *testing.T) {
+	cfg := &mockConfigProvider{uploadLimit: 10, downloadLimit: 1}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.77:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	for i := 1; i <= 6000; i++ {
+		if code := send("/api/upload/status/550e8400-e29b-41d4-a716-446655440000"); code != http.StatusOK {
+			t.Fatalf("status request %d: got %d, want 200", i, code)
+		}
+	}
+	if code := send("/api/upload/status/550e8400-e29b-41d4-a716-446655440000"); code != http.StatusTooManyRequests {
+		t.Fatalf("status request 6001: got %d, want 429", code)
+	}
+
+	// Separate bucket: the upload budget is untouched.
+	if code := send("/api/upload"); code != http.StatusOK {
+		t.Fatalf("upload after exhausting status budget: got %d, want 200", code)
+	}
+}
+
+// TestRateLimiter_UploadStatusLimitFloor checks a low RATE_LIMIT_UPLOAD
+// can't push the status limit below what a polling client needs.
+func TestRateLimiter_UploadStatusLimitFloor(t *testing.T) {
+	cfg := &mockConfigProvider{uploadLimit: 1, downloadLimit: 1}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for i := 1; i <= minStatusRateLimitPerHour; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/status/550e8400-e29b-41d4-a716-446655440000", nil)
+		req.RemoteAddr = "192.168.1.78:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d: got %d, want 200 (floor is %d)", i, rr.Code, minStatusRateLimitPerHour)
+		}
+	}
+}
+
+// TestRequestRecord_CheckCoarse covers the per-minute window: it enforces
+// the limit, frees budget once an hour has passed, and ignores slots
+// stamped in the future (a wall-clock step backwards).
+func TestRequestRecord_CheckCoarse(t *testing.T) {
+	r := &requestRecord{}
+	base := time.Unix(1_800_000_000, 0)
+
+	for i := 0; i < 3; i++ {
+		if !r.checkCoarse(base, 3) {
+			t.Fatalf("request %d rejected under limit", i+1)
+		}
+	}
+	if r.checkCoarse(base.Add(30*time.Minute), 3) {
+		t.Fatal("4th request within the hour allowed")
+	}
+	if !r.checkCoarse(base.Add(61*time.Minute), 3) {
+		t.Fatal("request after the window rejected")
+	}
+
+	// Clock steps back two hours: the "future" slots no longer count.
+	if !r.checkCoarse(base.Add(-2*time.Hour), 1) {
+		t.Fatal("future-stamped slots counted after a clock step back")
+	}
+	if !r.coarseActive(base.Add(-2*time.Hour).Unix() / 60) {
+		t.Fatal("record with a current count reported inactive")
+	}
+	if (&requestRecord{}).coarseActive(base.Unix() / 60) {
+		t.Fatal("record without a coarse window reported active")
 	}
 }

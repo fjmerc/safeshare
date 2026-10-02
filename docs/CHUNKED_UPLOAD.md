@@ -336,7 +336,8 @@ Logs example:
 ## Security
 
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Rate limiting applied to upload initialization
+- Rate limiting per client IP (per hour, based on `RATE_LIMIT_UPLOAD`): `/init` at the upload limit, `/chunk` and `/complete` at 10× it, and `/status` at 600× it (6,000/hour by default - well above the ~1,800/hour a client polling every 2 seconds sends)
+- A request body that stops arriving for 60 seconds, or averages under 4 KiB/s, is cut off with `408 UPLOAD_TIMEOUT` rather than held open until the full transfer deadline
 - Validates:
   - upload_id (UUID format)
   - chunk_number (in range)
@@ -1375,6 +1376,8 @@ Test results:
 | `UPLOAD_EXPIRED` | 410 | Upload session expired |
 | `UPLOAD_COMPLETED` | 409 | Upload already completed |
 | `CHUNK_TOO_LARGE` | 413 | Chunk exceeds size limit |
+| `UPLOAD_TIMEOUT` | 408 | The chunk's body stopped arriving (no data for 60 seconds, or under 4 KiB/s on average); retry the chunk |
+| `INSUFFICIENT_STORAGE` | 507 | Not enough disk space to store the chunk |
 | `CHUNK_SIZE_MISMATCH` | 400 | Chunk size doesn't match expected |
 | `UPLOAD_NOT_ACCEPTING` | 409 | Upload is being assembled (or assembly failed); chunks can no longer be written |
 | `CHUNK_CONFLICT` | 409 | Chunk was already uploaded with different content |
