@@ -1,16 +1,16 @@
 package handlers
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -428,61 +428,20 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		// Parse multipart form with the requested chunk size (not config default)
-		maxChunkSize := partialUpload.ChunkSize + 1024 // requested chunk size + 1KB overhead
-		extendTransferDeadline(w, cfg, maxChunkSize)
-		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
-		if err := r.ParseMultipartForm(maxChunkSize); err != nil {
-			sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
-			return
-		}
-
-		// Get chunk file from form
-		chunkFile, chunkHeader, err := r.FormFile("chunk")
-		if err != nil {
-			sendError(w, "No chunk file provided", "NO_CHUNK", http.StatusBadRequest)
-			return
-		}
-		defer chunkFile.Close()
-
-		// Read chunk data
-		chunkData, err := io.ReadAll(chunkFile)
-		if err != nil {
-			slog.Error("failed to read chunk data", "error", err)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-
-		// Calculate SHA256 checksum of chunk
-		hash := sha256.Sum256(chunkData)
-		checksum := hex.EncodeToString(hash[:])
-
-		chunkSize := int64(len(chunkData))
-
-		// Validate chunk size
+		// Work out this chunk's exact expected size before reading the body,
+		// so disk space can be checked up front and the body streamed to
+		// disk with a hard limit (#19).
 		expectedChunkSize := partialUpload.ChunkSize
-		isLastChunk := chunkNumber == partialUpload.TotalChunks-1
-
-		if !isLastChunk {
-			// Not the last chunk - must match expected size exactly
-			if chunkSize != expectedChunkSize {
-				sendSmartError(w,
-					fmt.Sprintf("Chunk size mismatch: expected %d, got %d", expectedChunkSize, chunkSize),
-					"CHUNK_SIZE_MISMATCH",
-					http.StatusBadRequest,
-				)
-				return
-			}
-		} else {
+		if chunkNumber == partialUpload.TotalChunks-1 {
 			// Last chunk - calculate expected size (P1 security fix: prevent integer underflow)
-			lastChunkSize := partialUpload.TotalSize - (int64(partialUpload.TotalChunks-1) * expectedChunkSize)
+			lastChunkSize := partialUpload.TotalSize - (int64(partialUpload.TotalChunks-1) * partialUpload.ChunkSize)
 			// Validate that lastChunkSize is positive (detect database corruption/manipulation)
 			if lastChunkSize <= 0 {
 				slog.Error("invalid last chunk size calculation (possible database corruption)",
 					"upload_id", uploadID,
 					"total_size", partialUpload.TotalSize,
 					"total_chunks", partialUpload.TotalChunks,
-					"expected_chunk_size", expectedChunkSize,
+					"expected_chunk_size", partialUpload.ChunkSize,
 					"calculated_last_chunk_size", lastChunkSize,
 				)
 				sendSmartError(w,
@@ -492,14 +451,97 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 				)
 				return
 			}
-			if chunkSize != lastChunkSize {
-				sendSmartError(w,
-					fmt.Sprintf("Last chunk size mismatch: expected %d, got %d", lastChunkSize, chunkSize),
-					"CHUNK_SIZE_MISMATCH",
-					http.StatusBadRequest,
-				)
+			expectedChunkSize = lastChunkSize
+		}
+
+		// Check disk space before saving chunk. Skipped for what looks like a
+		// retry of a chunk that's already stored at the right size: that only
+		// ever leaves the stored chunk in place, so it shouldn't be refused
+		// up front for lack of room for a copy it won't keep (its temp copy
+		// can still fail with 507 if the disk is genuinely full).
+		// Skip percentage check if quota is configured (quota takes precedence)
+		quotaConfigured := cfg.GetQuotaLimitGB() > 0
+		hasSpace, errMsg := true, ""
+		if !exists || existingSize != expectedChunkSize {
+			hasSpace, errMsg, err = utils.CheckDiskSpace(cfg.UploadDir, expectedChunkSize, quotaConfigured)
+			if err != nil {
+				slog.Error("failed to check disk space", "error", err)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
+		}
+		if !hasSpace {
+			slog.Warn("insufficient disk space for chunk",
+				"upload_id", uploadID,
+				"chunk_number", chunkNumber,
+				"chunk_size", expectedChunkSize,
+				"reason", errMsg,
+			)
+			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			return
+		}
+
+		// Bound the body by the requested chunk size (not config default)
+		maxChunkSize := partialUpload.ChunkSize + 1024 // requested chunk size + 1KB overhead
+		extendTransferDeadline(w, cfg, maxChunkSize)
+		r.Body = http.MaxBytesReader(w, r.Body, maxChunkSize)
+		chunkPart, err := nextFormFilePart(r, "chunk")
+		if err != nil {
+			if errors.Is(err, errNoFormFile) {
+				sendError(w, "No chunk file provided", "NO_CHUNK", http.StatusBadRequest)
+			} else {
+				sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
+			}
+			return
+		}
+		defer func() { _ = chunkPart.Close() }()
+
+		// Stream the chunk to a temp file next to its final path, hashing it
+		// on the way; it's only moved into place once every check below
+		// passes (and removed on every other path). The read is capped by the
+		// body limit rather than the expected size, so a slightly-too-large
+		// chunk still gets the exact size mismatch below, and a body over the
+		// limit gets 413 - the same responses as before chunks were streamed.
+		tmpPath, chunkSize, checksum, err := utils.StreamChunkToTemp(cfg.UploadDir, uploadID, chunkNumber, chunkPart, maxChunkSize)
+		if err != nil {
+			var readErr *utils.ChunkReadError
+			switch {
+			case errors.Is(err, utils.ErrChunkTooLarge), errors.As(err, &readErr):
+				sendError(w, "Chunk too large or invalid form data", "CHUNK_TOO_LARGE", http.StatusRequestEntityTooLarge)
+			case errors.Is(err, syscall.ENOSPC):
+				sendSmartError(w, "Insufficient storage space", "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+			default:
+				slog.Error("failed to write chunk", "error", err, "upload_id", uploadID, "chunk_number", chunkNumber)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			}
+			return
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				os.Remove(tmpPath)
+			}
+		}()
+
+		// Validate chunk size: every chunk but the last must be exactly
+		// ChunkSize, the last exactly the remainder.
+		if chunkSize != expectedChunkSize {
+			msg := fmt.Sprintf("Chunk size mismatch: expected %d, got %d", expectedChunkSize, chunkSize)
+			if chunkNumber == partialUpload.TotalChunks-1 {
+				msg = fmt.Sprintf("Last chunk size mismatch: expected %d, got %d", expectedChunkSize, chunkSize)
+			}
+			sendSmartError(w, msg, "CHUNK_SIZE_MISMATCH", http.StatusBadRequest)
+			return
+		}
+
+		// Re-check whether the chunk is stored now that the body has been
+		// read: the check above predates the whole transfer, and a concurrent
+		// request for the same chunk may have committed since.
+		exists, existingSize, err = utils.ChunkExists(cfg.UploadDir, uploadID, chunkNumber)
+		if err != nil {
+			slog.Error("failed to check chunk existence", "error", err)
+			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
 		}
 
 		// If the chunk is already stored and identical, this is a retry of a
@@ -568,26 +610,6 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			)
 		}
 
-		// Check disk space before saving chunk
-		// Skip percentage check if quota is configured (quota takes precedence)
-		quotaConfigured := cfg.GetQuotaLimitGB() > 0
-		hasSpace, errMsg, err := utils.CheckDiskSpace(cfg.UploadDir, chunkSize, quotaConfigured)
-		if err != nil {
-			slog.Error("failed to check disk space", "error", err)
-			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return
-		}
-		if !hasSpace {
-			slog.Warn("insufficient disk space for chunk",
-				"upload_id", uploadID,
-				"chunk_number", chunkNumber,
-				"chunk_size", chunkSize,
-				"reason", errMsg,
-			)
-			sendSmartError(w, errMsg, "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
-			return
-		}
-
 		// Re-check state right before writing: the body upload above can take a
 		// while, and /complete may have locked the upload for assembly meanwhile.
 		current, err := repos.PartialUploads.GetByUploadID(ctx, uploadID)
@@ -601,12 +623,17 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		// Save chunk to disk
-		if err := utils.SaveChunk(cfg.UploadDir, uploadID, chunkNumber, chunkData); err != nil {
+		// Move the chunk into place
+		if err := utils.CommitChunk(tmpPath, cfg.UploadDir, uploadID, chunkNumber); err != nil {
+			if errors.Is(err, syscall.ENOSPC) {
+				sendSmartError(w, "Insufficient storage space", "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
+				return
+			}
 			slog.Error("failed to save chunk", "error", err)
 			sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
+		committed = true
 
 		// Update last_activity to prevent cleanup worker from removing active uploads
 		if err := repos.PartialUploads.UpdateActivity(ctx, uploadID); err != nil {
@@ -649,7 +676,7 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			"chunk_size", chunkSize,
 			"chunks_received", chunksReceived,
 			"total_chunks", partialUpload.TotalChunks,
-			"filename", chunkHeader.Filename,
+			"filename", chunkPart.FileName(),
 		)
 	}
 }

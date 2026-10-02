@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Performance
+
+- **Uploads no longer hold the file in memory.** A regular (non-chunked) upload used to be buffered entirely in RAM - several times over - before being stored: a 512 MB upload peaked at about 2 GB of server memory. It's now streamed to a temporary file on the uploads volume, so server memory stays flat regardless of file size (measured: 2082 MB → 27 MB peak for a 512 MB upload). Chunked uploads likewise stream each chunk straight to disk instead of holding it in memory several times over (measured: 257 MB → 50 MB peak for a 200 MB upload sent four chunks at a time). Large uploads therefore no longer risk running the server out of memory, and the upload size limit is no longer bounded by available RAM. The temporary file lives under `.spool/` in the uploads directory and is never left behind, even if the server crashes mid-upload.
+
 ## [1.8.1] - 2026-10-02
 
 ### Security
