@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web uploader no longer gives up on a large upload just because its status checks were rate limited.** After a chunked upload, the browser polls `/api/upload/status` until the server finishes assembling the file - and that status response is the only place the claim code is returned. A `429 Too Many Requests` from it was treated like a network failure: after 30 in a row (about 5 minutes) the uploader reported the upload as failed, even though the server went on to finish it, so the claim code was lost. This could happen when many uploads share one IP address (a busy NAT, or a Tor hidden service, where every visitor appears as the same address). The uploader now treats a 429 as "poll more slowly": it waits 15-60 seconds between checks and keeps going for over an hour before giving up.
+
 ### Security
 
 - **Stalled uploads are cut off within about a minute (T50).** An upload's request body could previously take up to its full transfer deadline (as long as 6 hours for a large file) regardless of whether any data was still arriving, so a client that sent most of a file and then stopped kept the connection - and the partly received upload on disk - for that whole time. Upload and chunk requests now time out with `408 UPLOAD_TIMEOUT` once no data has arrived for 60 seconds, or once the body is averaging under 4 KiB/s; uploads that keep moving are unaffected, and the overall deadline still applies as before. Likewise, a client that sends its request headers too slowly is now disconnected after 20 seconds (previously the full `READ_TIMEOUT`, 120 seconds by default). The web client retries a timed-out chunk automatically; with the SDKs, the upload call returns the error (previously it would have hung for far longer), and retrying the upload works.
