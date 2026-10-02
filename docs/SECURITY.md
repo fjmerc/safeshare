@@ -1308,6 +1308,8 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.8.1 | MFA bypass: security-key-only accounts accepted a TOTP code for an empty secret (servers without ENCRYPTION_KEY) | High |
+| v1.8.1 | MFA codes limited only per IP/challenge; password-change endpoints unlimited; login timing revealed valid usernames | Medium |
 | v1.8.0 | IP blocklist entries bypassable via equivalent address spellings (case, leading zeros, IPv4-mapped IPv6) | Medium |
 | v1.8.0 | Per-IP rate limits and login lockouts bypassable by rotating IPv6 addresses within one /64 | Medium |
 | v1.8.0 | TOTP brute-force guard reset by the always-successful WebAuthn challenge route; SSO initiation limit ineffective | Medium |

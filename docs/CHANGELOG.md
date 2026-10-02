@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-02
+
 ### Security
 
 - **Fixed an MFA bypass for accounts that use only a security key.** On servers without `ENCRYPTION_KEY`, an account whose only second factor was a security key (WebAuthn) - never set up an authenticator app, or turned it off later - could be logged into with just its password plus a two-factor code anyone can compute, skipping the security key entirely. The login code check now only accepts authenticator-app codes for accounts that actually have an authenticator app enabled. Servers with `ENCRYPTION_KEY` set were not affected, nor were accounts with an authenticator app enabled. If you run without `ENCRYPTION_KEY` and have security-key-only accounts, review their recent logins.
