@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -178,6 +181,46 @@ func CommitChunk(tmpPath, uploadDir, uploadID string, chunkNumber int) error {
 	}
 	return nil
 }
+
+// ErrChunkAlreadyStored is returned by CommitNewChunk when the chunk was
+// stored by someone else first.
+var ErrChunkAlreadyStored = errors.New("chunk already stored")
+
+// CommitNewChunk moves a fully written temp chunk into place only if no chunk
+// is stored there yet (T51). Two concurrent first uploads of the same chunk
+// would otherwise both succeed with a plain rename, the last one silently
+// replacing the first; with this, the loser gets ErrChunkAlreadyStored and
+// can compare its bytes with the stored chunk the way a retry does. The temp
+// file is removed on success and left in place otherwise.
+//
+// On a filesystem without hard links it falls back to CommitChunk, which
+// loses that protection (logged once). Any other link error is returned, as
+// it would be from a rename.
+func CommitNewChunk(tmpPath, uploadDir, uploadID string, chunkNumber int) error {
+	err := os.Link(tmpPath, GetChunkPath(uploadDir, uploadID, chunkNumber))
+	switch {
+	case err == nil:
+		if rmErr := os.Remove(tmpPath); rmErr != nil {
+			// Harmless (it's a second name for the stored chunk, removed
+			// with the upload), but it would show in partial-upload sizes.
+			slog.Warn("failed to remove committed chunk temp file", "path", tmpPath, "error", rmErr)
+		}
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return ErrChunkAlreadyStored
+	case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP),
+		errors.Is(err, syscall.ENOSYS):
+		linkFallbackOnce.Do(func() {
+			slog.Warn("upload filesystem doesn't support hard links; concurrent first writes of a chunk are not detected",
+				"error", err)
+		})
+		return CommitChunk(tmpPath, uploadDir, uploadID, chunkNumber)
+	default:
+		return fmt.Errorf("failed to finalize chunk file: %w", err)
+	}
+}
+
+var linkFallbackOnce sync.Once
 
 // SaveChunk saves a chunk to disk atomically: the data goes to a temp file in
 // the same directory that is renamed over the final path only once fully
