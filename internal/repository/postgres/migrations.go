@@ -774,6 +774,49 @@ CREATE INDEX IF NOT EXISTS idx_partial_uploads_status_lease
     ON partial_uploads(status, lease_expires_at);
 `,
 	},
+	{
+		Version:     15,
+		Name:        "015_audit_logs",
+		Description: "ADR-018: tamper-evident audit log",
+		SQL: `
+-- See internal/database/migrations/027_audit_logs.sql (the SQLite
+-- counterpart). Every column is TEXT/'' exactly as hashed, so values read
+-- back are byte-identical to what was signed (no TIMESTAMPTZ/JSONB
+-- normalisation). Ids are assigned by the application, not a sequence.
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id            BIGINT PRIMARY KEY,
+    timestamp     TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    outcome       TEXT NOT NULL,
+    user_id       TEXT NOT NULL DEFAULT '',
+    username      TEXT NOT NULL DEFAULT '',
+    ip_address    TEXT NOT NULL DEFAULT '',
+    user_agent    TEXT NOT NULL DEFAULT '',
+    resource_type TEXT NOT NULL DEFAULT '',
+    resource_id   TEXT NOT NULL DEFAULT '',
+    details       TEXT NOT NULL DEFAULT '',
+    prev_hash     TEXT NOT NULL,
+    entry_hash    TEXT NOT NULL,
+    key_id        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type ON audit_logs(event_type, id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_username ON audit_logs(username, id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_ip_address ON audit_logs(ip_address, id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id, id);
+
+CREATE TABLE IF NOT EXISTS audit_log_state (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),
+    anchor_id      BIGINT NOT NULL DEFAULT 0,
+    anchor_hash    TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+    retention_days INTEGER NOT NULL DEFAULT 365
+);
+
+INSERT INTO audit_log_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.
