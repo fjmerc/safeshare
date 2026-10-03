@@ -1264,7 +1264,7 @@
     </div>
 
     <!-- User Created Success Modal -->
-    <div id="userCreatedModal" class="modal" style="display: none;">
+    <div id="userCreatedModal" class="modal" style="display: none;" data-modal-no-escape>
         <div class="modal-content modal-success">
             <div class="modal-header-icon">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1351,7 +1351,7 @@
     </div>
 
     <!-- Reset Password Modal -->
-    <div id="resetPasswordModal" class="modal" style="display: none;">
+    <div id="resetPasswordModal" class="modal" style="display: none;" data-modal-no-escape>
         <div class="modal-content">
             <h3>Password Reset</h3>
             <div style="margin: 20px 0;">
@@ -1375,7 +1375,7 @@
             <p id="confirmMessage"></p>
             <div class="modal-actions">
                 <button id="confirmYes" class="btn-danger">Confirm</button>
-                <button id="confirmNo" class="btn-secondary">Cancel</button>
+                <button id="confirmNo" class="btn-secondary" data-modal-close>Cancel</button>
             </div>
         </div>
     </div>
@@ -1659,6 +1659,7 @@
 
     <!-- Toast Notification System (must load before admin.js) -->
     <script src="/assets/toast.js"></script>
+    <script src="/assets/dialogs.js"></script>
     <script src="/admin/assets/admin.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // SafeShare Service Worker
 // Enables PWA functionality with offline support for static assets
 
-const CACHE_VERSION = 'safeshare-v74';
+const CACHE_VERSION = 'safeshare-v75';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 // Web Share Target cache - unversioned so page JS can always find it
@@ -14,6 +14,7 @@ const STATIC_ASSETS = [
   '/assets/app.js',
   '/assets/style.css',
   '/assets/toast.js',
+  '/assets/dialogs.js',
   '/assets/chunked-uploader.js',
   '/assets/qrcode.min.js',
   '/assets/crypto.js',

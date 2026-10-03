@@ -38,6 +38,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - **The Go, Python and TypeScript SDKs no longer abandon a large upload when status checks are rate limited (T52).** After a chunked upload, the SDKs poll `/api/upload/status` until the server finishes assembling the file, and that's the only place the claim code is returned. A `429 Too Many Requests` from it used to end the upload call with an error even though the server went on to finish the file. The SDKs now treat a 429 there as "poll more slowly": they wait for the server's `Retry-After` (between 15 and 60 seconds) and keep polling until their usual overall time limit. The same fix reached the web uploader in v1.9.0.
+- **Pop-up dialogs and notifications now work with screen readers and the keyboard.** Dialogs (sharing a file, changing your password, creating users and tokens, and the rest across the main page, your dashboard and the admin dashboard) are now announced as dialogs with their title. Opening one moves keyboard focus into it, Tab stays inside it until it's closed, Escape closes it (when it has a Cancel or Close button), and focus returns to where it was. Notification messages - the only place many errors are reported - were silent to screen readers; they're now read out, with errors and warnings announced right away.
 
 ## [1.10.0] - 2026-10-03
 

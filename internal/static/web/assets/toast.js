@@ -44,15 +44,17 @@
 
         // Create toast element
         const toast = document.createElement('div');
-        const toastId = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const toastId = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
         toast.id = toastId;
         toast.className = `toast toast-${type}`;
 
-        // Create toast content
+        // Create toast content. The icon is decorative; screen readers get
+        // the message through the live regions below instead (#25).
         toast.innerHTML = `
-            <span class="toast-icon">${icons[type] || icons.info}</span>
+            <span class="toast-icon" aria-hidden="true">${icons[type] || icons.info}</span>
             <span class="toast-message">${escapeHtml(message)}</span>
         `;
+        announce(message, type === 'error' || type === 'warning');
 
         // Add click to dismiss
         toast.addEventListener('click', () => {
@@ -88,6 +90,49 @@
                 toast.parentElement.removeChild(toast);
             }
         }, 300); // Match animation duration in CSS
+    }
+
+    // Screen readers only announce changes to a live region that already
+    // existed, so two visually hidden regions are created up front: polite
+    // for info/success, assertive for errors and warnings (#25).
+    const liveRegions = {};
+
+    function createLiveRegions() {
+        if (liveRegions.polite && liveRegions.polite.isConnected) return false;
+        for (const [key, politeness] of [['polite', 'polite'], ['assertive', 'assertive']]) {
+            const region = document.createElement('div');
+            region.className = 'toast-live-region';
+            region.setAttribute('aria-live', politeness);
+            region.setAttribute('aria-atomic', 'false');
+            region.setAttribute('role', politeness === 'assertive' ? 'alert' : 'status');
+            Object.assign(region.style, {
+                position: 'absolute', width: '1px', height: '1px', margin: '-1px',
+                padding: '0', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: '0',
+            });
+            document.body.appendChild(region);
+            liveRegions[key] = region;
+        }
+        return true;
+    }
+
+    function announce(message, urgent) {
+        // Each message is its own node, so toasts shown together are all
+        // read out instead of overwriting each other. A region created just
+        // now needs a moment before a change to it is picked up.
+        const justCreated = createLiveRegions();
+        const region = urgent ? liveRegions.assertive : liveRegions.polite;
+        setTimeout(() => {
+            const line = document.createElement('div');
+            line.textContent = message;
+            region.appendChild(line);
+            setTimeout(() => line.remove(), 10000);
+        }, justCreated ? 150 : 0);
+    }
+
+    if (document.body) {
+        createLiveRegions();
+    } else {
+        document.addEventListener('DOMContentLoaded', createLiveRegions);
     }
 
     /**

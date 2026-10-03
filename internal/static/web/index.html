@@ -444,7 +444,7 @@
                 </svg>
             </div>
             <h2 id="e2eDecryptTitle">Downloading encrypted file...</h2>
-            <p id="e2eDecryptStatus">Please wait</p>
+            <p id="e2eDecryptStatus" role="status">Please wait</p>
             <div class="e2e-decrypt-progress">
                 <div class="progress-bar">
                     <div id="e2eDecryptProgressFill" class="progress-fill"></div>
@@ -517,6 +517,7 @@
     <script src="/assets/qrcode.min.js"></script>
     <!-- Toast Notification System (must load before other scripts) -->
     <script src="/assets/toast.js"></script>
+    <script src="/assets/dialogs.js"></script>
     <!-- Client-Side Encryption (must load before app.js) -->
     <script src="/assets/crypto.js"></script>
     <!-- Chunked Upload Handler -->
