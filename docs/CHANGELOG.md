@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-03
+
 ### Fixed
 
 - **Two simultaneous uploads of the same chunk can no longer silently replace one another (T51).** If two requests sent the first copy of the same chunk at the same moment with different contents, both were told they succeeded and the later one quietly replaced the earlier. Now the first one stored wins, and the other is answered exactly like a retry: success if its bytes are identical, `409 CHUNK_CONFLICT` if they differ. On a filesystem without hard links SafeShare keeps the old behaviour and logs a warning once.
