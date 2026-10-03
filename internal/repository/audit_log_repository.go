@@ -45,7 +45,12 @@ type AuditLogRepository interface {
 	// that anchor, so every prune is itself recorded in the signed chain.
 	// It returns how many entries were deleted; with none, nothing is
 	// written.
-	Prune(ctx context.Context, before string, newCheck func(models.AuditAnchor) func(*models.AuditLog) error,
+	//
+	// newCheck also gets the newest retention prune entry (nil if none), so
+	// it can refuse to start from an anchor no signed prune vouches for. At
+	// most maxEntries are deleted per call, keeping the lock short.
+	Prune(ctx context.Context, before string, maxEntries int64,
+		newCheck func(anchor models.AuditAnchor, lastPrune *models.AuditLog) (func(*models.AuditLog) error, error),
 		makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign AuditSigner) (int64, error)
 
 	// RetentionDays returns how many days entries are kept (0 = forever).

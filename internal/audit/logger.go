@@ -39,7 +39,8 @@ type Logger struct {
 	now     func() time.Time
 	appends atomic.Int64
 	// verifying allows one Verify at a time: it reads the whole log.
-	verifying sync.Mutex
+	verifying    sync.Mutex
+	lastPruneErr atomic.Pointer[pruneError]
 }
 
 // NewLogger creates a Logger signing with key.
@@ -288,7 +289,7 @@ type pruneDetails struct {
 // Verify checks every entry from the anchor to the head: ids contiguous,
 // each linked to the previous entry's hash, each hash matching its
 // contents, and, once retention has pruned anything, the anchor vouched for
-// by the newest prune entry in the chain. It stops at the first problem.
+// by the newest prune entry in the chain. It reports every problem found.
 //
 // It can't see entries removed from the newest end; the checkpoint lines
 // in the application log are what catch that.
@@ -315,6 +316,13 @@ func (l *Logger) verifyOnce(ctx context.Context) (*Verification, error) {
 	anchor, err := l.repo.Anchor(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Entries at or before the starting point should all have been pruned.
+	if stale, err := l.repo.List(ctx, models.AuditLogFilter{BeforeID: anchor.ID + 1, Limit: 1}); err != nil {
+		return nil, err
+	} else if len(stale) > 0 {
+		v.fail(stale[0].ID, "entry %d is at or before the chain's starting point (%d), which should have been pruned", stale[0].ID, anchor.ID)
 	}
 
 	c := &chainChecker{l: l, prevID: anchor.ID, prevHash: anchor.Hash, fail: v.fail}
@@ -369,9 +377,39 @@ func ValidRetentionDays(days int) bool {
 	return days == 0 || (days >= MinRetentionDays && days <= MaxRetentionDays)
 }
 
-// Prune deletes entries older than the retention period, recording the
-// prune in the chain. It returns how many were deleted.
+// pruneBatch caps how many entries one prune transaction deletes, so the
+// append lock is never held for long; Prune repeats until done. (A
+// variable so tests can lower it.)
+var pruneBatch int64 = 10000
+
+// Prune deletes entries older than the retention period, recording each
+// prune in the chain. It returns how many were deleted. A failure is
+// counted and kept for the admin Audit Log tab (LastPruneError): pruning
+// refuses rather than discard entries it can't vouch for, so retention
+// stops until the problem is looked at.
 func (l *Logger) Prune(ctx context.Context) (int64, error) {
+	deleted, err := l.prune(ctx)
+	if err != nil {
+		pruneFailures.Inc()
+		l.lastPruneErr.Store(&pruneError{err: err.Error(), at: l.now().UTC().Format(TimestampFormat)})
+	} else {
+		l.lastPruneErr.Store(nil)
+	}
+	return deleted, err
+}
+
+// LastPruneError returns the most recent prune failure and when it
+// happened, or "" if the last prune succeeded.
+func (l *Logger) LastPruneError() (string, string) {
+	if p := l.lastPruneErr.Load(); p != nil {
+		return p.err, p.at
+	}
+	return "", ""
+}
+
+type pruneError struct{ err, at string }
+
+func (l *Logger) prune(ctx context.Context) (int64, error) {
 	days, err := l.repo.RetentionDays(ctx)
 	if err != nil || days == 0 {
 		return 0, err
@@ -381,43 +419,69 @@ func (l *Logger) Prune(ctx context.Context) (int64, error) {
 			days, MinRetentionDays, MaxRetentionDays)
 	}
 	before := l.now().UTC().AddDate(0, 0, -days).Format(TimestampFormat)
-	// Everything about to be deleted is checked first, inside the prune's
-	// transaction: pruning must never launder tampered or backdated
-	// entries out of the chain under a validly signed prune record.
-	check := func(anchor models.AuditAnchor) func(*models.AuditLog) error {
-		var problem error
-		c := &chainChecker{l: l, prevID: anchor.ID, prevHash: anchor.Hash, fail: func(id int64, format string, args ...any) {
-			if problem == nil {
-				problem = fmt.Errorf("refusing to prune: "+format, args...)
+
+	var total int64
+	for {
+		deleted, err := l.repo.Prune(ctx, before, pruneBatch, l.pruneChecker, func(anchor models.AuditAnchor, deleted int64) *models.AuditLog {
+			d, _ := json.Marshal(pruneDetails{ThroughID: anchor.ID, ThroughHash: anchor.Hash, Deleted: deleted,
+				Before: before, RetentionDays: days})
+			return &models.AuditLog{
+				EventType: models.AuditEventSystem,
+				Action:    PruneAction,
+				Outcome:   models.AuditOutcomeSuccess,
+				Details:   string(d),
+				KeyID:     l.key.ID,
 			}
-		}}
-		return func(e *models.AuditLog) error {
-			c.check(e)
-			return problem
+		}, func(e *models.AuditLog) string {
+			e.Timestamp = l.now().UTC().Format(TimestampFormat)
+			return l.Sign(e)
+		})
+		total += deleted
+		if err != nil {
+			return total, err
+		}
+		if deleted > 0 {
+			slog.Info("audit log retention prune", "deleted", deleted, "retention_days", days)
+			l.Checkpoint(ctx, "retention_prune")
+		}
+		if deleted < pruneBatch {
+			return total, nil
 		}
 	}
-	deleted, err := l.repo.Prune(ctx, before, check, func(anchor models.AuditAnchor, deleted int64) *models.AuditLog {
-		d, _ := json.Marshal(pruneDetails{ThroughID: anchor.ID, ThroughHash: anchor.Hash, Deleted: deleted,
-			Before: before, RetentionDays: days})
-		return &models.AuditLog{
-			EventType: models.AuditEventSystem,
-			Action:    PruneAction,
-			Outcome:   models.AuditOutcomeSuccess,
-			Details:   string(d),
-			KeyID:     l.key.ID,
+}
+
+// pruneChecker vets a prune before anything is deleted, inside its
+// transaction. The anchor it starts from lives in an unsigned table, so it
+// must be vouched for by the newest signed prune entry (or still be the
+// genesis anchor, with no prune ever recorded); otherwise deleting entries
+// and moving the anchor by hand would be legitimised by the next prune.
+// Then every entry to be deleted must check out, so tampered or backdated
+// entries can't be pruned away under a validly signed prune record either.
+func (l *Logger) pruneChecker(anchor models.AuditAnchor, lastPrune *models.AuditLog) (func(*models.AuditLog) error, error) {
+	if lastPrune == nil {
+		if anchor.ID != 0 || anchor.Hash != repository.AuditGenesisHash {
+			return nil, fmt.Errorf("refusing to prune: the chain starts after entry %d but no retention prune is recorded", anchor.ID)
 		}
-	}, func(e *models.AuditLog) string {
-		e.Timestamp = l.now().UTC().Format(TimestampFormat)
-		return l.Sign(e)
-	})
-	if err != nil {
-		return 0, err
+	} else {
+		var d pruneDetails
+		switch {
+		case lastPrune.KeyID != l.key.ID || !hmac.Equal([]byte(l.Sign(lastPrune)), []byte(lastPrune.EntryHash)):
+			return nil, fmt.Errorf("refusing to prune: the last retention prune entry (%d) doesn't verify", lastPrune.ID)
+		case json.Unmarshal([]byte(lastPrune.Details), &d) != nil || d.ThroughID != anchor.ID || d.ThroughHash != anchor.Hash || lastPrune.ID <= anchor.ID:
+			return nil, fmt.Errorf("refusing to prune: the chain's starting point doesn't match the last retention prune (entry %d)", lastPrune.ID)
+		}
 	}
-	if deleted > 0 {
-		slog.Info("audit log retention prune", "deleted", deleted, "retention_days", days)
-		l.Checkpoint(ctx, "retention_prune")
-	}
-	return deleted, nil
+
+	var problem error
+	c := &chainChecker{l: l, prevID: anchor.ID, prevHash: anchor.Hash, fail: func(id int64, format string, args ...any) {
+		if problem == nil {
+			problem = fmt.Errorf("refusing to prune: "+format, args...)
+		}
+	}}
+	return func(e *models.AuditLog) error {
+		c.check(e)
+		return problem
+	}, nil
 }
 
 // Run checkpoints hourly and prunes daily until ctx is done, then writes a

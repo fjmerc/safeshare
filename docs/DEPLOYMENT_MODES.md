@@ -492,7 +492,7 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 | **PostgreSQL backend** | No | No | Optional | Yes |
 | **Automated backups** | No | No | Optional | Yes |
 | **Prometheus metrics** | No | Optional | Recommended | Yes |
-| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`) | Basic | Full | Full |
+| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Basic | Full | Full |
 | **Storage quotas** | Optional | Optional | On | On |
 | **File expiration (max)** | 24h | 7 days | 7 days | Configurable |
 

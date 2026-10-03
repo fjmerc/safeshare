@@ -208,8 +208,23 @@ func (r *AuditLogRepository) Anchor(ctx context.Context) (models.AuditAnchor, er
 	return auditAnchor(ctx, r.db)
 }
 
+// lastPruneEntry returns the newest retention prune entry, or nil.
+func lastPruneEntry(ctx context.Context, tx *sql.Tx) (*models.AuditLog, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT `+auditLogColumns+` FROM audit_logs
+		WHERE event_type = 'SYSTEM' AND action = 'retention_prune' ORDER BY id DESC LIMIT 1`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read last retention prune: %w", err)
+	}
+	entries, err := scanAuditLogs(rows)
+	if err != nil || len(entries) == 0 {
+		return nil, err
+	}
+	return &entries[0], nil
+}
+
 // Prune implements repository.AuditLogRepository.
-func (r *AuditLogRepository) Prune(ctx context.Context, before string, newCheck func(models.AuditAnchor) func(*models.AuditLog) error,
+func (r *AuditLogRepository) Prune(ctx context.Context, before string, maxEntries int64,
+	newCheck func(models.AuditAnchor, *models.AuditLog) (func(*models.AuditLog) error, error),
 	makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign repository.AuditSigner) (int64, error) {
 	tx, err := beginImmediateTx(ctx, r.db)
 	if err != nil {
@@ -233,8 +248,18 @@ func (r *AuditLogRepository) Prune(ctx context.Context, before string, newCheck 
 	if !cut.Valid || cut.Int64 <= anchor.ID {
 		return 0, nil
 	}
+	if maxEntries > 0 && cut.Int64 > anchor.ID+maxEntries {
+		cut.Int64 = anchor.ID + maxEntries
+	}
 
-	check := newCheck(anchor)
+	lastPrune, err := lastPruneEntry(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	check, err := newCheck(anchor, lastPrune)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+auditLogColumns+` FROM audit_logs WHERE id <= ? ORDER BY id ASC`, cut.Int64)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read entries to prune: %w", err)

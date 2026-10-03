@@ -558,3 +558,99 @@ func TestEnabled(t *testing.T) {
 		}
 	}
 }
+
+// Re-audit HIGH: deleting old entries and moving the (unsigned) anchor by
+// hand must not be legitimised by the next prune.
+func TestPrune_RefusesForgedAnchor(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prior bool // a genuine prune happened first
+	}{{"no prune yet", false}, {"after a genuine prune", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, db := newTestLogger(t)
+			repo := sqlite.NewAuditLogRepository(db)
+			if err := repo.SetRetentionDays(context.Background(), 30); err != nil {
+				t.Fatal(err)
+			}
+			day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			l.now = func() time.Time { return day }
+			appendN(t, l, 6)
+			if tc.prior {
+				day = day.AddDate(0, 0, 10)
+				appendN(t, l, 1)
+				day = day.AddDate(0, 0, 25) // first 6 are now 35 days old
+				if n, err := l.Prune(context.Background()); err != nil || n != 6 {
+					t.Fatalf("genuine prune = %d, %v", n, err)
+				}
+			}
+			day = day.AddDate(0, 0, 1)
+			appendN(t, l, 4)
+
+			// Tamper: delete the oldest remaining entries and move the anchor
+			// to the last one deleted.
+			var anchorID int64
+			var anchorHash string
+			if err := db.QueryRow(`SELECT id, entry_hash FROM audit_logs ORDER BY id LIMIT 1 OFFSET 1`).Scan(&anchorID, &anchorHash); err != nil {
+				t.Fatal(err)
+			}
+			exec(t, db, `DELETE FROM audit_logs WHERE id <= ?`, anchorID)
+			exec(t, db, `UPDATE audit_log_state SET anchor_id = ?, anchor_hash = ? WHERE id = 1`, anchorID, anchorHash)
+
+			day = day.AddDate(0, 0, 400) // everything is old now
+			deleted, err := l.Prune(context.Background())
+			if err == nil || deleted != 0 {
+				t.Fatalf("Prune after forged anchor = %d, %v; want refusal", deleted, err)
+			}
+			if msg, _ := l.LastPruneError(); !strings.Contains(msg, "refusing to prune") {
+				t.Errorf("LastPruneError = %q", msg)
+			}
+			if v := mustVerify(t, l); v.Valid {
+				t.Errorf("verify passed after forged anchor: %+v", v)
+			}
+		})
+	}
+}
+
+func TestPrune_InBatches(t *testing.T) {
+	old := pruneBatch
+	pruneBatch = 4
+	defer func() { pruneBatch = old }()
+
+	l, db := newTestLogger(t)
+	if err := sqlite.NewAuditLogRepository(db).SetRetentionDays(context.Background(), 30); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return day }
+	appendN(t, l, 10)
+	day = day.AddDate(0, 0, 40)
+	appendN(t, l, 2)
+
+	deleted, err := l.Prune(context.Background())
+	if err != nil || deleted != 10 {
+		t.Fatalf("Prune = %d, %v; want all 10 old entries across batches", deleted, err)
+	}
+	if v := mustVerify(t, l); !v.Valid {
+		t.Fatalf("verify after batched prune = %+v", v)
+	}
+}
+
+func TestVerify_ReportsEntriesBelowAnchor(t *testing.T) {
+	l, db := newTestLogger(t)
+	if err := sqlite.NewAuditLogRepository(db).SetRetentionDays(context.Background(), 30); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return day }
+	appendN(t, l, 3)
+	day = day.AddDate(0, 0, 40)
+	appendN(t, l, 2)
+	if _, err := l.Prune(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, db, `INSERT INTO audit_logs (id, timestamp, event_type, action, outcome, prev_hash, entry_hash, key_id)
+		VALUES (2, '2026-01-01T00:00:00.000000Z', 'AUTH', 'login', 'SUCCESS', 'x', 'y', ?)`, l.KeyID())
+	if v := mustVerify(t, l); v.Valid || v.ProblemID != 2 {
+		t.Fatalf("verify = %+v, want the leftover entry 2 reported", v)
+	}
+}

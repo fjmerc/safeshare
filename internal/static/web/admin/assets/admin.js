@@ -4625,7 +4625,19 @@ async function loadAuditRetention() {
     try {
         const response = await fetch('/admin/api/audit-logs/retention');
         const data = await response.json();
-        if (response.ok) document.getElementById('auditRetentionDays').value = data.retention_days;
+        if (!response.ok) return;
+        document.getElementById('auditRetentionDays').value = data.retention_days;
+        const box = document.getElementById('auditVerifyResult');
+        if (!data.enabled) {
+            box.classList.remove('hidden', 'audit-verify-ok');
+            box.classList.add('audit-verify-bad');
+            box.textContent = 'The audit log is turned off (AUDIT_LOG=false, or anonymous mode). Entries listed here were recorded before that.';
+        } else if (data.last_prune_error) {
+            box.classList.remove('hidden', 'audit-verify-ok');
+            box.classList.add('audit-verify-bad');
+            box.textContent = `Old entries are not being removed: ${data.last_prune_error} (${data.last_prune_error_at} UTC). ` +
+                'Run "Verify integrity" to see what is wrong.';
+        }
     } catch (error) {
         console.error('Error loading audit retention:', error);
     }

@@ -7,20 +7,21 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/audit"
+	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/storage"
@@ -106,6 +107,11 @@ func run() error {
 		slog.Info("audit log enabled", "key_id", auditKey.ID, "key_source", auditKey.Source)
 	} else {
 		slog.Info("audit log disabled", "anonymous_mode", cfg.IsAnonymousMode(), "AUDIT_LOG", os.Getenv("AUDIT_LOG"))
+		// Entries from before it was turned off stay (and aren't pruned).
+		if old, err := repos.AuditLogs.List(context.Background(), models.AuditLogFilter{Limit: 1}); err == nil && len(old) > 0 {
+			slog.Warn("audit log is disabled but still holds entries recorded earlier; they remain visible to admins",
+				"entries_up_to_id", old[0].ID)
+		}
 	}
 
 	// Initialize admin credentials if admin is enabled

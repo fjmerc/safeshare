@@ -304,7 +304,13 @@ func AdminAuditLogsRetentionHandler(repos *repository.Repositories, cfg *config.
 			sendError(w, "Failed to read retention", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return
 		}
+		resp := map[string]any{"retention_days": days, "enabled": audit.Default() != nil}
+		if l := audit.Default(); l != nil {
+			if msg, at := l.LastPruneError(); msg != "" {
+				resp["last_prune_error"], resp["last_prune_error_at"] = msg, at
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"retention_days": days})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }

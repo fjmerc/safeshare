@@ -21,6 +21,12 @@ var writeFailures = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Audit log entries that could not be written",
 })
 
+// pruneFailures counts retention prunes that failed or refused.
+var pruneFailures = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "safeshare_audit_log_prune_failures_total",
+	Help: "Audit log retention prunes that failed or were refused",
+})
+
 var defaultLogger atomic.Pointer[Logger]
 
 // appendTimeout bounds how long recording one event may take.
