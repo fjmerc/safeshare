@@ -3507,7 +3507,7 @@
     </div>
 
     <!-- Token Created Modal -->
-    <div id="tokenCreatedModal" class="modal">
+    <div id="tokenCreatedModal" class="modal" data-modal-no-escape>
         <div class="modal-content" style="max-width: 550px;">
             <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2">
@@ -3604,7 +3604,7 @@
     </div>
 
     <!-- Rotated Token Success Modal -->
-    <div id="rotatedTokenModal" class="modal">
+    <div id="rotatedTokenModal" class="modal" data-modal-no-escape>
         <div class="modal-content" style="max-width: 520px;">
             <div class="modal-header" style="display: flex; align-items: center; gap: 8px; color: #10b981;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3778,14 +3778,14 @@
     </div>
 
     <!-- MFA Setup Wizard Modal -->
-    <div id="mfaSetupModal" class="modal">
+    <div id="mfaSetupModal" class="modal" aria-labelledby="mfaSetupModalTitle">
         <div class="modal-content mfa-wizard-content">
             <div class="modal-header" style="display: flex; align-items: center; gap: 8px;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-                <span>Enable Two-Factor Authentication</span>
+                <span id="mfaSetupModalTitle">Enable Two-Factor Authentication</span>
             </div>
             <div class="modal-body">
                 <!-- Step indicators -->
@@ -4013,5 +4013,6 @@
 
     <!-- Toast Notification System -->
     <script src="/assets/toast.js"></script>
+    <script src="/assets/dialogs.js"></script>
 </body>
 </html>
