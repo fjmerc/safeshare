@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-03
+
 ### Fixed
 
 - **Large downloads no longer run the browser out of memory (T31).** The web UI used to download a file into page memory before saving it, needing about twice the file's size in RAM, so files over a gigabyte or two could fail or crash the tab. Downloads from the Pickup tab are now handed to the browser's own download manager, which saves them straight to disk with its usual progress, pause and resume (measured: a 600 MB download now peaks at 5 MB of page memory). The password of a password-protected file is sent in the request body, never in the URL, and a wrong password is still reported on the page before anything downloads. Trade-offs: the in-page progress bar and Pause/Cancel buttons are gone (the browser shows its own), the browser can't resume an interrupted password-protected download (start it again), and resuming a file with a download limit may be refused once its downloads are used up. End-to-end encrypted files are unchanged: they're still decrypted in the page, which needs the whole file in memory.
