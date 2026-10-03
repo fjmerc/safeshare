@@ -1897,6 +1897,12 @@ footer .version-info {
     }
 }
 
+.recovery-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
 .recovery-header {
     text-align: center;
     padding: 2rem 2rem 1rem;

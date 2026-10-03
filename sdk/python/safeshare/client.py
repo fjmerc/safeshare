@@ -17,6 +17,7 @@ from safeshare.exceptions import (
     AuthenticationError,
     ChunkedUploadError,
     DownloadError,
+    RateLimitError,
     SafeShareError,
     UploadError,
     ValidationError,
@@ -42,6 +43,18 @@ from safeshare.models import (
 # Regex for validating claim codes (alphanumeric, dash, underscore)
 CLAIM_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+
+
+# Bounds on the wait after a rate-limited status poll, in seconds (the same
+# range the web uploader uses).
+RATE_LIMIT_POLL_MIN_WAIT = 15.0
+RATE_LIMIT_POLL_MAX_WAIT = 60.0
+
+
+def _rate_limit_poll_delay(error: RateLimitError) -> float:
+    """Seconds to wait after a 429 from the status endpoint (T52)."""
+    wait = max(RATE_LIMIT_POLL_MIN_WAIT, float(error.retry_after or 0))
+    return min(wait, RATE_LIMIT_POLL_MAX_WAIT)
 
 class SafeShareClient:
     """
@@ -146,6 +159,13 @@ class SafeShareClient:
                 message = response.text or f"HTTP {response.status_code}"
                 error_code = None
 
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After", "")
+                raise RateLimitError(
+                    message,
+                    429,
+                    retry_after=int(retry_after) if retry_after.isdigit() else None,
+                )
             raise_for_status(response.status_code, message, error_code)
 
         if response.status_code == 204:
@@ -511,7 +531,16 @@ class SafeShareClient:
 
         start_time = time.time()
         while time.time() - start_time < max_wait:
-            status = self.get_upload_status(upload_id)
+            try:
+                status = self.get_upload_status(upload_id)
+            except RateLimitError as e:
+                # T52: a 429 from the status endpoint only means "poll more
+                # slowly" - the upload is still assembling, and its claim
+                # code is only ever returned here. Wait (honouring
+                # Retry-After) and try again; max_wait still applies.
+                remaining = max_wait - (time.time() - start_time)
+                time.sleep(max(0.0, min(_rate_limit_poll_delay(e), remaining)))
+                continue
 
             if status.status == "completed" and status.claim_code:
                 return UploadResult(

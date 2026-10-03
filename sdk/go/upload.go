@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -322,6 +323,29 @@ func (c *Client) cancelUpload(ctx context.Context, uploadID string) {
 	}
 }
 
+// Bounds on the wait after a rate-limited status poll (variables so tests can
+// shorten them).
+var (
+	rateLimitPollMinWait = 15 * time.Second
+	rateLimitPollMaxWait = 60 * time.Second
+)
+
+// rateLimitPollDelay is how long to wait after the status endpoint answers
+// 429: the server's Retry-After, clamped to 15-60 seconds (the same range the
+// web uploader uses), or 15 seconds without one.
+func rateLimitPollDelay(err error) time.Duration {
+	minWait, maxWait := rateLimitPollMinWait, rateLimitPollMaxWait
+	wait := minWait
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > wait {
+		wait = apiErr.RetryAfter
+	}
+	if wait > maxWait {
+		wait = maxWait
+	}
+	return wait
+}
+
 // pollForCompletion polls the upload status endpoint until assembly is complete.
 // This is used when the server returns 202 Accepted for async assembly.
 func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename string, fileSize int64, opts *UploadOptions) (*UploadResult, error) {
@@ -355,6 +379,24 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 
 		// Get status
 		status, err := c.getUploadStatusInternal(ctx, uploadID)
+		if err != nil && errors.Is(err, ErrRateLimit) {
+			// T52: a 429 from the status endpoint only means "poll more
+			// slowly" - the upload is still assembling, and its claim code
+			// is only ever returned here. Wait (honouring Retry-After) and
+			// try again; the overall deadline still applies.
+			wait := rateLimitPollDelay(err)
+			if remaining := time.Until(deadline); wait > remaining {
+				wait = remaining
+			}
+			select {
+			case <-ctx.Done():
+				c.cancelUpload(context.Background(), uploadID)
+				return nil, ctx.Err()
+			case <-time.After(wait):
+			}
+			iteration-- // rate-limited polls don't count toward maxIterations
+			continue
+		}
 		if err != nil {
 			return nil, &ChunkedUploadError{
 				UploadID: uploadID,

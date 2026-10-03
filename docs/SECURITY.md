@@ -1313,6 +1313,7 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.10.1 | Two concurrent first uploads of the same chunk with different bytes both succeeded; the later silently replaced the earlier | Low |
 | v1.10.0 | Chunked-upload inits that sent no data held their full size against the storage quota for 24h | Medium |
 | v1.10.0 | Web UI downloads held the whole file in browser memory (~2× file size), failing for large files | Low |
 | v1.9.0 | Stalled upload bodies held connections and partly received uploads for up to 6h; slow request headers held for 120s | Medium |

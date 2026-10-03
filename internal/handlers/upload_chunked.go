@@ -560,59 +560,64 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		// If the chunk is already stored and identical, this is a retry of a
-		// chunk that made it: answer success without rewriting (idempotent).
+		// answerStoredChunk responds to a chunk whose correct-size copy is
+		// already stored: identical bytes are a retry of a chunk that made it
+		// (success, without rewriting - idempotent); different bytes are
+		// refused, since a legitimate retry resends the same slice of the same
+		// file, so the first complete write wins.
+		answerStoredChunk := func() {
+			existingChecksum, err := utils.HashFileSHA256(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
+			if err != nil {
+				slog.Error("failed to hash existing chunk", "error", err, "upload_id", uploadID, "chunk_number", chunkNumber)
+				sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+				return
+			}
+			if existingChecksum != checksum {
+				sendError(w,
+					fmt.Sprintf("Chunk %d was already uploaded with different content", chunkNumber),
+					"CHUNK_CONFLICT",
+					http.StatusConflict,
+				)
+				return
+			}
+
+			slog.Debug("chunk already exists (idempotent)",
+				"upload_id", uploadID,
+				"chunk_number", chunkNumber,
+				"size", chunkSize,
+				"checksum", checksum,
+			)
+
+			// No activity update: re-sending a stored chunk mustn't keep
+			// the upload's quota reservation alive (T30).
+
+			// Count actual chunks from disk instead of relying on DB counter
+			chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
+			if err != nil {
+				slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
+				chunksReceived = 0
+			}
+
+			response := models.UploadChunkResponse{
+				UploadID:       uploadID,
+				ChunkNumber:    chunkNumber,
+				ChunksReceived: chunksReceived,
+				TotalChunks:    partialUpload.TotalChunks,
+				Complete:       chunksReceived == partialUpload.TotalChunks,
+				Checksum:       checksum,
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(response)
+		}
+
 		// A stored chunk of the wrong size can only be a leftover from an
 		// interrupted write (before writes were atomic) and is replaced below;
 		// rejecting it made every retry fail and forced a full re-upload.
-		// Same size but different bytes is refused: a legitimate retry resends
-		// the same slice of the same file, so the first complete write wins.
 		if exists {
 			if existingSize == chunkSize {
-				existingChecksum, err := utils.HashFileSHA256(utils.GetChunkPath(cfg.UploadDir, uploadID, chunkNumber))
-				if err != nil {
-					slog.Error("failed to hash existing chunk", "error", err, "upload_id", uploadID, "chunk_number", chunkNumber)
-					sendSmartError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
-					return
-				}
-				if existingChecksum != checksum {
-					sendError(w,
-						fmt.Sprintf("Chunk %d was already uploaded with different content", chunkNumber),
-						"CHUNK_CONFLICT",
-						http.StatusConflict,
-					)
-					return
-				}
-
-				slog.Debug("chunk already exists (idempotent)",
-					"upload_id", uploadID,
-					"chunk_number", chunkNumber,
-					"size", chunkSize,
-					"checksum", checksum,
-				)
-
-				// No activity update: re-sending a stored chunk mustn't keep
-				// the upload's quota reservation alive (T30).
-
-				// Count actual chunks from disk instead of relying on DB counter
-				chunksReceived, err := utils.GetChunkCount(cfg.UploadDir, uploadID)
-				if err != nil {
-					slog.Warn("failed to get chunk count", "error", err, "upload_id", uploadID)
-					chunksReceived = 0
-				}
-
-				response := models.UploadChunkResponse{
-					UploadID:       uploadID,
-					ChunkNumber:    chunkNumber,
-					ChunksReceived: chunksReceived,
-					TotalChunks:    partialUpload.TotalChunks,
-					Complete:       chunksReceived == partialUpload.TotalChunks,
-					Checksum:       checksum,
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(response)
+				answerStoredChunk()
 				return
 			}
 
@@ -643,8 +648,21 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		// Move the chunk into place
-		if err := utils.CommitChunk(tmpPath, cfg.UploadDir, uploadID, chunkNumber); err != nil {
+		// Move the chunk into place. A first write must not replace a chunk
+		// a concurrent request stored meanwhile (T51): if it lost that race,
+		// answer exactly as for a retry. Only a wrong-size leftover is
+		// overwritten - and two requests replacing the same leftover can
+		// still race, but nothing writes wrong-size chunks since writes
+		// became atomic, so that only concerns leftovers from before.
+		commit := commitNewChunk
+		if exists {
+			commit = utils.CommitChunk
+		}
+		if err := commit(tmpPath, cfg.UploadDir, uploadID, chunkNumber); err != nil {
+			if errors.Is(err, utils.ErrChunkAlreadyStored) {
+				answerStoredChunk()
+				return
+			}
 			if errors.Is(err, syscall.ENOSPC) {
 				sendSmartError(w, "Insufficient storage space", "INSUFFICIENT_STORAGE", http.StatusInsufficientStorage)
 				return
@@ -701,6 +719,10 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 		)
 	}
 }
+
+// commitNewChunk is utils.CommitNewChunk, as a variable so tests can make a
+// concurrent first write land at the worst moment.
+var commitNewChunk = utils.CommitNewChunk
 
 // renewLapsedReservation re-reserves the rest of an upload's size against the
 // quota if its reservation has lapsed (T30), writing 507 QUOTA_EXCEEDED (or

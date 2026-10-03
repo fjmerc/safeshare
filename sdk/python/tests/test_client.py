@@ -473,3 +473,51 @@ class TestScanErrorHandling:
         with SafeShareClient(base_url="https://example.com") as client:
             with pytest.raises(DownloadLimitReachedError):
                 client.get_file_info("ABC123")
+
+
+class TestWaitForCompletionRateLimit:
+    """T52: a 429 from the status endpoint must not abort an assembling upload."""
+
+    UPLOAD_ID = "550e8400-e29b-41d4-a716-446655440052"
+
+    def test_keeps_polling_through_429(self, httpx_mock: HTTPXMock, monkeypatch):
+        import safeshare.client as client_module
+
+        sleeps = []
+        monkeypatch.setattr(client_module.time, "sleep", lambda s: sleeps.append(s))
+        url = f"https://example.com/api/upload/status/{self.UPLOAD_ID}"
+        for _ in range(2):
+            httpx_mock.add_response(
+                url=url,
+                status_code=429,
+                headers={"Retry-After": "30"},
+                json={"error": "Rate limit exceeded", "code": "RATE_LIMITED"},
+            )
+        httpx_mock.add_response(
+            url=url,
+            json={
+                "upload_id": self.UPLOAD_ID,
+                "filename": "f.bin",
+                "status": "completed",
+                "chunks_received": 1,
+                "total_chunks": 1,
+                "complete": True,
+                "claim_code": "AbCdEfGh12345678",
+                "expires_at": "2030-01-01T00:00:00Z",
+            },
+        )
+
+        client = SafeShareClient(base_url="https://example.com")
+        result = client._wait_for_completion(self.UPLOAD_ID)
+        client.close()
+
+        assert result.claim_code == "AbCdEfGh12345678"
+        assert sleeps == [30.0, 30.0]
+
+    def test_rate_limit_poll_delay_bounds(self):
+        from safeshare.client import _rate_limit_poll_delay
+
+        assert _rate_limit_poll_delay(RateLimitError("x")) == 15.0
+        assert _rate_limit_poll_delay(RateLimitError("x", retry_after=5)) == 15.0
+        assert _rate_limit_poll_delay(RateLimitError("x", retry_after=45)) == 45.0
+        assert _rate_limit_poll_delay(RateLimitError("x", retry_after=600)) == 60.0
