@@ -55,7 +55,7 @@ Conditional requests (`If-None-Match`, `If-Modified-Since`, `If-Range`) let a cl
 - `Content-Range: bytes */total`
 
 **Capped-download responses** (`max_downloads` set; see ADR-014):
-- `X-Download-Session` — opaque bearer token identifying this download's session. A resumable download client (including SafeShare's own web UI) should send this back as an `X-Download-Session` request header on any follow-up Range request for the same file, so a pause/resume is recognised as the same download instead of a separate, independently-counted request. Not present on files with no download cap, and never set on a `HEAD` request (see below).
+- `X-Download-Session` — opaque bearer token identifying this download's session. A resumable download client should send this back as an `X-Download-Session` request header on any follow-up Range request for the same file, so a pause/resume is recognised as the same download instead of a separate, independently-counted request. Not present on files with no download cap, and never set on a `HEAD` request (see below).
 
 ### `HEAD` Requests
 
@@ -69,7 +69,7 @@ Because it never reserves anything, the download-limit check above is a best-eff
 
 **One further, narrower exception**: a `HEAD` against a file stored in the old, pre-streaming (legacy) encrypted format does not actually attempt decryption (this is what lets it skip the memory/CPU cost a `GET` would pay — see "Legacy Encrypted Files" below), so it cannot detect a corrupt ciphertext or a wrong encryption key the way a `GET` (or a `HEAD` against a newer-format file, which does validate its first chunk) would. Such a file would pass `HEAD` but fail the subsequent `GET`. Run `migrate-encryption --verify --verify-decrypt` to audit legacy files' decryptability outside the request path.
 
-Use `HEAD` to check a file's size or availability before starting a real download — SafeShare's own web UI (`resumable-downloader.js`) does exactly this.
+Use `HEAD` to check a file's size or availability before starting a real download — SafeShare's own web UI does this to check a password before it starts a password-protected download.
 
 ### Conditional Requests
 

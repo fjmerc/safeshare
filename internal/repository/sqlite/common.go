@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/repository"
 )
 
 // validateStoredFilename validates that a stored filename is safe to use in file paths.
@@ -53,6 +54,39 @@ func escapeLikePattern(s string) string {
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
 }
+
+// reservationLapsed is true for an uploading partial upload that hasn't stored
+// a chunk within PartialUploadReservationIdle, i.e. whose quota reservation has
+// lapsed (T30). It's NULL - and so treated as held - when last_activity is
+// missing or unparseable, so bad data fails closed. storageUsageQuery and
+// RenewReservation must agree on it, so both use this one expression.
+var reservationLapsed = fmt.Sprintf(
+	"(COALESCE(status, 'uploading') = 'uploading' AND datetime(last_activity) <= datetime('now', '-%d seconds'))",
+	int64(repository.PartialUploadReservationIdle/time.Second))
+
+// storageUsageQuery returns the storage counted against the quota: unexpired
+// files plus what incomplete partial uploads hold. A partial upload holds its
+// full total_size unless its reservation has lapsed (reservationLapsed), in
+// which case it counts only the bytes it has received (T30). Every quota
+// check must use this one query so chunked and simple uploads agree.
+//
+// Defense in depth (bug-hunter finding, ADR-015): infected-audit rows are
+// already inserted with file_size=0, but exclude them explicitly too, so a
+// future insert bug can't silently reintroduce quota inflation.
+var storageUsageQuery = `
+	SELECT
+		COALESCE(SUM(file_size), 0) +
+		COALESCE((
+			SELECT SUM(CASE WHEN ` + reservationLapsed + `
+				THEN COALESCE(received_bytes, 0)
+				ELSE total_size
+			END)
+			FROM partial_uploads WHERE completed = 0
+		), 0)
+	FROM files
+	WHERE datetime(expires_at) > datetime('now')
+	AND (scan_status IS NULL OR scan_status != 'infected')
+`
 
 // beginImmediateTx starts a transaction with retry logic for robustness.
 // The IMMEDIATE locking is ensured by _txlock=immediate in the DSN.
