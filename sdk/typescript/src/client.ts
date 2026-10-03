@@ -33,6 +33,7 @@ import {
   ValidationError,
   DownloadError,
   ChunkedUploadError,
+  RateLimitError,
   handleErrorResponse,
 } from "./errors.js";
 
@@ -65,6 +66,19 @@ type FetchRequestBody = NonNullable<Parameters<typeof fetch>[1]>["body"];
  * console.log(`Claim code: ${result.claimCode}`);
  * ```
  */
+/** Bounds on the wait after a rate-limited status poll (ms). */
+export const RATE_LIMIT_POLL_WAIT = { min: 15_000, max: 60_000 };
+
+/**
+ * How long to wait after the status endpoint answers 429 (T52): the
+ * server's Retry-After, clamped to the same 15-60 s range the web uploader
+ * uses.
+ */
+export function rateLimitPollDelay(error: RateLimitError): number {
+  const retryAfterMs = (error.retryAfter ?? 0) * 1000;
+  return Math.min(Math.max(retryAfterMs, RATE_LIMIT_POLL_WAIT.min), RATE_LIMIT_POLL_WAIT.max);
+}
+
 /**
  * Normalize a server download limit. Chunked-upload responses encode
  * "unlimited" as 0 rather than null.
@@ -531,7 +545,19 @@ export class SafeShareClient {
 
     for (let iteration = 0; iteration < MAX_ITERATIONS && Date.now() < deadline; iteration++) {
       // Get status
-      const status = await this.getUploadStatusInternal(uploadId);
+      let status;
+      try {
+        status = await this.getUploadStatusInternal(uploadId);
+      } catch (error) {
+        if (!(error instanceof RateLimitError)) throw error;
+        // T52: a 429 from the status endpoint only means "poll more
+        // slowly" - the upload is still assembling, and its claim code is
+        // only ever returned here. Wait (honouring Retry-After) and try
+        // again; the overall deadline still applies.
+        await this.sleep(Math.min(rateLimitPollDelay(error), Math.max(0, deadline - Date.now())));
+        iteration--; // rate-limited polls don't count toward MAX_ITERATIONS
+        continue;
+      }
 
       switch (status.status) {
         case "completed":

@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Go, Python and TypeScript SDKs no longer abandon a large upload when status checks are rate limited (T52).** After a chunked upload, the SDKs poll `/api/upload/status` until the server finishes assembling the file, and that's the only place the claim code is returned. A `429 Too Many Requests` from it used to end the upload call with an error even though the server went on to finish the file. The SDKs now treat a 429 there as "poll more slowly": they wait for the server's `Retry-After` (between 15 and 60 seconds) and keep polling until their usual overall time limit. The same fix reached the web uploader in v1.9.0.
+
 ## [1.10.0] - 2026-10-03
 
 ### Fixed
