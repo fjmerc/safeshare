@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SafeShareClient } from "../src/client.js";
+import { SafeShareClient, rateLimitPollDelay } from "../src/client.js";
 import {
   SafeShareError,
   AuthenticationError,
@@ -727,5 +727,51 @@ describe("SafeShareClient", () => {
         expect(body.other).toBe("not_sensitive");
       }
     });
+  });
+});
+
+describe("pollForCompletion rate limiting (T52)", () => {
+  const uploadId = "550e8400-e29b-41d4-a716-446655440052";
+
+  it("keeps polling through 429s from the status endpoint", async () => {
+    const rateLimited = {
+      status: 429,
+      body: { error: "Rate limit exceeded", code: "RATE_LIMITED" },
+      headers: { "Retry-After": "30" },
+    };
+    const mockFetch = createMockFetch([
+      rateLimited,
+      rateLimited,
+      {
+        status: 200,
+        body: {
+          upload_id: uploadId,
+          filename: "f.bin",
+          status: "completed",
+          claim_code: "AbCdEfGh12345678",
+          expires_at: "2030-01-01T00:00:00Z",
+        },
+      },
+    ]);
+    const client = new SafeShareClient({ baseUrl: "https://example.com", fetch: mockFetch });
+    const sleeps: number[] = [];
+    (client as unknown as { sleep: (ms: number) => Promise<void> }).sleep = async (ms: number) => {
+      sleeps.push(ms);
+    };
+
+    const result = await (client as unknown as {
+      pollForCompletion: (id: string, name: string, size: number, pw: boolean) => Promise<{ claimCode: string }>;
+    }).pollForCompletion(uploadId, "f.bin", 10, false);
+
+    expect(result.claimCode).toBe("AbCdEfGh12345678");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(sleeps.slice(0, 2)).toEqual([30_000, 30_000]);
+  });
+
+  it("clamps the wait to 15-60 seconds", () => {
+    expect(rateLimitPollDelay(new RateLimitError("x"))).toBe(15_000);
+    expect(rateLimitPollDelay(new RateLimitError("x", 5))).toBe(15_000);
+    expect(rateLimitPollDelay(new RateLimitError("x", 45))).toBe(45_000);
+    expect(rateLimitPollDelay(new RateLimitError("x", 600))).toBe(60_000);
   });
 });
