@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,10 @@ func LoadKey(envValue, dir string) (Key, error) {
 	if err != nil || len(secret) != 32 {
 		return Key{}, fmt.Errorf("audit log key %s is not 64 hexadecimal characters", path)
 	}
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 {
+		slog.Warn("audit log key file is readable by other users; restrict it to the SafeShare user (chmod 600)",
+			"path", path, "mode", info.Mode().Perm().String())
+	}
 	return newKey(secret, path), nil
 }
 
@@ -85,4 +90,20 @@ func createKeyFile(path string) (Key, error) {
 		return Key{}, fmt.Errorf("failed to write audit log key %s: %w", path, err)
 	}
 	return newKey(secret, path+" (generated)"), nil
+}
+
+// Enabled decides whether the audit log runs, from AUDIT_LOG: "auto" (or
+// unset) means on, except in anonymous mode, whose promise is that no
+// record of who did what is kept; "true" and "false" force it. Anything
+// else is an error, so a typo can't silently turn auditing off.
+func Enabled(setting string, anonymousMode bool) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(setting)) {
+	case "", "auto":
+		return !anonymousMode, nil
+	case "true", "on", "1", "yes":
+		return true, nil
+	case "false", "off", "0", "no":
+		return false, nil
+	}
+	return false, fmt.Errorf("AUDIT_LOG must be auto, true or false, got %q", setting)
 }

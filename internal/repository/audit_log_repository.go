@@ -35,12 +35,18 @@ type AuditLogRepository interface {
 	// retention has pruned something.
 	Anchor(ctx context.Context) (models.AuditAnchor, error)
 
-	// Prune deletes the oldest entries, up to the newest one timestamped
-	// before `before`, and in the same transaction moves the anchor to the
-	// last deleted entry and appends the event makeEvent builds for that
-	// anchor (so every prune is itself recorded in the signed chain). It
-	// returns how many entries were deleted; with none, nothing is written.
-	Prune(ctx context.Context, before string, makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign AuditSigner) (int64, error)
+	// Prune deletes the oldest entries: everything before the oldest entry
+	// timestamped at or after `before` (a prefix by id, so a backdated
+	// entry further along can't drag newer ones with it). Within one
+	// transaction it first passes every entry to be deleted, in id order,
+	// to the checker newCheck builds for the current anchor, and deletes
+	// nothing if that returns an error; then it deletes them, moves the
+	// anchor to the last one, and appends the event makeEvent builds for
+	// that anchor, so every prune is itself recorded in the signed chain.
+	// It returns how many entries were deleted; with none, nothing is
+	// written.
+	Prune(ctx context.Context, before string, newCheck func(models.AuditAnchor) func(*models.AuditLog) error,
+		makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign AuditSigner) (int64, error)
 
 	// RetentionDays returns how many days entries are kept (0 = forever).
 	RetentionDays(ctx context.Context) (int, error)

@@ -329,7 +329,7 @@ func TestAnonymize_StripsIdentityKeepsWhatHappened(t *testing.T) {
 		Type: models.AuditEventAdmin, Action: "user_delete", Outcome: models.AuditOutcomeSuccess,
 		UserID: 1, Username: "admin", IPAddress: "198.51.100.1", UserAgent: "ua",
 		ResourceType: "user", ResourceID: "42",
-		Details: map[string]any{"target_username": "alice", "owner_id": 42, "name": "laptop", "role": "user", "count": 3},
+		Details: map[string]any{"target_username": "alice", "owner_id": 42, "name": "laptop", "filename": "memo.pdf", "role": "user", "count": 3},
 	}
 	original := e.Details
 	anonymize(&e)
@@ -465,6 +465,96 @@ func TestAppend_TimestampsFollowChainOrder(t *testing.T) {
 	for i := 1; i < len(entries); i++ {
 		if entries[i].Timestamp < entries[i-1].Timestamp {
 			t.Errorf("entry %d (%s) is timestamped before entry %d (%s)", entries[i].ID, entries[i].Timestamp, entries[i-1].ID, entries[i-1].Timestamp)
+		}
+	}
+}
+
+// Security audit HIGH: backdating an entry (or tampering with any entry
+// about to be pruned) must not get it laundered out of the chain by the
+// retention prune.
+func TestPrune_RefusesToLaunderTamperedEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tamper string
+	}{
+		{"newest entry backdated", `UPDATE audit_logs SET timestamp = '1970-01-01T00:00:00.000000Z' WHERE id = 10`},
+		{"old entry edited", `UPDATE audit_logs SET details = '{"n":99}' WHERE id = 2`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, db := newTestLogger(t)
+			repo := sqlite.NewAuditLogRepository(db)
+			if err := repo.SetRetentionDays(context.Background(), 30); err != nil {
+				t.Fatal(err)
+			}
+			day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			l.now = func() time.Time { return day }
+			appendN(t, l, 3) // old enough to prune
+			day = day.AddDate(0, 0, 40)
+			appendN(t, l, 7) // recent
+			exec(t, db, tc.tamper)
+
+			deleted, err := l.Prune(context.Background())
+			if tc.name == "newest entry backdated" {
+				// Only the genuinely old prefix (1-3) is due; the backdated
+				// entry 10 can't drag 4-9 along, and isn't pruned itself.
+				if err != nil || deleted != 3 {
+					t.Fatalf("Prune = %d, %v; want the 3 old entries only", deleted, err)
+				}
+			} else if err == nil || deleted != 0 {
+				t.Fatalf("Prune = %d, %v; want a refusal", deleted, err)
+			}
+			if v := mustVerify(t, l); v.Valid {
+				t.Fatalf("verify passed after %s: %+v", tc.name, v)
+			}
+		})
+	}
+}
+
+// Security audit MEDIUM: one bad entry must not hide tampering after it.
+func TestVerify_ReportsEveryProblem(t *testing.T) {
+	l, db := newTestLogger(t)
+	appendN(t, l, 10)
+	// A junk row at head+1, which later appends then chain onto...
+	exec(t, db, `INSERT INTO audit_logs (id, timestamp, event_type, action, outcome, prev_hash, entry_hash, key_id)
+		VALUES (11, '2026-01-01T00:00:00.000000Z', 'AUTH', 'junk', 'SUCCESS', 'x', 'y', ?)`, l.KeyID())
+	appendN(t, l, 3)
+	// ...and an edit further along.
+	exec(t, db, `UPDATE audit_logs SET username = 'mallory' WHERE id = 13`)
+
+	v := mustVerify(t, l)
+	if v.Valid || v.ProblemID != 11 {
+		t.Fatalf("verify = %+v, want first problem at 11", v)
+	}
+	var found13 bool
+	for _, p := range v.Problems {
+		if p.ID == 13 && strings.Contains(p.Description, "modified") {
+			found13 = true
+		}
+	}
+	if !found13 || v.Checked != 14 {
+		t.Errorf("problems = %+v (checked %d), want entry 13's edit reported too", v.Problems, v.Checked)
+	}
+}
+
+func TestEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		setting   string
+		anonymous bool
+		want      bool
+		wantErr   bool
+	}{
+		{"", false, true, false},
+		{"auto", false, true, false},
+		{"", true, false, false},
+		{"auto", true, false, false},
+		{"true", true, true, false},
+		{"false", false, false, false},
+		{"ON", false, true, false},
+		{"maybe", false, false, true},
+	} {
+		got, err := Enabled(tc.setting, tc.anonymous)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("Enabled(%q, anonymous=%v) = %v, %v", tc.setting, tc.anonymous, got, err)
 		}
 	}
 }

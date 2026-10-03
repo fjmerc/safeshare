@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -21,6 +22,9 @@ var writeFailures = promauto.NewCounter(prometheus.CounterOpts{
 })
 
 var defaultLogger atomic.Pointer[Logger]
+
+// appendTimeout bounds how long recording one event may take.
+const appendTimeout = 5 * time.Second
 
 // SetDefault sets the logger Record writes to. Until it's called (and in
 // tests that don't), Record does nothing.
@@ -87,7 +91,11 @@ func RecordFor(ctx context.Context, cfg *config.Config, ip, userAgent string, ev
 	if cfg == nil || cfg.IsAnonymousMode() {
 		anonymize(&in)
 	}
-	if _, err := l.Append(context.WithoutCancel(ctx), in); err != nil {
+	// Bounded: a stalled database must turn into a counted, logged write
+	// failure, not a request that hangs.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appendTimeout)
+	defer cancel()
+	if _, err := l.Append(ctx, in); err != nil {
 		writeFailures.Inc()
 		slog.Error("failed to write audit log entry", "error", err, "event_type", ev.Type, "action", ev.Action)
 	}
@@ -105,7 +113,9 @@ var identifyingResourceTypes = map[string]bool{
 // IdentifyingDetailKeys are Details keys that identify a person or an
 // address; hooks must use these names for such values so anonymous mode
 // can strip them.
-var IdentifyingDetailKeys = []string{"target_username", "username", "user_id", "owner_id", "ip", "ips", "name"}
+// Filenames and an export's query (which may hold a username or IP
+// filter) are dropped too.
+var IdentifyingDetailKeys = []string{"target_username", "username", "user_id", "owner_id", "ip", "ips", "name", "filename", "query"}
 
 // anonymize removes everything identifying a person from an entry,
 // keeping what happened: no requester address, account, username or user

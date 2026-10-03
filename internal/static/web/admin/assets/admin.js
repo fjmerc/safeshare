@@ -4600,8 +4600,10 @@ async function verifyAuditLog() {
                   `Latest hash ${v.last_hash.slice(0, 16)}... - compare with the latest "audit log checkpoint" line in the server logs.`;
         } else {
             box.classList.add('audit-verify-bad');
-            box.textContent = `Integrity check FAILED at entry #${v.problem_id}: ${v.problem}. ` +
-                `${v.checked} entries before it verified.`;
+            const more = v.problem_count > 1 ? ` (${v.problem_count} problems in total; also ` +
+                (v.problems || []).slice(1, 5).map(p => `#${p.id}`).join(', ') + (v.problem_count > 5 ? ', ...' : '') + ')' : '';
+            box.textContent = `Integrity check FAILED at entry #${v.problem_id}: ${v.problem}${more}. ` +
+                `${v.checked} entries checked.`;
         }
         loadAuditLog();
     } catch (error) {

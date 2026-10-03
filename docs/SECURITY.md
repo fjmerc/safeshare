@@ -195,7 +195,7 @@ docker run -e ANONYMOUS_MODE=true ...
 - **Logs**: IP addresses are redacted in all log output (replaced with `[redacted]`)
 - **Admin dashboard**: IP columns show `[redacted]` instead of real IPs
 - **Rate limiting**: Still functional (uses hashed IPs internally, never stored)
-- **Audit log**: entries record what happened but nothing about who: no IP address, account, username or user agent
+- **Audit log**: off by default. With `AUDIT_LOG=true`, entries record what happened but nothing about who: no IP address, account, username, user agent or filename
 
 ### Behavior
 
@@ -210,12 +210,15 @@ docker run -e ANONYMOUS_MODE=true ...
 ### Overview
 SafeShare keeps a tamper-evident audit log of security-relevant events: logins and failed logins, MFA, password changes, admin actions on users, files, IP blocks, tokens, settings and backups, uploads, downloads, deletions and malware verdicts. Admins can browse, filter, export (CSV or JSON Lines) and verify it in the admin dashboard's **Audit Log** tab, or via `GET /admin/api/audit-logs`, `GET /admin/api/audit-logs/export`, `POST /admin/api/audit-logs/verify` and `GET|PUT /admin/api/audit-logs/retention`.
 
+### Turning it on or off
+`AUDIT_LOG=auto` (the default) records events except in anonymous mode, which promises that no record of who did what is kept. `AUDIT_LOG=true` records in anonymous mode too, without anything identifying: no IP address, account, username, user agent or filename. `AUDIT_LOG=false` turns it off. Any other value stops SafeShare from starting, so a typo can't silently disable auditing.
+
 ### How tampering is detected
 - Every entry is signed with **HMAC-SHA256** over all of its fields, and includes the previous entry's signature, forming a chain. Entry numbers are consecutive.
-- **Verify integrity** re-checks the whole chain and names the first entry that was edited, removed, or signed with another key.
+- **Verify integrity** re-checks the whole chain and lists the entries that were edited, removed, inserted or signed with another key (it keeps going past the first, so one bad entry can't hide others).
 - The signing key is **not stored in the database**: it's `AUDIT_LOG_KEY` (64 hex characters) if set, otherwise `audit.key`, generated on first start in the database's directory with mode 0600.
 - Every 100 entries, hourly, and at startup and shutdown, SafeShare writes the newest entry's number and signature to its application log (`audit log checkpoint`). The admin dashboard's verify result shows the latest signature to compare against.
-- Entries older than the retention period (default 365 days; 0 keeps them forever; otherwise at least 30) are removed daily. Each removal is itself recorded, signed, in the chain, so the verifiable chain starts cleanly from it. There is no way to delete or hide individual entries.
+- Entries older than the retention period (default 365 days; 0 keeps them forever; otherwise at least 30) are removed daily. Removal only takes the oldest entries, up to the oldest one still within the period, and checks each one first: if anything about to be removed fails the check, nothing is removed and the error is logged, so pruning can't be used to discard tampered entries. Each removal is itself recorded, signed, in the chain. There is no way to delete or hide individual entries.
 
 ### What it protects against
 - Someone who can change the database but doesn't have the key (a leaked or copied database, a database-only compromise, a modified backup): any edit, insertion or deletion inside the chain fails verification.
@@ -229,6 +232,9 @@ The CSV export protects spreadsheet users by prefixing text that starts with `=`
 ### What it doesn't protect against
 - Someone with full access to the server, who can read the key file as well as the database, can rewrite the chain. Setting `AUDIT_LOG_KEY` from a secret store keeps the key off the data volume, and off-box checkpoint logs still show history that was rewritten after it was shipped.
 - Events that were never recorded: if an entry can't be written (for example, the database is unavailable), the request still goes through. The failure is logged and counted in the `safeshare_audit_log_write_failures_total` metric.
+
+### Several instances
+Instances that share one database must share one key: set the same `AUDIT_LOG_KEY` on all of them. With separate generated keys, each instance's entries fail verification on the others. SafeShare logs an error at startup when the newest entry was signed with a different key than the one it loaded.
 
 ### Keep the key
 SafeShare's own backups contain the database but not the key. A restore on the same server keeps working, because the key file stays where it is. Restoring a backup does replace the audit log with the one in the backup, so entries written after that backup are gone, and verification can't tell; the checkpoint lines in the application log (and the `backup_restore` entry written afterwards) are the record of what came after. When moving to a new server, copy `audit.key` along with the database, or set the same `AUDIT_LOG_KEY`; otherwise verification reports entries "signed with a different key". Replacing the key has the same effect on all older entries.

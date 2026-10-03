@@ -90,13 +90,23 @@ func run() error {
 
 	// Tamper-evident audit log (ADR-018). The signing key lives outside the
 	// database: AUDIT_LOG_KEY, or a key file generated next to it.
-	auditKey, err := audit.LoadKey(os.Getenv("AUDIT_LOG_KEY"), filepath.Dir(cfg.DBPath))
+	auditEnabled, err := audit.Enabled(os.Getenv("AUDIT_LOG"), cfg.IsAnonymousMode())
 	if err != nil {
-		return fmt.Errorf("failed to load audit log key: %w", err)
+		return err
 	}
-	auditLogger := audit.NewLogger(repos.AuditLogs, auditKey)
-	audit.SetDefault(auditLogger)
-	slog.Info("audit log initialized", "key_id", auditKey.ID, "key_source", auditKey.Source)
+	var auditLogger *audit.Logger
+	if auditEnabled {
+		auditKey, err := audit.LoadKey(os.Getenv("AUDIT_LOG_KEY"), filepath.Dir(cfg.DBPath))
+		if err != nil {
+			return fmt.Errorf("failed to load audit log key: %w", err)
+		}
+		auditLogger = audit.NewLogger(repos.AuditLogs, auditKey)
+		auditLogger.CheckKey(context.Background())
+		audit.SetDefault(auditLogger)
+		slog.Info("audit log enabled", "key_id", auditKey.ID, "key_source", auditKey.Source)
+	} else {
+		slog.Info("audit log disabled", "anonymous_mode", cfg.IsAnonymousMode(), "AUDIT_LOG", os.Getenv("AUDIT_LOG"))
+	}
 
 	// Initialize admin credentials if admin is enabled
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
@@ -1139,11 +1149,13 @@ func run() error {
 
 	// Audit log: checkpoints to this log (hourly and at shutdown) and
 	// daily retention pruning.
-	workerWg.Add(1)
-	go func() {
-		defer workerWg.Done()
-		auditLogger.Run(ctx)
-	}()
+	if auditLogger != nil {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			auditLogger.Run(ctx)
+		}()
+	}
 
 	// Start file cleanup worker
 	workerWg.Add(1)

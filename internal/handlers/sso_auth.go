@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/auth/sso"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
@@ -413,6 +414,8 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"error", err,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+				Details: map[string]any{"method": "sso", "provider": providerSlug, "reason": "token_exchange_failed"}})
 			http.Redirect(w, r, "/login?error=token_exchange_failed", http.StatusFound)
 			return
 		}
@@ -434,6 +437,8 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"provider", providerSlug,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeDenied,
+				Details: map[string]any{"method": "sso", "provider": providerSlug, "reason": "domain_not_allowed"}})
 			http.Redirect(w, r, "/login?error=domain_not_allowed", http.StatusFound)
 			return
 		}
@@ -458,6 +463,9 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"username", user.Username,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeDenied,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: idStr(user.ID),
+				Details: map[string]any{"method": "sso", "provider": providerSlug, "reason": "account_disabled"}})
 			http.Redirect(w, r, "/login?error=account_disabled", http.StatusFound)
 			return
 		}
@@ -526,6 +534,10 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 				"ip", logIP(clientIP, cfg),
 			)
 		}
+
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: idStr(user.ID),
+			Details: map[string]any{"method": "sso", "provider": providerSlug, "new_user": isNewUser}})
 
 		// Redirect to return URL or dashboard (validate to prevent open redirect)
 		returnURL := "/dashboard"

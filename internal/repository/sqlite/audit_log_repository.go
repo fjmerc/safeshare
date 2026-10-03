@@ -93,20 +93,31 @@ func (r *AuditLogRepository) Append(ctx context.Context, e *models.AuditLog, sig
 }
 
 func scanAuditLogs(rows *sql.Rows) ([]models.AuditLog, error) {
-	defer rows.Close()
 	var out []models.AuditLog
+	err := forEachAuditLog(rows, func(e *models.AuditLog) error {
+		out = append(out, *e)
+		return nil
+	})
+	return out, err
+}
+
+// forEachAuditLog scans rows one entry at a time, closing them when done.
+func forEachAuditLog(rows *sql.Rows, fn func(*models.AuditLog) error) error {
+	defer rows.Close()
 	for rows.Next() {
 		var e models.AuditLog
 		var eventType, outcome string
 		if err := rows.Scan(&e.ID, &e.Timestamp, &eventType, &e.Action, &outcome, &e.UserID, &e.Username,
 			&e.IPAddress, &e.UserAgent, &e.ResourceType, &e.ResourceID, &e.Details, &e.PrevHash, &e.EntryHash, &e.KeyID); err != nil {
-			return nil, fmt.Errorf("failed to scan audit log entry: %w", err)
+			return fmt.Errorf("failed to scan audit log entry: %w", err)
 		}
 		e.EventType = models.AuditEventType(eventType)
 		e.Outcome = models.AuditOutcome(outcome)
-		out = append(out, e)
+		if err := fn(&e); err != nil {
+			return err
+		}
 	}
-	return out, rows.Err()
+	return rows.Err()
 }
 
 // clampAuditLimit applies the default (50) and maximum (1000) page size.
@@ -198,36 +209,64 @@ func (r *AuditLogRepository) Anchor(ctx context.Context) (models.AuditAnchor, er
 }
 
 // Prune implements repository.AuditLogRepository.
-func (r *AuditLogRepository) Prune(ctx context.Context, before string, makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign repository.AuditSigner) (int64, error) {
+func (r *AuditLogRepository) Prune(ctx context.Context, before string, newCheck func(models.AuditAnchor) func(*models.AuditLog) error,
+	makeEvent func(models.AuditAnchor, int64) *models.AuditLog, sign repository.AuditSigner) (int64, error) {
 	tx, err := beginImmediateTx(ctx, r.db)
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Always a prefix by id, so the remaining entries stay one contiguous
-	// chain starting right after the new anchor.
-	var anchor models.AuditAnchor
-	err = tx.QueryRowContext(ctx, `SELECT id, entry_hash FROM audit_logs
-		WHERE id = (SELECT MAX(id) FROM audit_logs WHERE timestamp < ?)`, before).Scan(&anchor.ID, &anchor.Hash)
-	if err == sql.ErrNoRows {
-		return 0, nil
+	anchor, err := auditAnchor(ctx, tx)
+	if err != nil {
+		return 0, err
 	}
+	// The cut is just before the oldest entry still within retention (or
+	// the newest entry, if none is).
+	var cut sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(
+		(SELECT MIN(id) FROM audit_logs WHERE timestamp >= ?) - 1,
+		(SELECT MAX(id) FROM audit_logs))`, before).Scan(&cut)
 	if err != nil {
 		return 0, fmt.Errorf("failed to find audit log prune point: %w", err)
 	}
+	if !cut.Valid || cut.Int64 <= anchor.ID {
+		return 0, nil
+	}
 
-	res, err := tx.ExecContext(ctx, `DELETE FROM audit_logs WHERE id <= ?`, anchor.ID)
+	check := newCheck(anchor)
+	rows, err := tx.QueryContext(ctx, `SELECT `+auditLogColumns+` FROM audit_logs WHERE id <= ? ORDER BY id ASC`, cut.Int64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read entries to prune: %w", err)
+	}
+	// Streamed, not loaded: shortening retention on a large log can make
+	// one prune cover many entries.
+	var last models.AuditAnchor
+	err = forEachAuditLog(rows, func(e *models.AuditLog) error {
+		if err := check(e); err != nil {
+			return err
+		}
+		last = models.AuditAnchor{ID: e.ID, Hash: e.EntryHash}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if last.ID != cut.Int64 {
+		return 0, fmt.Errorf("refusing to prune: entries up to %d are not all present", cut.Int64)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM audit_logs WHERE id <= ?`, last.ID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to prune audit log: %w", err)
 	}
 	deleted, _ := res.RowsAffected()
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_log_state SET anchor_id = ?, anchor_hash = ? WHERE id = 1`, anchor.ID, anchor.Hash); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_log_state SET anchor_id = ?, anchor_hash = ? WHERE id = 1`, last.ID, last.Hash); err != nil {
 		return 0, fmt.Errorf("failed to move audit log anchor: %w", err)
 	}
-	// The prune itself goes into the chain. Pruning the whole log leaves
-	// it empty, and the head falls back to the anchor just written.
-	if err := appendTx(ctx, tx, makeEvent(anchor, deleted), sign); err != nil {
+	// The prune itself goes into the chain. If it removed every entry, the
+	// head is the anchor just written.
+	if err := appendTx(ctx, tx, makeEvent(last, deleted), sign); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {

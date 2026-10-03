@@ -186,6 +186,21 @@ func logCheckpoint(reason string, head models.AuditAnchor) {
 	slog.Info("audit log checkpoint", "reason", reason, "id", head.ID, "entry_hash", head.Hash)
 }
 
+// CheckKey warns if the newest entry was signed with a different key than
+// the one loaded: every check of the log would then fail from that entry
+// on (a lost key file, or instances that don't share AUDIT_LOG_KEY).
+func (l *Logger) CheckKey(ctx context.Context) {
+	latest, err := l.repo.List(ctx, models.AuditLogFilter{Limit: 1})
+	if err != nil || len(latest) == 0 {
+		return
+	}
+	if latest[0].KeyID != l.key.ID {
+		slog.Error("audit log was last written with a different signing key; integrity checks will fail for entries signed with it. "+
+			"Restore the previous audit.key or AUDIT_LOG_KEY, and give every instance the same AUDIT_LOG_KEY",
+			"current_key_id", l.key.ID, "latest_entry_key_id", latest[0].KeyID, "latest_entry_id", latest[0].ID)
+	}
+}
+
 // Checkpoint logs the current chain head.
 func (l *Logger) Checkpoint(ctx context.Context, reason string) {
 	head, err := l.repo.Head(ctx)
@@ -203,24 +218,71 @@ type Verification struct {
 	FirstID  int64  `json:"first_id,omitempty"`
 	LastID   int64  `json:"last_id,omitempty"`
 	LastHash string `json:"last_hash,omitempty"`
-	// Problem describes the first inconsistency found; ProblemID is the
-	// entry it was found at.
-	Problem   string `json:"problem,omitempty"`
-	ProblemID int64  `json:"problem_id,omitempty"`
+	// Problem and ProblemID describe the first inconsistency found;
+	// Problems lists up to maxReportedProblems of them and ProblemCount
+	// says how many there were. Checking carries on past a problem, so one
+	// bad entry can't hide tampering further along.
+	Problem      string    `json:"problem,omitempty"`
+	ProblemID    int64     `json:"problem_id,omitempty"`
+	Problems     []Problem `json:"problems,omitempty"`
+	ProblemCount int64     `json:"problem_count,omitempty"`
 }
 
-func (v *Verification) fail(id int64, format string, args ...any) *Verification {
-	v.Valid = false
-	v.ProblemID = id
-	v.Problem = fmt.Sprintf(format, args...)
-	return v
+// Problem is one inconsistency found by Verify.
+type Problem struct {
+	ID          int64  `json:"id"`
+	Description string `json:"description"`
+}
+
+const maxReportedProblems = 20
+
+func (v *Verification) fail(id int64, format string, args ...any) {
+	desc := fmt.Sprintf(format, args...)
+	if v.Valid {
+		v.Valid = false
+		v.ProblemID, v.Problem = id, desc
+	}
+	v.ProblemCount++
+	if len(v.Problems) < maxReportedProblems {
+		v.Problems = append(v.Problems, Problem{ID: id, Description: desc})
+	}
+}
+
+// chainChecker checks entries handed to it in id order, starting after an
+// anchor: each must be the next id, linked to the one before, signed with
+// this key, and unmodified. It reports every problem to fail and carries
+// on from the entry as stored.
+type chainChecker struct {
+	l        *Logger
+	prevID   int64
+	prevHash string
+	fail     func(id int64, format string, args ...any)
+}
+
+func (c *chainChecker) check(e *models.AuditLog) {
+	if e.ID != c.prevID+1 {
+		c.fail(c.prevID+1, "entries %d to %d are missing", c.prevID+1, e.ID-1)
+	} else if e.PrevHash != c.prevHash {
+		c.fail(e.ID, "entry %d is not linked to the entry before it", e.ID)
+	}
+	if e.KeyID != c.l.key.ID {
+		// Not something to skip: key_id is just a column, so accepting
+		// unknown keys would let anyone exempt a row from the check by
+		// changing it.
+		c.fail(e.ID, "entry %d was signed with a different key (%q); it can't be checked with the current key", e.ID, e.KeyID)
+	} else if !hmac.Equal([]byte(c.l.Sign(e)), []byte(e.EntryHash)) {
+		c.fail(e.ID, "entry %d has been modified", e.ID)
+	}
+	c.prevID, c.prevHash = e.ID, e.EntryHash
 }
 
 // pruneDetails is the Details of a retention prune entry.
 type pruneDetails struct {
-	ThroughID   int64  `json:"through_id"`
-	ThroughHash string `json:"through_hash"`
-	Deleted     int64  `json:"deleted"`
+	ThroughID     int64  `json:"through_id"`
+	ThroughHash   string `json:"through_hash"`
+	Deleted       int64  `json:"deleted"`
+	Before        string `json:"before,omitempty"`         // entries older than this were due
+	RetentionDays int    `json:"retention_days,omitempty"` // the setting the prune used
 }
 
 // Verify checks every entry from the anchor to the head: ids contiguous,
@@ -255,56 +317,39 @@ func (l *Logger) verifyOnce(ctx context.Context) (*Verification, error) {
 		return nil, err
 	}
 
-	prevID, prevHash := anchor.ID, anchor.Hash
+	c := &chainChecker{l: l, prevID: anchor.ID, prevHash: anchor.Hash, fail: v.fail}
 	var lastPrune *pruneDetails
 	var lastPruneID int64
-	const batch = 1000
 	for {
-		entries, err := l.repo.Range(ctx, prevID, batch)
+		entries, err := l.repo.Range(ctx, c.prevID, 1000)
 		if err != nil {
 			return nil, err
+		}
+		if len(entries) == 0 {
+			break
 		}
 		for i := range entries {
 			e := &entries[i]
 			if v.Checked == 0 {
 				v.FirstID = e.ID
 			}
-			if e.ID != prevID+1 {
-				return v.fail(prevID+1, "entries %d to %d are missing", prevID+1, e.ID-1), nil
-			}
-			if e.PrevHash != prevHash {
-				return v.fail(e.ID, "entry %d is not linked to the entry before it", e.ID), nil
-			}
-			if e.KeyID != l.key.ID {
-				// Not something to skip: key_id is just a column, so
-				// accepting unknown keys would let anyone exempt a row
-				// from the check by changing it.
-				return v.fail(e.ID, "entry %d was signed with a different key (%q); it can't be checked with the current key", e.ID, e.KeyID), nil
-			}
-			if !hmac.Equal([]byte(l.Sign(e)), []byte(e.EntryHash)) {
-				return v.fail(e.ID, "entry %d has been modified", e.ID), nil
-			}
+			c.check(e)
 			if e.EventType == models.AuditEventSystem && e.Action == PruneAction {
 				var d pruneDetails
 				if err := json.Unmarshal([]byte(e.Details), &d); err == nil {
 					lastPrune, lastPruneID = &d, e.ID
 				}
 			}
-			prevID, prevHash = e.ID, e.EntryHash
 			v.Checked++
 		}
-		if len(entries) < batch {
-			break
-		}
 	}
-	v.LastID, v.LastHash = prevID, prevHash
+	v.LastID, v.LastHash = c.prevID, c.prevHash
 
 	if anchor.ID > 0 {
 		if lastPrune == nil {
-			return v.fail(anchor.ID+1, "entries up to %d were removed without a recorded retention prune", anchor.ID), nil
-		}
-		if lastPrune.ThroughID != anchor.ID || lastPrune.ThroughHash != anchor.Hash {
-			return v.fail(lastPruneID, "the chain's starting point doesn't match the last recorded retention prune (entry %d)", lastPruneID), nil
+			v.fail(anchor.ID+1, "entries up to %d were removed without a recorded retention prune", anchor.ID)
+		} else if lastPrune.ThroughID != anchor.ID || lastPrune.ThroughHash != anchor.Hash {
+			v.fail(lastPruneID, "the chain's starting point doesn't match the last recorded retention prune (entry %d)", lastPruneID)
 		}
 	}
 	return v, nil
@@ -336,8 +381,24 @@ func (l *Logger) Prune(ctx context.Context) (int64, error) {
 			days, MinRetentionDays, MaxRetentionDays)
 	}
 	before := l.now().UTC().AddDate(0, 0, -days).Format(TimestampFormat)
-	deleted, err := l.repo.Prune(ctx, before, func(anchor models.AuditAnchor, deleted int64) *models.AuditLog {
-		d, _ := json.Marshal(pruneDetails{ThroughID: anchor.ID, ThroughHash: anchor.Hash, Deleted: deleted})
+	// Everything about to be deleted is checked first, inside the prune's
+	// transaction: pruning must never launder tampered or backdated
+	// entries out of the chain under a validly signed prune record.
+	check := func(anchor models.AuditAnchor) func(*models.AuditLog) error {
+		var problem error
+		c := &chainChecker{l: l, prevID: anchor.ID, prevHash: anchor.Hash, fail: func(id int64, format string, args ...any) {
+			if problem == nil {
+				problem = fmt.Errorf("refusing to prune: "+format, args...)
+			}
+		}}
+		return func(e *models.AuditLog) error {
+			c.check(e)
+			return problem
+		}
+	}
+	deleted, err := l.repo.Prune(ctx, before, check, func(anchor models.AuditAnchor, deleted int64) *models.AuditLog {
+		d, _ := json.Marshal(pruneDetails{ThroughID: anchor.ID, ThroughHash: anchor.Hash, Deleted: deleted,
+			Before: before, RetentionDays: days})
 		return &models.AuditLog{
 			EventType: models.AuditEventSystem,
 			Action:    PruneAction,
