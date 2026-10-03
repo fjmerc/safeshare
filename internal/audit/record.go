@@ -42,13 +42,31 @@ type Event struct {
 }
 
 // Record writes ev to the audit log, filling in who made the request. In
-// anonymous mode it stores nothing that identifies them: no address,
-// account, username or user agent.
+// anonymous mode it stores nothing that identifies a person (see
+// anonymize).
 //
 // It returns once the entry is durable. If it can't be written, that is
 // logged and counted but the request carries on: an audit log that can't
 // keep up must not lock everyone out of logging in.
 func Record(r *http.Request, cfg *config.Config, ev Event) {
+	if Default() == nil {
+		return
+	}
+	ip, ua := "", ""
+	ctx := context.Background()
+	if r != nil {
+		ip = utils.GetClientIP(r)
+		ua = r.Header.Get("User-Agent")
+		// Don't lose the entry because the client disconnected.
+		ctx = context.WithoutCancel(r.Context())
+	}
+	RecordFor(ctx, cfg, ip, ua, ev)
+}
+
+// RecordFor is Record for code with no request in hand (e.g. the chunked
+// upload assembly worker): ip and userAgent describe whoever caused the
+// event.
+func RecordFor(ctx context.Context, cfg *config.Config, ip, userAgent string, ev Event) {
 	l := Default()
 	if l == nil {
 		return
@@ -57,33 +75,55 @@ func Record(r *http.Request, cfg *config.Config, ev Event) {
 		Type:         ev.Type,
 		Action:       ev.Action,
 		Outcome:      ev.Outcome,
+		UserID:       ev.UserID,
+		Username:     ev.Username,
+		IPAddress:    ip,
+		UserAgent:    userAgent,
 		ResourceType: ev.ResourceType,
 		ResourceID:   ev.ResourceID,
 		Details:      ev.Details,
 	}
-	anonymous := cfg != nil && cfg.IsAnonymousMode()
-	if !anonymous {
-		in.UserID = ev.UserID
-		in.Username = ev.Username
-		if r != nil {
-			in.IPAddress = utils.GetClientIP(r)
-			in.UserAgent = truncate(r.Header.Get("User-Agent"), 512)
-		}
+	// Fail closed: without a config, assume anonymous mode.
+	if cfg == nil || cfg.IsAnonymousMode() {
+		anonymize(&in)
 	}
-	ctx := context.Background()
-	if r != nil {
-		// Don't lose the entry because the client disconnected.
-		ctx = context.WithoutCancel(r.Context())
-	}
-	if _, err := l.Append(ctx, in); err != nil {
+	if _, err := l.Append(context.WithoutCancel(ctx), in); err != nil {
 		writeFailures.Inc()
 		slog.Error("failed to write audit log entry", "error", err, "event_type", ev.Type, "action", ev.Action)
 	}
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+// Resource types whose ids identify a person or an address.
+var identifyingResourceTypes = map[string]bool{
+	"user":                true,
+	"mfa":                 true,
+	"webauthn_credential": true,
+	"token":               true,
+	"ip":                  true,
+}
+
+// IdentifyingDetailKeys are Details keys that identify a person or an
+// address; hooks must use these names for such values so anonymous mode
+// can strip them.
+var IdentifyingDetailKeys = []string{"target_username", "username", "user_id", "owner_id", "ip", "ips", "name"}
+
+// anonymize removes everything identifying a person from an entry,
+// keeping what happened: no requester address, account, username or user
+// agent, no id of a user, credential, token or IP the action was about, and
+// none of IdentifyingDetailKeys.
+func anonymize(e *Entry) {
+	e.UserID, e.Username, e.IPAddress, e.UserAgent = 0, "", "", ""
+	if identifyingResourceTypes[e.ResourceType] {
+		e.ResourceID = ""
 	}
-	return s[:n]
+	if len(e.Details) > 0 {
+		d := make(map[string]any, len(e.Details))
+		for k, v := range e.Details {
+			d[k] = v
+		}
+		for _, k := range IdentifyingDetailKeys {
+			delete(d, k)
+		}
+		e.Details = d
+	}
 }

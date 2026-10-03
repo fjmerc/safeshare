@@ -7,7 +7,7 @@ const (
 	AuditEventAuth     AuditEventType = "AUTH"     // logins, MFA, sessions, passwords
 	AuditEventFile     AuditEventType = "FILE"     // uploads, downloads, deletions
 	AuditEventAdmin    AuditEventType = "ADMIN"    // admin actions on users, files, tokens, backups
-	AuditEventSecurity AuditEventType = "SECURITY" // blocked IPs, malware verdicts, lockouts
+	AuditEventSecurity AuditEventType = "SECURITY" // malware verdicts, denied downloads, audit log verify/export
 	AuditEventConfig   AuditEventType = "CONFIG"   // settings changes
 	AuditEventSystem   AuditEventType = "SYSTEM"   // audit log maintenance (retention prunes)
 )
@@ -18,7 +18,7 @@ type AuditOutcome string
 const (
 	AuditOutcomeSuccess AuditOutcome = "SUCCESS"
 	AuditOutcomeFailure AuditOutcome = "FAILURE" // e.g. wrong password
-	AuditOutcomeDenied  AuditOutcome = "DENIED"  // e.g. blocked, rate limited, forbidden
+	AuditOutcomeDenied  AuditOutcome = "DENIED"  // e.g. disabled account, malware, forbidden
 )
 
 // AuditLog is one entry in the tamper-evident audit log (ADR-018).

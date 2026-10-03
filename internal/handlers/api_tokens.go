@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/middleware"
@@ -195,6 +196,9 @@ func CreateAPITokenHandler(repos *repository.Repositories, cfg *config.Config) h
 			"expires_at", expiresAt,
 			"ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "token_create", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "token", ResourceID: idStr(apiToken.ID),
+			Details: map[string]any{"name": req.Name, "scopes": req.Scopes}})
 
 		// Return response with the full token (shown only once!)
 		response := models.CreateAPITokenResponse{
@@ -390,6 +394,8 @@ func RevokeAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"username", user.Username,
 			"ip", logIP(getClientIP(r), cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "token_revoke", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "token", ResourceID: idStr(tokenID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -498,6 +504,9 @@ func RotateTokenHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		// Convert scopes string to slice
 		scopes := utils.StringToScopes(updatedToken.Scopes)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "token_rotate", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "token", ResourceID: idStr(tokenID),
+			Details: map[string]any{"name": updatedToken.Name, "scopes": scopes}})
 
 		// Return the new token (shown only once!)
 		response := models.RotateAPITokenResponse{
@@ -689,6 +698,8 @@ func AdminRevokeAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc
 			}(),
 			"ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "token_revoke", Outcome: models.AuditOutcomeSuccess, ResourceType: "token",
+			ResourceID: idStr(tokenID), Details: tokenOwnerDetails(token)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -753,6 +764,8 @@ func AdminDeleteAPITokenHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc
 			}(),
 			"ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "token_delete", Outcome: models.AuditOutcomeSuccess, ResourceType: "token",
+			ResourceID: idStr(tokenID), Details: tokenOwnerDetails(token)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -871,6 +884,8 @@ func AdminBulkRevokeTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"admin", adminUsername,
 			"ip", logIP(clientIP, cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "token_bulk_revoke", Outcome: models.AuditOutcomeSuccess, ResourceType: "token",
+			Details: map[string]any{"count": revokedCount, "ids": capIDs(req.TokenIDs, auditMaxIDs)}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(BulkRevokeResponse{
@@ -1014,6 +1029,8 @@ func AdminBulkExtendTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"admin", adminUsername,
 			"ip", logIP(clientIP, cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "token_bulk_extend", Outcome: models.AuditOutcomeSuccess, ResourceType: "token",
+			Details: map[string]any{"count": extendedCount, "days": req.Days, "ids": capIDs(req.TokenIDs, auditMaxIDs)}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(BulkExtendResponse{
@@ -1137,6 +1154,8 @@ func AdminRevokeUserTokensHandler(repos *repository.Repositories, cfg *config.Co
 			"admin", adminUsername,
 			"ip", logIP(clientIP, cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "token_revoke_user", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username, "count": revokedCount}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(RevokeUserTokensResponse{

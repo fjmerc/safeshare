@@ -110,6 +110,7 @@
             <button class="tab-btn" data-tab="ssoProviders">SSO Providers</button>
             <button class="tab-btn" data-tab="apiTokens">API Tokens</button>
             <button class="tab-btn" data-tab="backups">Backups</button>
+            <button class="tab-btn" data-tab="auditLog">Audit Log</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
         </div>
@@ -1001,6 +1002,72 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Audit Log Tab (ADR-018) -->
+        <div id="auditLogTab" class="tab-content">
+            <div class="table-controls audit-controls">
+                <div class="audit-filters">
+                    <select id="auditFilterType" class="webhook-filter" aria-label="Event type">
+                        <option value="">All types</option>
+                        <option value="AUTH">Auth</option>
+                        <option value="FILE">File</option>
+                        <option value="ADMIN">Admin</option>
+                        <option value="SECURITY">Security</option>
+                        <option value="CONFIG">Config</option>
+                        <option value="SYSTEM">System</option>
+                    </select>
+                    <select id="auditFilterOutcome" class="webhook-filter" aria-label="Outcome">
+                        <option value="">All outcomes</option>
+                        <option value="SUCCESS">Success</option>
+                        <option value="FAILURE">Failure</option>
+                        <option value="DENIED">Denied</option>
+                    </select>
+                    <input type="text" id="auditFilterSearch" class="webhook-filter" placeholder="Search action, user, resource, details (case-sensitive)" aria-label="Search">
+                    <input type="date" id="auditFilterSince" class="webhook-filter" aria-label="From date">
+                    <input type="date" id="auditFilterUntil" class="webhook-filter" aria-label="Until date (exclusive)">
+                    <button id="auditApplyBtn" class="btn-secondary">Apply</button>
+                </div>
+                <div class="audit-actions">
+                    <button id="auditVerifyBtn" class="btn-primary">Verify integrity</button>
+                    <button id="auditExportCsvBtn" class="btn-secondary">Export CSV</button>
+                    <button id="auditExportJsonlBtn" class="btn-secondary">Export JSONL</button>
+                </div>
+            </div>
+
+            <div id="auditVerifyResult" class="audit-verify-result hidden" role="status" aria-live="polite"></div>
+
+            <div class="table-container">
+                <table class="data-table" id="auditTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Time (UTC)</th>
+                            <th>Type</th>
+                            <th>Action</th>
+                            <th>Outcome</th>
+                            <th>User</th>
+                            <th>IP</th>
+                            <th>Resource</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="auditTableBody">
+                        <tr>
+                            <td colspan="9" class="loading">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="audit-footer">
+                <button id="auditMoreBtn" class="btn-secondary hidden">Load older entries</button>
+                <div class="audit-retention">
+                    <label for="auditRetentionDays">Keep entries for</label>
+                    <input type="number" id="auditRetentionDays" min="0" max="36500" step="1" class="webhook-filter">
+                    <span>days (0 = forever, otherwise at least 30)</span>
+                    <button id="auditRetentionSaveBtn" class="btn-secondary">Save</button>
+                </div>
             </div>
         </div>
 

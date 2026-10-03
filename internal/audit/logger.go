@@ -1,17 +1,21 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
@@ -34,6 +38,8 @@ type Logger struct {
 	key     Key
 	now     func() time.Time
 	appends atomic.Int64
+	// verifying allows one Verify at a time: it reads the whole log.
+	verifying sync.Mutex
 }
 
 // NewLogger creates a Logger signing with key.
@@ -88,39 +94,81 @@ type Entry struct {
 	Details      map[string]any
 }
 
+// Field limits, applied before signing. Several fields carry
+// client-supplied text (a login form's username, a credential's name), and
+// entries are kept for at least 30 days and read in full by Verify and
+// export, so no one request may write an arbitrarily large entry.
+const (
+	maxShortField  = 64   // action, IP address, resource type
+	maxMediumField = 256  // username, resource id
+	maxUserAgent   = 512  // user agent
+	maxDetails     = 8192 // details JSON
+)
+
 // Append signs and stores an entry. The entry is durable when it returns.
 func (l *Logger) Append(ctx context.Context, in Entry) (*models.AuditLog, error) {
 	e := &models.AuditLog{
-		Timestamp:    l.now().UTC().Format(TimestampFormat),
 		EventType:    in.Type,
-		Action:       clean(in.Action),
+		Action:       limit(clean(in.Action), maxShortField),
 		Outcome:      in.Outcome,
-		Username:     clean(in.Username),
-		IPAddress:    clean(in.IPAddress),
-		UserAgent:    clean(in.UserAgent),
-		ResourceType: clean(in.ResourceType),
-		ResourceID:   clean(in.ResourceID),
+		Username:     limit(clean(in.Username), maxMediumField),
+		IPAddress:    limit(clean(in.IPAddress), maxShortField),
+		UserAgent:    limit(clean(in.UserAgent), maxUserAgent),
+		ResourceType: limit(clean(in.ResourceType), maxShortField),
+		ResourceID:   limit(clean(in.ResourceID), maxMediumField),
 		KeyID:        l.key.ID,
 	}
 	if in.UserID != 0 {
 		e.UserID = strconv.FormatInt(in.UserID, 10)
 	}
 	if len(in.Details) > 0 {
-		// encoding/json sorts map keys, so this is deterministic; the
-		// stored text is what gets hashed either way.
-		data, err := json.Marshal(in.Details)
+		details, err := encodeDetails(in.Details)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encode audit details: %w", err)
+			return nil, err
 		}
-		e.Details = string(data)
+		e.Details = details
 	}
-	if err := l.repo.Append(ctx, e, l.Sign); err != nil {
+	// The timestamp is taken inside the append lock, with the id, so
+	// timestamps are in chain order.
+	sign := func(e *models.AuditLog) string {
+		e.Timestamp = l.now().UTC().Format(TimestampFormat)
+		return l.Sign(e)
+	}
+	if err := l.repo.Append(ctx, e, sign); err != nil {
 		return nil, err
 	}
 	if l.appends.Add(1)%checkpointEvery == 0 {
 		logCheckpoint("periodic", models.AuditAnchor{ID: e.ID, Hash: e.EntryHash})
 	}
 	return e, nil
+}
+
+// encodeDetails renders Details as JSON (sorted keys; <, > and & left as
+// they are, so they can be searched for). Over maxDetails, it's replaced by
+// a marker rather than cut into invalid JSON.
+func encodeDetails(details map[string]any) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(details); err != nil {
+		return "", fmt.Errorf("failed to encode audit details: %w", err)
+	}
+	out := strings.TrimSuffix(buf.String(), "\n")
+	if len(out) > maxDetails {
+		return `{"truncated":true}`, nil
+	}
+	return clean(out), nil
+}
+
+// limit cuts s to at most n bytes without splitting a UTF-8 sequence.
+func limit(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // clean makes client-supplied text storable unchanged in both databases
@@ -183,6 +231,24 @@ type pruneDetails struct {
 // It can't see entries removed from the newest end; the checkpoint lines
 // in the application log are what catch that.
 func (l *Logger) Verify(ctx context.Context) (*Verification, error) {
+	if !l.verifying.TryLock() {
+		return nil, ErrVerifyInProgress
+	}
+	defer l.verifying.Unlock()
+	v, err := l.verifyOnce(ctx)
+	if err == nil && !v.Valid {
+		// The anchor and the entries are read separately, so a retention
+		// prune landing in between looks like missing entries. Check
+		// again before reporting tampering; real tampering fails twice.
+		v, err = l.verifyOnce(ctx)
+	}
+	return v, err
+}
+
+// ErrVerifyInProgress is returned by Verify while another run is going.
+var ErrVerifyInProgress = errors.New("audit log verification already in progress")
+
+func (l *Logger) verifyOnce(ctx context.Context) (*Verification, error) {
 	v := &Verification{Valid: true}
 	anchor, err := l.repo.Anchor(ctx)
 	if err != nil {
@@ -244,25 +310,45 @@ func (l *Logger) Verify(ctx context.Context) (*Verification, error) {
 	return v, nil
 }
 
+// Retention limits: 0 keeps entries forever; otherwise at least
+// MinRetentionDays, so recent history can't be pruned away by shortening
+// it - enforced here as well as in the admin API, since the setting lives in
+// an unsigned table.
+const (
+	MinRetentionDays = 30
+	MaxRetentionDays = 36500
+)
+
+// ValidRetentionDays reports whether days is an allowed retention period.
+func ValidRetentionDays(days int) bool {
+	return days == 0 || (days >= MinRetentionDays && days <= MaxRetentionDays)
+}
+
 // Prune deletes entries older than the retention period, recording the
 // prune in the chain. It returns how many were deleted.
 func (l *Logger) Prune(ctx context.Context) (int64, error) {
 	days, err := l.repo.RetentionDays(ctx)
-	if err != nil || days <= 0 {
+	if err != nil || days == 0 {
 		return 0, err
+	}
+	if !ValidRetentionDays(days) {
+		return 0, fmt.Errorf("refusing to prune: stored retention of %d days is outside the allowed range (0 or %d-%d)",
+			days, MinRetentionDays, MaxRetentionDays)
 	}
 	before := l.now().UTC().AddDate(0, 0, -days).Format(TimestampFormat)
 	deleted, err := l.repo.Prune(ctx, before, func(anchor models.AuditAnchor, deleted int64) *models.AuditLog {
 		d, _ := json.Marshal(pruneDetails{ThroughID: anchor.ID, ThroughHash: anchor.Hash, Deleted: deleted})
 		return &models.AuditLog{
-			Timestamp: l.now().UTC().Format(TimestampFormat),
 			EventType: models.AuditEventSystem,
 			Action:    PruneAction,
 			Outcome:   models.AuditOutcomeSuccess,
 			Details:   string(d),
 			KeyID:     l.key.ID,
 		}
-	}, l.Sign)
+	}, func(e *models.AuditLog) string {
+		e.Timestamp = l.now().UTC().Format(TimestampFormat)
+		return l.Sign(e)
+	})
 	if err != nil {
 		return 0, err
 	}

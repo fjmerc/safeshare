@@ -4507,3 +4507,161 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// ===========================================
+// Audit Log (ADR-018)
+// ===========================================
+
+let auditNextBeforeId = null;
+
+function auditFilterParams() {
+    const params = new URLSearchParams();
+    const add = (key, id) => {
+        const value = document.getElementById(id)?.value.trim();
+        if (value) params.set(key, value);
+    };
+    add('event_type', 'auditFilterType');
+    add('outcome', 'auditFilterOutcome');
+    add('search', 'auditFilterSearch');
+    add('since', 'auditFilterSince');
+    add('until', 'auditFilterUntil');
+    return params;
+}
+
+function auditOutcomeBadge(outcome) {
+    const cls = { SUCCESS: 'badge-yes', FAILURE: 'badge-no', DENIED: 'badge-no' }[outcome] || 'badge-secondary';
+    return `<span class="badge ${cls}">${escapeHtml(outcome)}</span>`;
+}
+
+function auditRow(e) {
+    const user = e.username || (e.user_id ? `#${e.user_id}` : '');
+    const resource = e.resource_type ? `${e.resource_type}${e.resource_id ? ': ' + e.resource_id : ''}` : '';
+    return `
+        <tr>
+            <td>${escapeHtml(String(e.id))}</td>
+            <td class="audit-time">${escapeHtml(e.timestamp.replace('T', ' ').replace(/\.\d+Z$/, ''))}</td>
+            <td>${escapeHtml(e.event_type)}</td>
+            <td>${escapeHtml(e.action)}</td>
+            <td>${auditOutcomeBadge(e.outcome)}</td>
+            <td>${escapeHtml(user)}</td>
+            <td>${escapeHtml(e.ip_address || '')}</td>
+            <td>${escapeHtml(resource)}</td>
+            <td class="audit-details"><code>${escapeHtml(e.details || '')}</code></td>
+        </tr>`;
+}
+
+async function loadAuditLog(append = false) {
+    const tbody = document.getElementById('auditTableBody');
+    const moreBtn = document.getElementById('auditMoreBtn');
+    if (append && moreBtn.disabled) return; // a page is already loading
+    moreBtn.disabled = true;
+    const params = auditFilterParams();
+    params.set('limit', '100');
+    if (append && auditNextBeforeId) params.set('before_id', auditNextBeforeId);
+    try {
+        const response = await fetch('/admin/api/audit-logs?' + params.toString());
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Failed to load audit log');
+        const rows = (data.entries || []).map(auditRow).join('');
+        if (append) {
+            tbody.insertAdjacentHTML('beforeend', rows);
+        } else {
+            tbody.innerHTML = rows || '<tr><td colspan="9" class="loading">No entries</td></tr>';
+        }
+        auditNextBeforeId = data.next_before_id || null;
+        moreBtn.classList.toggle('hidden', !auditNextBeforeId);
+    } catch (error) {
+        console.error('Error loading audit log:', error);
+        showError(error.message);
+    } finally {
+        moreBtn.disabled = false;
+    }
+}
+
+async function verifyAuditLog() {
+    const btn = document.getElementById('auditVerifyBtn');
+    const box = document.getElementById('auditVerifyResult');
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    try {
+        const response = await fetch('/admin/api/audit-logs/verify', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': getCSRFToken() },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Verification failed');
+        const v = data.verification;
+        box.classList.remove('hidden', 'audit-verify-ok', 'audit-verify-bad');
+        if (v.valid) {
+            box.classList.add('audit-verify-ok');
+            box.textContent = v.checked === 0
+                ? 'The audit log is empty.'
+                : `Intact: ${v.checked} entries (#${v.first_id}-#${v.last_id}) verified with key ${data.key_id}. ` +
+                  `Latest hash ${v.last_hash.slice(0, 16)}... - compare with the latest "audit log checkpoint" line in the server logs.`;
+        } else {
+            box.classList.add('audit-verify-bad');
+            box.textContent = `Integrity check FAILED at entry #${v.problem_id}: ${v.problem}. ` +
+                `${v.checked} entries before it verified.`;
+        }
+        loadAuditLog();
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify integrity';
+    }
+}
+
+function exportAuditLog(format) {
+    const params = auditFilterParams();
+    params.set('format', format);
+    // A plain navigation: the browser saves the attachment.
+    window.location.href = '/admin/api/audit-logs/export?' + params.toString();
+}
+
+async function loadAuditRetention() {
+    try {
+        const response = await fetch('/admin/api/audit-logs/retention');
+        const data = await response.json();
+        if (response.ok) document.getElementById('auditRetentionDays').value = data.retention_days;
+    } catch (error) {
+        console.error('Error loading audit retention:', error);
+    }
+}
+
+async function saveAuditRetention() {
+    const days = parseInt(document.getElementById('auditRetentionDays').value, 10);
+    if (Number.isNaN(days)) {
+        showError('Enter a number of days');
+        return;
+    }
+    try {
+        const response = await fetch('/admin/api/audit-logs/retention', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCSRFToken() },
+            body: JSON.stringify({ retention_days: days }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Failed to save retention');
+        showSuccess(days === 0 ? 'Audit entries will be kept forever' : `Audit entries will be kept for ${days} days`);
+        loadAuditLog();
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelector('.tab-btn[data-tab="auditLog"]')?.addEventListener('click', () => {
+        loadAuditLog();
+        loadAuditRetention();
+    });
+    document.getElementById('auditApplyBtn')?.addEventListener('click', () => loadAuditLog());
+    document.getElementById('auditFilterSearch')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loadAuditLog();
+    });
+    document.getElementById('auditMoreBtn')?.addEventListener('click', () => loadAuditLog(true));
+    document.getElementById('auditVerifyBtn')?.addEventListener('click', verifyAuditLog);
+    document.getElementById('auditExportCsvBtn')?.addEventListener('click', () => exportAuditLog('csv'));
+    document.getElementById('auditExportJsonlBtn')?.addEventListener('click', () => exportAuditLog('jsonl'));
+    document.getElementById('auditRetentionSaveBtn')?.addEventListener('click', saveAuditRetention);
+});

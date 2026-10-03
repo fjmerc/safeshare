@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
@@ -41,7 +42,7 @@ func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Han
 						slog.Error("failed to update admin session activity", "error", err)
 					}
 					// Session is valid, proceed
-					next.ServeHTTP(w, r)
+					next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, contextKeyAdminActor, AdminActor{BuiltIn: true})))
 					return
 				}
 			}
@@ -120,9 +121,24 @@ func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Han
 			}
 
 			// User has admin role, proceed
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, contextKeyAdminActor, AdminActor{UserID: user.ID, Username: user.Username})))
 		})
 	}
+}
+
+// AdminActor identifies who passed AdminAuth, for audit records.
+type AdminActor struct {
+	BuiltIn  bool   // the ADMIN_USERNAME account (admin_session)
+	UserID   int64  // an admin-role user (user_session)
+	Username string // that user's username
+}
+
+const contextKeyAdminActor contextKey = "admin_actor"
+
+// GetAdminActor returns who passed AdminAuth for this request.
+func GetAdminActor(r *http.Request) (AdminActor, bool) {
+	a, ok := r.Context().Value(contextKeyAdminActor).(AdminActor)
+	return a, ok
 }
 
 // CSRFProtection middleware validates CSRF tokens for state-changing requests

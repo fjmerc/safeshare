@@ -785,7 +785,9 @@ CREATE INDEX IF NOT EXISTS idx_partial_uploads_status_lease
 -- normalisation). Ids are assigned by the application, not a sequence.
 CREATE TABLE IF NOT EXISTS audit_logs (
     id            BIGINT PRIMARY KEY,
-    timestamp     TEXT NOT NULL,
+    -- "C" collation: plain byte order, so the fixed-width timestamps sort
+    -- and compare chronologically whatever the database's default.
+    timestamp     TEXT COLLATE "C" NOT NULL,
     event_type    TEXT NOT NULL,
     action        TEXT NOT NULL,
     outcome       TEXT NOT NULL,

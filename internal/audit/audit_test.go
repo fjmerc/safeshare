@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -194,9 +195,9 @@ func TestPrune_KeepsChainVerifiable(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l.now = func() time.Time { return start }
 	appendN(t, l, 5) // old
-	l.now = func() time.Time { return start.AddDate(0, 0, 20) }
+	l.now = func() time.Time { return start.AddDate(0, 0, 40) }
 	appendN(t, l, 3) // recent
-	if err := repo.SetRetentionDays(context.Background(), 10); err != nil {
+	if err := repo.SetRetentionDays(context.Background(), 30); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,5 +321,150 @@ func TestLoadKey(t *testing.T) {
 	}
 	if _, err := LoadKey("", dir); err == nil {
 		t.Error("LoadKey with a corrupt key file = nil error, want failure")
+	}
+}
+
+func TestAnonymize_StripsIdentityKeepsWhatHappened(t *testing.T) {
+	e := Entry{
+		Type: models.AuditEventAdmin, Action: "user_delete", Outcome: models.AuditOutcomeSuccess,
+		UserID: 1, Username: "admin", IPAddress: "198.51.100.1", UserAgent: "ua",
+		ResourceType: "user", ResourceID: "42",
+		Details: map[string]any{"target_username": "alice", "owner_id": 42, "name": "laptop", "role": "user", "count": 3},
+	}
+	original := e.Details
+	anonymize(&e)
+	if e.UserID != 0 || e.Username != "" || e.IPAddress != "" || e.UserAgent != "" || e.ResourceID != "" {
+		t.Errorf("identity kept: %+v", e)
+	}
+	for _, k := range IdentifyingDetailKeys {
+		if _, ok := e.Details[k]; ok {
+			t.Errorf("details still has %q", k)
+		}
+	}
+	if e.Details["role"] != "user" || e.Details["count"] != 3 || e.Action != "user_delete" {
+		t.Errorf("non-identifying data lost: %+v", e)
+	}
+	if original["target_username"] != "alice" {
+		t.Error("anonymize modified the caller's Details map")
+	}
+
+	file := Entry{ResourceType: "file", ResourceID: "7"}
+	anonymize(&file)
+	if file.ResourceID != "7" {
+		t.Errorf("file id stripped: %q", file.ResourceID)
+	}
+}
+
+func TestAppend_CapsFieldSizes(t *testing.T) {
+	l, _ := newTestLogger(t)
+	e, err := l.Append(context.Background(), Entry{
+		Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+		Username: strings.Repeat("é", 1000), // 2000 bytes, multi-byte
+		Details:  map[string]any{"name": strings.Repeat("x", 20000)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Username) > maxMediumField || !utf8.ValidString(e.Username) {
+		t.Errorf("username stored as %d bytes, valid UTF-8 %v", len(e.Username), utf8.ValidString(e.Username))
+	}
+	if e.Details != `{"truncated":true}` {
+		t.Errorf("oversized details stored as %d bytes: %.40q", len(e.Details), e.Details)
+	}
+	if v := mustVerify(t, l); !v.Valid {
+		t.Errorf("verify = %+v", v)
+	}
+}
+
+// The retention setting lives in an unsigned table: a value below the
+// floor, however it got there, must not prune recent history.
+func TestPrune_RefusesRetentionBelowFloor(t *testing.T) {
+	l, db := newTestLogger(t)
+	l.now = func() time.Time { return time.Now().AddDate(0, 0, -5) }
+	appendN(t, l, 3)
+	l.now = time.Now
+	exec(t, db, `UPDATE audit_log_state SET retention_days = 1 WHERE id = 1`)
+	deleted, err := l.Prune(context.Background())
+	if err == nil || deleted != 0 {
+		t.Fatalf("Prune with retention 1 = %d, %v; want refusal", deleted, err)
+	}
+	if v := mustVerify(t, l); !v.Valid || v.Checked != 3 {
+		t.Errorf("verify = %+v, want all 3 entries kept", v)
+	}
+	for days, want := range map[int]bool{0: true, 29: false, 30: true, 36500: true, 36501: false, -1: false} {
+		if got := ValidRetentionDays(days); got != want {
+			t.Errorf("ValidRetentionDays(%d) = %v, want %v", days, got, want)
+		}
+	}
+}
+
+func TestPrune_EverythingThenMoreAndAgain(t *testing.T) {
+	l, db := newTestLogger(t)
+	repo := sqlite.NewAuditLogRepository(db)
+	if err := repo.SetRetentionDays(context.Background(), 30); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return day }
+	appendN(t, l, 4)
+
+	// Everything is old: the log is left holding just the prune entry.
+	day = day.AddDate(0, 0, 40)
+	if n, err := l.Prune(context.Background()); err != nil || n != 4 {
+		t.Fatalf("first prune = %d, %v", n, err)
+	}
+	appendN(t, l, 2)
+	if v := mustVerify(t, l); !v.Valid || v.FirstID != 5 || v.Checked != 3 {
+		t.Fatalf("after full prune verify = %+v", v)
+	}
+
+	// A later prune removes the first prune entry too; the newest one now
+	// vouches for the anchor.
+	day = day.AddDate(0, 0, 40)
+	if n, err := l.Prune(context.Background()); err != nil || n != 3 {
+		t.Fatalf("second prune = %d, %v", n, err)
+	}
+	if v := mustVerify(t, l); !v.Valid || v.FirstID != 8 || v.Checked != 1 {
+		t.Fatalf("after second prune verify = %+v", v)
+	}
+}
+
+func TestVerify_OneAtATime(t *testing.T) {
+	l, _ := newTestLogger(t)
+	l.verifying.Lock()
+	_, err := l.Verify(context.Background())
+	l.verifying.Unlock()
+	if err != ErrVerifyInProgress {
+		t.Fatalf("Verify while another runs = %v, want ErrVerifyInProgress", err)
+	}
+}
+
+func TestAppend_TimestampsFollowChainOrder(t *testing.T) {
+	db, err := database.Initialize(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := sqlite.NewAuditLogRepository(db)
+	l := NewLogger(repo, testKey(t))
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 5; i++ {
+				_, _ = l.Append(context.Background(), Entry{Type: models.AuditEventFile, Action: "upload", Outcome: models.AuditOutcomeSuccess})
+			}
+		}()
+	}
+	wg.Wait()
+	entries, err := repo.Range(context.Background(), 0, 100)
+	if err != nil || len(entries) != 40 {
+		t.Fatalf("entries = %d, %v", len(entries), err)
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i].Timestamp < entries[i-1].Timestamp {
+			t.Errorf("entry %d (%s) is timestamped before entry %d (%s)", entries[i].ID, entries[i].Timestamp, entries[i-1].ID, entries[i-1].Timestamp)
+		}
 	}
 }

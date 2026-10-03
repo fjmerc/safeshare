@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -47,6 +49,8 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+				Username: req.Username, ResourceType: "user", Details: map[string]any{"reason": "missing_credentials"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -70,6 +74,8 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+				Username: req.Username, ResourceType: "user", Details: map[string]any{"reason": "invalid_credentials"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -85,6 +91,9 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeDenied,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"reason": "account_disabled"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -141,6 +150,8 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"user_id", user.ID,
 			"ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10)})
 
 		// Return user info (without password hash)
 		response := models.UserLoginResponse{
@@ -178,9 +189,12 @@ func UserLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.
 		}
 
 		// Delete session from repository
+		outcome := models.AuditOutcomeSuccess
 		if err := repos.Users.DeleteSession(ctx, cookie.Value); err != nil {
 			slog.Error("failed to delete user session", "error", err)
-			// Continue anyway to clear the cookie
+			// Continue anyway to clear the cookie, but the session may
+			// still be valid: don't record a clean logout.
+			outcome = models.AuditOutcomeFailure
 		}
 
 		// Clear session cookie
@@ -197,6 +211,11 @@ func UserLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.
 		slog.Info("user logout successful",
 			"ip", logIP(getClientIP(r), cfg),
 		)
+		ev := audit.Event{Type: models.AuditEventAuth, Action: "logout", Outcome: outcome, ResourceType: "user"}
+		if u := middleware.GetUserFromContext(r); u != nil {
+			ev.UserID, ev.Username, ev.ResourceID = u.ID, u.Username, strconv.FormatInt(u.ID, 10)
+		}
+		audit.Record(r, cfg, ev)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -206,7 +225,7 @@ func UserLogoutHandler(repos *repository.Repositories, cfg *config.Config) http.
 }
 
 // UserChangePasswordHandler handles user password changes
-func UserChangePasswordHandler(repos *repository.Repositories) http.HandlerFunc {
+func UserChangePasswordHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -263,6 +282,8 @@ func UserChangePasswordHandler(repos *repository.Repositories) http.HandlerFunc 
 				"user_id", user.ID,
 				"username", user.Username,
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "password_change", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: idStr(user.ID)})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -301,6 +322,8 @@ func UserChangePasswordHandler(repos *repository.Repositories) http.HandlerFunc 
 			"user_id", user.ID,
 			"username", user.Username,
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "password_change", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: idStr(user.ID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{

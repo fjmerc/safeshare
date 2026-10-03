@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fjmerc/safeshare/internal/backup"
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
@@ -85,6 +87,16 @@ func run() error {
 	}
 
 	slog.Info("repositories initialized")
+
+	// Tamper-evident audit log (ADR-018). The signing key lives outside the
+	// database: AUDIT_LOG_KEY, or a key file generated next to it.
+	auditKey, err := audit.LoadKey(os.Getenv("AUDIT_LOG_KEY"), filepath.Dir(cfg.DBPath))
+	if err != nil {
+		return fmt.Errorf("failed to load audit log key: %w", err)
+	}
+	auditLogger := audit.NewLogger(repos.AuditLogs, auditKey)
+	audit.SetDefault(auditLogger)
+	slog.Info("audit log initialized", "key_id", auditKey.ID, "key_source", auditKey.Source)
 
 	// Initialize admin credentials if admin is enabled
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
@@ -430,7 +442,7 @@ func run() error {
 	// Built once, outside the per-request closure (see registerUserLoginRoute
 	// for why), and inside userAuth so it can key by the authenticated user.
 	changePasswordHandler := userAuth(middleware.RateLimitChangePassword(anonMode)(
-		http.HandlerFunc(handlers.UserChangePasswordHandler(repos))))
+		http.HandlerFunc(handlers.UserChangePasswordHandler(repos, cfg))))
 	mux.HandleFunc("/api/auth/change-password", func(w http.ResponseWriter, r *http.Request) {
 		changePasswordHandler.ServeHTTP(w, r)
 	})
@@ -868,6 +880,23 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookDeliveryHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		// Tamper-evident audit log (ADR-018)
+		mux.HandleFunc("/admin/api/audit-logs", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminAuditLogsHandler(repos, cfg))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/export", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminAuditLogsExportHandler(repos, cfg))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/verify", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminAuditLogsVerifyHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/retention", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminAuditLogsRetentionHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin API Token management routes
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
@@ -1107,6 +1136,14 @@ func run() error {
 	defer cancel()
 
 	var workerWg sync.WaitGroup
+
+	// Audit log: checkpoints to this log (hourly and at shutdown) and
+	// daily retention pruning.
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		auditLogger.Run(ctx)
+	}()
 
 	// Start file cleanup worker
 	workerWg.Add(1)

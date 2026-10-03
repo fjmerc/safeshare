@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -219,6 +220,10 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 					"client_ip", logIP(getClientIP(r), cfg),
 					"user_agent", getUserAgent(r),
 				)
+				if r.Method != http.MethodHead { // the web UI's password pre-check is a HEAD
+					audit.Record(r, cfg, audit.Event{Type: models.AuditEventSecurity, Action: "download_denied", Outcome: models.AuditOutcomeFailure,
+						ResourceType: "file", ResourceID: idStr(file.ID), Details: map[string]any{"reason": "incorrect_password"}})
+				}
 				sendErrorResponse(w, r, "Incorrect Password", "The password provided for this file is incorrect. Please check the password and try again, or contact the sender for the correct password.", "INCORRECT_PASSWORD", http.StatusUnauthorized)
 				return
 			}
@@ -386,6 +391,8 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			// Cancel on the non-commitable path.
 
 			if committed {
+				audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_download", Outcome: models.AuditOutcomeSuccess,
+					ResourceType: "file", ResourceID: idStr(file.ID)})
 				now := time.Now()
 				EmitWebhookEvent(&webhooks.Event{
 					Type:      webhooks.EventFileDownloaded,

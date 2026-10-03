@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
@@ -656,6 +657,11 @@ func (w *assemblyWorker) run() {
 		)
 		auditFile := recordInfectedChunkedUpload(cfg, partialUpload, claimCode, verdict)
 		if w.failWithAudit(errMalwareDetected, fmt.Sprintf("Upload rejected: malware detected (%s)", verdict.result), auditFile) {
+			recordAssemblyEvent(context.WithoutCancel(w.ctx), cfg, w.repos, partialUpload, audit.Event{
+				Type: models.AuditEventSecurity, Action: "malware_detected", Outcome: models.AuditOutcomeDenied,
+				ResourceType: "file", ResourceID: idStr(auditFile.ID),
+				Details: map[string]any{"virus_name": verdict.result, "filename": partialUpload.Filename, "chunked": true},
+			})
 			// Only delete chunks once the MALWARE_DETECTED verdict (and its
 			// audit row) actually committed under OUR lease. If it didn't
 			// (another attempt already took over, or a belt-and-suspenders
@@ -1010,6 +1016,20 @@ func (w *assemblyWorker) run() {
 		slog.Error("failed to delete chunks", "error", err, "upload_id", uploadID)
 		// Don't fail - chunks will be cleaned up later by cleanup worker
 	}
+
+	// The row is published (directly or confirmed by the re-read above), so
+	// the upload is complete - recorded even when the published row couldn't
+	// be re-fetched (fileRecord.ID 0, no id to name).
+	fileID := ""
+	if fileRecord.ID != 0 {
+		fileID = idStr(fileRecord.ID)
+	}
+	recordAssemblyEvent(context.WithoutCancel(w.ctx), cfg, w.repos, partialUpload, audit.Event{
+		Type: models.AuditEventFile, Action: "file_upload", Outcome: models.AuditOutcomeSuccess,
+		ResourceType: "file", ResourceID: fileID,
+		Details: map[string]any{"filename": partialUpload.Filename, "size": totalBytesWritten,
+			"password_protected": partialUpload.PasswordHash != "", "chunked": true},
+	})
 
 	// Emit webhook event for file upload completion (only after the commit
 	// above — a webhook for a file that turned out to be superseded/rolled

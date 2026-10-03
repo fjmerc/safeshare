@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
 
@@ -171,6 +173,8 @@ func AdminCreateBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			"success", result.Success,
 			"duration", result.DurationString,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "backup_create", Outcome: models.AuditOutcomeSuccess, ResourceType: "backup",
+			ResourceID: filepath.Base(result.BackupPath), Details: map[string]any{"mode": string(mode)}})
 
 		// Build response with flattened fields for frontend
 		response := map[string]interface{}{
@@ -410,6 +414,10 @@ func AdminRestoreBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		result, err := backup.Restore(opts)
 		if err != nil {
 			slog.Error("restore failed", "error", err)
+			if !req.DryRun {
+				recordAdmin(r, cfg, audit.Event{Action: "backup_restore", Outcome: models.AuditOutcomeFailure, ResourceType: "backup",
+					ResourceID: filepath.Base(absBackupPath), Details: map[string]any{"force": req.Force}})
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -426,6 +434,10 @@ func AdminRestoreBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			"orphans_found", result.OrphansFound,
 			"duration", result.DurationString,
 		)
+		if !result.DryRun {
+			recordAdmin(r, cfg, audit.Event{Action: "backup_restore", Outcome: models.AuditOutcomeSuccess, ResourceType: "backup",
+				ResourceID: filepath.Base(absBackupPath), Details: map[string]any{"force": req.Force, "handle_orphans": string(handleOrphans), "files_restored": result.FilesRestored}})
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
@@ -530,6 +542,8 @@ func AdminDeleteBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		slog.Info("backup deleted", "path", absBackupPath)
+		recordAdmin(r, cfg, audit.Event{Action: "backup_delete", Outcome: models.AuditOutcomeSuccess, ResourceType: "backup",
+			ResourceID: filepath.Base(absBackupPath)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -721,6 +735,8 @@ func AdminDownloadBackupHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc
 		}
 
 		slog.Info("backup download completed", "backup", filename)
+		recordAdmin(r, cfg, audit.Event{Action: "backup_download", Outcome: models.AuditOutcomeSuccess, ResourceType: "backup",
+			ResourceID: filepath.Base(absBackupPath)})
 	}
 }
 
