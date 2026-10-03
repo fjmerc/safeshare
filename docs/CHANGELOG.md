@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- **Tamper-evident audit log (#7).** SafeShare now records security-relevant events in its database: logins and failed logins, MFA, password changes, admin actions on users, files, IP blocks, tokens, settings and backups, and uploads, downloads, deletions and malware verdicts. Each entry is signed (HMAC-SHA256) and chained to the one before it, so editing or deleting entries is detected by the new **Verify integrity** button in the admin dashboard's **Audit Log** tab, which can also filter, page through and export the log (CSV or JSON Lines). The signing key comes from the new `AUDIT_LOG_KEY` setting, or is generated into `audit.key` next to the database on first start. Keep that file (or the variable) when you move the database to another server. The newest entry's signature is written to the application log every 100 entries and hourly, so shipping those logs elsewhere also exposes deleted recent entries. Entries are kept for 365 days by default (adjustable in the tab; 0 keeps them forever). The new `AUDIT_LOG` setting turns it on or off: by default it's on, except in anonymous mode, which keeps its promise of no audit trail. With `AUDIT_LOG=true` in anonymous mode, entries record what happened but not who did it or which file. See `docs/SECURITY.md` → Audit Log.
+
 ## [1.10.1] - 2026-10-03
 
 ### Fixed

@@ -8,17 +8,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/handlers"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/storage"
@@ -85,6 +88,31 @@ func run() error {
 	}
 
 	slog.Info("repositories initialized")
+
+	// Tamper-evident audit log (ADR-018). The signing key lives outside the
+	// database: AUDIT_LOG_KEY, or a key file generated next to it.
+	auditEnabled, err := audit.Enabled(os.Getenv("AUDIT_LOG"), cfg.IsAnonymousMode())
+	if err != nil {
+		return err
+	}
+	var auditLogger *audit.Logger
+	if auditEnabled {
+		auditKey, err := audit.LoadKey(os.Getenv("AUDIT_LOG_KEY"), filepath.Dir(cfg.DBPath))
+		if err != nil {
+			return fmt.Errorf("failed to load audit log key: %w", err)
+		}
+		auditLogger = audit.NewLogger(repos.AuditLogs, auditKey)
+		auditLogger.CheckKey(context.Background())
+		audit.SetDefault(auditLogger)
+		slog.Info("audit log enabled", "key_id", auditKey.ID, "key_source", auditKey.Source)
+	} else {
+		slog.Info("audit log disabled", "anonymous_mode", cfg.IsAnonymousMode(), "AUDIT_LOG", os.Getenv("AUDIT_LOG"))
+		// Entries from before it was turned off stay (and aren't pruned).
+		if old, err := repos.AuditLogs.List(context.Background(), models.AuditLogFilter{Limit: 1}); err == nil && len(old) > 0 {
+			slog.Warn("audit log is disabled but still holds entries recorded earlier; they remain visible to admins",
+				"entries_up_to_id", old[0].ID)
+		}
+	}
 
 	// Initialize admin credentials if admin is enabled
 	if cfg.AdminUsername != "" && cfg.GetAdminPassword() != "" {
@@ -430,7 +458,7 @@ func run() error {
 	// Built once, outside the per-request closure (see registerUserLoginRoute
 	// for why), and inside userAuth so it can key by the authenticated user.
 	changePasswordHandler := userAuth(middleware.RateLimitChangePassword(anonMode)(
-		http.HandlerFunc(handlers.UserChangePasswordHandler(repos))))
+		http.HandlerFunc(handlers.UserChangePasswordHandler(repos, cfg))))
 	mux.HandleFunc("/api/auth/change-password", func(w http.ResponseWriter, r *http.Request) {
 		changePasswordHandler.ServeHTTP(w, r)
 	})
@@ -868,6 +896,23 @@ func run() error {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookDeliveryHandler(repos.DB)))).ServeHTTP(w, r)
 		})
 
+		// Tamper-evident audit log (ADR-018)
+		mux.HandleFunc("/admin/api/audit-logs", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminAuditLogsHandler(repos, cfg))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/export", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminAuditLogsExportHandler(repos, cfg))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/verify", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminAuditLogsVerifyHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
+		mux.HandleFunc("/admin/api/audit-logs/retention", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminAuditLogsRetentionHandler(repos, cfg)))).ServeHTTP(w, r)
+		})
+
 		// Admin API Token management routes
 		mux.HandleFunc("/admin/api/tokens", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet {
@@ -1107,6 +1152,16 @@ func run() error {
 	defer cancel()
 
 	var workerWg sync.WaitGroup
+
+	// Audit log: checkpoints to this log (hourly and at shutdown) and
+	// daily retention pruning.
+	if auditLogger != nil {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			auditLogger.Run(ctx)
+		}()
+	}
 
 	// Start file cleanup worker
 	workerWg.Add(1)

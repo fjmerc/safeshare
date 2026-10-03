@@ -116,6 +116,7 @@ func setupTestRepos(t *testing.T) *repository.Repositories {
 		"user_webauthn_credentials",
 		"user_mfa_recovery_codes",
 		"user_mfa",
+		"audit_logs",
 		"partial_uploads",
 		"files",
 		"users",

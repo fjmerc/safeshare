@@ -15,6 +15,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
@@ -297,6 +298,8 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+				Username: req.Username, ResourceType: "user", Details: map[string]any{"reason": "missing_credentials"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -320,6 +323,8 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeFailure,
+				Username: req.Username, ResourceType: "user", Details: map[string]any{"reason": "invalid_credentials"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -335,6 +340,9 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				"username", logUsername(req.Username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeDenied,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"reason": "account_disabled"}})
 			time.Sleep(500 * time.Millisecond)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized) // Use 401, not 403 to prevent enumeration
@@ -428,6 +436,8 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 				"available_methods", availableMethods,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login_mfa_challenge", Outcome: models.AuditOutcomeSuccess,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10)})
 
 			// Determine primary challenge type for backward compatibility
 			challengeType := "totp"
@@ -450,7 +460,11 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		}
 
 		// No MFA required - complete the login normally
-		completeLogin(w, r, repos, cfg, user, clientIP, userAgent)
+		if completeLogin(w, r, repos, cfg, user, clientIP, userAgent) {
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeSuccess,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"method": "password"}})
+		}
 	}
 }
 
@@ -540,6 +554,9 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 				"request_ip", logIP(clientIP, cfg),
 				"user_id", challenge.UserID,
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "mfa_verify", Outcome: models.AuditOutcomeDenied,
+				UserID: challenge.UserID, ResourceType: "user", ResourceID: strconv.FormatInt(challenge.UserID, 10),
+				Details: map[string]any{"reason": "ip_mismatch"}})
 			// Delete the challenge to prevent further attempts
 			mfaLoginStore.Delete(req.ChallengeID)
 			w.Header().Set("Content-Type", "application/json")
@@ -686,6 +703,13 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 				"code_type", codeType,
 				"ip", logIP(clientIP, cfg),
 			)
+			failDetails := map[string]any{"method": "totp"}
+			if req.IsRecovery {
+				failDetails["method"] = "recovery_code"
+			}
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "mfa_verify", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: failDetails})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -705,12 +729,23 @@ func MFAVerifyLoginHandler(repos *repository.Repositories, cfg *config.Config) h
 		)
 
 		// Complete the login
-		completeLogin(w, r, repos, cfg, user, challenge.ClientIP, challenge.UserAgent)
+		if completeLogin(w, r, repos, cfg, user, challenge.ClientIP, challenge.UserAgent) {
+			method := "totp"
+			if req.IsRecovery {
+				method = "recovery_code"
+			}
+			// The session exists now: this, not the password step, is the
+			// successful login.
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeSuccess,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"method": method}})
+		}
 	}
 }
 
-// completeLogin creates the session and returns the login response
-func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, user *models.User, clientIP, userAgent string) {
+// completeLogin creates the session and returns the login response. It reports
+// whether the session was established.
+func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, user *models.User, clientIP, userAgent string) bool {
 	ctx := r.Context()
 
 	// Generate session token
@@ -718,7 +753,7 @@ func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 	if err != nil {
 		slog.Error("failed to generate session token", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	// Calculate expiry time
@@ -729,7 +764,7 @@ func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 	if err != nil {
 		slog.Error("failed to create user session", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	// Update last login timestamp
@@ -787,6 +822,7 @@ func completeLogin(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+	return true
 }
 
 // setUserCSRFCookieForLogin sets the CSRF cookie for user login
@@ -1243,6 +1279,9 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 				"user_id", user.ID,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "mfa_verify", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"method": "webauthn"}})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -1297,6 +1336,10 @@ func MFAWebAuthnLoginFinishHandler(repos *repository.Repositories, cfg *config.C
 		)
 
 		// Complete the login
-		completeLogin(w, r, repos, cfg, user, challenge.ClientIP, challenge.UserAgent)
+		if completeLogin(w, r, repos, cfg, user, challenge.ClientIP, challenge.UserAgent) {
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "login", Outcome: models.AuditOutcomeSuccess,
+				UserID: user.ID, Username: user.Username, ResourceType: "user", ResourceID: strconv.FormatInt(user.ID, 10),
+				Details: map[string]any{"method": "webauthn"}})
+		}
 	}
 }

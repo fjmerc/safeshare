@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
@@ -277,6 +278,16 @@ func recordInfectedUpload(ctx context.Context, repos *repository.Repositories, c
 			ScanResult: &scanResult,
 		},
 	})
+
+	infected := audit.Event{Type: models.AuditEventSecurity, Action: "malware_detected", Outcome: models.AuditOutcomeDenied,
+		ResourceType: "file", Details: map[string]any{"virus_name": verdict.result, "filename": sanitizedFilename, "declared_size": header.Size}}
+	if fileRecord.ID != 0 {
+		infected.ResourceID = idStr(fileRecord.ID)
+	}
+	if user := middleware.GetUserFromContext(r); user != nil {
+		infected.UserID, infected.Username = user.ID, user.Username
+	}
+	audit.Record(r, cfg, infected)
 
 	slog.Warn("malware detected in upload; rejected before storage",
 		"virus_name", verdict.result,
@@ -775,6 +786,14 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 			ExpiresAt: fileRecord.ExpiresAt,
 		},
 	})
+
+	uploaded := audit.Event{Type: models.AuditEventFile, Action: "file_upload", Outcome: models.AuditOutcomeSuccess,
+		ResourceType: "file", ResourceID: idStr(fileRecord.ID),
+		Details: map[string]any{"filename": sanitizedFilename, "size": result.written, "password_protected": passwordHash != ""}}
+	if user := middleware.GetUserFromContext(r); user != nil {
+		uploaded.UserID, uploaded.Username = user.ID, user.Username
+	}
+	audit.Record(r, cfg, uploaded)
 
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),

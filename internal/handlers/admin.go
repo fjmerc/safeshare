@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/ipcanon"
 	"github.com/fjmerc/safeshare/internal/middleware"
@@ -109,6 +110,8 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 				"username", logUsername(username, cfg),
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_login", Outcome: models.AuditOutcomeFailure,
+				Username: username, ResourceType: "user", Details: map[string]any{"reason": "invalid_credentials"}})
 
 			// Return error with slight delay to prevent timing attacks
 			time.Sleep(500 * time.Millisecond)
@@ -171,6 +174,9 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 						"available_methods", availableMethods,
 						"ip", logIP(clientIP, cfg),
 					)
+					audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_login_mfa_challenge", Outcome: models.AuditOutcomeSuccess,
+						UserID: authenticatedUser.ID, Username: authenticatedUser.Username, ResourceType: "user",
+						ResourceID: strconv.FormatInt(authenticatedUser.ID, 10)})
 
 					// Determine primary challenge type
 					challengeType := "totp"
@@ -236,6 +242,8 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 				"ip", logIP(clientIP, cfg),
 				"user_agent", userAgent,
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_login", Outcome: models.AuditOutcomeSuccess,
+				Username: username, ResourceType: "user", Details: map[string]any{"method": "admin_credentials"}})
 
 			// Return success response with CSRF token
 			w.Header().Set("Content-Type", "application/json")
@@ -274,6 +282,10 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 			if err != nil {
 				slog.Error("failed to set CSRF cookie", "error", err)
 			}
+
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_login", Outcome: models.AuditOutcomeSuccess,
+				UserID: authenticatedUser.ID, Username: authenticatedUser.Username, ResourceType: "user",
+				ResourceID: strconv.FormatInt(authenticatedUser.ID, 10)})
 
 			// Return user info response (similar to UserLoginHandler)
 			w.Header().Set("Content-Type", "application/json")
@@ -325,6 +337,9 @@ func AdminLogoutHandler(repos *repository.Repositories, cfg *config.Config) http
 				"ip", logIP(getClientIP(r), cfg),
 			)
 		}
+
+		recordAdmin(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_logout", Outcome: models.AuditOutcomeSuccess,
+			ResourceType: "user"})
 
 		// Clear admin_session cookie
 		http.SetCookie(w, &http.Cookie{
@@ -614,6 +629,8 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 			"size", file.FileSize,
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
+			ResourceType: "file", ResourceID: strconv.FormatInt(file.ID, 10)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -666,6 +683,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 
 		// Delete physical files
 		deletedCount := 0
+		deletedIDs := make([]int64, 0, len(files))
 		for _, file := range files {
 			// Validate stored filename (defense-in-depth against database corruption/compromise)
 			if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
@@ -705,6 +723,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 			})
 
 			deletedCount++
+			deletedIDs = append(deletedIDs, file.ID)
 		}
 
 		slog.Info("admin bulk deleted files",
@@ -712,6 +731,8 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 			"requested_count", len(claimCodes),
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "file_bulk_delete", Outcome: models.AuditOutcomeSuccess, ResourceType: "file",
+			Details: map[string]any{"count": deletedCount, "ids": capIDs(deletedIDs, auditMaxIDs)}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -924,6 +945,8 @@ func AdminBlockIPHandler(repos *repository.Repositories, cfg *config.Config) htt
 			"admin_ip", logIP(getClientIP(r), cfg),
 			"trusted_proxy_caution", caution != "",
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "ip_block", Outcome: models.AuditOutcomeSuccess, ResourceType: "ip", ResourceID: canonical,
+			Details: map[string]any{"is_cidr": isPrefix, "reason": reason}})
 
 		message := "IP blocked successfully"
 		if caution != "" {
@@ -978,6 +1001,7 @@ func AdminUnblockIPHandler(repos *repository.Repositories, cfg *config.Config) h
 			"unblocked_ip", ipAddress,
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "ip_unblock", Outcome: models.AuditOutcomeSuccess, ResourceType: "ip", ResourceID: ipAddress})
 
 		writeAdminIPResponse(w, http.StatusOK, true, "IP unblocked successfully")
 	}
@@ -1032,6 +1056,8 @@ func AdminUpdateQuotaHandler(repos *repository.Repositories, cfg *config.Config)
 			"new_quota_gb", newQuota,
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Type: models.AuditEventConfig, Action: "quota_update", Outcome: models.AuditOutcomeSuccess,
+			ResourceType: "setting", ResourceID: "quota_gb", Details: map[string]any{"old_quota_gb": oldQuota, "new_quota_gb": newQuota}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1065,6 +1091,14 @@ func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *conf
 		oldMaxExpiration := cfg.GetMaxExpirationHours()
 
 		updates := make(map[string]interface{})
+		// Settings are applied one at a time, so record whatever was applied
+		// even if a later field is rejected.
+		defer func() {
+			if len(updates) > 0 {
+				recordAdmin(r, cfg, audit.Event{Type: models.AuditEventConfig, Action: "storage_settings_update",
+					Outcome: models.AuditOutcomeSuccess, ResourceType: "setting", Details: map[string]any{"changes": updates}})
+			}
+		}()
 
 		// Update storage quota
 		if quotaGB := r.FormValue("quota_gb"); quotaGB != "" {
@@ -1215,6 +1249,14 @@ func AdminUpdateSecuritySettingsHandler(repos *repository.Repositories, cfg *con
 		oldBlockedExts := cfg.GetBlockedExtensions()
 
 		updates := make(map[string]interface{})
+		// Settings are applied one at a time, so record whatever was applied
+		// even if a later field is rejected.
+		defer func() {
+			if len(updates) > 0 {
+				recordAdmin(r, cfg, audit.Event{Type: models.AuditEventConfig, Action: "security_settings_update",
+					Outcome: models.AuditOutcomeSuccess, ResourceType: "setting", Details: map[string]any{"changes": updates}})
+			}
+		}()
 
 		// Update upload rate limit
 		if uploadLimitStr := r.FormValue("rate_limit_upload"); uploadLimitStr != "" {
@@ -1346,6 +1388,8 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 			slog.Warn("admin password change failed - incorrect current password",
 				"admin_ip", logIP(getClientIP(r), cfg),
 			)
+			recordAdmin(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_password_change", Outcome: models.AuditOutcomeFailure,
+				ResourceType: "user", Details: map[string]any{"reason": "incorrect_current_password"}})
 			time.Sleep(500 * time.Millisecond) // Additional defense against timing attacks
 			http.Error(w, "Current password is incorrect", http.StatusUnauthorized)
 			return
@@ -1366,6 +1410,8 @@ func AdminChangePasswordHandler(cfg *config.Config) http.HandlerFunc {
 		slog.Info("admin password changed successfully",
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
+		recordAdmin(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "admin_password_change", Outcome: models.AuditOutcomeSuccess,
+			ResourceType: "user"})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{

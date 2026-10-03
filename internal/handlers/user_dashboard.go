@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -206,6 +208,8 @@ func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			"claim_code", file.ClaimCode,
 			"filename", file.OriginalFilename,
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -523,6 +527,8 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 			"claim_code", file.ClaimCode,
 			"filename", file.OriginalFilename,
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -821,6 +827,8 @@ func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, c
 			"new_claim_code", result.NewClaimCode,
 			"client_ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "claim_code_regenerate", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(result.FileID)})
 
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)
@@ -945,6 +953,8 @@ func UserRegenerateClaimCodeHandler(repos *repository.Repositories, cfg *config.
 			"new_claim_code", result.NewClaimCode,
 			"client_ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "claim_code_regenerate", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(req.FileID)})
 
 		// Build download URL
 		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)

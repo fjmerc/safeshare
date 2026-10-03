@@ -77,6 +77,7 @@ func NewRepositories(cfg *config.Config) (*repository.Repositories, func(), erro
 		BackupScheduler: NewBackupSchedulerRepository(pool),
 		MFA:             NewMFARepository(pool),
 		SSO:             NewSSORepository(pool),
+		AuditLogs:       NewAuditLogRepository(pool),
 		DB:              nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:    repository.DatabaseTypePostgreSQL,
 		Cleanup:         cleanup,
@@ -107,6 +108,7 @@ func NewRepositoriesWithPool(pool *Pool) (*repository.Repositories, error) {
 		BackupScheduler: NewBackupSchedulerRepository(pool),
 		MFA:             NewMFARepository(pool),
 		SSO:             NewSSORepository(pool),
+		AuditLogs:       NewAuditLogRepository(pool),
 		DB:              nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:    repository.DatabaseTypePostgreSQL,
 		Cleanup:         nil, // Caller manages the pool lifecycle
