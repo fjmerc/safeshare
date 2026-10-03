@@ -2198,10 +2198,20 @@
                         </div>
                     `).join('')}
                 </div>
+                <div class="recovery-footer">
+                    <button type="button" class="btn-secondary recovery-close" data-modal-close>Close</button>
+                </div>
             </div>
         `;
 
         document.body.appendChild(modal);
+
+        // A keyboard way out (the background click is mouse-only, and the
+        // copy buttons only close it if copying works).
+        modal.querySelector('.recovery-close').addEventListener('click', () => {
+            ChunkedUploader.markCompletionsAsViewed();
+            modal.remove();
+        });
 
         // Copy claim code buttons
         modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {

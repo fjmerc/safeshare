@@ -7,7 +7,8 @@
  * touch every open/close call, this watches for any modal becoming visible
  * and, while it is open:
  *   - marks it role="dialog" aria-modal="true", labelled by its heading;
- *   - moves focus into it, and keeps Tab / Shift+Tab inside it;
+ *   - moves focus into it (to `data-modal-initial-focus` if it has one),
+ *     and keeps Tab / Shift+Tab inside it;
  *   - closes it on Escape by clicking its own close/cancel button
  *     (`data-modal-close`, else a ...Cancel.../...Close... button); a modal
  *     without one (e.g. a progress dialog) or marked `data-modal-no-escape`
@@ -70,7 +71,10 @@
         // specific field themselves, which should win.
         setTimeout(() => {
             if (!isShown(modal) || modal.contains(document.activeElement)) return;
-            const target = focusableIn(modal)[0];
+            // A modal can name its initial focus (e.g. Cancel on a destructive
+            // confirmation, so a held Enter can't confirm it); otherwise the
+            // first focusable element.
+            const target = modal.querySelector('[data-modal-initial-focus]:not([disabled])') || focusableIn(modal)[0];
             if (target) {
                 target.focus();
             } else {
