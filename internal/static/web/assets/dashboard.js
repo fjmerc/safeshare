@@ -2549,7 +2549,8 @@
                         showToast('Network error during MFA setup', 'error');
                     } finally {
                         nextBtn.disabled = false;
-                        nextBtn.textContent = 'Get Started';
+                        // Label for whichever step we ended on (advanced or not)
+                        updateMFAWizardUI();
                     }
                     break;
 
@@ -2610,7 +2611,8 @@
                         errorEl.style.display = 'block';
                     } finally {
                         nextBtn.disabled = false;
-                        nextBtn.textContent = 'Verify';
+                        // Label for whichever step we ended on (advanced or not)
+                        updateMFAWizardUI();
                     }
                     break;
 

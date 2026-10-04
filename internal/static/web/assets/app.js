@@ -1633,12 +1633,12 @@
         if (success) {
             // Visual feedback on button
             const btn = e.currentTarget;
-            const originalText = btn.textContent;
-            btn.textContent = '✓';
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             btn.classList.add('copied');
 
             setTimeout(() => {
-                btn.textContent = originalText;
+                btn.innerHTML = originalHTML;
                 btn.classList.remove('copied');
             }, 2000);
 
@@ -2251,16 +2251,18 @@
                                 <div class="recovery-code-display">
                                     <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
                                     <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
-                                        📋
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                     </button>
                                 </div>
                             </div>
                             <div class="recovery-actions">
                                 <button class="btn-recovery-download" data-url="${escapeHtml(completion.download_url)}">
-                                    ⬇️ Download
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                    Download
                                 </button>
                                 <button class="btn-recovery-copy-url" data-url="${escapeHtml(completion.download_url)}">
-                                    🔗 Copy Link
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                                    Copy Link
                                 </button>
                             </div>
                         </div>

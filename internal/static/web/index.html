@@ -163,9 +163,9 @@
                                     <button type="button" class="btn-small" data-hours="4320">180d</button>
                                     <button type="button" class="btn-small" data-hours="8760">1yr</button>
                                 </div>
-                                <div class="checkbox-group" style="margin-top: 16px;">
-                                    <label for="neverExpire" style="display: flex; align-items: center; cursor: pointer;">
-                                        <input type="checkbox" id="neverExpire" name="never-expire" style="margin-right: 8px;">
+                                <div class="checkbox-group">
+                                    <label for="neverExpire" class="checkbox-row">
+                                        <input type="checkbox" id="neverExpire" name="never-expire">
                                         <span>Never expire</span>
                                     </label>
                                 </div>
@@ -270,7 +270,7 @@
                         <div class="code-display">
                             <code id="claimCode" class="claim-code" aria-labelledby="claimCodeLabel"></code>
                             <button class="btn-copy" data-copy="claimCode" aria-label="Copy claim code">
-                                📋
+                                <svg class="icon-copy" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </div>
@@ -280,7 +280,7 @@
                         <div class="url-display">
                             <input type="text" id="downloadUrl" class="url-input" readonly>
                             <button class="btn-copy" data-copy="downloadUrl" aria-label="Copy download URL">
-                                📋
+                                <svg class="icon-copy" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </div>
@@ -343,7 +343,7 @@
                 <!-- File Info Display -->
                 <div id="fileInfoSection" class="file-info-section hidden">
                     <div class="info-header">
-                        <div class="info-icon" aria-hidden="true">📄</div>
+                        <div class="info-icon" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg></div>
                         <h3>File Ready for Download</h3>
                     </div>
 
@@ -423,7 +423,8 @@
                     </div>
 
                     <button id="downloadButton" class="btn-primary btn-large">
-                        ⬇️ Download File
+                        <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Download File
                     </button>
 
                     <button id="newPickupButton" class="btn-secondary">Check Another File</button>

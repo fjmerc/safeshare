@@ -1493,20 +1493,6 @@ footer .version-info {
     height: 16px;
 }
 
-/* Mobile responsiveness for SHA256 */
-@media (max-width: 768px) {
-    .sha256-container {
-        max-width: 100%;
-        flex-wrap: wrap;
-    }
-    
-    .sha256-hash {
-        font-size: 0.6875rem;
-        padding: 0.5rem 0.75rem;
-        flex: 1 1 100%;
-    }
-}
-
 .sha256-hint {
     font-size: 0.75rem;
     color: var(--text-secondary);
@@ -2314,4 +2300,210 @@ footer .version-info {
         max-width: min(260px, calc(100vw - 24px));
         white-space: normal;
     }
+}
+
+/* ============================================
+   Small-viewport adaptations (public pages)
+   ============================================ */
+
+/* Icons that replace emoji inside buttons */
+.btn-icon {
+    flex-shrink: 0;
+    vertical-align: -4px;
+    margin-right: 0.5rem;
+}
+
+.btn-copy,
+.btn-copy-recovery {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-primary);
+}
+
+.btn-copy-recovery {
+    color: var(--on-accent);
+}
+
+.btn-copy svg,
+.btn-copy-recovery svg {
+    display: block;
+}
+
+.btn-copy.copied {
+    color: var(--success-text);
+}
+
+.info-icon svg {
+    display: block;
+}
+
+/* Rows: keep label and value apart; SHA-256 row wraps its hint to its own line */
+.file-details .detail {
+    gap: 1rem;
+}
+
+.file-details .detail span.detail-value {
+    min-width: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+}
+
+.file-details .detail-label {
+    flex-shrink: 0;
+    margin-bottom: 0;
+}
+
+.file-details .detail-sha256 {
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.file-details .detail-sha256 .sha256-hint {
+    flex: 1 1 100%;
+    margin-top: 0.25rem;
+}
+
+/* Tap-friendly rows for plain checkboxes */
+.checkbox-group {
+    margin-top: 0.5rem;
+}
+
+.checkbox-row,
+.e2e-toggle-label {
+    min-height: 44px;
+}
+
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    margin: 0;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+}
+
+.tab-button {
+    min-height: 44px;
+}
+
+footer a {
+    display: inline-block;
+    min-height: 44px;
+    line-height: 44px;
+}
+
+/* Password fields: placeholder must not run under the eye button */
+.password-wrapper input {
+    padding-right: 3.25rem;
+    text-overflow: ellipsis;
+}
+
+.password-wrapper input::placeholder {
+    font-size: 0.9375rem;
+    font-weight: 400;
+}
+
+.qr-code {
+    max-width: 100%;
+}
+
+.qr-code canvas,
+.qr-code img {
+    max-width: 100%;
+    height: auto !important;
+}
+
+@media (max-width: 768px) {
+    .file-details {
+        padding: 1rem;
+    }
+
+    .file-details .detail {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.25rem;
+    }
+
+    .file-details .detail-sha256 {
+        flex-direction: column;
+    }
+
+    .sha256-container {
+        max-width: 100%;
+        width: 100%;
+        align-items: flex-start;
+    }
+
+    .sha256-hash {
+        font-size: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        overflow-wrap: anywhere;
+        word-break: break-all;
+    }
+
+    /* Floating toggle scrolls with the page so it never covers content */
+    .theme-toggle-fixed {
+        position: absolute;
+    }
+}
+
+@media (max-width: 480px) {
+    .card {
+        padding: 1.25rem;
+    }
+
+    .code-display,
+    .url-display {
+        gap: 0.375rem;
+    }
+
+    .claim-code {
+        min-width: 0;
+        padding: 0.75rem 0.5rem;
+        font-size: 1rem;
+        letter-spacing: 0.02em;
+        overflow-wrap: anywhere;
+    }
+
+    .qr-section {
+        padding: 1.25rem 0.75rem;
+    }
+
+    .qr-code {
+        padding: 0.75rem;
+    }
+
+    .claim-code-input {
+        padding: 1rem 0.75rem;
+        letter-spacing: 0.05em;
+    }
+
+    .result-details {
+        padding: 1rem;
+    }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+    header {
+        margin-bottom: 1.5rem;
+    }
+}
+
+.url-input,
+.claim-code {
+    min-width: 0;
 }

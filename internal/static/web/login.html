@@ -92,6 +92,7 @@
         }
 
         .btn-login {
+            min-height: 44px;
             width: 100%;
             padding: 12px;
             background: var(--primary-color);
@@ -345,7 +346,7 @@
         @media (max-width: 480px) {
             .login-container {
                 width: calc(100% - 32px);
-                margin: 24px auto;
+                margin: 64px auto 24px; /* clear the page-top theme toggle */
                 padding: 24px 16px;
             }
         }

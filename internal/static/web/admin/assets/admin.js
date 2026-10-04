@@ -425,17 +425,17 @@ function updateFilesTable(files) {
             <td>
                 <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}" aria-label="Select ${escapeHtml(file.original_filename)}">
             </td>
-            <td><code>${escapeHtml(file.claim_code)}</code></td>
-            <td class="filename-cell" title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</td>
-            <td>${formatBytes(file.file_size)}</td>
-            <td>${file.username ? escapeHtml(file.username) : '<em class="text-muted">Anonymous</em>'}</td>
-            <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
-            <td>${formatDate(file.created_at)}</td>
-            <td>${formatDate(file.expires_at)}</td>
-            <td>${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
-            <td>${formatScanStatus(file.scan_status, file.scan_result)}</td>
-            <td><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
-            <td>
+            <td data-label="Claim Code"><code>${escapeHtml(file.claim_code)}</code></td>
+            <td class="filename-cell" title="${escapeHtml(file.original_filename)}" data-label="Filename">${escapeHtml(file.original_filename)}</td>
+            <td data-label="Size">${formatBytes(file.file_size)}</td>
+            <td data-label="User">${file.username ? escapeHtml(file.username) : '<em class="text-muted">Anonymous</em>'}</td>
+            <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}" data-label="Uploader IP">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
+            <td data-label="Created">${formatDate(file.created_at)}</td>
+            <td data-label="Expires">${formatDate(file.expires_at)}</td>
+            <td data-label="Downloads">${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
+            <td data-label="Scan">${formatScanStatus(file.scan_status, file.scan_result)}</td>
+            <td data-label="Protected"><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
+            <td data-label="Actions">
                 <button class="btn-icon btn-danger" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}" title="Delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -467,11 +467,11 @@ function updateBlockedIPsTable(blockedIPs) {
 
     tbody.innerHTML = blockedIPs.map(ip => `
         <tr>
-            <td><code>${escapeHtml(ip.IPAddress)}</code></td>
-            <td>${escapeHtml(ip.Reason)}</td>
-            <td>${formatDate(ip.BlockedAt)}</td>
-            <td>${escapeHtml(ip.BlockedBy)}</td>
-            <td>
+            <td data-label="IP Address"><code>${escapeHtml(ip.IPAddress)}</code></td>
+            <td data-label="Reason">${escapeHtml(ip.Reason)}</td>
+            <td data-label="Blocked At">${formatDate(ip.BlockedAt)}</td>
+            <td data-label="Blocked By">${escapeHtml(ip.BlockedBy)}</td>
+            <td data-label="Actions">
                 <button class="btn-small btn-action" data-action="unblockIP" data-ip="${escapeHtml(ip.IPAddress)}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"></polyline>
@@ -999,6 +999,8 @@ function activateTab(btn) {
     });
     const panel = document.getElementById(btn.dataset.tab + 'Tab');
     if (panel) panel.classList.add('active');
+    // Keep the selected tab visible when the tab bar is scrolled (phones)
+    if (typeof btn.scrollIntoView === 'function') btn.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
 // Theme Management
@@ -1932,22 +1934,22 @@ function displayUsers(users) {
 
     tbody.innerHTML = users.map(user => `
         <tr>
-            <td><strong>${escapeHtml(user.username)}</strong></td>
-            <td>${escapeHtml(user.email)}</td>
-            <td>
+            <td data-label="Username"><strong>${escapeHtml(user.username)}</strong></td>
+            <td data-label="Email">${escapeHtml(user.email)}</td>
+            <td data-label="Role">
                 <span class="badge ${user.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">
                     ${user.role}
                 </span>
             </td>
-            <td>
+            <td data-label="Status">
                 <span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">
                     ${user.is_active ? 'Active' : 'Disabled'}
                 </span>
             </td>
-            <td>${user.file_count || 0}</td>
-            <td>${new Date(user.created_at).toLocaleDateString()}</td>
-            <td>${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
-            <td class="actions">
+            <td data-label="Files">${user.file_count || 0}</td>
+            <td data-label="Created">${new Date(user.created_at).toLocaleDateString()}</td>
+            <td data-label="Last Login">${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
+            <td class="actions" data-label="Actions">
                 <button class="btn-icon btn-primary" data-action="editUser" data-user-id="${user.id}" title="Edit">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -2264,13 +2266,13 @@ function updateWebhooksTable(webhooks) {
 
         return `
             <tr>
-                <td>${webhook.id}</td>
-                <td title="${escapeHtml(webhook.url)}">${escapeHtml(truncatedURL)}</td>
-                <td><span class="badge ${webhook.enabled ? 'badge-yes' : 'badge-no'}">${webhook.enabled ? 'Yes' : 'No'}</span></td>
-                <td>${eventBadges}</td>
-                <td>${webhook.max_retries}</td>
-                <td>${webhook.timeout_seconds}s</td>
-                <td class="actions">
+                <td data-label="ID">${webhook.id}</td>
+                <td title="${escapeHtml(webhook.url)}" data-label="URL">${escapeHtml(truncatedURL)}</td>
+                <td data-label="Enabled"><span class="badge ${webhook.enabled ? 'badge-yes' : 'badge-no'}">${webhook.enabled ? 'Yes' : 'No'}</span></td>
+                <td data-label="Events">${eventBadges}</td>
+                <td data-label="Retries">${webhook.max_retries}</td>
+                <td data-label="Timeout">${webhook.timeout_seconds}s</td>
+                <td class="actions" data-label="Actions">
                     <button class="btn-icon btn-primary" data-action="editWebhook" data-webhook-id="${webhook.id}" title="Edit webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -2569,12 +2571,12 @@ function updateDeliveriesTable(deliveries) {
 
         return `
             <tr>
-                <td>${formatDate(delivery.created_at)}</td>
-                <td><span class="badge badge-info" title="${escapeHtml(delivery.event_type)}">${formatEventType(delivery.event_type)}</span></td>
-                <td>${statusBadge}</td>
-                <td>${delivery.response_code || '-'}</td>
-                <td>${delivery.attempt_count}</td>
-                <td class="actions">
+                <td data-label="Timestamp">${formatDate(delivery.created_at)}</td>
+                <td data-label="Event Type"><span class="badge badge-info" title="${escapeHtml(delivery.event_type)}">${formatEventType(delivery.event_type)}</span></td>
+                <td data-label="Status">${statusBadge}</td>
+                <td data-label="Response Code">${delivery.response_code || '-'}</td>
+                <td data-label="Attempts">${delivery.attempt_count}</td>
+                <td class="actions" data-label="Actions">
                     <button class="btn-icon btn-info" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -2798,13 +2800,13 @@ function updateBackupsTable(backups) {
 
         return `
             <tr>
-                <td><code class="code-sm">${escapeHtml(backup.filename)}</code></td>
-                <td>${modeBadge}</td>
-                <td>${formatBytes(backup.size)}</td>
-                <td>${formatDate(backup.created_at)}</td>
-                <td>${escapeHtml(backup.version || 'Unknown')}</td>
-                <td>${statusBadge}</td>
-                <td class="actions">
+                <td data-label="Filename"><code class="code-sm">${escapeHtml(backup.filename)}</code></td>
+                <td data-label="Mode">${modeBadge}</td>
+                <td data-label="Size">${formatBytes(backup.size)}</td>
+                <td data-label="Created">${formatDate(backup.created_at)}</td>
+                <td data-label="Version">${escapeHtml(backup.version || 'Unknown')}</td>
+                <td data-label="Status">${statusBadge}</td>
+                <td class="actions" data-label="Actions">
                     <button class="btn-icon btn-info backup-verify-btn" data-filename="${escapeHtml(backup.filename)}" title="Verify backup">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="20 6 9 17 4 12"></polyline>
@@ -3316,16 +3318,16 @@ function displayAdminTokens(tokens) {
                 <td>
                     <input type="checkbox" class="token-checkbox" value="${token.id}" data-action="token-checkbox-change">
                 </td>
-                <td><strong>${escapeHtml(token.name)}</strong></td>
-                <td>${escapeHtml(token.username || 'Unknown')}</td>
-                <td>${statusBadge}</td>
-                <td>${scopesBadges}</td>
-                <td>${requests.toLocaleString()}</td>
-                <td>${formatBytes(bytesTransferred)}</td>
-                <td>${createdDate}</td>
-                <td>${expiresDisplay}</td>
-                <td>${lastUsed}</td>
-                <td class="actions">
+                <td data-label="Token Name"><strong>${escapeHtml(token.name)}</strong></td>
+                <td data-label="User">${escapeHtml(token.username || 'Unknown')}</td>
+                <td data-label="Status">${statusBadge}</td>
+                <td data-label="Scopes">${scopesBadges}</td>
+                <td data-label="Requests">${requests.toLocaleString()}</td>
+                <td data-label="Data Transferred">${formatBytes(bytesTransferred)}</td>
+                <td data-label="Created">${createdDate}</td>
+                <td data-label="Expires">${expiresDisplay}</td>
+                <td data-label="Last Used">${lastUsed}</td>
+                <td class="actions" data-label="Actions">
                     ${revokeButton}
                     ${deleteButton}
                 </td>
@@ -4038,13 +4040,13 @@ function updateSSOProvidersTable(providers) {
         
         return `
             <tr>
-                <td><strong>${escapeHtml(provider.name)}</strong></td>
-                <td><span class="badge badge-info">${escapeHtml((provider.type || 'oidc').toUpperCase())}</span></td>
-                <td title="${escapeHtml(provider.issuer_url)}">${escapeHtml(truncatedIssuer)}</td>
-                <td><span class="badge ${provider.enabled ? 'badge-yes' : 'badge-no'}">${provider.enabled ? 'Active' : 'Disabled'}</span></td>
-                <td>${linkedCount}</td>
-                <td>${formatDate(provider.created_at)}</td>
-                <td class="actions">
+                <td data-label="Name"><strong>${escapeHtml(provider.name)}</strong></td>
+                <td data-label="Type"><span class="badge badge-info">${escapeHtml((provider.type || 'oidc').toUpperCase())}</span></td>
+                <td title="${escapeHtml(provider.issuer_url)}" data-label="Issuer URL">${escapeHtml(truncatedIssuer)}</td>
+                <td data-label="Status"><span class="badge ${provider.enabled ? 'badge-yes' : 'badge-no'}">${provider.enabled ? 'Active' : 'Disabled'}</span></td>
+                <td data-label="Linked Users">${linkedCount}</td>
+                <td data-label="Created">${formatDate(provider.created_at)}</td>
+                <td class="actions" data-label="Actions">
                     <button class="btn-icon btn-primary" data-action="editSSOProvider" data-provider-id="${provider.id}" title="Edit provider">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -4084,12 +4086,12 @@ function updateSSOLinksTable(links) {
         
         return `
             <tr>
-                <td><strong>${escapeHtml(link.username || 'Unknown')}</strong></td>
-                <td>${escapeHtml(providerName)}</td>
-                <td><code>${escapeHtml((link.external_id || '').substring(0, 20))}${(link.external_id || '').length > 20 ? '...' : ''}</code></td>
-                <td>${formatDate(link.linked_at)}</td>
-                <td>${link.last_login ? formatDate(link.last_login) : 'Never'}</td>
-                <td class="actions">
+                <td data-label="User"><strong>${escapeHtml(link.username || 'Unknown')}</strong></td>
+                <td data-label="Provider">${escapeHtml(providerName)}</td>
+                <td data-label="External ID"><code>${escapeHtml((link.external_id || '').substring(0, 20))}${(link.external_id || '').length > 20 ? '...' : ''}</code></td>
+                <td data-label="Linked At">${formatDate(link.linked_at)}</td>
+                <td data-label="Last Login">${link.last_login ? formatDate(link.last_login) : 'Never'}</td>
+                <td class="actions" data-label="Actions">
                     <button class="btn-icon btn-danger" data-action="unlinkSSOAccount" data-link-id="${link.id}" data-username="${escapeHtml(link.username)}" title="Unlink account">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M18 6L6 18M6 6l12 12"></path>
@@ -4582,15 +4584,15 @@ function auditRow(e) {
     const resource = e.resource_type ? `${e.resource_type}${e.resource_id ? ': ' + e.resource_id : ''}` : '';
     return `
         <tr>
-            <td>${escapeHtml(String(e.id))}</td>
-            <td class="audit-time">${escapeHtml(e.timestamp.replace('T', ' ').replace(/\.\d+Z$/, ''))}</td>
-            <td>${escapeHtml(e.event_type)}</td>
-            <td>${escapeHtml(e.action)}</td>
-            <td>${auditOutcomeBadge(e.outcome)}</td>
-            <td>${escapeHtml(user)}</td>
-            <td>${escapeHtml(e.ip_address || '')}</td>
-            <td>${escapeHtml(resource)}</td>
-            <td class="audit-details"><code>${escapeHtml(e.details || '')}</code></td>
+            <td data-label="#">${escapeHtml(String(e.id))}</td>
+            <td class="audit-time" data-label="Time (UTC)">${escapeHtml(e.timestamp.replace('T', ' ').replace(/\.\d+Z$/, ''))}</td>
+            <td data-label="Type">${escapeHtml(e.event_type)}</td>
+            <td data-label="Action">${escapeHtml(e.action)}</td>
+            <td data-label="Outcome">${auditOutcomeBadge(e.outcome)}</td>
+            <td data-label="User">${escapeHtml(user)}</td>
+            <td data-label="IP">${escapeHtml(e.ip_address || '')}</td>
+            <td data-label="Resource">${escapeHtml(resource)}</td>
+            <td class="audit-details" data-label="Details"><code>${escapeHtml(e.details || '')}</code></td>
         </tr>`;
 }
 

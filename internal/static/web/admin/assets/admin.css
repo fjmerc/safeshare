@@ -773,6 +773,11 @@ button:disabled {
     border-color: var(--primary-color);
 }
 
+[data-theme="dark"] .search-input {
+    background-color: var(--bg-light);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+}
+
 .inline-form {
     display: flex;
     gap: 12px;
@@ -1277,7 +1282,7 @@ input[type="checkbox"] {
 /* Large Desktop: Show all columns (>1400px) - no changes needed */
 
 /* Medium Desktop: Hide less critical columns (1024px - 1400px) */
-@media (max-width: 1400px) {
+@media (min-width: 769px) and (max-width: 1400px) {
     #filesTab .data-table th:nth-child(4),
     #filesTab .data-table td:nth-child(4),
     #filesTab .data-table th:nth-child(9),
@@ -1309,8 +1314,8 @@ input[type="checkbox"] {
     }
 }
 
-/* Tablet: Essential columns only (768px - 1024px) */
-@media (max-width: 1024px) {
+/* Tablet: Essential columns only (769px - 1024px). At 768px and below tables become stacked cards. */
+@media (min-width: 769px) and (max-width: 1024px) {
     #filesTab .data-table th:nth-child(4),
     #filesTab .data-table td:nth-child(4),
     #filesTab .data-table th:nth-child(5),
@@ -1353,84 +1358,6 @@ input[type="checkbox"] {
     #filesTab .data-table th:nth-child(11),
     #filesTab .data-table td:nth-child(11) {
         width: 14%;
-    }
-}
-
-/* Mobile: Minimal columns (< 768px) */
-@media (max-width: 768px) {
-    #filesTab .data-table th:nth-child(2),
-    #filesTab .data-table td:nth-child(2),
-    #filesTab .data-table th:nth-child(4),
-    #filesTab .data-table td:nth-child(4),
-    #filesTab .data-table th:nth-child(5),
-    #filesTab .data-table td:nth-child(5),
-    #filesTab .data-table th:nth-child(6),
-    #filesTab .data-table td:nth-child(6),
-    #filesTab .data-table th:nth-child(7),
-    #filesTab .data-table td:nth-child(7),
-    #filesTab .data-table th:nth-child(9),
-    #filesTab .data-table td:nth-child(9),
-    #filesTab .data-table th:nth-child(10),
-    #filesTab .data-table td:nth-child(10) {
-        display: none;
-    }
-
-    /* Show only: Checkbox, Filename, Expires, Actions */
-    #filesTab .data-table th:nth-child(1),
-    #filesTab .data-table td:nth-child(1) {
-        width: 8%;
-    }
-
-    #filesTab .data-table th:nth-child(3),
-    #filesTab .data-table td:nth-child(3) {
-        width: 45%;
-    }
-
-    #filesTab .data-table th:nth-child(8),
-    #filesTab .data-table td:nth-child(8) {
-        width: 28%;
-    }
-
-    #filesTab .data-table th:nth-child(11),
-    #filesTab .data-table td:nth-child(11) {
-        width: 19%;
-    }
-
-    /* Reduce padding further on mobile */
-    #filesTab .data-table th,
-    #filesTab .data-table td {
-        padding: 10px 6px;
-        font-size: 13px;
-    }
-}
-
-/* Very Small Mobile: Ultra minimal (< 480px) */
-@media (max-width: 480px) {
-    #filesTab .data-table th:nth-child(8),
-    #filesTab .data-table td:nth-child(8) {
-        display: none;
-    }
-
-    /* Show only: Checkbox (bulk delete has no other entry point), Filename, Actions */
-    #filesTab .data-table th:nth-child(1),
-    #filesTab .data-table td:nth-child(1) {
-        width: 12%;
-    }
-
-    #filesTab .data-table th:nth-child(3),
-    #filesTab .data-table td:nth-child(3) {
-        width: 53%;
-    }
-
-    #filesTab .data-table th:nth-child(11),
-    #filesTab .data-table td:nth-child(11) {
-        width: 35%;
-    }
-
-    #filesTab .data-table th,
-    #filesTab .data-table td {
-        padding: 8px 4px;
-        font-size: 12px;
     }
 }
 
@@ -2295,95 +2222,19 @@ pre {
 }
 
 /* Users: hide Created/Last Login at tablet; Email/Files at phone; Role at small phone */
-@media (max-width: 1024px) {
+@media (min-width: 769px) and (max-width: 1024px) {
     #usersTable th:nth-child(6), #usersTable td:nth-child(6),
     #usersTable th:nth-child(7), #usersTable td:nth-child(7) {
         display: none;
     }
 }
 
-@media (max-width: 768px) {
-    #usersTable th:nth-child(2), #usersTable td:nth-child(2),
-    #usersTable th:nth-child(5), #usersTable td:nth-child(5) {
-        display: none;
-    }
-
-    /* Blocked IPs: keep IP / Reason / Actions */
-    #blockedIPsTable th:nth-child(3), #blockedIPsTable td:nth-child(3),
-    #blockedIPsTable th:nth-child(4), #blockedIPsTable td:nth-child(4) {
-        display: none;
-    }
-
-    /* Webhooks: keep URL / Enabled / Events / Actions.
-       ID column is display-only; action buttons carry the id in data-* attributes. */
-    #webhooksTable th:nth-child(1), #webhooksTable td:nth-child(1),
-    #webhooksTable th:nth-child(5), #webhooksTable td:nth-child(5),
-    #webhooksTable th:nth-child(6), #webhooksTable td:nth-child(6) {
-        display: none;
-    }
-
-    /* Deliveries: keep Timestamp / Event / Status / Actions */
-    #deliveriesTable th:nth-child(4), #deliveriesTable td:nth-child(4),
-    #deliveriesTable th:nth-child(5), #deliveriesTable td:nth-child(5) {
-        display: none;
-    }
-
-    /* SSO providers: keep Name / Type / Status / Actions */
-    #ssoProvidersTable th:nth-child(3), #ssoProvidersTable td:nth-child(3),
-    #ssoProvidersTable th:nth-child(5), #ssoProvidersTable td:nth-child(5),
-    #ssoProvidersTable th:nth-child(6), #ssoProvidersTable td:nth-child(6) {
-        display: none;
-    }
-
-    /* SSO links: keep User / Provider / Actions */
-    #ssoLinksTable th:nth-child(3), #ssoLinksTable td:nth-child(3),
-    #ssoLinksTable th:nth-child(4), #ssoLinksTable td:nth-child(4),
-    #ssoLinksTable th:nth-child(5), #ssoLinksTable td:nth-child(5) {
-        display: none;
-    }
-
-    /* Backups: keep Filename / Size / Created / Status / Actions */
-    #backupsTable th:nth-child(2), #backupsTable td:nth-child(2),
-    #backupsTable th:nth-child(5), #backupsTable td:nth-child(5) {
-        display: none;
-    }
-}
-
 /* API tokens: trim progressively (11 columns at desktop) */
-@media (max-width: 1024px) {
+@media (min-width: 769px) and (max-width: 1024px) {
     #tokensTable th:nth-child(5), #tokensTable td:nth-child(5),
     #tokensTable th:nth-child(8), #tokensTable td:nth-child(8),
     #tokensTable th:nth-child(10), #tokensTable td:nth-child(10) {
         display: none;
-    }
-}
-
-@media (max-width: 768px) {
-    #tokensTable th:nth-child(3), #tokensTable td:nth-child(3),
-    #tokensTable th:nth-child(6), #tokensTable td:nth-child(6),
-    #tokensTable th:nth-child(7), #tokensTable td:nth-child(7) {
-        display: none;
-    }
-}
-
-@media (max-width: 480px) {
-    /* Users: hide Status (inferable) but keep Role — the key admin differentiator.
-       Tokens: keep the checkbox column — bulk revoke/extend has no other entry point. */
-    #usersTable th:nth-child(4), #usersTable td:nth-child(4),
-    #blockedIPsTable th:nth-child(2), #blockedIPsTable td:nth-child(2),
-    #webhooksTable th:nth-child(4), #webhooksTable td:nth-child(4),
-    #deliveriesTable th:nth-child(2), #deliveriesTable td:nth-child(2),
-    #ssoProvidersTable th:nth-child(2), #ssoProvidersTable td:nth-child(2),
-    #tokensTable th:nth-child(9), #tokensTable td:nth-child(9),
-    #backupsTable th:nth-child(3), #backupsTable td:nth-child(3),
-    #backupsTable th:nth-child(4), #backupsTable td:nth-child(4) {
-        display: none;
-    }
-
-    .data-table th,
-    .data-table td {
-        padding: 10px 6px;
-        font-size: 13px;
     }
 }
 
@@ -2421,6 +2272,13 @@ pre {
     border-color: var(--danger-color);
     background: var(--danger-light);
     font-weight: 600;
+}
+
+/* Text/date filters reuse the select styling; drop the chevron and its gutter */
+.audit-filters input.webhook-filter {
+    background-image: none;
+    padding-right: 12px;
+    cursor: text;
 }
 
 #auditTable .audit-time {
@@ -2802,7 +2660,9 @@ input[type="checkbox"].check-inline {
    Touch targets (coarse pointers): 44x44 minimum
    ============================================ */
 
-@media (pointer: coarse) {
+/* Phones count as touch even where the browser does not report a coarse pointer
+   (desktop emulation, hybrid devices), so size by viewport as well as by pointer. */
+@media (pointer: coarse), (max-width: 768px) {
     .btn-sm,
     .btn-small,
     .btn-icon,
@@ -2813,7 +2673,13 @@ input[type="checkbox"].check-inline {
     .btn-danger,
     .btn-success,
     .tab-btn,
-    .theme-toggle-fixed {
+    .theme-toggle-fixed,
+    .search-input,
+    .webhook-filter,
+    .filter-select,
+    .pagination button,
+    .form-group input:not([type="checkbox"]):not([type="radio"]),
+    .form-group select {
         min-height: 44px;
     }
 
@@ -2823,10 +2689,417 @@ input[type="checkbox"].check-inline {
         min-width: 44px;
     }
 
+    /* Checkbox + text labels become full 44px-high rows; footer links get padding */
+    .form-group label:has(> input[type="checkbox"]) {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+    }
+
+    .footer a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 0 4px;
+    }
+
+    /* Drawn checkbox: a 24px box with a 44px hit area (the invisible ::after) */
     .data-table input[type="checkbox"],
     .table-controls input[type="checkbox"] {
+        -webkit-appearance: none;
+        appearance: none;
+        position: relative;
+        flex-shrink: 0;
         width: 24px;
         height: 24px;
+        margin: 10px;
+        border: 2px solid var(--border-strong);
+        border-radius: var(--radius-sm);
+        background-color: var(--bg-white);
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: 16px;
+    }
+
+    .data-table input[type="checkbox"]::after,
+    .table-controls input[type="checkbox"]::after {
+        content: '';
+        position: absolute;
+        top: -12px;
+        right: -12px;
+        bottom: -12px;
+        left: -12px;
+    }
+
+    .data-table input[type="checkbox"]:checked,
+    .table-controls input[type="checkbox"]:checked {
+        border-color: var(--primary-color);
+        background-color: var(--primary-color);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.5l3.2 3L13 4.5'/%3E%3C/svg%3E");
+    }
+
+    .data-table input[type="checkbox"]:indeterminate,
+    .table-controls input[type="checkbox"]:indeterminate {
+        border-color: var(--primary-color);
+        background-color: var(--primary-color);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+    }
+}
+
+/* ============================================
+   Phones: compact chrome and stacked-card tables
+   ============================================ */
+
+/* Header: not sticky on phones or short landscape screens (it would eat a
+   third of the viewport); logo + title on one row, actions on the next. */
+@media (max-width: 640px), (max-height: 500px) {
+    .admin-header {
+        position: static;
+        padding: 10px 0;
+    }
+
+    .header-content {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px 12px;
+        padding: 0 16px;
+        text-align: left;
+    }
+
+    .header-left {
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .header-logo {
+        width: 32px;
+        height: 32px;
+    }
+
+    .admin-header h1 {
+        font-size: var(--text-md);
+        line-height: 1.2;
+    }
+
+    .header-actions {
+        width: auto;
+        gap: 8px;
+        flex-wrap: nowrap;
+    }
+}
+
+@media (max-width: 768px) {
+    .dashboard-container {
+        padding: 16px 12px 24px;
+    }
+
+    /* Stats: compact 2-up grid; the tooltip card spans both columns so its tip has room */
+    .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 16px;
+    }
+
+    .stat-card {
+        padding: 10px 12px;
+    }
+
+    .stat-card h3 {
+        font-size: var(--text-xs);
+        margin-bottom: 2px;
+    }
+
+    .stat-value {
+        font-size: var(--text-lg);
+        overflow-wrap: anywhere;
+    }
+
+    .stat-card:has(.tooltip-wrapper) {
+        grid-column: 1 / -1;
+    }
+
+    .stat-card .tooltip-wrapper {
+        position: static;
+    }
+
+    .stat-card .tooltip-content,
+    .stat-card .info-icon:hover + .tooltip-content,
+    .stat-card .info-icon:focus + .tooltip-content,
+    .stat-card .tooltip-wrapper:hover .tooltip-content {
+        left: 8px;
+        right: 8px;
+        width: auto;
+        transform: none;
+    }
+
+    .stat-card .tooltip-content {
+        top: calc(100% - 4px);
+    }
+
+    .stat-card .tooltip-content::after {
+        display: none;
+    }
+
+    /* Tabs: edge-to-edge scroller, tighter padding */
+    .tabs {
+        padding: 0 4px;
+        gap: 0;
+        margin-bottom: 16px;
+    }
+
+    .tab-btn {
+        padding: 12px 14px;
+    }
+
+    /* Toolbars: search on its own row, buttons share the next row */
+    .table-controls {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .table-controls .search-input {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .table-controls > button {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+
+    .table-controls > .audit-filters,
+    .table-controls > .audit-actions {
+        flex: 1 1 100%;
+    }
+
+    /* Audit filters: two-up grid of full-width controls */
+    .audit-filters {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .audit-filters .webhook-filter {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .audit-filters #auditFilterSearch,
+    .audit-filters #auditApplyBtn {
+        grid-column: 1 / -1;
+    }
+
+    .audit-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .audit-actions #auditVerifyBtn {
+        grid-column: 1 / -1;
+    }
+
+    .audit-footer,
+    .audit-retention {
+        align-items: stretch;
+    }
+
+    .audit-footer > button {
+        width: 100%;
+    }
+
+    /* System information: label above value, long paths wrap */
+    .info-item {
+        flex-direction: column;
+        gap: 4px;
+        padding: 12px;
+    }
+
+    .info-item span {
+        overflow-wrap: anywhere;
+    }
+
+    .settings-section {
+        padding: 16px;
+    }
+
+    /* ---- Stacked-card tables (every table with an id; the config-assistant
+       comparison tables stay as scrolling tables). Cells carry data-label. ---- */
+    #main .table-container:has(> .data-table[id]) {
+        background: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        overflow: visible;
+        padding: 0;
+    }
+
+    #main .data-table[id],
+    #main .data-table[id] thead,
+    #main .data-table[id] tbody,
+    #main .data-table[id] tr {
+        display: block;
+        width: 100%;
+    }
+
+    /* Column headers are replaced by per-cell data-label text; only the
+       bulk-select checkbox header stays visible */
+    #main .data-table[id] thead th:not(.col-check) {
+        display: none;
+    }
+
+    #main .data-table[id] thead th.col-check {
+        display: flex;
+        align-items: center;
+        width: auto;
+        padding: 0 0 4px;
+        background: none;
+        border: 0;
+    }
+
+    #main .data-table[id] thead th.col-check input[type="checkbox"] {
+        margin-left: 0;
+    }
+
+    #main .data-table[id] thead th.col-check::after {
+        content: 'Select all';
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--text-secondary);
+        pointer-events: none;
+    }
+
+    #main .data-table[id] tbody tr {
+        position: relative;
+        margin-bottom: 10px;
+        padding: 4px 14px;
+        background: var(--bg-white);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+    }
+
+    #main .data-table[id] tbody td {
+        position: relative;
+        display: block;
+        min-width: 0;
+        width: auto !important;
+        padding: 5px 0 5px 108px;
+        border: 0;
+        font-size: var(--text-base);
+        text-align: left !important;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        overflow-wrap: anywhere;
+    }
+
+    #main .data-table[id] tbody td + td {
+        border-top: 1px solid var(--border-color);
+    }
+
+    #main .data-table[id] tbody td[data-label]::before {
+        content: attr(data-label);
+        position: absolute;
+        top: 6px;
+        left: 0;
+        width: 96px;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        line-height: 1.4;
+        color: var(--text-secondary);
+        overflow-wrap: normal;
+    }
+
+    /* Action buttons: a footer row inside the card, no label column */
+    #main .data-table[id] tbody td[data-label="Actions"] {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-left: 0;
+    }
+
+    #main .data-table[id] tbody td[data-label="Actions"]::before {
+        display: none;
+    }
+
+    /* Per-row bulk-select checkbox sits in the card's top-right corner */
+    #main .data-table[id] tbody td:has(> input[type="checkbox"]) {
+        position: absolute;
+        top: 0;
+        right: 2px;
+        padding: 0;
+        border: 0;
+        z-index: 1;
+    }
+
+    #main .data-table[id] tbody td:has(> input[type="checkbox"]) + td {
+        padding-right: 52px;
+    }
+
+    /* Empty / loading / error rows */
+    #main .data-table[id] tbody td[colspan] {
+        padding: 12px 0;
+        text-align: center !important;
+    }
+
+    #main .data-table[id] tbody td code,
+    #main .data-table[id] tbody td .badge {
+        max-width: 100%;
+    }
+
+    #main .data-table[id] tbody td .badge {
+        white-space: normal;
+    }
+
+    #auditTable tbody td {
+        padding-top: 3px;
+        padding-bottom: 3px;
+    }
+
+    #auditTable tbody td[data-label]::before {
+        top: 4px;
+    }
+
+    #auditTable .audit-time {
+        white-space: normal;
+    }
+
+    #auditTable .audit-details code {
+        display: block;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+}
+
+/* Modals: keep the footer reachable on short or narrow screens */
+@media (max-width: 768px), (max-height: 680px) {
+    .modal-content {
+        --modal-pad: 24px;
+        max-height: 92vh;
+        max-height: 92dvh;
+        overscroll-behavior: contain;
+    }
+
+    .modal-actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        flex-wrap: wrap;
+        margin: 20px calc(var(--modal-pad) * -1) calc(var(--modal-pad) * -1);
+        padding: 12px var(--modal-pad) var(--modal-pad);
+        background: var(--bg-white);
+        border-top: 1px solid var(--border-color);
+    }
+}
+
+@media (max-height: 680px) {
+    .modal-content {
+        --modal-pad: 20px;
     }
 }
 
