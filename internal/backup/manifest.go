@@ -185,9 +185,13 @@ func VerifyChecksum(filePath, expectedChecksum string) error {
 	return nil
 }
 
+// BackupDirNameLayout is the timestamp layout in backup directory names
+// (backup-2006-01-02T15-04-05, UTC).
+const BackupDirNameLayout = "2006-01-02T15-04-05"
+
 // GetBackupDirName generates a backup directory name based on timestamp
 func GetBackupDirName() string {
-	return fmt.Sprintf("backup-%s", time.Now().UTC().Format("2006-01-15T15-04-05"))
+	return "backup-" + time.Now().UTC().Format(BackupDirNameLayout)
 }
 
 // GetFileSize returns the size of a file in bytes

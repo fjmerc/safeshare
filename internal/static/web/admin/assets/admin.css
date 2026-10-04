@@ -3127,3 +3127,25 @@ input[type="checkbox"].check-inline {
         animation: none !important;
     }
 }
+
+/* A flex <td> stops being a table cell: its height and bottom border no
+   longer line up with the rest of the row. On table layouts keep action
+   cells as cells and space the buttons inline (phones use the card layout). */
+@media (min-width: 769px) {
+    .data-table td.actions,
+    #usersTab .data-table td.actions {
+        display: table-cell;
+        text-align: center;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .data-table td.actions > * {
+        display: inline-flex;
+        vertical-align: middle;
+    }
+
+    .data-table td.actions > * + * {
+        margin-left: 6px;
+    }
+}

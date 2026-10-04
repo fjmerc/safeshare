@@ -22,8 +22,13 @@ import (
 // cronFieldRegex validates individual cron expression fields.
 var cronFieldRegex = regexp.MustCompile(`^(\*|[0-9]+)$`)
 
-// backupDirNameRegex validates backup directory names (backup-YYYYMMDD-HHMMSS format).
-var backupDirNameRegex = regexp.MustCompile(`^backup-\d{8}-\d{6}$`)
+// backupDirNameRegex validates backup directory names before retention
+// cleanup deletes them. GetBackupDirName produces backup-YYYY-MM-DDTHH-MM-SS
+// (before v1.11.1 the day field held the hour by mistake, which this still
+// matches); backup-YYYYMMDD-HHMMSS is accepted for older installs. Create
+// appends -<UnixNano> when the name is taken, which the old layout made
+// common (same hour:minute:second on any day of the month).
+var backupDirNameRegex = regexp.MustCompile(`^backup-(\d{8}-\d{6}|\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(-\d{1,19})?$`)
 
 // ErrBackupAlreadyRunning indicates a backup is already in progress.
 var ErrBackupAlreadyRunning = errors.New("another backup is already running")

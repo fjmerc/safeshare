@@ -1633,12 +1633,16 @@
         if (success) {
             // Visual feedback on button
             const btn = e.currentTarget;
-            const originalHTML = btn.innerHTML;
+            // Keep the icon from before the first click, so a second click
+            // within the 2s window doesn't capture the checkmark as "original"
+            if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+            clearTimeout(btn._copiedTimer);
             btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             btn.classList.add('copied');
 
-            setTimeout(() => {
-                btn.innerHTML = originalHTML;
+            btn._copiedTimer = setTimeout(() => {
+                btn.innerHTML = btn.dataset.originalHtml;
+                delete btn.dataset.originalHtml;
                 btn.classList.remove('copied');
             }, 2000);
 
