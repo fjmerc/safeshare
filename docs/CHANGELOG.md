@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-10-04
+
 ### Changed
 - **No more "Upload Completed" pop-up on every visit.** The upload page used to keep every claim code in the browser for 7 days and show them in a pop-up until you clicked a copy button, even to the next person using the same computer, and even after logging out. Now:
   - Signed-in users: nothing is stored in the browser. The success screen links to **My Uploads**, where every upload and claim code already lives.
