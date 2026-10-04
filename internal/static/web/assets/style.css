@@ -1,33 +1,77 @@
 /* CSS Variables for Theming */
+/*
+ * Design tokens. Every value below is checked against WCAG AA on the
+ * surfaces it is used on (text ≥4.5:1, borders/focus ≥3:1), in both themes.
+ * Use the -text tokens for colored text, the solid tokens (--primary-color,
+ * --success-color, --danger-color, --warning-color) for fills behind white
+ * text, and the -tint tokens for pale status backgrounds.
+ */
 :root {
-    --primary-color: #3b82f6;
-    --primary-hover: #2563eb;
-    --success-color: #10b981;
-    --danger-color: #ef4444;
+    color-scheme: light;
+    --primary-color: #2563eb;      /* fill behind white text: 5.17:1 */
+    --primary-hover: #1d4ed8;
+    --primary-text: #1d4ed8;       /* links, active tabs */
+    --primary-tint: #eff6ff;
+    --on-accent: #ffffff;
+    --success-color: #047857;
+    --success-hover: #065f46;
+    --success-text: #047857;
+    --success-tint: #ecfdf5;
+    --danger-color: #dc2626;
+    --danger-hover: #b91c1c;
+    --danger-text: #b91c1c;
+    --danger-tint: #fef2f2;
+    --warning-color: #b45309;
+    --warning-text: #92400e;
+    --warning-tint: #fffbeb;
     --bg-primary: #ffffff;
     --bg-secondary: #f9fafb;
     --bg-tertiary: #f3f4f6;
     --text-primary: #111827;
-    --text-secondary: #6b7280;
+    --text-secondary: #4b5563;
+    --text-muted: #4b5563;
     --text-color: #111827;
-    --border-color: #e5e7eb;
+    --border-color: #e5e7eb;       /* decorative dividers only */
+    --border-strong: #6b7280;      /* form controls: ≥4.39:1 */
+    --focus-ring: #2563eb;
     --card-bg: #ffffff;
-    --input-bg: #f9fafb;
+    --input-bg: #ffffff;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     --radius: 0.5rem;
-    --transition: all 0.2s ease;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+    /* Stacking order: raised < sticky < banner < dropdown < modal < toast < tooltip */
+    --z-raised: 10;
+    --z-sticky: 100;
+    --z-banner: 200;
+    --z-dropdown: 300;
+    --z-modal: 1000;
+    --z-toast: 1100;
+    --z-tooltip: 1200;
 }
 
 [data-theme="dark"] {
+    color-scheme: dark;
+    --primary-text: #93c5fd;
+    --primary-tint: #1e3a5f;
+    --success-text: #6ee7b7;
+    --success-tint: #064e3b;
+    --danger-text: #fca5a5;
+    --danger-tint: #7f1d1d;
+    --warning-text: #fde68a;
+    --warning-tint: #78350f;
     --bg-primary: #1f2937;
     --bg-secondary: #111827;
     --bg-tertiary: #374151;
     --text-primary: #f9fafb;
-    --text-secondary: #9ca3af;
+    --text-secondary: #b0b7c3;
+    --text-muted: #b0b7c3;
     --text-color: #f9fafb;
     --border-color: #4b5563;
+    --border-strong: #8b93a1;
+    --focus-ring: #93c5fd;
     --card-bg: #1f2937;
     --input-bg: #111827;
 }

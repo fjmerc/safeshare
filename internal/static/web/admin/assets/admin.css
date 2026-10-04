@@ -1,22 +1,37 @@
 /* Modern Admin Panel Styles */
+/*
+ * Design tokens (same contract as assets/style.css). Checked against WCAG AA
+ * on the surfaces they are used on, in both themes: text ≥4.5:1, borders and
+ * focus indicators ≥3:1. Solid tokens are fills behind white text; -text
+ * tokens are for colored text; -light tokens are pale status backgrounds.
+ */
 :root {
-    --primary-color: #3b82f6;
-    --primary-hover: #2563eb;
-    --primary-light: #dbeafe;
-    --danger-color: #ef4444;
-    --danger-hover: #dc2626;
-    --danger-light: #fee2e2;
-    --success-color: #10b981;
-    --success-light: #d1fae5;
-    --warning-color: #f59e0b;
-    --warning-light: #fef3c7;
-    --border-color: #e5e7eb;
+    color-scheme: light;
+    --primary-color: #2563eb;
+    --primary-hover: #1d4ed8;
+    --primary-text: #1d4ed8;
+    --primary-light: #eff6ff;
+    --on-accent: #ffffff;
+    --danger-color: #dc2626;
+    --danger-hover: #b91c1c;
+    --danger-text: #b91c1c;
+    --danger-light: #fef2f2;
+    --success-color: #047857;
+    --success-hover: #065f46;
+    --success-text: #047857;
+    --success-light: #ecfdf5;
+    --warning-color: #b45309;
+    --warning-text: #92400e;
+    --warning-light: #fffbeb;
+    --border-color: #e5e7eb;       /* decorative dividers only */
     --border-hover: #d1d5db;
+    --border-strong: #6b7280;      /* form controls */
+    --focus-ring: #2563eb;
     --bg-light: #f9fafb;
     --bg-white: #ffffff;
     --text-primary: #111827;
-    --text-secondary: #6b7280;
-    --text-muted: #9ca3af;
+    --text-secondary: #4b5563;
+    --text-muted: #4b5563;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
@@ -24,18 +39,34 @@
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 12px;
-    --transition: all 0.2s ease;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+    /* Stacking order: raised < sticky < banner < dropdown < modal < toast < tooltip */
+    --z-raised: 10;
+    --z-sticky: 100;
+    --z-banner: 200;
+    --z-dropdown: 300;
+    --z-modal: 1000;
+    --z-toast: 1100;
+    --z-tooltip: 1200;
 }
 
 /* Dark Theme */
 [data-theme="dark"] {
+    color-scheme: dark;
     --bg-light: #1f2937;
     --bg-white: #111827;
     --text-primary: #f9fafb;
-    --text-secondary: #9ca3af;
-    --text-muted: #6b7280;
+    --text-secondary: #b0b7c3;
+    --text-muted: #b0b7c3;
     --border-color: #374151;
     --border-hover: #4b5563;
+    --border-strong: #8b93a1;
+    --focus-ring: #93c5fd;
+    --primary-text: #93c5fd;
+    --danger-text: #fca5a5;
+    --success-text: #6ee7b7;
+    --warning-text: #fde68a;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
