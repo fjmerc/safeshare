@@ -120,7 +120,7 @@
         initE2EEncryption(); // Show/hide E2E toggle based on browser support
         setupEventListeners();
         handleInitialTab();
-        checkForCompletedUploads(); // Check for saved completions to recover
+        initRecentUploads(); // Quiet per-device list for anonymous uploaders (replaces the old pop-up)
         setupBeforeUnloadProtection(); // Prevent navigation during upload
         clearLegacyDownloadProgress(); // Remove download_* keys from the removed cross-refresh resume feature
         if (typeof ChunkedUploader !== 'undefined') {
@@ -408,6 +408,8 @@
             if (response.ok) {
                 currentUser = null;
                 showUserStatus(false);
+                ChunkedUploader.clearRecentUploads();
+                renderRecentUploads();
                 // Optional: show a success message
                 console.log('Logged out successfully');
             } else {
@@ -1105,8 +1107,6 @@
             xhr.addEventListener('load', () => {
                 if (xhr.status === 201) {
                     const response = JSON.parse(xhr.responseText);
-                    // Save completion to localStorage for recovery
-                    ChunkedUploader.saveCompletion(response);
                     showResults(response);
                 } else {
                     const error = JSON.parse(xhr.responseText);
@@ -1292,9 +1292,6 @@
     // Show results
     function showResults(data) {
         try {
-            // Recovery feature: Upload completions are saved by upload handlers
-            // (ChunkedUploader.complete() for chunked, XHR handler for simple)
-
             // If E2E encrypted, construct URL with key fragment
             let displayUrl = data.download_url;
             const isE2E = !!e2eExportedKey;
@@ -1337,6 +1334,19 @@
                 ? `${data.completed_downloads} / ${data.max_downloads}`
                 : `${data.completed_downloads} / Unlimited`;
             document.getElementById('maxDownloadsInfo').textContent = downloadsText;
+
+            // The upload password is never stored, so say so while it's on screen
+            const passwordInput = document.getElementById('uploadPassword');
+            const passwordUsed = !!(passwordInput && passwordInput.value.trim());
+            document.getElementById('resultPasswordNote')?.classList.toggle('hidden', !passwordUsed);
+
+            // Signed-in users find every upload in My Uploads; anonymous uploads go
+            // in this device's recent list (not E2E: the code alone can't decrypt)
+            document.getElementById('resultDashboardLink')?.classList.toggle('hidden', !currentUser);
+            if (!currentUser && !isE2E) {
+                ChunkedUploader.saveRecentUpload(data);
+                renderRecentUploads();
+            }
 
             // Generate QR code (optional - if library loaded)
             const qrcodeDiv = document.getElementById('qrcode');
@@ -1486,9 +1496,6 @@
 
     // Reset form
     function resetForm() {
-        // Mark completions as viewed since user has seen results and is moving on
-        ChunkedUploader.markCompletionsAsViewed();
-
         clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
@@ -1646,10 +1653,6 @@
                 btn.classList.remove('copied');
             }, 2000);
 
-            // Mark completions as viewed if user copied claim code or download URL
-            if (copyId === 'claimCode' || copyId === 'downloadUrl') {
-                ChunkedUploader.markCompletionsAsViewed();
-            }
         }
     }
 
@@ -1844,6 +1847,7 @@
     // Format file size
     function formatFileSize(bytes) {
         if (bytes === 0) return '0 Bytes';
+        if (bytes === 1) return '1 Byte';
 
         const k = 1024;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
@@ -2214,118 +2218,98 @@
     // ========================================
 
     /**
-     * Check for completed uploads in localStorage and show recovery modal
+     * Older versions showed a pop-up with every saved claim code on each
+     * visit. Drop that list; keep a quiet recent-uploads list for anonymous
+     * uploaders only (signed-in users have My Uploads).
      */
-    function checkForCompletedUploads() {
-        const completions = ChunkedUploader.getUnviewedCompletions();
+    function initRecentUploads() {
+        if (typeof ChunkedUploader === 'undefined') return;
+        ChunkedUploader.dropLegacyCompletions();
+        if (currentUser) ChunkedUploader.clearRecentUploads();
 
-        if (completions.length > 0) {
-            console.log('Found', completions.length, 'unviewed completed uploads');
-            showRecoveryModal(completions);
-        }
+        document.getElementById('clearRecentUploads')?.addEventListener('click', () => {
+            ChunkedUploader.clearRecentUploads();
+            renderRecentUploads();
+            showToast('Recent uploads cleared from this device', 'success', 3000);
+        });
+
+        // Keep other open tabs in step (clear, remove, logout elsewhere)
+        window.addEventListener('storage', (e) => {
+            if (e.key === null || e.key === ChunkedUploader.RECENT_UPLOADS_KEY) renderRecentUploads();
+        });
+        renderRecentUploads();
     }
 
-    /**
-     * Show recovery modal with completed uploads
-     * @param {Array} completions - Array of completion objects
-     */
-    function showRecoveryModal(completions) {
-        // Create modal HTML
-        const modal = document.createElement('div');
-        modal.id = 'recoveryModal';
-        modal.className = 'recovery-modal';
-        modal.innerHTML = `
-            <div class="recovery-modal-content">
-                <div class="recovery-header">
-                    <div class="recovery-icon" aria-hidden="true">✓</div>
-                    <h2>Upload${completions.length > 1 ? 's' : ''} Completed!</h2>
-                    <p>Your upload${completions.length > 1 ? 's have' : ' has'} finished. Here ${completions.length > 1 ? 'are' : 'is'} your claim code${completions.length > 1 ? 's' : ''}:</p>
-                </div>
-                <div class="recovery-uploads">
-                    ${completions.map((completion, index) => `
-                        <div class="recovery-upload" data-index="${index}">
-                            <div class="recovery-file-info">
-                                <div class="recovery-filename" title="${escapeHtml(completion.filename)}">
-                                    ${escapeHtml(completion.filename)}
-                                </div>
-                                <div class="recovery-filesize">${formatFileSize(completion.file_size)}</div>
-                            </div>
-                            <div class="recovery-claim">
-                                <span class="recovery-label">Claim code</span>
-                                <div class="recovery-code-display">
-                                    <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
-                                    <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
-                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="recovery-actions">
-                                <button class="btn-recovery-download" data-url="${escapeHtml(completion.download_url)}">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                                    Download
-                                </button>
-                                <button class="btn-recovery-copy-url" data-url="${escapeHtml(completion.download_url)}">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-                                    Copy Link
-                                </button>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="recovery-footer">
-                    <button type="button" class="btn-secondary recovery-close" data-modal-close>Close</button>
-                </div>
-            </div>
-        `;
+    function renderRecentUploads() {
+        const section = document.getElementById('recentUploads');
+        const list = document.getElementById('recentUploadsList');
+        if (!section || !list || typeof ChunkedUploader === 'undefined') return;
 
-        document.body.appendChild(modal);
+        const uploads = currentUser ? [] : ChunkedUploader.getRecentUploads();
+        section.classList.toggle('hidden', uploads.length === 0);
+        list.replaceChildren(...uploads.map(buildRecentUploadItem));
+    }
 
-        // A keyboard way out (the background click is mouse-only, and the
-        // copy buttons only close it if copying works).
-        modal.querySelector('.recovery-close').addEventListener('click', () => {
-            ChunkedUploader.markCompletionsAsViewed();
-            modal.remove();
-        });
+    // Built with DOM APIs (textContent), so stored values can't inject markup
+    function buildRecentUploadItem(upload) {
+        const filename = upload.filename || 'Untitled file';
+        const item = document.createElement('li');
+        item.className = 'recent-upload';
 
-        // Copy claim code buttons
-        modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const claimCode = e.currentTarget.dataset.claim;
-                const success = await copyToClipboard(claimCode, 'Claim code copied!');
-                if (success) {
-                    ChunkedUploader.markCompletionsAsViewed();
-                    modal.remove();
-                }
-            });
-        });
+        const info = document.createElement('div');
+        info.className = 'recent-upload-info';
+        const name = document.createElement('span');
+        name.className = 'recent-upload-name';
+        name.textContent = filename;
+        name.title = filename;
+        const meta = document.createElement('span');
+        meta.className = 'recent-upload-meta';
+        meta.textContent = [
+            upload.file_size ? formatFileSize(upload.file_size) : null,
+            ChunkedUploader.recentUploadExpiry(upload) !== null
+                ? `expires ${formatDate(upload.expires_at)}`
+                : 'never expires'
+        ].filter(Boolean).join(' · ');
+        info.append(name, meta);
 
-        // Download buttons
-        modal.querySelectorAll('.btn-recovery-download').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const url = e.currentTarget.dataset.url;
-                window.open(url, '_blank');
-            });
-        });
+        const code = document.createElement('code');
+        code.className = 'recent-upload-code';
+        code.textContent = upload.claim_code;
 
-        // Copy URL buttons
-        modal.querySelectorAll('.btn-recovery-copy-url').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const url = e.currentTarget.dataset.url;
-                const success = await copyToClipboard(url, 'Download link copied!');
-                if (success) {
-                    ChunkedUploader.markCompletionsAsViewed();
-                    modal.remove();
-                }
-            });
-        });
+        const actions = document.createElement('div');
+        actions.className = 'recent-upload-actions';
+        actions.append(
+            recentUploadButton('Copy code', `Copy claim code for ${filename}`, ICON_COPY, () =>
+                copyToClipboard(upload.claim_code, 'Claim code copied!')),
+            recentUploadButton('Copy link', `Copy download link for ${filename}`, ICON_LINK, () =>
+                copyToClipboard(upload.download_url, 'Download link copied!')),
+            recentUploadButton('Remove', `Remove ${filename} from this list`, ICON_REMOVE, () => {
+                ChunkedUploader.removeRecentUpload(upload.claim_code);
+                renderRecentUploads();
+                document.getElementById('recentUploadsHeading')?.focus();
+            }, 'recent-upload-remove')
+        );
 
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                ChunkedUploader.markCompletionsAsViewed();
-                modal.remove();
-            }
-        });
+        item.append(info, code, actions);
+        return item;
+    }
+
+    const ICON_COPY = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
+    const ICON_LINK = '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>';
+    const ICON_REMOVE = '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>';
+
+    function recentUploadButton(label, ariaLabel, iconPaths, onClick, extraClass) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'recent-upload-btn' + (extraClass ? ' ' + extraClass : '');
+        btn.setAttribute('aria-label', ariaLabel);
+        // Icon markup is a constant above; the label goes in as text
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths}</svg>`;
+        const text = document.createElement('span');
+        text.textContent = label;
+        btn.append(text);
+        btn.addEventListener('click', onClick);
+        return btn;
     }
 
     /**
