@@ -12,7 +12,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <link rel="manifest" href="/assets/manifest.json">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#2563eb">
 
     <!-- Load theme before CSS to prevent flash -->
     <script src="/assets/theme-init.js"></script>
@@ -21,8 +21,8 @@
 </head>
 <body>
     <!-- Upload Warning Banner - Fixed Position -->
-    <div id="uploadWarningBanner" class="upload-warning-banner hidden">
-        <span class="upload-warning-icon">⚠️</span>
+    <div id="uploadWarningBanner" class="upload-warning-banner hidden" role="status">
+        <span class="upload-warning-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
         <span class="upload-warning-text">Upload in Progress - Do not navigate away or close this page</span>
     </div>
 
@@ -87,15 +87,18 @@
             <p class="subtitle">Secure temporary file sharing with automatic expiration</p>
         </header>
 
+        <main id="main">
         <!-- Tab Navigation -->
-        <div class="tabs" role="tablist" aria-label="File sharing actions">
-            <button class="tab-button active" id="dropoffTabButton" data-tab="dropoff" role="tab" aria-selected="true" aria-controls="dropoffTab">
-                Dropoff
-            </button>
-            <button class="tab-button" id="pickupTabButton" data-tab="pickup" role="tab" aria-selected="false" aria-controls="pickupTab">
-                Pickup
-            </button>
-            <button class="tab-button login-to-upload hidden" id="loginToUploadBtn">
+        <div class="tabs">
+            <div class="tab-list" role="tablist" aria-label="File sharing actions">
+                <button class="tab-button active" id="dropoffTabButton" data-tab="dropoff" role="tab" aria-selected="true" aria-controls="dropoffTab">
+                    Dropoff
+                </button>
+                <button class="tab-button" id="pickupTabButton" data-tab="pickup" role="tab" aria-selected="false" aria-controls="pickupTab" tabindex="-1">
+                    Pickup
+                </button>
+            </div>
+            <button type="button" class="tab-button login-to-upload hidden" id="loginToUploadBtn">
                 🔒 Login to Dropoff
             </button>
         </div>
@@ -106,45 +109,49 @@
             <div id="uploadSection" class="upload-section">
                 <div class="card">
                     <div id="dropZone" class="drop-zone">
-                        <div class="drop-zone-icon">📁</div>
+                        <div class="drop-zone-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </div>
                         <!-- File Preparation Spinner -->
                         <div class="file-preparation-spinner hidden">
                             <div class="spinner"></div>
                         </div>
                         <h2>Drop file here or click to browse</h2>
                         <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
+                        <button type="button" id="browseButton" class="btn-browse">Browse files</button>
                         <input type="file" id="fileInput" hidden>
                     </div>
 
-                    <button id="removeFileButton" class="btn-remove-file hidden">
-                        ✕ Remove File
-                    </button>
+                    <button type="button" id="removeFileButton" class="btn-remove-file hidden">Remove File</button>
 
                     <form id="uploadSettingsForm" autocomplete="on">
                         <!-- Hidden username field for password manager compatibility -->
                         <input type="text" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
 
                         <div class="settings">
-                            <h3
-                                id="uploadSettingsToggle"
-                                class="settings-toggle"
-                                role="button"
-                                tabindex="0"
-                                aria-expanded="true"
-                                aria-controls="uploadSettingsContent"
-                            >
-                                Upload Settings
-                                <svg class="chevron-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
+                            <h3 class="settings-heading">
+                                <button
+                                    type="button"
+                                    id="uploadSettingsToggle"
+                                    class="settings-toggle"
+                                    aria-expanded="true"
+                                    aria-controls="uploadSettingsContent"
+                                >
+                                    <span>Upload Settings</span>
+                                    <svg class="chevron-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
                             </h3>
 
                             <div id="uploadSettingsContent" class="settings-content">
                             <div class="form-group">
-                                <label for="expirationHours">
-                                    Expires in (hours):
-                                    <span class="tooltip" tabindex="0" aria-label="File will be automatically deleted after this time" data-tooltip="File will be automatically deleted after this time">i</span>
-                                </label>
+                                <div class="label-row">
+                                    <label for="expirationHours">Expires in (hours)</label>
+                                    <button type="button" class="tooltip" aria-label="File will be automatically deleted after this time" data-tooltip="File will be automatically deleted after this time">i</button>
+                                </div>
                                 <input type="number" id="expirationHours" name="expiration-hours" min="0.1" step="0.1" value="24">
                                 <div class="quick-select">
                                     <button type="button" class="btn-small" data-hours="1">1h</button>
@@ -156,19 +163,19 @@
                                     <button type="button" class="btn-small" data-hours="4320">180d</button>
                                     <button type="button" class="btn-small" data-hours="8760">1yr</button>
                                 </div>
-                                <div class="checkbox-group" style="margin-top: 16px;">
-                                    <label for="neverExpire" style="display: flex; align-items: center; cursor: pointer;">
-                                        <input type="checkbox" id="neverExpire" name="never-expire" style="margin-right: 8px;">
+                                <div class="checkbox-group">
+                                    <label for="neverExpire" class="checkbox-row">
+                                        <input type="checkbox" id="neverExpire" name="never-expire">
                                         <span>Never expire</span>
                                     </label>
                                 </div>
                             </div>
 
                             <div class="form-group">
-                                <label for="maxDownloads">
-                                    Max downloads (optional):
-                                    <span class="tooltip" tabindex="0" aria-label="Limit how many times the file can be downloaded" data-tooltip="Limit how many times the file can be downloaded">i</span>
-                                </label>
+                                <div class="label-row">
+                                    <label for="maxDownloads">Max downloads (optional)</label>
+                                    <button type="button" class="tooltip" aria-label="Limit how many times the file can be downloaded" data-tooltip="Limit how many times the file can be downloaded">i</button>
+                                </div>
                                 <input type="number" id="maxDownloads" name="max-downloads" min="1" max="1000" placeholder="Unlimited">
                                 <div class="quick-select">
                                     <button type="button" class="btn-small" data-downloads="1">Once</button>
@@ -179,10 +186,10 @@
                             </div>
 
                             <div class="form-group">
-                                <label for="uploadPassword">
-                                    Password (optional):
-                                    <span class="tooltip" tabindex="0" aria-label="Require a password to download this file" data-tooltip="Require a password to download this file">i</span>
-                                </label>
+                                <div class="label-row">
+                                    <label for="uploadPassword">Password (optional)</label>
+                                    <button type="button" class="tooltip" aria-label="Require a password to download this file" data-tooltip="Require a password to download this file">i</button>
+                                </div>
                                 <div class="password-wrapper">
                                     <input type="password" id="uploadPassword" name="upload-password" placeholder="Leave blank for no password" maxlength="128" autocomplete="new-password">
                                     <button type="button" class="password-toggle" data-password-toggle="uploadPassword" aria-label="Toggle password visibility">
@@ -209,7 +216,7 @@
                                         End-to-End Encryption
                                     </span>
                                 </label>
-                                <p class="e2e-description">Encrypt in your browser — server never sees your file</p>
+                                <p class="e2e-description">Encrypt in your browser. The server never sees your file.</p>
                                 <p class="e2e-size-warning hidden" id="e2eSizeWarning">Large files (>500 MB) may cause browser memory issues. Consider server-side encryption for very large files.</p>
 
                                 <div class="e2e-suboption hidden" id="e2eHideFilenameGroup">
@@ -228,7 +235,7 @@
                         <div class="progress-header">
                             <span id="progressText" aria-live="polite">Uploading...</span>
                         </div>
-                        <div class="progress-bar">
+                        <div class="progress-bar" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                             <div id="progressFill" class="progress-fill"></div>
                         </div>
                         <div class="progress-stats">
@@ -245,7 +252,7 @@
             <div id="resultsSection" class="results-section hidden">
                 <div class="card">
                     <div class="success-header">
-                        <div class="success-icon">✓</div>
+                        <div class="success-icon" aria-hidden="true">✓</div>
                         <h2>File Uploaded Successfully!</h2>
                     </div>
 
@@ -259,21 +266,21 @@
                     <p class="e2e-warning hidden" id="e2eWarning">Save this link — the decryption key is embedded in the URL. If you lose the link, the file cannot be recovered.</p>
 
                     <div class="result-item">
-                        <label>Claim Code:</label>
+                        <span class="result-label" id="claimCodeLabel">Claim code</span>
                         <div class="code-display">
-                            <code id="claimCode" class="claim-code"></code>
+                            <code id="claimCode" class="claim-code" aria-labelledby="claimCodeLabel"></code>
                             <button class="btn-copy" data-copy="claimCode" aria-label="Copy claim code">
-                                📋
+                                <svg class="icon-copy" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </div>
 
                     <div class="result-item">
-                        <label>Download URL:</label>
+                        <label for="downloadUrl">Download URL</label>
                         <div class="url-display">
                             <input type="text" id="downloadUrl" class="url-input" readonly>
                             <button class="btn-copy" data-copy="downloadUrl" aria-label="Copy download URL">
-                                📋
+                                <svg class="icon-copy" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </div>
@@ -327,7 +334,7 @@
                 <p class="subtitle">Enter the claim code you received to download the file</p>
 
                 <div class="form-group">
-                    <label for="claimCodeInput">Claim Code:</label>
+                    <label for="claimCodeInput">Claim code</label>
                     <input type="text" id="claimCodeInput" class="claim-code-input" placeholder="Enter claim code" autocomplete="off">
                 </div>
 
@@ -336,7 +343,7 @@
                 <!-- File Info Display -->
                 <div id="fileInfoSection" class="file-info-section hidden">
                     <div class="info-header">
-                        <div class="info-icon">📄</div>
+                        <div class="info-icon" aria-hidden="true"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg></div>
                         <h3>File Ready for Download</h3>
                     </div>
 
@@ -377,7 +384,7 @@
                     </div>
 
                     <div class="warning-box hidden" id="limitWarning">
-                        ⚠️ This file has reached its download limit and can no longer be downloaded.
+                        <svg class="inline-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> This file has reached its download limit and can no longer be downloaded.
                     </div>
 
                     <form id="downloadPasswordForm" autocomplete="on">
@@ -385,10 +392,10 @@
                         <input type="text" name="username" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true">
 
                         <div class="form-group hidden" id="passwordPrompt">
-                            <label for="downloadPassword">
-                                🔒 Password Required:
-                                <span class="tooltip" tabindex="0" aria-label="This file is password protected" data-tooltip="This file is password protected">i</span>
-                            </label>
+                            <div class="label-row">
+                                <label for="downloadPassword">Password required</label>
+                                <button type="button" class="tooltip" aria-label="This file is password protected" data-tooltip="This file is password protected">i</button>
+                            </div>
                             <div class="password-wrapper">
                                 <input type="password" id="downloadPassword" name="download-password" placeholder="Enter password" maxlength="128" autocomplete="current-password">
                                 <button type="button" class="password-toggle" data-password-toggle="downloadPassword" aria-label="Toggle password visibility">
@@ -408,7 +415,7 @@
                     <!-- E2E Key Prompt (shown when file is E2E encrypted) -->
                     <div id="e2eKeyPrompt" class="e2e-key-section hidden">
                         <div class="e2e-key-header">
-                            <span class="e2e-key-icon">🔐</span>
+                            <span class="e2e-key-icon" aria-hidden="true">🔐</span>
                             <span>End-to-End Encrypted File</span>
                         </div>
                         <p class="e2e-key-hint">This file is end-to-end encrypted. Paste the full share link or encryption key to decrypt it.</p>
@@ -416,19 +423,21 @@
                     </div>
 
                     <button id="downloadButton" class="btn-primary btn-large">
-                        ⬇️ Download File
+                        <svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Download File
                     </button>
 
                     <button id="newPickupButton" class="btn-secondary">Check Another File</button>
                 </div>
             </div>
         </section>
+        </main>
 
         <!-- Footer -->
         <footer>
             <p>
                 Files are automatically deleted after expiration.
-                <a href="https://github.com/fjmerc/safeshare" target="_blank" rel="noopener">GitHub</a>
+                <a href="https://github.com/fjmerc/safeshare" target="_blank" rel="noopener">GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
             </p>
             <p class="version-info" id="versionInfo"></p>
         </footer>
@@ -446,7 +455,7 @@
             <h2 id="e2eDecryptTitle">Downloading encrypted file...</h2>
             <p id="e2eDecryptStatus" role="status">Please wait</p>
             <div class="e2e-decrypt-progress">
-                <div class="progress-bar">
+                <div class="progress-bar" role="progressbar" aria-label="Decryption progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                     <div id="e2eDecryptProgressFill" class="progress-fill"></div>
                 </div>
             </div>
@@ -476,7 +485,7 @@
         <div class="share-modal-content">
             <div class="share-modal-header">
                 <h3>Share this file</h3>
-                <button class="share-modal-close" aria-label="Close modal">&times;</button>
+                <button type="button" class="share-modal-close" aria-label="Close dialog">&times;</button>
             </div>
             <div class="share-modal-body">
                 <button class="share-option" id="shareViaEmail">
