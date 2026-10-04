@@ -2596,3 +2596,70 @@ pre {
         font-size: 13px;
     }
 }
+
+/* Audit Log tab (ADR-018) */
+#auditLogTab .hidden {
+    display: none;
+}
+
+.audit-controls {
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.audit-filters,
+.audit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.audit-verify-result {
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 16px;
+    border-left: 4px solid var(--border-color);
+}
+
+.audit-verify-ok {
+    border-left-color: var(--success-color);
+    background: var(--success-light);
+}
+
+.audit-verify-bad {
+    border-left-color: var(--danger-color);
+    background: var(--danger-light);
+    font-weight: 600;
+}
+
+#auditTable .audit-time {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+#auditTable .audit-details code {
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.audit-footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.audit-retention {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+}
+
+.audit-retention input {
+    width: 90px;
+}

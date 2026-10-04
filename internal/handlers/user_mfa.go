@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/pquerna/otp/totp"
@@ -350,6 +352,8 @@ func MFATOTPVerifyHandler(repos *repository.Repositories, cfg *config.Config) ht
 				"user_id", user.ID,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "totp_enable", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "mfa", ResourceID: idStr(user.ID), Details: map[string]any{"method": "totp"}})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -400,6 +404,8 @@ func MFATOTPVerifyHandler(repos *repository.Repositories, cfg *config.Config) ht
 			"ip", logIP(clientIP, cfg),
 			"recovery_codes_generated", len(recoveryCodes),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "totp_enable", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "mfa", ResourceID: idStr(user.ID), Details: map[string]any{"method": "totp"}})
 
 		response := TOTPVerifyResponse{
 			Success:       true,
@@ -525,6 +531,8 @@ func MFATOTPDisableHandler(repos *repository.Repositories, cfg *config.Config) h
 				"user_id", user.ID,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "totp_disable", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "mfa", ResourceID: idStr(user.ID), Details: map[string]any{"method": "totp"}})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -548,6 +556,8 @@ func MFATOTPDisableHandler(repos *repository.Repositories, cfg *config.Config) h
 			"username", user.Username,
 			"ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "totp_disable", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "mfa", ResourceID: idStr(user.ID), Details: map[string]any{"method": "totp"}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -856,6 +866,8 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 				"target_username", user.Username,
 				"ip", logIP(clientIP, cfg),
 			)
+			recordAdmin(r, cfg, audit.Event{Action: "user_mfa_reset", Outcome: models.AuditOutcomeDenied, ResourceType: "mfa",
+				ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username, "reason": "target_is_admin"}})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -909,6 +921,9 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 			"webauthn_credentials", statusBefore.WebAuthnCredentials,
 			"recovery_codes", statusBefore.RecoveryCodesRemaining,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_mfa_reset", Outcome: models.AuditOutcomeSuccess, ResourceType: "mfa",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username,
+				"had_totp": statusBefore.TOTPEnabled, "had_webauthn": statusBefore.WebAuthnEnabled}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{

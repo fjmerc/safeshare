@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
@@ -413,6 +414,12 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 				DownloadedAt: &now,
 			},
 		})
+	}
+
+	// A download is counted once, when the session is credited.
+	if justCredited {
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_download", Outcome: models.AuditOutcomeSuccess,
+			ResourceType: "file", ResourceID: idStr(file.ID)})
 	}
 
 	// file.expired fires when a credit *this request* performed brings the

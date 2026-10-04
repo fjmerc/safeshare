@@ -47,7 +47,7 @@ flowchart TD
 | **Metadata stripping** | Always on | Off by default | Off by default | Off by default |
 | **Network access** | Tor only | Clearnet | Clearnet + proxy | Clearnet + proxy |
 | **Abuse prevention** | Minimal | Basic rate limits | Full controls | Full controls + audit |
-| **Audit trail** | None (by design) | Basic logs | Structured JSON logs | Full audit + backups |
+| **Audit trail** | None (by design: the audit log is off in anonymous mode) | Basic logs | Structured JSON logs | Full audit + backups |
 | **Database** | SQLite | SQLite | SQLite or PostgreSQL | PostgreSQL |
 | **Best for** | Whistleblowers, journalists | Personal use, small teams | Enterprises, internal tools | Regulated industries |
 
@@ -492,7 +492,7 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 | **PostgreSQL backend** | No | No | Optional | Yes |
 | **Automated backups** | No | No | Optional | Yes |
 | **Prometheus metrics** | No | Optional | Recommended | Yes |
-| **Structured audit logs** | Disabled | Basic | Full | Full |
+| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Basic | Full | Full |
 | **Storage quotas** | Optional | Optional | On | On |
 | **File expiration (max)** | 24h | 7 days | 7 days | Configurable |
 

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
@@ -140,6 +141,8 @@ func AdminCreateUserHandler(repos *repository.Repositories, cfg *config.Config) 
 			"new_user_id", user.ID,
 			"username", user.Username,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_create", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(user.ID), Details: map[string]any{"target_username": user.Username, "role": user.Role}})
 
 		// Return user info with temporary password
 		response := models.CreateUserResponse{
@@ -288,6 +291,17 @@ func AdminUpdateUserHandler(repos *repository.Repositories, cfg *config.Config) 
 			return
 		}
 
+		changed := []string{}
+		if username != user.Username {
+			changed = append(changed, "username")
+		}
+		if email != user.Email {
+			changed = append(changed, "email")
+		}
+		if role != user.Role {
+			changed = append(changed, "role")
+		}
+
 		// Update user in database
 		if err := repos.Users.Update(ctx, userID, username, email, role); err != nil {
 			slog.Error("failed to update user", "error", err)
@@ -310,6 +324,8 @@ func AdminUpdateUserHandler(repos *repository.Repositories, cfg *config.Config) 
 			"user_id", userID,
 			"username", username,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_update", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": username, "changed_fields": changed, "role": role}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -389,6 +405,8 @@ func AdminToggleUserActiveHandler(repos *repository.Repositories, cfg *config.Co
 			"username", user.Username,
 			"is_active", isActive,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_toggle_active", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username, "active": isActive}})
 
 		message := "User disabled successfully"
 		if isActive {
@@ -475,6 +493,8 @@ func AdminResetUserPasswordHandler(repos *repository.Repositories, cfg *config.C
 			"user_id", userID,
 			"username", user.Username,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_reset_password", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username}})
 
 		response := map[string]string{
 			"message":            "Password reset successfully",
@@ -540,6 +560,8 @@ func AdminDeleteUserHandler(repos *repository.Repositories, cfg *config.Config) 
 			"user_id", userID,
 			"username", user.Username,
 		)
+		recordAdmin(r, cfg, audit.Event{Action: "user_delete", Outcome: models.AuditOutcomeSuccess, ResourceType: "user",
+			ResourceID: idStr(userID), Details: map[string]any{"target_username": user.Username}})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{

@@ -263,7 +263,7 @@ func TestChangePasswordHandler_Valid(t *testing.T) {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
-	handler := UserChangePasswordHandler(repos)
+	handler := UserChangePasswordHandler(repos, cfg)
 
 	// Create request
 	changeReq := models.ChangePasswordRequest{
@@ -316,7 +316,7 @@ func TestChangePasswordHandler_InvalidCurrentPassword(t *testing.T) {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
-	handler := UserChangePasswordHandler(repos)
+	handler := UserChangePasswordHandler(repos, cfg)
 
 	changeReq := models.ChangePasswordRequest{
 		CurrentPassword: "wrongpassword",
@@ -352,7 +352,7 @@ func TestChangePasswordHandler_PasswordMismatch(t *testing.T) {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
-	handler := UserChangePasswordHandler(repos)
+	handler := UserChangePasswordHandler(repos, cfg)
 
 	changeReq := models.ChangePasswordRequest{
 		CurrentPassword: "currentpassword",
@@ -647,7 +647,7 @@ func TestUserChangePasswordHandler_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create repositories: %v", err)
 	}
-	handler := UserChangePasswordHandler(repos)
+	handler := UserChangePasswordHandler(repos, cfg)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
 
@@ -679,7 +679,7 @@ func TestUserChangePasswordHandler_WeakPassword(t *testing.T) {
 		t.Fatalf("failed to create user: %v", err)
 	}
 
-	handler := UserChangePasswordHandler(repos)
+	handler := UserChangePasswordHandler(repos, cfg)
 
 	tests := []struct {
 		name        string

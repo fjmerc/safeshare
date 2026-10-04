@@ -12,8 +12,10 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/fjmerc/safeshare/internal/audit"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
+	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/webauthn"
 )
@@ -356,6 +358,8 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 				"user_id", user.ID,
 				"ip", logIP(clientIP, cfg),
 			)
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "webauthn_register", Outcome: models.AuditOutcomeFailure,
+				UserID: user.ID, Username: user.Username, ResourceType: "webauthn_credential"})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -393,6 +397,9 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 			"ip", logIP(clientIP, cfg),
 			"user_agent", userAgent,
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "webauthn_register", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "webauthn_credential", ResourceID: idStr(storedCred.ID),
+			Details: map[string]any{"name": req.Name}})
 
 		// Return the new credential info
 		response := WebAuthnCredentialResponse{
@@ -868,6 +875,8 @@ func MFAWebAuthnCredentialDeleteHandler(repos *repository.Repositories, cfg *con
 			"credential_id", credentialID,
 			"ip", logIP(clientIP, cfg),
 		)
+		audit.Record(r, cfg, audit.Event{Type: models.AuditEventAuth, Action: "webauthn_delete", Outcome: models.AuditOutcomeSuccess,
+			UserID: user.ID, Username: user.Username, ResourceType: "webauthn_credential", ResourceID: idStr(credentialID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
