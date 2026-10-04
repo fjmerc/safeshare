@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const MODAL_SELECTOR = '.modal, .share-modal, .recovery-modal, .e2e-decrypt-overlay';
+    const MODAL_SELECTOR = '.modal, .share-modal, .e2e-decrypt-overlay';
     // A modal's own header first: some have per-step headings in the body
     // (a modal can also set aria-labelledby itself).
     const HEADING_SELECTORS = ['.modal-header', 'h1, h2, h3'];

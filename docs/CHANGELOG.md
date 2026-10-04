@@ -35,6 +35,13 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+- **No more "Upload Completed" pop-up on every visit.** The upload page used to keep every claim code in the browser for 7 days and show them in a pop-up until you clicked a copy button, even to the next person using the same computer, and even after logging out. Now:
+  - Signed-in users: nothing is stored in the browser. The success screen links to **My Uploads**, where every upload and claim code already lives.
+  - Anonymous uploads (when sign-in isn't required): a quiet **Recent uploads on this device** list under the upload area, with copy and remove buttons and a **Clear all** link. It never pops up, and each entry disappears when its file expires.
+  - Claim codes saved by earlier versions are deleted on your next visit, and saved codes are cleared when you log out.
+  - When you set a password, the success screen reminds you that it isn't saved anywhere and can't be recovered.
+
 ### Fixed
 - **Backup retention never deleted anything.** Backup folders were named with the hour where the day belongs (a backup made at 10:52 on October 4 was named `backup-YYYY-10-10T10-52-…`), and the scheduled-backup retention sweep only recognized a different name format, so old backups were never removed. Names now use the real date, and retention recognizes every format SafeShare has produced. **After upgrading, the first scheduled backup run deletes backup folders in `BACKUP_DIR` older than the schedule's retention period — including manual and CLI backups stored there.** Copy anything you want to keep out of `BACKUP_DIR` first. Installs without an enabled backup schedule are unaffected.
 - Admin tables: the Actions column's cell border no longer sits out of line with the rest of the row.

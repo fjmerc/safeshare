@@ -305,6 +305,13 @@
                         </div>
                     </div>
 
+                    <p id="resultPasswordNote" class="result-note hidden">
+                        <svg class="inline-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        The password isn't saved anywhere. Send it to the recipient separately; if it's lost, the file can't be opened.
+                    </p>
+
+                    <a id="resultDashboardLink" class="result-dashboard-link hidden" href="/dashboard">See all your uploads in My Uploads</a>
+
                     <div class="qr-section">
                         <h3>Share this file</h3>
                         <div id="qrcode" class="qr-code"></div>
@@ -326,6 +333,16 @@
                     <button id="newUploadButton" class="btn-secondary">Upload Another File</button>
                 </div>
             </div>
+
+            <!-- Anonymous uploads only; signed-in users have My Uploads -->
+            <section id="recentUploads" class="card recent-uploads hidden" aria-labelledby="recentUploadsHeading">
+                <div class="recent-uploads-header">
+                    <h2 id="recentUploadsHeading" tabindex="-1">Recent uploads on this device</h2>
+                    <button type="button" id="clearRecentUploads" class="btn-link-small">Clear all</button>
+                </div>
+                <p class="recent-uploads-hint">Saved only in this browser until each file expires. Clear them when you're done, especially on a shared computer.</p>
+                <ul id="recentUploadsList" class="recent-uploads-list"></ul>
+            </section>
         </section>
 
         <!-- Pickup Tab Content -->

@@ -595,6 +595,11 @@
 
         // Logout
         async function logout() {
+            // Claim codes saved on this device by the upload page (current and pre-1.11.1 keys)
+            try {
+                localStorage.removeItem('safeshare_recent_uploads');
+                localStorage.removeItem('safeshare_completed_uploads');
+            } catch (e) { /* storage blocked */ }
             try {
                 await fetch('/api/auth/logout', {
                     method: 'POST',
