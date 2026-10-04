@@ -1349,6 +1349,7 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.11.1 | The upload page kept claim codes in the browser for 7 days and showed them in a pop-up to whoever used the browser next, even after logout | Low |
 | v1.11.0 | No tamper-evident record of security events (audit log added, ADR-018) | Medium |
 | v1.10.1 | Two concurrent first uploads of the same chunk with different bytes both succeeded; the later silently replaced the earlier | Low |
 | v1.10.0 | Chunked-upload inits that sent no data held their full size against the storage quota for 24h | Medium |

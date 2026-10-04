@@ -112,6 +112,9 @@ function resetToLogin() {
     const submitBtn = loginForm.querySelector('button[type="submit"]');
     submitBtn.disabled = false;
     submitBtn.textContent = 'Login';
+
+    // Return keyboard focus to the form that just reappeared
+    document.getElementById('password').focus();
 }
 
 function startMFATimer() {

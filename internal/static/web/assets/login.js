@@ -1,10 +1,18 @@
-// Load theme preference from localStorage
-(function() {
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-theme', savedTheme);
-})();
+// theme-init.js (loaded in <head>) has already applied the stored choice or
+// the OS preference. The icon shows the mode a click switches to.
+function syncThemeUI(theme) {
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#111827' : '#2563eb');
 
-// Theme toggle functionality
+    const toggle = document.getElementById('themeToggle');
+    if (!toggle) return;
+    const sunIcon = toggle.querySelector('.theme-icon-sun');
+    const moonIcon = toggle.querySelector('.theme-icon-moon');
+    if (!sunIcon || !moonIcon) return;
+    sunIcon.style.display = theme === 'dark' ? 'block' : 'none';
+    moonIcon.style.display = theme === 'dark' ? 'none' : 'block';
+}
+
 const themeToggle = document.getElementById('themeToggle');
 if (themeToggle) {
     themeToggle.addEventListener('click', () => {
@@ -12,34 +20,11 @@ if (themeToggle) {
         const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
         document.documentElement.setAttribute('data-theme', newTheme);
-        localStorage.setItem('theme', newTheme);
-
-        // Toggle icon visibility
-        const sunIcon = themeToggle.querySelector('.theme-icon-sun');
-        const moonIcon = themeToggle.querySelector('.theme-icon-moon');
-
-        if (newTheme === 'dark') {
-            sunIcon.style.display = 'none';
-            moonIcon.style.display = 'block';
-        } else {
-            sunIcon.style.display = 'block';
-            moonIcon.style.display = 'none';
-        }
+        try { localStorage.setItem('theme', newTheme); } catch (e) { /* storage blocked */ }
+        syncThemeUI(newTheme);
     });
-
-    // Set initial icon based on current theme
-    const currentTheme = document.documentElement.getAttribute('data-theme');
-    const sunIcon = themeToggle.querySelector('.theme-icon-sun');
-    const moonIcon = themeToggle.querySelector('.theme-icon-moon');
-
-    if (currentTheme === 'dark') {
-        sunIcon.style.display = 'none';
-        moonIcon.style.display = 'block';
-    } else {
-        sunIcon.style.display = 'block';
-        moonIcon.style.display = 'none';
-    }
 }
+syncThemeUI(document.documentElement.getAttribute('data-theme'));
 
 // Universal password toggle handler
 document.querySelectorAll('[data-password-toggle]').forEach(button => {

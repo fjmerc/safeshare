@@ -446,9 +446,6 @@ class ChunkedUploader {
 
                     this.isCompleted = true;
 
-                    // Save completion data to localStorage BEFORE clearing upload state
-                    ChunkedUploader.saveCompletion(result);
-
                     // Clear saved state from localStorage
                     this.clearState();
 
@@ -459,9 +456,6 @@ class ChunkedUploader {
 
                 // If not 202, handle as synchronous completion (backward compatibility)
                 this.isCompleted = true;
-
-                // Save completion data to localStorage BEFORE clearing upload state
-                ChunkedUploader.saveCompletion(data);
 
                 // Clear saved state from localStorage
                 this.clearState();
@@ -1440,100 +1434,114 @@ class ChunkedUploader {
         };
     }
 
-    /**
-     * Save upload completion to localStorage for recovery
-     * @param {Object} data - Completion data from server
+    /*
+     * "Recent uploads on this device": a quiet list for anonymous uploaders,
+     * so a claim code isn't lost if the tab is closed before it's copied.
+     * Signed-in users have My Uploads instead, so nothing is stored for them.
+     * Entries leave the list when the file expires.
      */
-    static saveCompletion(data) {
-        const STORAGE_KEY = 'safeshare_completed_uploads';
-        const RETENTION_DAYS = 7;
+    static get RECENT_UPLOADS_KEY() { return 'safeshare_recent_uploads'; }
 
-        try {
-            // Get existing completions
-            let completions = [];
-            const existing = localStorage.getItem(STORAGE_KEY);
-            if (existing) {
-                completions = JSON.parse(existing);
-            }
+    // Kept for 30 days when the file never expires
+    static get RECENT_UPLOADS_NO_EXPIRY_MS() { return 30 * 24 * 60 * 60 * 1000; }
 
-            // Add new completion
-            completions.push({
-                claim_code: data.claim_code,
-                download_url: data.download_url,
-                filename: data.original_filename,
-                file_size: data.file_size,
-                expires_at: data.expires_at,
-                max_downloads: data.max_downloads,
-                timestamp: Date.now(),
-                viewed: false
-            });
+    static get RECENT_UPLOADS_MAX() { return 20; }
 
-            // Clean up old completions (older than RETENTION_DAYS)
-            const cutoffTime = Date.now() - (RETENTION_DAYS * 24 * 60 * 60 * 1000);
-            completions = completions.filter(c => c.timestamp > cutoffTime);
-
-            // Save back to localStorage
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(completions));
-            console.log('Saved completion to localStorage:', data.claim_code);
-
-        } catch (e) {
-            console.warn('Failed to save completion to localStorage:', e);
-        }
+    /**
+     * Expiry time of an entry, or null when the file never expires (the
+     * server sends "never" as ~100 years out, same cut-off as formatDate)
+     * @returns {number|null}
+     */
+    static recentUploadExpiry(upload) {
+        const expires = upload && upload.expires_at ? Date.parse(upload.expires_at) : NaN;
+        if (Number.isNaN(expires)) return null;
+        const NINETY_YEARS_MS = 90 * 365 * 24 * 60 * 60 * 1000;
+        return expires - Date.now() > NINETY_YEARS_MS ? null : expires;
     }
 
     /**
-     * Get all unviewed completed uploads from localStorage
-     * @returns {Array<Object>} - Array of completion objects
+     * Remember an upload in this browser's recent list
+     * @param {Object} data - Upload response from the server
      */
-    static getUnviewedCompletions() {
-        const STORAGE_KEY = 'safeshare_completed_uploads';
+    static saveRecentUpload(data) {
+        if (!data || !data.claim_code) return;
+        const entry = {
+            claim_code: data.claim_code,
+            download_url: data.download_url,
+            filename: data.original_filename,
+            file_size: data.file_size,
+            expires_at: data.expires_at || null,
+            saved_at: Date.now()
+        };
+        const list = ChunkedUploader.getRecentUploads()
+            .filter(u => u.claim_code !== entry.claim_code);
+        list.unshift(entry);
+        ChunkedUploader.writeRecentUploads(list.slice(0, ChunkedUploader.RECENT_UPLOADS_MAX));
+    }
 
+    /**
+     * Recent uploads that haven't expired, newest first
+     * @returns {Array<Object>}
+     */
+    static getRecentUploads() {
+        let list;
         try {
-            const existing = localStorage.getItem(STORAGE_KEY);
-            if (!existing) return [];
-
-            const completions = JSON.parse(existing);
-            return completions.filter(c => !c.viewed);
-
+            list = JSON.parse(localStorage.getItem(ChunkedUploader.RECENT_UPLOADS_KEY) || '[]');
         } catch (e) {
-            console.warn('Failed to load completions from localStorage:', e);
             return [];
         }
+        if (!Array.isArray(list)) return [];
+
+        const now = Date.now();
+        const live = list.filter(u => {
+            if (!u || typeof u.claim_code !== 'string') return false;
+            const expires = ChunkedUploader.recentUploadExpiry(u);
+            if (expires !== null) return expires > now;
+            return (Number(u.saved_at) || 0) + ChunkedUploader.RECENT_UPLOADS_NO_EXPIRY_MS > now;
+        });
+        if (live.length !== list.length) ChunkedUploader.writeRecentUploads(live);
+        return live;
     }
 
     /**
-     * Mark all completions as viewed
+     * Forget one upload
+     * @param {string} claimCode
      */
-    static markCompletionsAsViewed() {
-        const STORAGE_KEY = 'safeshare_completed_uploads';
-
-        try {
-            const existing = localStorage.getItem(STORAGE_KEY);
-            if (!existing) return;
-
-            const completions = JSON.parse(existing);
-            completions.forEach(c => c.viewed = true);
-
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(completions));
-            console.log('Marked all completions as viewed');
-
-        } catch (e) {
-            console.warn('Failed to mark completions as viewed:', e);
-        }
+    static removeRecentUpload(claimCode) {
+        ChunkedUploader.writeRecentUploads(
+            ChunkedUploader.getRecentUploads().filter(u => u.claim_code !== claimCode));
     }
 
     /**
-     * Clear all completions from localStorage
+     * Forget every recent upload, including the list kept by older versions
      */
-    static clearAllCompletions() {
-        const STORAGE_KEY = 'safeshare_completed_uploads';
-
+    static clearRecentUploads() {
         try {
-            localStorage.removeItem(STORAGE_KEY);
-            console.log('Cleared all completions from localStorage');
+            localStorage.removeItem(ChunkedUploader.RECENT_UPLOADS_KEY);
+        } catch (e) { /* storage blocked */ }
+        ChunkedUploader.dropLegacyCompletions();
+    }
 
+    /**
+     * Older versions kept every claim code for 7 days and showed them in a
+     * pop-up on each visit (even to the next person on a shared computer).
+     * That list is deleted rather than migrated.
+     */
+    static dropLegacyCompletions() {
+        try {
+            localStorage.removeItem('safeshare_completed_uploads');
+        } catch (e) { /* storage blocked */ }
+    }
+
+    static writeRecentUploads(list) {
+        try {
+            if (list.length) {
+                localStorage.setItem(ChunkedUploader.RECENT_UPLOADS_KEY, JSON.stringify(list));
+            } else {
+                localStorage.removeItem(ChunkedUploader.RECENT_UPLOADS_KEY);
+            }
         } catch (e) {
-            console.warn('Failed to clear completions:', e);
+            console.warn('Failed to update recent uploads:', e);
         }
     }
 }

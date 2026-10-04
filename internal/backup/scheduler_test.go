@@ -464,6 +464,13 @@ func TestBackupDirNameRegex(t *testing.T) {
 	}{
 		{"valid format", "backup-20240115-143022", true},
 		{"valid format 2", "backup-19991231-235959", true},
+		{"generated format", "backup-2026-10-04T10-52-14", true},
+		{"pre-1.11.1 generated format", "backup-2026-10-10T10-52-14", true},
+		{"generated format with collision suffix", "backup-2026-10-10T10-52-14-1791197534123456789", true},
+		{"generated format with letter suffix", "backup-2026-10-04T10-52-14-x", false},
+		{"generated format with mixed suffix", "backup-2026-10-04T10-52-14-1a", false},
+		{"generated format with oversized suffix", "backup-2026-10-04T10-52-14-12345678901234567890", false},
+		{"generated format traversal", "../backup-2026-10-04T10-52-14", false},
 		{"missing prefix", "20240115-143022", false},
 		{"wrong prefix", "bkp-20240115-143022", false},
 		{"extra suffix", "backup-20240115-143022-extra", false},
@@ -499,10 +506,14 @@ func TestCleanupOldBackupDirectories(t *testing.T) {
 
 	// Create some backup directories with different ages
 	oldBackup := filepath.Join(tmpDir, "backup-20230101-120000")
+	oldGenerated := filepath.Join(tmpDir, "backup-2023-01-12T12-00-00")
 	newBackup := filepath.Join(tmpDir, "backup-20240115-120000")
 	nonBackup := filepath.Join(tmpDir, "other-directory")
 
 	if err := os.MkdirAll(oldBackup, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(oldGenerated, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(newBackup, 0755); err != nil {
@@ -517,6 +528,9 @@ func TestCleanupOldBackupDirectories(t *testing.T) {
 	if err := os.Chtimes(oldBackup, oldTime, oldTime); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chtimes(oldGenerated, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
 
 	// Cutoff is 30 days ago
 	cutoffTime := time.Now().AddDate(0, 0, -30)
@@ -526,6 +540,10 @@ func TestCleanupOldBackupDirectories(t *testing.T) {
 	// Old backup should be removed
 	if _, err := os.Stat(oldBackup); !os.IsNotExist(err) {
 		t.Error("old backup directory should have been removed")
+	}
+	// Including one named the way GetBackupDirName names them
+	if _, err := os.Stat(oldGenerated); !os.IsNotExist(err) {
+		t.Error("old backup with a generated name should have been removed")
 	}
 
 	// New backup should still exist

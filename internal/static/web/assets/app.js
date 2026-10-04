@@ -120,7 +120,7 @@
         initE2EEncryption(); // Show/hide E2E toggle based on browser support
         setupEventListeners();
         handleInitialTab();
-        checkForCompletedUploads(); // Check for saved completions to recover
+        initRecentUploads(); // Quiet per-device list for anonymous uploaders (replaces the old pop-up)
         setupBeforeUnloadProtection(); // Prevent navigation during upload
         clearLegacyDownloadProgress(); // Remove download_* keys from the removed cross-refresh resume feature
         if (typeof ChunkedUploader !== 'undefined') {
@@ -229,7 +229,10 @@
 
         // Keep aria-selected in sync with the active class in both branches
         [dropoffButton, pickupButton].forEach(btn => {
-            if (btn) btn.setAttribute('aria-selected', btn.classList.contains('active') ? 'true' : 'false');
+            if (!btn) return;
+            const on = btn.classList.contains('active');
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            btn.setAttribute('tabindex', on ? '0' : '-1');
         });
     }
 
@@ -288,20 +291,37 @@
         if (toggle.checked && selectedFile &&
             window.SafeShareCrypto && SafeShareCrypto.isFileTooLargeForClientEncryption(selectedFile.size)) {
             warning.classList.remove('hidden');
+            // The warning lives inside Upload Settings; open it if collapsed
+            const settingsToggle = document.getElementById('uploadSettingsToggle');
+            if (settingsToggle && settingsToggle.getAttribute('aria-expanded') === 'false') {
+                settingsToggle.click();
+            }
         } else {
             warning.classList.add('hidden');
         }
     }
 
-    // Load theme preference
-    function loadTheme() {
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        document.documentElement.setAttribute('data-theme', savedTheme);
-        updateThemeIcon(savedTheme);
+    // Set a progress bar's fill (transform, not width) and its aria-valuenow
+    function setProgress(fillEl, percent) {
+        if (!fillEl) return;
+        const value = Math.max(0, Math.min(100, Number(percent) || 0));
+        fillEl.style.transform = `scaleX(${value / 100})`;
+        if (fillEl.parentElement) {
+            fillEl.parentElement.setAttribute('aria-valuenow', String(Math.round(value)));
+        }
     }
 
-    // Update theme icon
+    // theme-init.js has already applied the stored choice or the OS preference;
+    // just make the icon (and browser chrome colour) match what is on the page.
+    function loadTheme() {
+        updateThemeIcon(document.documentElement.getAttribute('data-theme'));
+    }
+
+    // Update theme icon (it shows the mode a click switches to) and the
+    // browser toolbar colour
     function updateThemeIcon(theme) {
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#111827' : '#2563eb');
         const sunIcon = document.querySelector('.theme-icon-sun');
         const moonIcon = document.querySelector('.theme-icon-moon');
 
@@ -388,6 +408,8 @@
             if (response.ok) {
                 currentUser = null;
                 showUserStatus(false);
+                ChunkedUploader.clearRecentUploads();
+                renderRecentUploads();
                 // Optional: show a success message
                 console.log('Logged out successfully');
             } else {
@@ -415,6 +437,27 @@
             btn.addEventListener('click', handleTabSwitch);
         });
 
+        // Arrow keys move between the visible tabs (automatic activation)
+        const tabList = document.querySelector('.tab-list');
+        if (tabList) {
+            tabList.addEventListener('keydown', (e) => {
+                const tabs = [...tabList.querySelectorAll('[role="tab"]')].filter(t => t.offsetParent !== null);
+                const idx = tabs.indexOf(document.activeElement);
+                if (idx === -1) return;
+                let next = null;
+                switch (e.key) {
+                    case 'ArrowRight': next = tabs[(idx + 1) % tabs.length]; break;
+                    case 'ArrowLeft': next = tabs[(idx - 1 + tabs.length) % tabs.length]; break;
+                    case 'Home': next = tabs[0]; break;
+                    case 'End': next = tabs[tabs.length - 1]; break;
+                    default: return;
+                }
+                e.preventDefault();
+                next.focus();
+                next.click();
+            });
+        }
+
         // Login to upload button
         const loginToUploadBtn = document.getElementById('loginToUploadBtn');
         if (loginToUploadBtn) {
@@ -425,6 +468,15 @@
 
         // Dropoff Tab - Drop zone events
         dropZone.addEventListener('click', () => fileInput.click());
+        // Real button for keyboard / screen-reader users; stop the click
+        // reaching the zone handler so the picker opens only once
+        const browseButton = document.getElementById('browseButton');
+        if (browseButton) {
+            browseButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+        }
         dropZone.addEventListener('dragover', handleDragOver);
         dropZone.addEventListener('dragleave', handleDragLeave);
         dropZone.addEventListener('drop', handleDrop);
@@ -544,6 +596,7 @@
 
             // Toggle function
             const toggleUploadSettings = () => {
+                if (uploadSettingsToggle.getAttribute('aria-disabled') === 'true') return;
                 const isCurrentlyExpanded = uploadSettingsToggle.getAttribute('aria-expanded') === 'true';
                 const newState = !isCurrentlyExpanded;
 
@@ -562,17 +615,28 @@
                 }
             };
 
-            // Click event
+            // A real <button>: click covers mouse, touch, Enter and Space
             uploadSettingsToggle.addEventListener('click', toggleUploadSettings);
-
-            // Keyboard support (Enter and Space)
-            uploadSettingsToggle.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleUploadSettings();
-                }
-            });
         }
+
+        // Help badges: click/tap opens the popup, Escape dismisses it
+        // until the pointer or focus leaves (WCAG 1.4.13)
+        document.querySelectorAll('.tooltip').forEach(tip => {
+            tip.addEventListener('click', () => {
+                tip.classList.remove('is-dismissed');
+                tip.classList.toggle('is-open');
+            });
+            const reset = () => tip.classList.remove('is-dismissed', 'is-open');
+            tip.addEventListener('mouseleave', reset);
+            tip.addEventListener('blur', reset);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            document.querySelectorAll('.tooltip').forEach(tip => {
+                tip.classList.remove('is-open');
+                tip.classList.add('is-dismissed');
+            });
+        });
 
         // Dropoff Tab - New upload button
         newUploadButton.addEventListener('click', resetForm);
@@ -914,12 +978,12 @@
                 uploadProgress.classList.remove('hidden');
                 uploadButton.disabled = true;
                 progressText.textContent = 'Reading file...';
-                progressFill.style.width = '0%';
+                setProgress(progressFill, 0);
 
                 const arrayBuffer = await selectedFile.arrayBuffer();
 
                 progressText.textContent = 'Encrypting...';
-                progressFill.style.width = '10%';
+                setProgress(progressFill, 10);
 
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
@@ -932,7 +996,7 @@
                 const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, payload);
 
                 progressText.textContent = 'Uploading...';
-                progressFill.style.width = '15%';
+                setProgress(progressFill, 15);
 
                 const uploadName = hideFilename ? 'encrypted.bin' : selectedFile.name;
                 fileToUpload = new File([encryptedBuffer], uploadName, {
@@ -1023,7 +1087,7 @@
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const percent = (e.loaded / e.total) * 100;
-                    progressFill.style.width = percent + '%';
+                    setProgress(progressFill, percent);
                     updateUploadStats(e.loaded, e.total);
                     if (percent >= 100) {
                         // ADR-015: the body is fully sent, but the server still
@@ -1043,8 +1107,6 @@
             xhr.addEventListener('load', () => {
                 if (xhr.status === 201) {
                     const response = JSON.parse(xhr.responseText);
-                    // Save completion to localStorage for recovery
-                    ChunkedUploader.saveCompletion(response);
                     showResults(response);
                 } else {
                     const error = JSON.parse(xhr.responseText);
@@ -1123,7 +1185,7 @@
             // Register progress event
             uploader.on('progress', (data) => {
                 const percent = data.percentage;
-                progressFill.style.width = percent + '%';
+                setProgress(progressFill, percent);
 
                 // Show user-friendly progress (no technical chunk details)
                 const uploaded = formatFileSize(data.uploadedBytes);
@@ -1179,7 +1241,7 @@
                     ? 'Processing and scanning file... This may take a moment for large files.'
                     : 'Assembling file... This may take a moment for large files.';
                 // Keep progress bar at 100% (chunks are uploaded)
-                progressFill.style.width = '100%';
+                setProgress(progressFill, 100);
             });
 
             // Register assembling progress event (polling updates)
@@ -1230,9 +1292,6 @@
     // Show results
     function showResults(data) {
         try {
-            // Recovery feature: Upload completions are saved by upload handlers
-            // (ChunkedUploader.complete() for chunked, XHR handler for simple)
-
             // If E2E encrypted, construct URL with key fragment
             let displayUrl = data.download_url;
             const isE2E = !!e2eExportedKey;
@@ -1276,6 +1335,19 @@
                 : `${data.completed_downloads} / Unlimited`;
             document.getElementById('maxDownloadsInfo').textContent = downloadsText;
 
+            // The upload password is never stored, so say so while it's on screen
+            const passwordInput = document.getElementById('uploadPassword');
+            const passwordUsed = !!(passwordInput && passwordInput.value.trim());
+            document.getElementById('resultPasswordNote')?.classList.toggle('hidden', !passwordUsed);
+
+            // Signed-in users find every upload in My Uploads; anonymous uploads go
+            // in this device's recent list (not E2E: the code alone can't decrypt)
+            document.getElementById('resultDashboardLink')?.classList.toggle('hidden', !currentUser);
+            if (!currentUser && !isE2E) {
+                ChunkedUploader.saveRecentUpload(data);
+                renderRecentUploads();
+            }
+
             // Generate QR code (optional - if library loaded)
             const qrcodeDiv = document.getElementById('qrcode');
             qrcodeDiv.innerHTML = ''; // Clear previous
@@ -1292,11 +1364,11 @@
                     });
                 } catch (qrError) {
                     console.error('QR Code generation failed:', qrError);
-                    qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable</p>';
+                    qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable</p>';
                 }
             } else {
                 console.warn('QRCode library not loaded');
-                qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable (library not loaded)</p>';
+                qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable (library not loaded)</p>';
             }
 
             // Hide upload section, show results
@@ -1359,13 +1431,13 @@
     function updateRemoveButtonState() {
         if (uploadState === 'uploading') {
             // Show as cancel button
-            removeFileButton.textContent = '✕ Cancel Upload';
+            removeFileButton.textContent = 'Cancel Upload';
             removeFileButton.classList.remove('btn-remove-file');
             removeFileButton.classList.add('btn-cancel');
             removeFileButton.classList.remove('hidden');
         } else if (selectedFile) {
             // Show as remove button
-            removeFileButton.textContent = '✕ Remove File';
+            removeFileButton.textContent = 'Remove File';
             removeFileButton.classList.add('btn-remove-file');
             removeFileButton.classList.remove('btn-cancel');
             removeFileButton.classList.remove('hidden');
@@ -1416,13 +1488,14 @@
         if (fileInput) {
             fileInput.disabled = disabled;
         }
+
+        // Keep the keyboard route in step with the zone
+        const browseBtn = document.getElementById('browseButton');
+        if (browseBtn) browseBtn.disabled = disabled;
     }
 
     // Reset form
     function resetForm() {
-        // Mark completions as viewed since user has seen results and is moving on
-        ChunkedUploader.markCompletionsAsViewed();
-
         clearSelectedFile();
         expirationHours.value = 24;
         maxDownloads.value = '';
@@ -1475,7 +1548,7 @@
 
     function resetProgress() {
         uploadProgress.classList.add('hidden');
-        progressFill.style.width = '0%';
+        setProgress(progressFill, 0);
         progressText.textContent = 'Uploading...';
         resetUploadStats();
         uploadButton.disabled = false;
@@ -1497,7 +1570,7 @@
         const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
         document.documentElement.setAttribute('data-theme', newTheme);
-        localStorage.setItem('theme', newTheme);
+        try { localStorage.setItem('theme', newTheme); } catch (e) { /* storage blocked */ }
         updateThemeIcon(newTheme);
     }
 
@@ -1567,19 +1640,19 @@
         if (success) {
             // Visual feedback on button
             const btn = e.currentTarget;
-            const originalText = btn.textContent;
-            btn.textContent = '✓';
+            // Keep the icon from before the first click, so a second click
+            // within the 2s window doesn't capture the checkmark as "original"
+            if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+            clearTimeout(btn._copiedTimer);
+            btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
             btn.classList.add('copied');
 
-            setTimeout(() => {
-                btn.textContent = originalText;
+            btn._copiedTimer = setTimeout(() => {
+                btn.innerHTML = btn.dataset.originalHtml;
+                delete btn.dataset.originalHtml;
                 btn.classList.remove('copied');
             }, 2000);
 
-            // Mark completions as viewed if user copied claim code or download URL
-            if (copyId === 'claimCode' || copyId === 'downloadUrl') {
-                ChunkedUploader.markCompletionsAsViewed();
-            }
         }
     }
 
@@ -1774,6 +1847,7 @@
     // Format file size
     function formatFileSize(bytes) {
         if (bytes === 0) return '0 Bytes';
+        if (bytes === 1) return '1 Byte';
 
         const k = 1024;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
@@ -1850,10 +1924,12 @@
             btn.classList.remove('active');
             if (btn.dataset.tab) {
                 btn.setAttribute('aria-selected', 'false');
+                btn.setAttribute('tabindex', '-1');
             }
         });
         e.target.classList.add('active');
         e.target.setAttribute('aria-selected', 'true');
+        e.target.setAttribute('tabindex', '0');
 
         // Update tab content
         document.querySelectorAll('.tab-content').forEach(content => {
@@ -2142,116 +2218,98 @@
     // ========================================
 
     /**
-     * Check for completed uploads in localStorage and show recovery modal
+     * Older versions showed a pop-up with every saved claim code on each
+     * visit. Drop that list; keep a quiet recent-uploads list for anonymous
+     * uploaders only (signed-in users have My Uploads).
      */
-    function checkForCompletedUploads() {
-        const completions = ChunkedUploader.getUnviewedCompletions();
+    function initRecentUploads() {
+        if (typeof ChunkedUploader === 'undefined') return;
+        ChunkedUploader.dropLegacyCompletions();
+        if (currentUser) ChunkedUploader.clearRecentUploads();
 
-        if (completions.length > 0) {
-            console.log('Found', completions.length, 'unviewed completed uploads');
-            showRecoveryModal(completions);
-        }
+        document.getElementById('clearRecentUploads')?.addEventListener('click', () => {
+            ChunkedUploader.clearRecentUploads();
+            renderRecentUploads();
+            showToast('Recent uploads cleared from this device', 'success', 3000);
+        });
+
+        // Keep other open tabs in step (clear, remove, logout elsewhere)
+        window.addEventListener('storage', (e) => {
+            if (e.key === null || e.key === ChunkedUploader.RECENT_UPLOADS_KEY) renderRecentUploads();
+        });
+        renderRecentUploads();
     }
 
-    /**
-     * Show recovery modal with completed uploads
-     * @param {Array} completions - Array of completion objects
-     */
-    function showRecoveryModal(completions) {
-        // Create modal HTML
-        const modal = document.createElement('div');
-        modal.id = 'recoveryModal';
-        modal.className = 'recovery-modal';
-        modal.innerHTML = `
-            <div class="recovery-modal-content">
-                <div class="recovery-header">
-                    <div class="recovery-icon">✓</div>
-                    <h2>Upload${completions.length > 1 ? 's' : ''} Completed!</h2>
-                    <p>Your upload${completions.length > 1 ? 's have' : ' has'} finished. Here ${completions.length > 1 ? 'are' : 'is'} your claim code${completions.length > 1 ? 's' : ''}:</p>
-                </div>
-                <div class="recovery-uploads">
-                    ${completions.map((completion, index) => `
-                        <div class="recovery-upload" data-index="${index}">
-                            <div class="recovery-file-info">
-                                <div class="recovery-filename" title="${escapeHtml(completion.filename)}">
-                                    ${escapeHtml(completion.filename)}
-                                </div>
-                                <div class="recovery-filesize">${formatFileSize(completion.file_size)}</div>
-                            </div>
-                            <div class="recovery-claim">
-                                <label>Claim Code:</label>
-                                <div class="recovery-code-display">
-                                    <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
-                                    <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
-                                        📋
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="recovery-actions">
-                                <button class="btn-recovery-download" data-url="${escapeHtml(completion.download_url)}">
-                                    ⬇️ Download
-                                </button>
-                                <button class="btn-recovery-copy-url" data-url="${escapeHtml(completion.download_url)}">
-                                    🔗 Copy Link
-                                </button>
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="recovery-footer">
-                    <button type="button" class="btn-secondary recovery-close" data-modal-close>Close</button>
-                </div>
-            </div>
-        `;
+    function renderRecentUploads() {
+        const section = document.getElementById('recentUploads');
+        const list = document.getElementById('recentUploadsList');
+        if (!section || !list || typeof ChunkedUploader === 'undefined') return;
 
-        document.body.appendChild(modal);
+        const uploads = currentUser ? [] : ChunkedUploader.getRecentUploads();
+        section.classList.toggle('hidden', uploads.length === 0);
+        list.replaceChildren(...uploads.map(buildRecentUploadItem));
+    }
 
-        // A keyboard way out (the background click is mouse-only, and the
-        // copy buttons only close it if copying works).
-        modal.querySelector('.recovery-close').addEventListener('click', () => {
-            ChunkedUploader.markCompletionsAsViewed();
-            modal.remove();
-        });
+    // Built with DOM APIs (textContent), so stored values can't inject markup
+    function buildRecentUploadItem(upload) {
+        const filename = upload.filename || 'Untitled file';
+        const item = document.createElement('li');
+        item.className = 'recent-upload';
 
-        // Copy claim code buttons
-        modal.querySelectorAll('.btn-copy-recovery').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const claimCode = e.currentTarget.dataset.claim;
-                const success = await copyToClipboard(claimCode, 'Claim code copied!');
-                if (success) {
-                    ChunkedUploader.markCompletionsAsViewed();
-                    modal.remove();
-                }
-            });
-        });
+        const info = document.createElement('div');
+        info.className = 'recent-upload-info';
+        const name = document.createElement('span');
+        name.className = 'recent-upload-name';
+        name.textContent = filename;
+        name.title = filename;
+        const meta = document.createElement('span');
+        meta.className = 'recent-upload-meta';
+        meta.textContent = [
+            upload.file_size ? formatFileSize(upload.file_size) : null,
+            ChunkedUploader.recentUploadExpiry(upload) !== null
+                ? `expires ${formatDate(upload.expires_at)}`
+                : 'never expires'
+        ].filter(Boolean).join(' · ');
+        info.append(name, meta);
 
-        // Download buttons
-        modal.querySelectorAll('.btn-recovery-download').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const url = e.currentTarget.dataset.url;
-                window.open(url, '_blank');
-            });
-        });
+        const code = document.createElement('code');
+        code.className = 'recent-upload-code';
+        code.textContent = upload.claim_code;
 
-        // Copy URL buttons
-        modal.querySelectorAll('.btn-recovery-copy-url').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const url = e.currentTarget.dataset.url;
-                const success = await copyToClipboard(url, 'Download link copied!');
-                if (success) {
-                    ChunkedUploader.markCompletionsAsViewed();
-                    modal.remove();
-                }
-            });
-        });
+        const actions = document.createElement('div');
+        actions.className = 'recent-upload-actions';
+        actions.append(
+            recentUploadButton('Copy code', `Copy claim code for ${filename}`, ICON_COPY, () =>
+                copyToClipboard(upload.claim_code, 'Claim code copied!')),
+            recentUploadButton('Copy link', `Copy download link for ${filename}`, ICON_LINK, () =>
+                copyToClipboard(upload.download_url, 'Download link copied!')),
+            recentUploadButton('Remove', `Remove ${filename} from this list`, ICON_REMOVE, () => {
+                ChunkedUploader.removeRecentUpload(upload.claim_code);
+                renderRecentUploads();
+                document.getElementById('recentUploadsHeading')?.focus();
+            }, 'recent-upload-remove')
+        );
 
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                ChunkedUploader.markCompletionsAsViewed();
-                modal.remove();
-            }
-        });
+        item.append(info, code, actions);
+        return item;
+    }
+
+    const ICON_COPY = '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
+    const ICON_LINK = '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>';
+    const ICON_REMOVE = '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>';
+
+    function recentUploadButton(label, ariaLabel, iconPaths, onClick, extraClass) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'recent-upload-btn' + (extraClass ? ' ' + extraClass : '');
+        btn.setAttribute('aria-label', ariaLabel);
+        // Icon markup is a constant above; the label goes in as text
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPaths}</svg>`;
+        const text = document.createElement('span');
+        text.textContent = label;
+        btn.append(text);
+        btn.addEventListener('click', onClick);
+        return btn;
     }
 
     /**
@@ -2390,7 +2448,7 @@
             closeBtn.classList.add('hidden');
             passwordSection.classList.add('hidden');
             iconEl.className = 'e2e-decrypt-icon';
-            progressFillEl.style.width = '0%';
+            setProgress(progressFillEl, 0);
         }
 
         // Show overlay
@@ -2438,7 +2496,7 @@
                 // Step 1: Get file info (check password, get filename)
                 title.textContent = 'Checking file...';
                 status.textContent = 'Retrieving file information';
-                progressFillEl.style.width = '10%';
+                setProgress(progressFillEl, 10);
 
                 const infoResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}/info`);
                 if (!infoResponse.ok) {
@@ -2464,7 +2522,7 @@
                 // Step 3: Download encrypted file
                 title.textContent = 'Downloading encrypted file...';
                 status.textContent = formatFileSize(fileInfo.file_size);
-                progressFillEl.style.width = '30%';
+                setProgress(progressFillEl, 30);
 
                 const downloadHeaders = passwordHeader ? { 'X-File-Password': passwordHeader } : undefined;
                 const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}`, downloadHeaders ? { headers: downloadHeaders } : undefined);
@@ -2476,13 +2534,13 @@
                     throw new Error(err.error || 'Download failed');
                 }
 
-                progressFillEl.style.width = '60%';
+                setProgress(progressFillEl, 60);
                 const encryptedData = await downloadResponse.arrayBuffer();
 
                 // Step 4: Decrypt
                 title.textContent = 'Decrypting...';
                 status.textContent = 'Using key from URL';
-                progressFillEl.style.width = '80%';
+                setProgress(progressFillEl, 80);
 
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
@@ -2498,7 +2556,7 @@
                 const downloadFilename = unwrapped.filename || fileInfo.original_filename;
                 const downloadData = unwrapped.data;
 
-                progressFillEl.style.width = '100%';
+                setProgress(progressFillEl, 100);
 
                 // Step 5: Trigger download
                 title.textContent = 'Download complete';
@@ -2527,7 +2585,7 @@
                 iconEl.className = 'e2e-decrypt-icon error';
                 title.textContent = 'Decryption failed';
                 status.textContent = '';
-                progressFillEl.style.width = '0%';
+                setProgress(progressFillEl, 0);
                 errorEl.textContent = error.message || 'The link may be incorrect or corrupted.';
                 errorEl.classList.remove('hidden');
                 retryBtn.classList.remove('hidden');
@@ -2560,7 +2618,7 @@
     function escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str;
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     // Initialize when DOM is ready

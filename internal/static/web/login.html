@@ -8,7 +8,7 @@
 
     <!-- PWA Manifest -->
     <link rel="manifest" href="/assets/manifest.json">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#2563eb">
 
     <!-- Load theme before CSS to prevent flash -->
     <script src="/assets/theme-init.js"></script>
@@ -41,14 +41,26 @@
             height: 80px;
         }
 
+        .login-header h1 {
+            margin: 0 0 0.25rem;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
         .login-header p {
             margin: 0;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
+        /* Plain field group: the shared .form-group card look is not wanted here */
         .form-group {
             margin-bottom: 20px;
+            padding: 0;
+            background: none;
+            border: none;
+            border-radius: 0;
         }
 
         .form-group label {
@@ -56,7 +68,7 @@
             margin-bottom: 5px;
             color: var(--text-primary);
             font-weight: 500;
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
         .form-group input {
@@ -64,10 +76,10 @@
             padding: 10px;
             background: var(--input-bg);
             color: var(--text-primary);
-            border: 1px solid var(--border-color);
+            border: 1px solid var(--border-strong);
             border-radius: 4px;
-            /* 16px minimum prevents iOS Safari auto-zoom on focus */
-            font-size: 16px;
+            /* 1rem minimum prevents iOS Safari auto-zoom on focus */
+            font-size: 1rem;
             box-sizing: border-box;
         }
 
@@ -76,41 +88,40 @@
         }
 
         .form-group input:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+            border-color: var(--focus-ring);
         }
 
         .btn-login {
+            min-height: 44px;
             width: 100%;
             padding: 12px;
             background: var(--primary-color);
-            color: white;
+            color: var(--on-accent);
             border: none;
             border-radius: 4px;
-            font-size: 16px;
+            font-size: 1rem;
             font-weight: 500;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: background-color 0.15s ease;
         }
 
-        .btn-login:hover {
+        .btn-login:hover:not(:disabled) {
             background: var(--primary-hover);
         }
 
         .btn-login:disabled {
-            background: #94a3b8;
+            opacity: 0.5;
             cursor: not-allowed;
         }
 
 
         .info-message {
             padding: 12px;
-            background: #dbeafe;
-            border: 1px solid #bfdbfe;
+            background: var(--primary-tint);
+            border: 1px solid var(--primary-color);
             border-radius: 4px;
-            color: #1e40af;
-            font-size: 14px;
+            color: var(--primary-text);
+            font-size: 0.875rem;
             margin-bottom: 20px;
         }
 
@@ -120,20 +131,15 @@
         }
 
         .back-link a {
-            color: var(--primary-color);
-            text-decoration: none;
-            font-size: 14px;
+            display: inline-block;
+            padding: 12px;
+            color: var(--primary-text);
+            text-decoration: underline;
+            font-size: 0.875rem;
         }
 
         .back-link a:hover {
-            text-decoration: underline;
-        }
-
-        /* Dark mode overrides */
-        [data-theme="dark"] .info-message {
-            background: #1e3a5f;
-            border-color: #2563eb;
-            color: #93c5fd;
+            text-decoration-thickness: 2px;
         }
 
         /* SSO Section Styles */
@@ -160,7 +166,7 @@
         .sso-divider span {
             padding: 0 12px;
             color: var(--text-secondary);
-            font-size: 13px;
+            font-size: 0.8125rem;
             font-weight: 500;
         }
 
@@ -178,26 +184,26 @@
             padding: 12px 16px;
             color: var(--text-primary);
             background: var(--card-bg);
-            border: 1px solid var(--border-color);
+            border: 1px solid var(--border-strong);
             border-radius: 6px;
-            font-size: 14px;
+            min-height: 44px;
+            font-size: 0.875rem;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
             text-decoration: none;
             width: 100%;
             box-sizing: border-box;
         }
 
         .sso-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            background: var(--bg-tertiary);
+            border-color: var(--primary-color);
         }
 
         .sso-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
-            transform: none;
         }
 
         .sso-btn img {
@@ -218,28 +224,17 @@
             text-align: center;
             padding: 12px;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
         .sso-error {
             padding: 12px;
-            background: #fef2f2;
-            border: 1px solid #fecaca;
+            background: var(--danger-tint);
+            border: 1px solid var(--danger-color);
             border-radius: 4px;
-            color: #dc2626;
-            font-size: 14px;
+            color: var(--danger-text);
+            font-size: 0.875rem;
             margin-bottom: 16px;
-        }
-
-        /* Dark mode SSO styles */
-        [data-theme="dark"] .sso-btn:hover {
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        }
-
-        [data-theme="dark"] .sso-error {
-            background: #450a0a;
-            border-color: #7f1d1d;
-            color: #fca5a5;
         }
 
         /* MFA Verification Section */
@@ -254,21 +249,21 @@
 
         .mfa-header h2 {
             margin: 0 0 8px 0;
-            font-size: 20px;
+            font-size: 1.25rem;
             color: var(--text-primary);
         }
 
         .mfa-header p {
             margin: 0;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
         }
 
         .mfa-icon {
             width: 48px;
             height: 48px;
             margin: 0 auto 16px;
-            background: #dbeafe;
+            background: var(--primary-tint);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -278,13 +273,13 @@
         .mfa-icon svg {
             width: 24px;
             height: 24px;
-            color: #2563eb;
+            color: var(--primary-text);
         }
 
         .totp-input {
             letter-spacing: 0.5em;
             text-align: center;
-            font-size: 24px;
+            font-size: 1.5rem;
             font-family: monospace;
         }
 
@@ -299,18 +294,19 @@
             width: 100%;
             padding: 12px;
             background: transparent;
-            border: 1px solid var(--border-color);
+            border: 1px solid var(--border-strong);
             border-radius: 4px;
+            min-height: 44px;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
             cursor: pointer;
             text-align: center;
-            transition: all 0.2s;
+            transition: color 0.15s ease, border-color 0.15s ease;
         }
 
         .mfa-method-toggle:hover {
             border-color: var(--primary-color);
-            color: var(--primary-color);
+            color: var(--primary-text);
         }
 
         .recovery-input {
@@ -322,52 +318,44 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
+            min-height: 44px;
             padding: 8px 0;
             background: none;
             border: none;
             color: var(--text-secondary);
-            font-size: 14px;
+            font-size: 0.875rem;
             cursor: pointer;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
         }
 
         .mfa-back-btn:hover {
-            color: var(--primary-color);
+            color: var(--primary-text);
         }
 
         .mfa-timer {
             text-align: center;
             margin-top: 16px;
             color: var(--text-secondary);
-            font-size: 13px;
+            font-size: 0.8125rem;
         }
 
         .mfa-timer.expiring {
-            color: #dc2626;
-        }
-
-        /* Dark mode MFA styles */
-        [data-theme="dark"] .mfa-icon {
-            background: #1e3a5f;
+            color: var(--danger-text);
         }
 
         @media (max-width: 480px) {
             .login-container {
                 width: calc(100% - 32px);
-                margin: 24px auto;
+                margin: 64px auto 24px; /* clear the page-top theme toggle */
                 padding: 24px 16px;
             }
         }
 
         @media (max-width: 400px) {
             .totp-input {
-                font-size: 20px;
+                font-size: 1.25rem;
                 letter-spacing: 0.3em;
             }
-        }
-
-        [data-theme="dark"] .mfa-icon svg {
-            color: #60a5fa;
         }
     </style>
 </head>
@@ -390,12 +378,13 @@
         </svg>
     </button>
 
-    <div class="login-container">
+    <main class="login-container">
         <div class="login-header">
             <div class="logo-container">
                 <img src="/assets/logo.svg" alt="SafeShare Logo" class="logo">
             </div>
-            <p>Sign in to access your dashboard</p>
+            <h1>Sign in to SafeShare</h1>
+            <p>Access your uploads and account settings</p>
         </div>
 
         <form id="loginForm">
@@ -521,7 +510,7 @@
         <div class="back-link">
             <a href="/">← Back to Home</a>
         </div>
-    </div>
+    </main>
 
     <script src="/assets/login.js"></script>
 

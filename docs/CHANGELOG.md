@@ -35,6 +35,31 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-10-04
+
+### Changed
+- **No more "Upload Completed" pop-up on every visit.** The upload page used to keep every claim code in the browser for 7 days and show them in a pop-up until you clicked a copy button, even to the next person using the same computer, and even after logging out. Now:
+  - Signed-in users: nothing is stored in the browser. The success screen links to **My Uploads**, where every upload and claim code already lives.
+  - Anonymous uploads (when sign-in isn't required): a quiet **Recent uploads on this device** list under the upload area, with copy and remove buttons and a **Clear all** link. It never pops up, and each entry disappears when its file expires.
+  - Claim codes saved by earlier versions are deleted on your next visit, and saved codes are cleared when you log out.
+  - When you set a password, the success screen reminds you that it isn't saved anywhere and can't be recovered.
+
+### Fixed
+- **Backup retention never deleted anything.** Backup folders were named with the hour where the day belongs (a backup made at 10:52 on October 4 was named `backup-YYYY-10-10T10-52-…`), and the scheduled-backup retention sweep only recognized a different name format, so old backups were never removed. Names now use the real date, and retention recognizes every format SafeShare has produced. **After upgrading, the first scheduled backup run deletes backup folders in `BACKUP_DIR` older than the schedule's retention period — including manual and CLI backups stored there.** Copy anything you want to keep out of `BACKUP_DIR` first. Installs without an enabled backup schedule are unaffected.
+- Admin tables: the Actions column's cell border no longer sits out of line with the rest of the row.
+- Copy buttons: clicking twice quickly no longer leaves the checkmark stuck in place of the copy icon.
+
+### Changed
+- **Accessibility and design pass across every page.**
+  - Keyboard: the upload area has a "Browse files" button; inline rename and change-expiry icons are real buttons; admin tabs and public tabs support arrow keys; every control shows a visible focus outline.
+  - Contrast: buttons, links, tabs, status badges, muted text and form-field borders now meet WCAG AA in light and dark themes. The two-factor setup wizard is readable in dark mode (its text was invisible).
+  - Phones and tablets: every page was checked at 320–430px wide, in landscape and at tablet sizes. The user and admin dashboards' tables become stacked cards (claim code, status and actions stay visible), the admin header and stat cards are compact, the pickup page's file details and SHA-256 no longer run off screen, the QR code and claim code fit, dialog action buttons stay pinned at the bottom, and the theme button no longer covers content when you scroll. Buttons and checkbox rows are at least 44px tall.
+  - Screen readers: upload progress is announced as a progress bar, form fields are labelled, tables have column headers, pages have a main landmark, and errors in the two-factor flow are announced.
+  - The theme follows the operating system setting until you choose one. If you never picked a theme and your device is in dark mode, SafeShare now opens in dark mode.
+  - Visual clean-up: gradients, glows, colored side stripes, decorative blur, emoji icons and uppercase field labels are gone; colors come from one shared set of theme tokens.
+  - Admin settings no longer warn about unsaved changes when you click the tab you are already on.
+  - The two-factor setup wizard's button now reads "Continue" on the QR-code step (it showed "Get Started").
+
 ## [1.11.0] - 2026-10-04
 
 ### Added
