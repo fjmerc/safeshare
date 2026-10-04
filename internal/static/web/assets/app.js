@@ -229,7 +229,10 @@
 
         // Keep aria-selected in sync with the active class in both branches
         [dropoffButton, pickupButton].forEach(btn => {
-            if (btn) btn.setAttribute('aria-selected', btn.classList.contains('active') ? 'true' : 'false');
+            if (!btn) return;
+            const on = btn.classList.contains('active');
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            btn.setAttribute('tabindex', on ? '0' : '-1');
         });
     }
 
@@ -288,20 +291,37 @@
         if (toggle.checked && selectedFile &&
             window.SafeShareCrypto && SafeShareCrypto.isFileTooLargeForClientEncryption(selectedFile.size)) {
             warning.classList.remove('hidden');
+            // The warning lives inside Upload Settings; open it if collapsed
+            const settingsToggle = document.getElementById('uploadSettingsToggle');
+            if (settingsToggle && settingsToggle.getAttribute('aria-expanded') === 'false') {
+                settingsToggle.click();
+            }
         } else {
             warning.classList.add('hidden');
         }
     }
 
-    // Load theme preference
-    function loadTheme() {
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        document.documentElement.setAttribute('data-theme', savedTheme);
-        updateThemeIcon(savedTheme);
+    // Set a progress bar's fill (transform, not width) and its aria-valuenow
+    function setProgress(fillEl, percent) {
+        if (!fillEl) return;
+        const value = Math.max(0, Math.min(100, Number(percent) || 0));
+        fillEl.style.transform = `scaleX(${value / 100})`;
+        if (fillEl.parentElement) {
+            fillEl.parentElement.setAttribute('aria-valuenow', String(Math.round(value)));
+        }
     }
 
-    // Update theme icon
+    // theme-init.js has already applied the stored choice or the OS preference;
+    // just make the icon (and browser chrome colour) match what is on the page.
+    function loadTheme() {
+        updateThemeIcon(document.documentElement.getAttribute('data-theme'));
+    }
+
+    // Update theme icon (it shows the mode a click switches to) and the
+    // browser toolbar colour
     function updateThemeIcon(theme) {
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#111827' : '#2563eb');
         const sunIcon = document.querySelector('.theme-icon-sun');
         const moonIcon = document.querySelector('.theme-icon-moon');
 
@@ -415,6 +435,27 @@
             btn.addEventListener('click', handleTabSwitch);
         });
 
+        // Arrow keys move between the visible tabs (automatic activation)
+        const tabList = document.querySelector('.tab-list');
+        if (tabList) {
+            tabList.addEventListener('keydown', (e) => {
+                const tabs = [...tabList.querySelectorAll('[role="tab"]')].filter(t => t.offsetParent !== null);
+                const idx = tabs.indexOf(document.activeElement);
+                if (idx === -1) return;
+                let next = null;
+                switch (e.key) {
+                    case 'ArrowRight': next = tabs[(idx + 1) % tabs.length]; break;
+                    case 'ArrowLeft': next = tabs[(idx - 1 + tabs.length) % tabs.length]; break;
+                    case 'Home': next = tabs[0]; break;
+                    case 'End': next = tabs[tabs.length - 1]; break;
+                    default: return;
+                }
+                e.preventDefault();
+                next.focus();
+                next.click();
+            });
+        }
+
         // Login to upload button
         const loginToUploadBtn = document.getElementById('loginToUploadBtn');
         if (loginToUploadBtn) {
@@ -425,6 +466,15 @@
 
         // Dropoff Tab - Drop zone events
         dropZone.addEventListener('click', () => fileInput.click());
+        // Real button for keyboard / screen-reader users; stop the click
+        // reaching the zone handler so the picker opens only once
+        const browseButton = document.getElementById('browseButton');
+        if (browseButton) {
+            browseButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+        }
         dropZone.addEventListener('dragover', handleDragOver);
         dropZone.addEventListener('dragleave', handleDragLeave);
         dropZone.addEventListener('drop', handleDrop);
@@ -544,6 +594,7 @@
 
             // Toggle function
             const toggleUploadSettings = () => {
+                if (uploadSettingsToggle.getAttribute('aria-disabled') === 'true') return;
                 const isCurrentlyExpanded = uploadSettingsToggle.getAttribute('aria-expanded') === 'true';
                 const newState = !isCurrentlyExpanded;
 
@@ -562,17 +613,28 @@
                 }
             };
 
-            // Click event
+            // A real <button>: click covers mouse, touch, Enter and Space
             uploadSettingsToggle.addEventListener('click', toggleUploadSettings);
-
-            // Keyboard support (Enter and Space)
-            uploadSettingsToggle.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleUploadSettings();
-                }
-            });
         }
+
+        // Help badges: click/tap opens the popup, Escape dismisses it
+        // until the pointer or focus leaves (WCAG 1.4.13)
+        document.querySelectorAll('.tooltip').forEach(tip => {
+            tip.addEventListener('click', () => {
+                tip.classList.remove('is-dismissed');
+                tip.classList.toggle('is-open');
+            });
+            const reset = () => tip.classList.remove('is-dismissed', 'is-open');
+            tip.addEventListener('mouseleave', reset);
+            tip.addEventListener('blur', reset);
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            document.querySelectorAll('.tooltip').forEach(tip => {
+                tip.classList.remove('is-open');
+                tip.classList.add('is-dismissed');
+            });
+        });
 
         // Dropoff Tab - New upload button
         newUploadButton.addEventListener('click', resetForm);
@@ -914,12 +976,12 @@
                 uploadProgress.classList.remove('hidden');
                 uploadButton.disabled = true;
                 progressText.textContent = 'Reading file...';
-                progressFill.style.width = '0%';
+                setProgress(progressFill, 0);
 
                 const arrayBuffer = await selectedFile.arrayBuffer();
 
                 progressText.textContent = 'Encrypting...';
-                progressFill.style.width = '10%';
+                setProgress(progressFill, 10);
 
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
@@ -932,7 +994,7 @@
                 const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, payload);
 
                 progressText.textContent = 'Uploading...';
-                progressFill.style.width = '15%';
+                setProgress(progressFill, 15);
 
                 const uploadName = hideFilename ? 'encrypted.bin' : selectedFile.name;
                 fileToUpload = new File([encryptedBuffer], uploadName, {
@@ -1023,7 +1085,7 @@
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const percent = (e.loaded / e.total) * 100;
-                    progressFill.style.width = percent + '%';
+                    setProgress(progressFill, percent);
                     updateUploadStats(e.loaded, e.total);
                     if (percent >= 100) {
                         // ADR-015: the body is fully sent, but the server still
@@ -1123,7 +1185,7 @@
             // Register progress event
             uploader.on('progress', (data) => {
                 const percent = data.percentage;
-                progressFill.style.width = percent + '%';
+                setProgress(progressFill, percent);
 
                 // Show user-friendly progress (no technical chunk details)
                 const uploaded = formatFileSize(data.uploadedBytes);
@@ -1179,7 +1241,7 @@
                     ? 'Processing and scanning file... This may take a moment for large files.'
                     : 'Assembling file... This may take a moment for large files.';
                 // Keep progress bar at 100% (chunks are uploaded)
-                progressFill.style.width = '100%';
+                setProgress(progressFill, 100);
             });
 
             // Register assembling progress event (polling updates)
@@ -1292,11 +1354,11 @@
                     });
                 } catch (qrError) {
                     console.error('QR Code generation failed:', qrError);
-                    qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable</p>';
+                    qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable</p>';
                 }
             } else {
                 console.warn('QRCode library not loaded');
-                qrcodeDiv.innerHTML = '<p style="padding: 2rem; color: #6b7280;">QR code unavailable (library not loaded)</p>';
+                qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable (library not loaded)</p>';
             }
 
             // Hide upload section, show results
@@ -1359,13 +1421,13 @@
     function updateRemoveButtonState() {
         if (uploadState === 'uploading') {
             // Show as cancel button
-            removeFileButton.textContent = '✕ Cancel Upload';
+            removeFileButton.textContent = 'Cancel Upload';
             removeFileButton.classList.remove('btn-remove-file');
             removeFileButton.classList.add('btn-cancel');
             removeFileButton.classList.remove('hidden');
         } else if (selectedFile) {
             // Show as remove button
-            removeFileButton.textContent = '✕ Remove File';
+            removeFileButton.textContent = 'Remove File';
             removeFileButton.classList.add('btn-remove-file');
             removeFileButton.classList.remove('btn-cancel');
             removeFileButton.classList.remove('hidden');
@@ -1416,6 +1478,10 @@
         if (fileInput) {
             fileInput.disabled = disabled;
         }
+
+        // Keep the keyboard route in step with the zone
+        const browseBtn = document.getElementById('browseButton');
+        if (browseBtn) browseBtn.disabled = disabled;
     }
 
     // Reset form
@@ -1475,7 +1541,7 @@
 
     function resetProgress() {
         uploadProgress.classList.add('hidden');
-        progressFill.style.width = '0%';
+        setProgress(progressFill, 0);
         progressText.textContent = 'Uploading...';
         resetUploadStats();
         uploadButton.disabled = false;
@@ -1497,7 +1563,7 @@
         const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
         document.documentElement.setAttribute('data-theme', newTheme);
-        localStorage.setItem('theme', newTheme);
+        try { localStorage.setItem('theme', newTheme); } catch (e) { /* storage blocked */ }
         updateThemeIcon(newTheme);
     }
 
@@ -1850,10 +1916,12 @@
             btn.classList.remove('active');
             if (btn.dataset.tab) {
                 btn.setAttribute('aria-selected', 'false');
+                btn.setAttribute('tabindex', '-1');
             }
         });
         e.target.classList.add('active');
         e.target.setAttribute('aria-selected', 'true');
+        e.target.setAttribute('tabindex', '0');
 
         // Update tab content
         document.querySelectorAll('.tab-content').forEach(content => {
@@ -2165,7 +2233,7 @@
         modal.innerHTML = `
             <div class="recovery-modal-content">
                 <div class="recovery-header">
-                    <div class="recovery-icon">✓</div>
+                    <div class="recovery-icon" aria-hidden="true">✓</div>
                     <h2>Upload${completions.length > 1 ? 's' : ''} Completed!</h2>
                     <p>Your upload${completions.length > 1 ? 's have' : ' has'} finished. Here ${completions.length > 1 ? 'are' : 'is'} your claim code${completions.length > 1 ? 's' : ''}:</p>
                 </div>
@@ -2179,7 +2247,7 @@
                                 <div class="recovery-filesize">${formatFileSize(completion.file_size)}</div>
                             </div>
                             <div class="recovery-claim">
-                                <label>Claim Code:</label>
+                                <span class="recovery-label">Claim code</span>
                                 <div class="recovery-code-display">
                                     <code class="recovery-claim-code">${escapeHtml(completion.claim_code)}</code>
                                     <button class="btn-copy-recovery" data-claim="${escapeHtml(completion.claim_code)}" aria-label="Copy claim code">
@@ -2390,7 +2458,7 @@
             closeBtn.classList.add('hidden');
             passwordSection.classList.add('hidden');
             iconEl.className = 'e2e-decrypt-icon';
-            progressFillEl.style.width = '0%';
+            setProgress(progressFillEl, 0);
         }
 
         // Show overlay
@@ -2438,7 +2506,7 @@
                 // Step 1: Get file info (check password, get filename)
                 title.textContent = 'Checking file...';
                 status.textContent = 'Retrieving file information';
-                progressFillEl.style.width = '10%';
+                setProgress(progressFillEl, 10);
 
                 const infoResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}/info`);
                 if (!infoResponse.ok) {
@@ -2464,7 +2532,7 @@
                 // Step 3: Download encrypted file
                 title.textContent = 'Downloading encrypted file...';
                 status.textContent = formatFileSize(fileInfo.file_size);
-                progressFillEl.style.width = '30%';
+                setProgress(progressFillEl, 30);
 
                 const downloadHeaders = passwordHeader ? { 'X-File-Password': passwordHeader } : undefined;
                 const downloadResponse = await fetch(`/api/claim/${encodeURIComponent(fragment.claimCode)}`, downloadHeaders ? { headers: downloadHeaders } : undefined);
@@ -2476,13 +2544,13 @@
                     throw new Error(err.error || 'Download failed');
                 }
 
-                progressFillEl.style.width = '60%';
+                setProgress(progressFillEl, 60);
                 const encryptedData = await downloadResponse.arrayBuffer();
 
                 // Step 4: Decrypt
                 title.textContent = 'Decrypting...';
                 status.textContent = 'Using key from URL';
-                progressFillEl.style.width = '80%';
+                setProgress(progressFillEl, 80);
 
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
@@ -2498,7 +2566,7 @@
                 const downloadFilename = unwrapped.filename || fileInfo.original_filename;
                 const downloadData = unwrapped.data;
 
-                progressFillEl.style.width = '100%';
+                setProgress(progressFillEl, 100);
 
                 // Step 5: Trigger download
                 title.textContent = 'Download complete';
@@ -2527,7 +2595,7 @@
                 iconEl.className = 'e2e-decrypt-icon error';
                 title.textContent = 'Decryption failed';
                 status.textContent = '';
-                progressFillEl.style.width = '0%';
+                setProgress(progressFillEl, 0);
                 errorEl.textContent = error.message || 'The link may be incorrect or corrupted.';
                 errorEl.classList.remove('hidden');
                 retryBtn.classList.remove('hidden');
@@ -2560,7 +2628,7 @@
     function escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str;
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     // Initialize when DOM is ready

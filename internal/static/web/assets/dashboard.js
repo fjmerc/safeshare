@@ -1,8 +1,5 @@
-        // Load theme preference from localStorage
-        (function() {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-        })();
+        // Theme is applied before first paint by /assets/theme-init.js (stored
+        // choice, else the OS colour scheme). Nothing here may re-set it.
 
         // Universal password toggle handler
         document.addEventListener('DOMContentLoaded', () => {
@@ -112,8 +109,15 @@
             }
         }
 
+        // After a list re-renders (innerHTML) the control the user was on is gone,
+        // so move focus to the section heading instead of dropping it on <body>.
+        function focusSectionHeading(id) {
+            const heading = document.getElementById(id);
+            if (heading) heading.focus();
+        }
+
         // Load files
-        async function loadFiles() {
+        async function loadFiles(restoreFocus) {
             try {
                 const response = await fetch('/api/user/files?limit=100&offset=0', {
                     credentials: 'include'
@@ -122,6 +126,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     displayFiles(data.files);
+                    if (restoreFocus) focusSectionHeading('filesHeading');
                 } else {
                     showToast('Failed to load files', 'error');
                 }
@@ -149,18 +154,18 @@
             }
 
             let tableHTML = `
-                <div class="files-table-wrapper">
-                    <table class="files-table">
+                <div class="files-table-wrapper" role="region" aria-label="My uploads table" tabindex="0">
+                    <table class="files-table" aria-label="My uploads">
                         <thead>
                             <tr>
-                                <th>File Name</th>
-                                <th>File Size</th>
-                                <th>Claim Code</th>
-                                <th>Uploaded</th>
-                                <th>Expires</th>
-                                <th style="text-align: center;">Downloads</th>
-                                <th style="text-align: center;">Status</th>
-                                <th>Actions</th>
+                                <th scope="col">File name</th>
+                                <th scope="col">Size</th>
+                                <th scope="col">Claim code</th>
+                                <th scope="col">Uploaded</th>
+                                <th scope="col">Expires</th>
+                                <th scope="col">Downloads</th>
+                                <th scope="col">Status</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -186,35 +191,42 @@
                     statusBadge = '<span class="badge badge-success">Active</span>';
                 }
 
-                const downloadUrl = file.download_url;
+                const downloadUrl = escapeHtml(file.download_url || '');
+                // Attribute-safe (escapeHtml also escapes quotes)
+                const safeName = escapeHtml(file.original_filename);
+                const safeClaim = escapeHtml(file.claim_code);
 
                 tableHTML += `
                     <tr>
-                        <td>
+                        <td data-label="File name">
                             <div class="file-name">
-                                <span class="file-name-text">${escapeHtml(file.original_filename)}</span>
-                                <svg class="inline-edit-icon" data-action="renameFile" data-file-id="${file.id}" data-filename="${escapeHtml(file.original_filename)}" title="Rename file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                                </svg>
+                                <span class="file-name-text">${safeName}</span>
+                                <button type="button" class="inline-edit-btn" data-action="renameFile" data-file-id="${file.id}" data-filename="${safeName}" aria-label="Rename ${safeName}" title="Rename file">
+                                    <svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                    </svg>
+                                </button>
                             </div>
                         </td>
-                        <td><span class="file-size">${formatFileSize(file.file_size)}</span></td>
-                        <td><span class="claim-code">${file.claim_code}</span></td>
-                        <td><span class="date-truncate" title="${createdDateFull}">${createdDate}</span></td>
-                        <td>
+                        <td data-label="Size"><span class="file-size">${formatFileSize(file.file_size)}</span></td>
+                        <td data-label="Claim code"><span class="claim-code">${safeClaim}</span></td>
+                        <td data-label="Uploaded"><span class="date-truncate" title="${createdDateFull}">${createdDate}</span></td>
+                        <td data-label="Expires">
                             <div class="file-name-expires">
                                 <span class="file-name-text" title="${expiresDateFull}">${expiresDate}</span>
-                                <svg class="inline-edit-icon" data-action="editExpiration" data-file-id="${file.id}" data-expires-at="${file.expires_at}" title="Edit expiration" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                                </svg>
+                                <button type="button" class="inline-edit-btn" data-action="editExpiration" data-file-id="${file.id}" data-expires-at="${escapeHtml(file.expires_at)}" aria-label="Edit expiration of ${safeName}" title="Edit expiration">
+                                    <svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                    </svg>
+                                </button>
                             </div>
                         </td>
-                        <td style="text-align: center;">${downloads}</td>
-                        <td style="text-align: center;">${statusBadge}</td>
-                        <td class="actions-col">
+                        <td data-label="Downloads">${downloads}</td>
+                        <td data-label="Status">${statusBadge}</td>
+                        <td class="actions-col" data-label="Actions">
                             <div class="actions-cell">
-                                <button class="btn-icon btn-primary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${escapeHtml(file.original_filename)}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${file.expires_at}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${file.claim_code}" title="Share File">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button type="button" class="btn-icon btn-primary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${safeName}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${escapeHtml(file.expires_at)}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${safeClaim}" aria-label="Share ${safeName}" title="Share file">
+                                    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
                                         <circle cx="6" cy="12" r="3"></circle>
                                         <circle cx="18" cy="19" r="3"></circle>
@@ -222,8 +234,8 @@
                                         <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                                     </svg>
                                 </button>
-                                <button class="btn-icon btn-danger" data-action="deleteFile" data-file-id="${file.id}" title="Delete">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button type="button" class="btn-icon btn-danger" data-action="deleteFile" data-file-id="${file.id}" aria-label="Delete ${safeName}" title="Delete file">
+                                    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                     </svg>
@@ -264,7 +276,9 @@
 
                 if (response.ok) {
                     showToast('File deleted successfully', 'success');
-                    loadFiles();
+                    hideDeleteModal();
+                    await loadFiles(true);
+                    return;
                 } else {
                     const data = await response.json();
                     showToast(data.error || 'Failed to delete file', 'error');
@@ -317,8 +331,8 @@
 
                 if (response.ok) {
                     showToast('File renamed successfully', 'success');
-                    loadFiles();
                     hideRenameModal();
+                    await loadFiles(true);
                 } else {
                     showToast(data.error || 'Failed to rename file', 'error');
                 }
@@ -400,7 +414,7 @@
                 toggleExpirationOptions();
                 if (this.checked) {
                     previewContainer.style.display = 'none';
-                    customValueInput.value = '';
+                    datetimeInput.value = '';
                     document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
                 }
             });
@@ -496,8 +510,8 @@
 
                 if (response.ok) {
                     showToast('Expiration updated successfully', 'success');
-                    loadFiles();
                     hideExpirationModal();
+                    await loadFiles(true);
                 } else {
                     showToast(data.error || 'Failed to update expiration', 'error');
                 }
@@ -637,18 +651,14 @@
                         <polyline points="20 6 9 17 4 12"></polyline>
                     </svg>
                 `;
-                button.style.background = '#10b981';
-                button.style.borderColor = '#10b981';
-                button.style.color = 'white';
+                button.classList.add('is-copied');
 
                 showToast('Download link copied to clipboard', 'success');
 
                 // Reset after 2 seconds
                 setTimeout(() => {
                     button.innerHTML = originalHTML;
-                    button.style.background = '';
-                    button.style.borderColor = '';
-                    button.style.color = '';
+                    button.classList.remove('is-copied');
                 }, 2000);
             }).catch((err) => {
                 console.error('Copy failed:', err);
@@ -663,10 +673,11 @@
             return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
         }
 
+        // Safe for element text AND quoted attribute values (quotes escaped too).
         function escapeHtml(text) {
             const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            div.textContent = text == null ? '' : text;
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         // Format date in compact format (e.g., "11/05/25 3:45 PM")
@@ -689,26 +700,33 @@
         }
 
         // Toggle theme
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-
-            // Update theme icon
+        // Icon and label always reflect the theme actually applied to <html>
+        // (which theme-init.js derived from storage or the OS), never storage.
+        function syncThemeToggle() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const themeColor = document.querySelector('meta[name="theme-color"]');
+            if (themeColor) themeColor.setAttribute('content', isDark ? '#111827' : '#2563eb');
             const sunIcon = document.querySelector('.theme-icon-sun');
             const moonIcon = document.querySelector('.theme-icon-moon');
-
             if (sunIcon && moonIcon) {
-                if (newTheme === 'dark') {
-                    sunIcon.style.display = 'block';
-                    moonIcon.style.display = 'none';
-                } else {
-                    sunIcon.style.display = 'none';
-                    moonIcon.style.display = 'block';
-                }
+                sunIcon.style.display = isDark ? 'block' : 'none';
+                moonIcon.style.display = isDark ? 'none' : 'block';
             }
+            const toggle = document.getElementById('themeToggle');
+            if (toggle) {
+                const label = isDark ? 'Switch to light theme' : 'Switch to dark theme';
+                toggle.setAttribute('aria-label', label);
+                toggle.setAttribute('title', label);
+            }
+        }
+
+        function toggleTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+
+            document.documentElement.setAttribute('data-theme', newTheme);
+            try { localStorage.setItem('theme', newTheme); } catch (e) { /* storage blocked */ }
+            syncThemeToggle();
         }
 
         // ========== Share Functions ==========
@@ -1025,7 +1043,7 @@
         let createdTokenSecret = null;
 
         // Load tokens
-        async function loadTokens() {
+        async function loadTokens(restoreFocus) {
             try {
                 const response = await fetch('/api/tokens', {
                     credentials: 'include'
@@ -1034,6 +1052,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     displayTokens(data.tokens || []);
+                    if (restoreFocus) focusSectionHeading('tokensHeading');
                 } else {
                     console.error('Failed to load tokens:', response.status);
                     displayTokens([]);
@@ -1061,17 +1080,17 @@
             }
 
             let tableHTML = `
-                <div class="files-table-wrapper">
-                    <table class="tokens-table">
+                <div class="files-table-wrapper" role="region" aria-label="API tokens table" tabindex="0">
+                    <table class="tokens-table" aria-label="API tokens">
                         <thead>
                             <tr>
-                                <th>Name</th>
-                                <th>Scopes</th>
-                                <th>Usage</th>
-                                <th>Created</th>
-                                <th>Expires</th>
-                                <th>Last Used</th>
-                                <th style="text-align: center;">Actions</th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Scopes</th>
+                                <th scope="col">Usage</th>
+                                <th scope="col">Created</th>
+                                <th scope="col">Expires</th>
+                                <th scope="col">Last used</th>
+                                <th scope="col">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1104,23 +1123,25 @@
                 // Build usage stats display
                 const usageStats = formatTokenUsageStats(token.usage_stats);
 
+                const safeTokenName = escapeHtml(token.name);
+
                 tableHTML += `
                     <tr>
-                        <td><span class="token-name">${escapeHtml(token.name)}</span></td>
-                        <td><div class="scopes-cell">${scopesBadges}</div></td>
-                        <td style="text-align: center;">${usageStats}</td>
-                        <td><span class="token-date">${createdDate}</span></td>
-                        <td>${expiresDisplay}</td>
-                        <td>${lastUsed}</td>
-                        <td style="text-align: center;">
-                            <div style="display: flex; gap: 6px; justify-content: center;">
-                                <button class="btn-icon btn-secondary" data-action="rotateToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Rotate Token (Generate New)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <td data-label="Name"><span class="token-name">${safeTokenName}</span></td>
+                        <td data-label="Scopes"><div class="scopes-cell">${scopesBadges}</div></td>
+                        <td data-label="Usage">${usageStats}</td>
+                        <td data-label="Created"><span class="token-date">${createdDate}</span></td>
+                        <td data-label="Expires">${expiresDisplay}</td>
+                        <td data-label="Last used">${lastUsed}</td>
+                        <td class="actions-col" data-label="Actions">
+                            <div class="actions-cell">
+                                <button type="button" class="btn-icon btn-secondary" data-action="rotateToken" data-token-id="${token.id}" data-token-name="${safeTokenName}" aria-label="Rotate token ${safeTokenName}" title="Rotate token (generate new)">
+                                    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
                                     </svg>
                                 </button>
-                                <button class="btn-icon btn-danger" data-action="revokeToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Revoke Token">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button type="button" class="btn-icon btn-danger" data-action="revokeToken" data-token-id="${token.id}" data-token-name="${safeTokenName}" aria-label="Revoke token ${safeTokenName}" title="Revoke token">
+                                    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                     </svg>
@@ -1349,7 +1370,7 @@
                 if (response.ok) {
                     hideRevokeTokenModal();
                     showToast('Token revoked successfully', 'success');
-                    loadTokens();
+                    await loadTokens(true);
                 } else {
                     const data = await response.json();
                     showToast(data.error || 'Failed to revoke token', 'error');
@@ -1384,7 +1405,7 @@
             if (daysUntilExpiry < 0) {
                 return `
                     <div class="expiration-warning danger">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"></circle>
                             <line x1="15" y1="9" x2="9" y2="15"></line>
                             <line x1="9" y1="9" x2="15" y2="15"></line>
@@ -1399,7 +1420,7 @@
             if (daysUntilExpiry <= 3) {
                 return `
                     <div class="expiration-warning danger">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                             <line x1="12" y1="9" x2="12" y2="13"></line>
                             <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -1414,7 +1435,7 @@
             if (daysUntilExpiry <= 7) {
                 return `
                     <div class="expiration-warning">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                             <line x1="12" y1="9" x2="12" y2="13"></line>
                             <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -1449,14 +1470,14 @@
             return `
                 <div class="token-stats-summary">
                     <span class="stat-item" title="Total API requests">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
                         </svg>
                         ${requests}
                     </span>
                     <span class="stat-divider">|</span>
                     <span class="stat-item" title="Data transferred">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -1923,8 +1944,8 @@
                                 <line x1="12" y1="18" x2="12.01" y2="18"></line>
                             </svg>
                             <div>
-                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Authenticator App (TOTP)</h4>
-                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">Use an app like Google Authenticator or Authy</p>
+                                <h4 class="mfa-method-title">Authenticator app (TOTP)</h4>
+                                <p class="mfa-method-desc">Use an app like Google Authenticator or Authy</p>
                             </div>
                             <span class="mfa-method-badge ${isTOTPEnabled ? 'enabled' : 'disabled'}">
                                 ${isTOTPEnabled ? 'Enabled' : 'Not Set Up'}
@@ -1934,7 +1955,7 @@
 
                 if (isTOTPEnabled) {
                     html += `
-                        <div class="mfa-details" style="margin-top: 12px;">
+                        <div class="mfa-details mfa-details-spaced">
                             <div class="mfa-detail-item">
                                 <div class="mfa-detail-label">Enabled Since</div>
                                 <div class="mfa-detail-value">${escapeHtml(verifiedAt)}</div>
@@ -1945,16 +1966,16 @@
                             </div>
                         </div>
                         ${recoveryCodesRemaining < 3 ? `
-                        <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin-top: 12px; display: flex; align-items: center; gap: 10px;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0;">
+                        <div class="mfa-low-codes-notice" role="status">
+                            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                                 <line x1="12" y1="9" x2="12" y2="13"></line>
                                 <line x1="12" y1="17" x2="12.01" y2="17"></line>
                             </svg>
-                            <span style="color: #92400e; font-size: 13px;">You have few recovery codes left. Consider regenerating them.</span>
+                            <span>You have few recovery codes left. Consider regenerating them.</span>
                         </div>
                         ` : ''}
-                        <div class="mfa-actions" style="margin-top: 16px;">
+                        <div class="mfa-actions mfa-actions-spaced">
                             <button class="btn btn-danger btn-sm" data-action="showDisableMFAModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -1966,7 +1987,7 @@
                     `;
                 } else {
                     html += `
-                        <div class="mfa-actions" style="margin-top: 16px;">
+                        <div class="mfa-actions mfa-actions-spaced">
                             <button class="btn btn-success btn-sm" data-action="showMFASetupModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -1984,25 +2005,25 @@
             // WebAuthn Section (if WebAuthn is enabled on server)
             if (isWebAuthnServerEnabled) {
                 html += `
-                    <div class="mfa-status-card" style="margin-top: 16px;">
+                    <div class="mfa-status-card mfa-status-card-spaced">
                         <div class="mfa-method-header">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"></path>
                                 <line x1="8" y1="12" x2="16" y2="12"></line>
                             </svg>
                             <div>
-                                <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Hardware Security Keys</h4>
-                                <p style="margin: 2px 0 0 0; font-size: 12px; color: #6b7280;">YubiKey, Touch ID, Windows Hello, or other FIDO2 devices</p>
+                                <h4 class="mfa-method-title">Hardware security keys</h4>
+                                <p class="mfa-method-desc">YubiKey, Touch ID, Windows Hello, or other FIDO2 devices</p>
                             </div>
                             <span class="mfa-method-badge ${webauthnCredCount > 0 ? 'enabled' : 'disabled'}">
                                 ${webauthnCredCount > 0 ? webauthnCredCount + ' key' + (webauthnCredCount > 1 ? 's' : '') : 'Not Set Up'}
                             </span>
                         </div>
-                        <div id="webauthnCredentialsList" style="margin-top: 12px;">
+                        <div id="webauthnCredentialsList" class="webauthn-credentials-list">
                             <!-- Credentials will be loaded here -->
                             <div class="webauthn-loading">Loading security keys...</div>
                         </div>
-                        <div class="mfa-actions" style="margin-top: 16px;">
+                        <div class="mfa-actions mfa-actions-spaced">
                             <button class="btn btn-success btn-sm" data-action="showWebAuthnRegisterModal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -2090,16 +2111,16 @@
                             <div class="webauthn-credential-meta">Added ${createdDate} • Last used: ${lastUsed}</div>
                         </div>
                         <div class="webauthn-credential-actions">
-                            <button data-action="showWebAuthnRenameModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
-                                    title="Rename">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button type="button" data-action="showWebAuthnRenameModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
+                                    aria-label="Rename security key ${escapeHtml(cred.name)}" title="Rename">
+                                <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                 </svg>
                             </button>
-                            <button class="delete" data-action="showWebAuthnDeleteModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
-                                    title="Delete">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <button type="button" class="delete" data-action="showWebAuthnDeleteModal" data-cred-id="${cred.id}" data-cred-name="${escapeHtml(cred.name)}"
+                                    aria-label="Delete security key ${escapeHtml(cred.name)}" title="Delete">
+                                <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="3 6 5 6 21 6"></polyline>
                                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                     <line x1="10" y1="11" x2="10" y2="17"></line>
@@ -2422,16 +2443,22 @@
                 if (i < mfaWizardStep) {
                     stepEl.classList.add('completed');
                     stepEl.classList.remove('active');
-                    stepEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    stepEl.innerHTML = '<svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    stepEl.setAttribute('aria-label', `Step ${i}, completed`);
+                    stepEl.removeAttribute('aria-current');
                     if (connector) connector.classList.add('completed');
                 } else if (i === mfaWizardStep) {
                     stepEl.classList.add('active');
                     stepEl.classList.remove('completed');
                     stepEl.textContent = i;
+                    stepEl.setAttribute('aria-label', `Step ${i} of 4, current`);
+                    stepEl.setAttribute('aria-current', 'step');
                     if (connector) connector.classList.remove('completed');
                 } else {
                     stepEl.classList.remove('active', 'completed');
                     stepEl.textContent = i;
+                    stepEl.setAttribute('aria-label', `Step ${i} of 4`);
+                    stepEl.removeAttribute('aria-current');
                     if (connector) connector.classList.remove('completed');
                 }
 
@@ -2543,7 +2570,7 @@
                     if (!/^\d{6}$/.test(code)) {
                         errorEl.textContent = 'Please enter a 6-digit code';
                         errorEl.style.display = 'block';
-                        document.getElementById('mfaVerifyCode').classList.add('error');
+                        document.getElementById('mfaVerifyCode').classList.add('error'); document.getElementById('mfaVerifyCode').setAttribute('aria-invalid', 'true');
                         setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
                         return;
                     }
@@ -2574,7 +2601,7 @@
                             const data = await response.json();
                             errorEl.textContent = data.error || 'Invalid code. Please try again.';
                             errorEl.style.display = 'block';
-                            document.getElementById('mfaVerifyCode').classList.add('error');
+                            document.getElementById('mfaVerifyCode').classList.add('error'); document.getElementById('mfaVerifyCode').setAttribute('aria-invalid', 'true');
                             setTimeout(() => document.getElementById('mfaVerifyCode').classList.remove('error'), 400);
                         }
                     } catch (error) {
@@ -2733,7 +2760,7 @@ you may be locked out of your account.
             if (!/^\d{6}$/.test(code)) {
                 errorEl.textContent = 'Please enter a 6-digit code';
                 errorEl.style.display = 'block';
-                document.getElementById('mfaDisableCode').classList.add('error');
+                document.getElementById('mfaDisableCode').classList.add('error'); document.getElementById('mfaDisableCode').setAttribute('aria-invalid', 'true');
                 setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
                 return;
             }
@@ -2761,7 +2788,7 @@ you may be locked out of your account.
                     const data = await response.json();
                     errorEl.textContent = data.error || 'Invalid code. Please try again.';
                     errorEl.style.display = 'block';
-                    document.getElementById('mfaDisableCode').classList.add('error');
+                    document.getElementById('mfaDisableCode').classList.add('error'); document.getElementById('mfaDisableCode').setAttribute('aria-invalid', 'true');
                     setTimeout(() => document.getElementById('mfaDisableCode').classList.remove('error'), 400);
                 }
             } catch (error) {
@@ -2778,19 +2805,7 @@ you may be locked out of your account.
 
         // Initialize theme icons on load
         document.addEventListener('DOMContentLoaded', () => {
-            const theme = document.documentElement.getAttribute('data-theme');
-            const sunIcon = document.querySelector('.theme-icon-sun');
-            const moonIcon = document.querySelector('.theme-icon-moon');
-
-            if (sunIcon && moonIcon) {
-                if (theme === 'dark') {
-                    sunIcon.style.display = 'block';
-                    moonIcon.style.display = 'none';
-                } else {
-                    sunIcon.style.display = 'none';
-                    moonIcon.style.display = 'block';
-                }
-            }
+            syncThemeToggle();
 
             // Initialize share modal event listeners
             const shareModal = document.getElementById('shareModal');
@@ -3160,6 +3175,20 @@ you may be locked out of your account.
             // Theme toggle
             document.getElementById('themeToggle').addEventListener('click', toggleTheme);
 
+            // Preset button groups mark their choice with a CSS class; mirror it to
+            // aria-pressed so the selection is not conveyed by colour alone.
+            ['.expiration-presets', '#tokenExpirationPresets'].forEach(function(sel) {
+                const group = document.querySelector(sel);
+                if (!group) return;
+                const sync = function() {
+                    group.querySelectorAll('button').forEach(function(btn) {
+                        btn.setAttribute('aria-pressed', btn.classList.contains('selected') ? 'true' : 'false');
+                    });
+                };
+                sync();
+                new MutationObserver(sync).observe(group, { subtree: true, attributes: true, attributeFilter: ['class'] });
+            });
+
             // Header action buttons
             document.getElementById('adminDashboardBtn').addEventListener('click', function() { window.location.href = '/admin'; });
             document.getElementById('changePasswordBtn').addEventListener('click', showChangePasswordModal);
@@ -3248,6 +3277,11 @@ you may be locked out of your account.
             // WebAuthn rename modal
             document.getElementById('webauthnRenameCancelBtn').addEventListener('click', hideWebAuthnRenameModal);
             document.getElementById('webauthnRenameConfirmBtn').addEventListener('click', confirmWebAuthnRename);
+
+            // Clear the invalid state as soon as the user edits a rejected code
+            ['mfaVerifyCode', 'mfaDisableCode'].forEach(function(id) {
+                document.getElementById(id).addEventListener('input', function() { this.removeAttribute('aria-invalid'); });
+            });
 
             // MFA disable modal
             document.getElementById('mfaDisableCancelBtn').addEventListener('click', hideMFADisableModal);

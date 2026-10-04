@@ -298,30 +298,30 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Format scan status as a colored badge with optional tooltip for details.
-// SECURITY: style values must be hardcoded constants only; never interpolate
-// server-sourced strings into the style attribute. label is escapeHtml()-safe.
+// Format scan status as a badge with optional tooltip for details.
+// SECURITY: class names come from a fixed map only; never interpolate
+// server-sourced strings into attributes. label is escapeHtml()-safe.
 function formatScanStatus(status, result) {
-    if (!status) return '<span class="badge" style="background: var(--bg-tertiary); color: var(--text-secondary);">N/A</span>';
-    const styles = {
-        'pending':     'background: #f59e0b; color: #000;',
-        'clean':       'background: var(--success-color); color: #fff;',
-        'infected':    'background: var(--error-color); color: #fff;',
-        'error':       'background: #ef4444; color: #fff;',
-        'skipped':     'background: var(--bg-tertiary); color: var(--text-secondary);',
+    if (!status) return '<span class="badge badge-secondary">N/A</span>';
+    const classes = {
+        'pending':     'badge-warning',
+        'clean':       'badge-success',
+        'infected':    'badge-danger',
+        'error':       'badge-danger',
+        'skipped':     'badge-secondary',
         // ADR-015: content that was deliberately never inspected (E2E
-        // ciphertext or larger than the scan size limit) — neutral, not an
+        // ciphertext or larger than the scan size limit) - neutral, not an
         // error state. `result` carries the reason ("client_encrypted" /
         // "exceeds scan size limit") as the tooltip.
-        'not_scanned': 'background: var(--bg-tertiary); color: var(--text-secondary);'
+        'not_scanned': 'badge-secondary'
     };
     const labels = {
         'not_scanned': 'Not Scanned'
     };
-    const style = styles[status] || 'background: #6b7280; color: #fff;';
+    const cls = classes[status] || 'badge-secondary';
     const label = escapeHtml(labels[status] || (status.charAt(0).toUpperCase() + status.slice(1)));
     const tooltip = result ? ` title="${escapeHtml(result)}"` : '';
-    return `<span class="badge" style="${style}"${tooltip}>${label}</span>`;
+    return `<span class="badge ${cls}"${tooltip}>${label}</span>`;
 }
 
 // Format date
@@ -423,12 +423,12 @@ function updateFilesTable(files) {
     tbody.innerHTML = files.map(file => `
         <tr>
             <td>
-                <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}">
+                <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}" aria-label="Select ${escapeHtml(file.original_filename)}">
             </td>
             <td><code>${escapeHtml(file.claim_code)}</code></td>
             <td class="filename-cell" title="${escapeHtml(file.original_filename)}">${escapeHtml(file.original_filename)}</td>
             <td>${formatBytes(file.file_size)}</td>
-            <td>${file.username ? escapeHtml(file.username) : '<em style="color: #94a3b8;">Anonymous</em>'}</td>
+            <td>${file.username ? escapeHtml(file.username) : '<em class="text-muted">Anonymous</em>'}</td>
             <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
             <td>${formatDate(file.created_at)}</td>
             <td>${formatDate(file.expires_at)}</td>
@@ -838,7 +838,7 @@ function goToPage(page) {
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Render a webhook event type as a human label: "file.uploaded" -> "Uploaded".
@@ -984,11 +984,28 @@ async function deleteSelectedFiles() {
     }
 }
 
+// Activate a tab: keeps .active (queried elsewhere), ARIA state, roving
+// tabindex and the matching panel in sync.
+function activateTab(btn) {
+    if (!btn) return;
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        const on = b === btn;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.setAttribute('tabindex', on ? '0' : '-1');
+    });
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    const panel = document.getElementById(btn.dataset.tab + 'Tab');
+    if (panel) panel.classList.add('active');
+}
+
 // Theme Management
 function loadTheme() {
-    const savedTheme = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-theme', savedTheme);
-    updateThemeIcon(savedTheme);
+    // theme-init.js has already applied the stored choice or the OS default;
+    // the DOM attribute is the source of truth, not localStorage.
+    updateThemeIcon(document.documentElement.getAttribute('data-theme') || 'light');
 }
 
 function toggleTheme() {
@@ -996,11 +1013,13 @@ function toggleTheme() {
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 
     document.documentElement.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
+    try { localStorage.setItem('theme', newTheme); } catch (e) { /* storage blocked: theme still applies for this page */ }
     updateThemeIcon(newTheme);
 }
 
 function updateThemeIcon(theme) {
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#111827' : '#2563eb');
     const sunIcon = document.querySelector('.theme-icon-sun');
     const moonIcon = document.querySelector('.theme-icon-moon');
 
@@ -1054,12 +1073,18 @@ document.addEventListener('DOMContentLoaded', () => {
     csrfToken = getCSRFToken();
 
     // Tab switching with unsaved changes warning
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
+    // Feature-gated tabs are display:none while their feature is off, so the
+    // navigable set is computed at event time rather than cached.
+    const visibleTabs = () => tabButtons.filter(t => t.offsetParent !== null);
+
+    tabButtons.forEach(btn => {
         btn.addEventListener('click', async (e) => {
             const tabName = btn.dataset.tab;
 
             // Check for unsaved changes when leaving Settings tab
             const currentTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+            if (tabName === currentTab) return;
             if (currentTab === 'settings' && hasUnsavedChanges) {
                 const leave = await confirm('You have unsaved changes that will be lost. Do you want to leave this page?');
                 if (!leave) {
@@ -1069,15 +1094,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 hasUnsavedChanges = false;
             }
 
-            // Update active button
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+            activateTab(btn);
+        });
 
-            // Update active content
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(tabName + 'Tab').classList.add('active');
+        // Arrow/Home/End move focus only (manual activation), so the async
+        // unsaved-changes confirm never fires per keypress.
+        btn.addEventListener('keydown', (e) => {
+            const tabs = visibleTabs();
+            const idx = tabs.indexOf(btn);
+            if (idx === -1) return;
+            let next = null;
+            switch (e.key) {
+                case 'ArrowRight': next = tabs[(idx + 1) % tabs.length]; break;
+                case 'ArrowLeft': next = tabs[(idx - 1 + tabs.length) % tabs.length]; break;
+                case 'Home': next = tabs[0]; break;
+                case 'End': next = tabs[tabs.length - 1]; break;
+                default: return;
+            }
+            e.preventDefault();
+            // tabindex stays on the selected tab, so Tab out and back returns there
+            next.focus();
         });
     });
 
@@ -1776,9 +1812,9 @@ function displayRecommendations(data) {
     if (analysis.additional_recommendations && analysis.additional_recommendations.length > 0) {
         document.getElementById('additionalRecommendations').style.display = 'block';
         const content = document.getElementById('additionalRecommendationsContent');
-        content.innerHTML = '<ul style="list-style: disc; margin-left: 20px;">' +
+        content.innerHTML = '<ul class="bullet-list">' +
             analysis.additional_recommendations.map(rec =>
-                `<li style="margin-bottom: 8px;">${escapeHtml(rec)}</li>`
+                `<li>${escapeHtml(rec)}</li>`
             ).join('') +
             '</ul>';
     } else {
@@ -1791,18 +1827,18 @@ function populateTable(tbody, comparisons) {
     comparisons.forEach(item => {
         const row = document.createElement('tr');
         if (item.changed) {
-            // Subtle left border indicator for changed values
-            row.style.borderLeft = '4px solid var(--primary-color)';
-            row.style.backgroundColor = 'rgba(59, 130, 246, 0.05)'; // Very subtle blue tint
+            // Full outline + tint (see .row-changed); the "Changed" label carries
+            // the meaning so it does not rely on color alone.
+            row.className = 'row-changed';
         }
         row.innerHTML = `
-            <td style="text-align: left; font-weight: 600;">
-                ${item.changed ? '<span style="display: inline-block; width: 8px; height: 8px; background: var(--primary-color); border-radius: 50%; margin-right: 8px;"></span>' : ''}
+            <td class="cmp-setting">
+                ${item.changed ? '<span class="badge badge-info cmp-changed-badge">Changed</span>' : ''}
                 ${escapeHtml(item.setting)}
             </td>
-            <td style="text-align: center; ${item.changed ? 'opacity: 0.6;' : ''}">${escapeHtml(item.current)}</td>
-            <td style="text-align: center; font-weight: 600; color: ${item.changed ? 'var(--primary-color)' : 'inherit'};">${escapeHtml(item.recommended)}</td>
-            <td style="text-align: left; font-size: 13px; ${item.changed ? 'font-style: italic;' : ''}">${escapeHtml(item.impact)}</td>
+            <td class="cmp-current">${escapeHtml(item.current)}</td>
+            <td class="cmp-recommended">${escapeHtml(item.recommended)}</td>
+            <td class="cmp-impact">${escapeHtml(item.impact)}</td>
         `;
         tbody.appendChild(row);
     });
@@ -2223,7 +2259,7 @@ function updateWebhooksTable(webhooks) {
     tbody.innerHTML = webhooks.map(webhook => {
         const truncatedURL = webhook.url.length > 50 ? webhook.url.substring(0, 50) + '...' : webhook.url;
         const eventBadges = webhook.events.map(event =>
-            `<span class="badge badge-info" style="margin: 2px;" title="${escapeHtml(event)}">${formatEventType(event)}</span>`
+            `<span class="badge badge-info badge-spaced" title="${escapeHtml(event)}">${formatEventType(event)}</span>`
         ).join('');
 
         return `
@@ -2509,6 +2545,12 @@ function updateDeliveriesTable(deliveries) {
         return;
     }
 
+    // Auto-refresh re-renders the body; remember a focused row control so a
+    // keyboard user is not dropped back to <body> every 10 seconds.
+    const focused = tbody.contains(document.activeElement) ? document.activeElement : null;
+    const focusAction = focused ? focused.dataset.action : null;
+    const focusId = focused ? focused.dataset.deliveryId : null;
+
     tbody.innerHTML = filteredDeliveries.map(delivery => {
         let statusBadge;
         switch (delivery.status) {
@@ -2549,6 +2591,13 @@ function updateDeliveriesTable(deliveries) {
             </tr>
         `;
     }).join('');
+
+    if (focusAction && focusId) {
+        const again = Array.from(tbody.querySelectorAll('[data-action]')).find(
+            el => el.dataset.action === focusAction && el.dataset.deliveryId === focusId
+        );
+        if (again) again.focus({ preventScroll: true });
+    }
 }
 
 // View delivery details
@@ -2588,7 +2637,7 @@ function displayDeliveryDetails(delivery) {
     }
 
     content.innerHTML = `
-        <div style="display: grid; gap: 16px;">
+        <div class="detail-grid">
             <div>
                 <strong>Delivery ID:</strong> ${delivery.id}
             </div>
@@ -2614,18 +2663,18 @@ function displayDeliveryDetails(delivery) {
             ${delivery.next_retry_at ? `<div><strong>Next Retry:</strong> ${formatDate(delivery.next_retry_at)}</div>` : ''}
             <div>
                 <strong>Payload:</strong>
-                <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px;">${escapeHtml(delivery.payload)}</pre>
+                <pre class="pre-block">${escapeHtml(delivery.payload)}</pre>
             </div>
             ${delivery.response_body ? `
                 <div>
                     <strong>Response Body:</strong>
-                    <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px;">${escapeHtml(delivery.response_body)}</pre>
+                    <pre class="pre-block">${escapeHtml(delivery.response_body)}</pre>
                 </div>
             ` : ''}
             ${delivery.error_message ? `
                 <div>
                     <strong>Error Message:</strong>
-                    <pre style="background: var(--bg-light); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; margin-top: 8px; color: var(--danger-color);">${escapeHtml(delivery.error_message)}</pre>
+                    <pre class="pre-block pre-error">${escapeHtml(delivery.error_message)}</pre>
                 </div>
             ` : ''}
         </div>
@@ -2749,7 +2798,7 @@ function updateBackupsTable(backups) {
 
         return `
             <tr>
-                <td><code style="font-size: 12px;">${escapeHtml(backup.filename)}</code></td>
+                <td><code class="code-sm">${escapeHtml(backup.filename)}</code></td>
                 <td>${modeBadge}</td>
                 <td>${formatBytes(backup.size)}</td>
                 <td>${formatDate(backup.created_at)}</td>
@@ -2974,7 +3023,7 @@ function showBackupResult(title, data) {
     document.getElementById('backupResultTitle').textContent = title;
     
     let content = `
-        <div style="display: grid; gap: 12px;">
+        <div class="detail-grid detail-grid-tight">
             <div><strong>Backup File:</strong> <code>${escapeHtml(data.filename || 'N/A')}</code></div>
             <div><strong>Mode:</strong> ${getModeBadge(data.mode)}</div>
             <div><strong>Size:</strong> ${formatBytes(data.size || 0)}</div>
@@ -2996,8 +3045,8 @@ function showRestoreResult(dryRun, data) {
     document.getElementById('backupResultTitle').textContent = title;
 
     let content = `
-        <div style="display: grid; gap: 12px;">
-            <div class="alert-${dryRun ? 'info' : 'success'}" style="margin-bottom: 12px;">
+        <div class="detail-grid detail-grid-tight">
+            <div class="alert-${dryRun ? 'info' : 'success'}">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     ${dryRun 
                         ? '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>'
@@ -3023,7 +3072,7 @@ function showRestoreResult(dryRun, data) {
 
     if (!dryRun) {
         content += `
-            <div class="alert-warning" style="margin-top: 12px;">
+            <div class="alert-warning">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                     <line x1="12" y1="9" x2="12" y2="13"></line>
@@ -3595,7 +3644,7 @@ function updateEnterpriseStatusDisplay(flags) {
         const element = document.getElementById(elementId);
         if (element) {
             element.textContent = enabled ? 'Enabled' : 'Disabled';
-            element.style.color = enabled ? 'var(--success-color)' : 'var(--text-secondary)';
+            element.classList.toggle('status-on', !!enabled);
         }
     }
 }
@@ -3637,13 +3686,8 @@ function updateEnterpriseTabs(flags) {
         const filesTabBtn = document.querySelector('.tab-btn[data-tab="files"]');
         const filesTabContent = document.getElementById('filesTab');
         
-        // Remove active from all tabs
-        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-        
-        // Activate Files tab
-        if (filesTabBtn) filesTabBtn.classList.add('active');
-        if (filesTabContent) filesTabContent.classList.add('active');
+        if (filesTabBtn) activateTab(filesTabBtn);
+        else if (filesTabContent) filesTabContent.classList.add('active');
     }
 }
 
@@ -4217,14 +4261,14 @@ async function testSSOProvider(providerId) {
         const content = document.getElementById('ssoTestResultContent');
         if (data.success) {
             content.innerHTML = `
-                <div class="alert-success" style="padding: 16px; border-radius: 8px; background: rgba(34, 197, 94, 0.1); border: 1px solid var(--success-color);">
-                    <h4 style="color: var(--success-color); margin-bottom: 8px;">Connection Successful</h4>
+                <div class="alert-success alert-block">
+                    <h4>Connection Successful</h4>
                     <p>Successfully connected to the OIDC discovery endpoint.</p>
                     ${data.issuer ? `<p><strong>Issuer:</strong> ${escapeHtml(data.issuer)}</p>` : ''}
                     ${data.endpoints ? `
-                        <div style="margin-top: 12px;">
+                        <div class="alert-endpoints">
                             <strong>Discovered Endpoints:</strong>
-                            <ul style="margin-top: 8px; padding-left: 20px;">
+                            <ul class="bullet-list">
                                 ${data.endpoints.authorization ? `<li>Authorization: ✓</li>` : ''}
                                 ${data.endpoints.token ? `<li>Token: ✓</li>` : ''}
                                 ${data.endpoints.userinfo ? `<li>UserInfo: ✓</li>` : ''}
@@ -4235,8 +4279,8 @@ async function testSSOProvider(providerId) {
             `;
         } else {
             content.innerHTML = `
-                <div class="alert-error" style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger-color);">
-                    <h4 style="color: var(--danger-color); margin-bottom: 8px;">Connection Failed</h4>
+                <div class="alert-error alert-block">
+                    <h4>Connection Failed</h4>
                     <p>${escapeHtml(data.error || 'Unknown error occurred')}</p>
                 </div>
             `;
@@ -4529,7 +4573,7 @@ function auditFilterParams() {
 }
 
 function auditOutcomeBadge(outcome) {
-    const cls = { SUCCESS: 'badge-yes', FAILURE: 'badge-no', DENIED: 'badge-no' }[outcome] || 'badge-secondary';
+    const cls = { SUCCESS: 'badge-success', FAILURE: 'badge-danger', DENIED: 'badge-warning' }[outcome] || 'badge-secondary';
     return `<span class="badge ${cls}">${escapeHtml(outcome)}</span>`;
 }
 

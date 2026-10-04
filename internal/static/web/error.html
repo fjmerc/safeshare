@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <link rel="manifest" href="/assets/manifest.json">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#2563eb">
 
     <!-- Load theme before CSS to prevent flash -->
     <script src="/assets/theme-init.js"></script>
@@ -27,9 +27,15 @@
         }
 
         .error-icon {
-            font-size: 4rem;
+            display: flex;
+            justify-content: center;
             margin-bottom: 1.5rem;
-            opacity: 0.8;
+            color: var(--warning-text);
+        }
+
+        .error-icon svg {
+            width: 64px;
+            height: 64px;
         }
 
         .error-title {
@@ -50,7 +56,6 @@
             font-family: monospace;
             font-size: 0.875rem;
             color: var(--text-secondary);
-            opacity: 0.6;
             margin-bottom: 2rem;
         }
 
@@ -63,35 +68,34 @@
 
         .btn-error-action {
             padding: 0.75rem 1.5rem;
+            min-height: 44px;
             border-radius: 8px;
-            border: none;
+            border: 1px solid transparent;
             font-size: 1rem;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
             text-decoration: none;
             display: inline-block;
         }
 
         .btn-primary-error {
             background: var(--primary-color);
-            color: white;
+            color: var(--on-accent);
         }
 
         .btn-primary-error:hover {
             background: var(--primary-hover);
-            transform: translateY(-1px);
         }
 
         .btn-secondary-error {
             background: var(--bg-secondary);
             color: var(--text-color);
-            border: 1px solid var(--border-color);
+            border-color: var(--border-strong);
         }
 
         .btn-secondary-error:hover {
             background: var(--bg-tertiary);
-            transform: translateY(-1px);
         }
 
         @media (max-width: 480px) {
@@ -143,8 +147,11 @@
         </header>
 
         <!-- Error Content -->
+        <main>
         <div class="card error-container">
-            <div class="error-icon">⚠️</div>
+            <div class="error-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            </div>
             <h2 class="error-title">{{TITLE}}</h2>
             <p class="error-message">{{MESSAGE}}</p>
             <div class="error-code">Error Code: {{CODE}}</div>
@@ -154,6 +161,7 @@
                 <a href="/#pickup" class="btn-error-action btn-secondary-error">Try Another Code</a>
             </div>
         </div>
+        </main>
 
         <!-- Footer -->
         <footer>

@@ -35,6 +35,16 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+- **Accessibility and design pass across every page.**
+  - Keyboard: the upload area has a "Browse files" button; inline rename and change-expiry icons are real buttons; admin tabs and public tabs support arrow keys; every control shows a visible focus outline.
+  - Contrast: buttons, links, tabs, status badges, muted text and form-field borders now meet WCAG AA in light and dark themes. The two-factor setup wizard is readable in dark mode (its text was invisible).
+  - Phones: the user dashboard's file and token tables become stacked cards, so the claim code and status stay visible; buttons have 44px touch targets; dialogs scroll on short screens.
+  - Screen readers: upload progress is announced as a progress bar, form fields are labelled, tables have column headers, pages have a main landmark, and errors in the two-factor flow are announced.
+  - The theme follows the operating system setting until you choose one.
+  - Visual clean-up: gradients, glows, colored side stripes, decorative blur and uppercase field labels are gone; colors come from one shared set of theme tokens.
+  - Admin settings no longer warn about unsaved changes when you click the tab you are already on.
+
 ## [1.11.0] - 2026-10-04
 
 ### Added

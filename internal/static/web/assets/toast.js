@@ -34,12 +34,14 @@
             document.body.appendChild(container);
         }
 
-        // Icon mapping
+        // Icon mapping: inline SVGs (static markup, no user data) in place of
+        // emoji, which render differently on every platform
+        const svg = (inner) => '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
         const icons = {
-            info: 'ℹ️',
-            success: '✓',
-            error: '✕',
-            warning: '⚠️'
+            info: svg('<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>'),
+            success: svg('<polyline points="20 6 9 17 4 12"></polyline>'),
+            error: svg('<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>'),
+            warning: svg('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>')
         };
 
         // Create toast element
@@ -89,7 +91,7 @@
             if (toast.parentElement) {
                 toast.parentElement.removeChild(toast);
             }
-        }, 300); // Match animation duration in CSS
+        }, 250); // Match animation duration in CSS
     }
 
     // Screen readers only announce changes to a live region that already
@@ -143,7 +145,7 @@
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     // Expose showToast globally

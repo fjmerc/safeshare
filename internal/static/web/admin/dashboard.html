@@ -11,7 +11,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <link rel="manifest" href="/assets/manifest.json">
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#2563eb">
 
     <!-- Load theme before CSS to prevent flash -->
     <script src="/assets/theme-init.js"></script>
@@ -26,7 +26,7 @@
                 <h1>SafeShare Admin Dashboard</h1>
             </div>
             <div class="header-actions">
-                <button id="themeToggle" class="btn-icon btn-secondary" title="Toggle theme" aria-label="Toggle theme">
+                <button id="themeToggle" type="button" class="btn-icon btn-secondary" title="Toggle theme" aria-label="Toggle theme">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="theme-icon-sun">
                         <circle cx="12" cy="12" r="5"></circle>
                         <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -61,9 +61,10 @@
         </div>
     </header>
 
-    <div class="dashboard-container">
+    <main class="dashboard-container" id="main">
         <!-- Stats Section -->
-        <div class="stats-grid">
+        <h2 class="sr-only">Overview</h2>
+        <div class="stats-grid" role="group" aria-label="Storage and traffic overview">
             <div class="stat-card">
                 <h3>Total Files</h3>
                 <p class="stat-value" id="statTotalFiles">-</p>
@@ -76,14 +77,14 @@
                 <div class="stat-header-with-tooltip">
                     <h3>Partial Upload Size</h3>
                     <div class="tooltip-wrapper">
-                        <button class="info-icon" tabindex="0" aria-label="Information about partial upload size">
+                        <button type="button" class="info-icon" aria-label="Information about partial upload size" aria-describedby="partialUploadTip">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="10"></circle>
                                 <line x1="12" y1="16" x2="12" y2="12"></line>
                                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
                             </svg>
                         </button>
-                        <div class="tooltip-content">
+                        <div class="tooltip-content" role="tooltip" id="partialUploadTip">
                             Temporary storage used by in-progress chunked uploads. Files are automatically cleaned up after 24 hours of inactivity.
                         </div>
                     </div>
@@ -101,24 +102,24 @@
         </div>
 
         <!-- Tabs -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="files">Files</button>
-            <button class="tab-btn" data-tab="users">Users</button>
-            <button class="tab-btn" data-tab="blockedIPs">Blocked IPs</button>
-            <button class="tab-btn" data-tab="enterpriseFeatures">Enterprise Features</button>
-            <button class="tab-btn" data-tab="webhooks">Webhooks</button>
-            <button class="tab-btn" data-tab="ssoProviders">SSO Providers</button>
-            <button class="tab-btn" data-tab="apiTokens">API Tokens</button>
-            <button class="tab-btn" data-tab="backups">Backups</button>
-            <button class="tab-btn" data-tab="auditLog">Audit Log</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
-            <button class="tab-btn" data-tab="configAssistant">Configuration Assistant</button>
+        <div class="tabs" role="tablist" aria-label="Admin sections">
+            <button class="tab-btn active" data-tab="files" role="tab" id="tab-files" aria-controls="filesTab" aria-selected="true" tabindex="0">Files</button>
+            <button class="tab-btn" data-tab="users" role="tab" id="tab-users" aria-controls="usersTab" aria-selected="false" tabindex="-1">Users</button>
+            <button class="tab-btn" data-tab="blockedIPs" role="tab" id="tab-blockedIPs" aria-controls="blockedIPsTab" aria-selected="false" tabindex="-1">Blocked IPs</button>
+            <button class="tab-btn" data-tab="enterpriseFeatures" role="tab" id="tab-enterpriseFeatures" aria-controls="enterpriseFeaturesTab" aria-selected="false" tabindex="-1">Enterprise Features</button>
+            <button class="tab-btn" data-tab="webhooks" role="tab" id="tab-webhooks" aria-controls="webhooksTab" aria-selected="false" tabindex="-1">Webhooks</button>
+            <button class="tab-btn" data-tab="ssoProviders" role="tab" id="tab-ssoProviders" aria-controls="ssoProvidersTab" aria-selected="false" tabindex="-1">SSO Providers</button>
+            <button class="tab-btn" data-tab="apiTokens" role="tab" id="tab-apiTokens" aria-controls="apiTokensTab" aria-selected="false" tabindex="-1">API Tokens</button>
+            <button class="tab-btn" data-tab="backups" role="tab" id="tab-backups" aria-controls="backupsTab" aria-selected="false" tabindex="-1">Backups</button>
+            <button class="tab-btn" data-tab="auditLog" role="tab" id="tab-auditLog" aria-controls="auditLogTab" aria-selected="false" tabindex="-1">Audit Log</button>
+            <button class="tab-btn" data-tab="settings" role="tab" id="tab-settings" aria-controls="settingsTab" aria-selected="false" tabindex="-1">Settings</button>
+            <button class="tab-btn" data-tab="configAssistant" role="tab" id="tab-configAssistant" aria-controls="configAssistantTab" aria-selected="false" tabindex="-1">Configuration Assistant</button>
         </div>
 
         <!-- Files Tab -->
-        <div id="filesTab" class="tab-content active">
+        <div id="filesTab" class="tab-content active" role="tabpanel" aria-labelledby="tab-files">
             <div class="table-controls">
-                <input type="text" id="searchInput" placeholder="Search by claim code, filename, or IP..." class="search-input">
+                <input type="text" id="searchInput" aria-label="Search files" placeholder="Search by claim code, filename, or IP..." class="search-input">
                 <button id="refreshBtn" class="btn-secondary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="23 4 23 10 17 10"></polyline>
@@ -136,24 +137,24 @@
                 </button>
             </div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Files">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th style="width: 40px;">
-                                <input type="checkbox" id="selectAllCheckbox" title="Select all files">
+                            <th scope="col" class="col-check">
+                                <input type="checkbox" id="selectAllCheckbox" title="Select all files" aria-label="Select all files">
                             </th>
-                            <th>Claim Code</th>
-                            <th>Filename</th>
-                            <th>Size</th>
-                            <th>User</th>
-                            <th>Uploader IP</th>
-                            <th>Created</th>
-                            <th>Expires</th>
-                            <th>Downloads</th>
-                            <th>Scan</th>
-                            <th>Protected</th>
-                            <th>Actions</th>
+                            <th scope="col">Claim Code</th>
+                            <th scope="col">Filename</th>
+                            <th scope="col">Size</th>
+                            <th scope="col">User</th>
+                            <th scope="col">Uploader IP</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Expires</th>
+                            <th scope="col">Downloads</th>
+                            <th scope="col">Scan</th>
+                            <th scope="col">Protected</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="filesTableBody">
@@ -170,7 +171,7 @@
         </div>
 
         <!-- Users Tab -->
-        <div id="usersTab" class="tab-content">
+        <div id="usersTab" class="tab-content" role="tabpanel" aria-labelledby="tab-users">
             <div class="table-controls">
                 <button id="createUserBtn" class="btn-primary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -191,18 +192,18 @@
                 </button>
             </div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Users">
                 <table class="data-table" id="usersTable">
                     <thead>
                         <tr>
-                            <th>Username</th>
-                            <th>Email</th>
-                            <th>Role</th>
-                            <th>Status</th>
-                            <th>Files</th>
-                            <th>Created</th>
-                            <th>Last Login</th>
-                            <th>Actions</th>
+                            <th scope="col">Username</th>
+                            <th scope="col">Email</th>
+                            <th scope="col">Role</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Files</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Last Login</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="usersTableBody">
@@ -215,11 +216,11 @@
         </div>
 
         <!-- Blocked IPs Tab -->
-        <div id="blockedIPsTab" class="tab-content">
+        <div id="blockedIPsTab" class="tab-content" role="tabpanel" aria-labelledby="tab-blockedIPs">
             <div class="table-controls">
                 <form id="blockIPForm" class="inline-form">
-                    <input type="text" name="ip_address" placeholder="IP address or CIDR (e.g. 203.0.113.5 or 2001:db8::/64)" title="A single IPv4/IPv6 address, or a CIDR range to block (max /8 for IPv4, /32 for IPv6). Stored in canonical form. Blocks are per-address, but rate limits group IPv6 clients by /64 -- to stop an IPv6 client that's rotating addresses within its own network, block its /64 (e.g. 2001:db8:1234:5678::/64), not just one address.">
-                    <input type="text" name="reason" placeholder="Reason (optional)">
+                    <input type="text" name="ip_address" aria-label="IP address or CIDR" placeholder="IP address or CIDR (e.g. 203.0.113.5 or 2001:db8::/64)" title="A single IPv4/IPv6 address, or a CIDR range to block (max /8 for IPv4, /32 for IPv6). Stored in canonical form. Blocks are per-address, but rate limits group IPv6 clients by /64 -- to stop an IPv6 client that's rotating addresses within its own network, block its /64 (e.g. 2001:db8:1234:5678::/64), not just one address.">
+                    <input type="text" name="reason" aria-label="Reason" placeholder="Reason (optional)">
                     <button type="submit" class="btn-primary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"></circle>
@@ -230,15 +231,15 @@
                 </form>
             </div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Blocked IP addresses">
                 <table class="data-table" id="blockedIPsTable">
                     <thead>
                         <tr>
-                            <th>IP Address</th>
-                            <th>Reason</th>
-                            <th>Blocked At</th>
-                            <th>Blocked By</th>
-                            <th>Actions</th>
+                            <th scope="col">IP Address</th>
+                            <th scope="col">Reason</th>
+                            <th scope="col">Blocked At</th>
+                            <th scope="col">Blocked By</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="blockedIPsTableBody">
@@ -251,7 +252,7 @@
         </div>
 
         <!-- Webhooks Tab -->
-        <div id="webhooksTab" class="tab-content">
+        <div id="webhooksTab" class="tab-content" role="tabpanel" aria-labelledby="tab-webhooks">
             <div class="table-controls">
                 <button id="createWebhookBtn" class="btn-primary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -272,18 +273,18 @@
                 </button>
             </div>
 
-            <div class="table-container">
-                <h3 style="margin-bottom: 16px; color: var(--text-primary);">Webhook Configurations</h3>
+            <div class="table-container" tabindex="0" role="region" aria-label="Webhook configurations">
+                <h3 class="u-mb-16">Webhook Configurations</h3>
                 <table class="data-table" id="webhooksTable">
                     <thead>
                         <tr>
-                            <th>ID</th>
-                            <th>URL</th>
-                            <th>Enabled</th>
-                            <th>Events</th>
-                            <th>Retries</th>
-                            <th>Timeout</th>
-                            <th>Actions</th>
+                            <th scope="col">ID</th>
+                            <th scope="col">URL</th>
+                            <th scope="col">Enabled</th>
+                            <th scope="col">Events</th>
+                            <th scope="col">Retries</th>
+                            <th scope="col">Timeout</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="webhooksTableBody">
@@ -294,22 +295,22 @@
                 </table>
             </div>
 
-            <div class="table-container" style="margin-top: 32px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
-                    <h3 style="margin: 0; color: var(--text-primary);">Delivery History</h3>
-                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="autoRefreshDeliveries" style="width: auto;">
-                            <span style="font-size: 14px; color: var(--text-secondary);">Auto-refresh (10s)</span>
+            <div class="table-container section-gap" tabindex="0" role="region" aria-label="Webhook delivery history">
+                <div class="panel-head">
+                    <h3 class="u-m-0">Delivery History</h3>
+                    <div class="toolbar-row">
+                        <label class="label-row">
+                            <input class="check-inline" type="checkbox" id="autoRefreshDeliveries">
+                            <span class="help-text">Auto-refresh (10s)</span>
                         </label>
-                        <select id="deliveryEventFilter" class="webhook-filter">
+                        <select id="deliveryEventFilter" class="webhook-filter" aria-label="Filter deliveries by event">
                             <option value="">All Events</option>
                             <option value="file.uploaded">file.uploaded</option>
                             <option value="file.downloaded">file.downloaded</option>
                             <option value="file.deleted">file.deleted</option>
                             <option value="file.expired">file.expired</option>
                         </select>
-                        <select id="deliveryStatusFilter" class="webhook-filter">
+                        <select id="deliveryStatusFilter" class="webhook-filter" aria-label="Filter deliveries by status">
                             <option value="">All Statuses</option>
                             <option value="success">Success</option>
                             <option value="failed">Failed</option>
@@ -328,12 +329,12 @@
                 <table class="data-table" id="deliveriesTable">
                     <thead>
                         <tr>
-                            <th>Timestamp</th>
-                            <th>Event Type</th>
-                            <th>Status</th>
-                            <th>Response Code</th>
-                            <th>Attempts</th>
-                            <th>Actions</th>
+                            <th scope="col">Timestamp</th>
+                            <th scope="col">Event Type</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Response Code</th>
+                            <th scope="col">Attempts</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="deliveriesTableBody">
@@ -346,7 +347,7 @@
         </div>
 
         <!-- Settings Tab -->
-        <div id="settingsTab" class="tab-content">
+        <div id="settingsTab" class="tab-content" role="tabpanel" aria-labelledby="tab-settings">
             <div class="settings-grid">
             <div class="settings-section">
                 <h2>Storage Management</h2>
@@ -355,7 +356,7 @@
                         <label for="storageQuota">Storage Quota</label>
                         <div class="input-with-unit">
                             <input type="number" id="storageQuota" name="storage_quota" min="0" step="0.001" required>
-                            <select id="storageQuotaUnit" name="storage_quota_unit">
+                            <select id="storageQuotaUnit" name="storage_quota_unit" aria-label="Storage quota unit">
                                 <option value="GB">GB</option>
                                 <option value="TB">TB</option>
                             </select>
@@ -366,7 +367,7 @@
                         <label for="maxFileSize">Max File Size</label>
                         <div class="input-with-unit">
                             <input type="number" id="maxFileSize" name="max_file_size" min="0.001" step="0.001" required>
-                            <select id="maxFileSizeUnit" name="max_file_size_unit">
+                            <select id="maxFileSizeUnit" name="max_file_size_unit" aria-label="Max file size unit">
                                 <option value="MB">MB</option>
                                 <option value="GB">GB</option>
                                 <option value="TB">TB</option>
@@ -378,7 +379,7 @@
                         <label for="defaultExpiration">Default Expiration</label>
                         <div class="input-with-unit">
                             <input type="number" id="defaultExpiration" name="default_expiration" min="0.001" step="0.001" required>
-                            <select id="defaultExpirationUnit" name="default_expiration_unit">
+                            <select id="defaultExpirationUnit" name="default_expiration_unit" aria-label="Default expiration unit">
                                 <option value="hours">Hours</option>
                                 <option value="days">Days</option>
                             </select>
@@ -389,7 +390,7 @@
                         <label for="maxExpiration">Max Expiration</label>
                         <div class="input-with-unit">
                             <input type="number" id="maxExpiration" name="max_expiration" min="0.001" step="0.001" required>
-                            <select id="maxExpirationUnit" name="max_expiration_unit">
+                            <select id="maxExpirationUnit" name="max_expiration_unit" aria-label="Max expiration unit">
                                 <option value="hours">Hours</option>
                                 <option value="days">Days</option>
                             </select>
@@ -539,11 +540,11 @@
                     </div>
                 </div>
 
-                <div style="margin-top: 24px;">
-                    <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 12px;">
+                <div class="u-mt-24">
+                    <p class="help-text u-mb-12">
                         Abandoned uploads are partial uploads that have been inactive for more than 24 hours.
                     </p>
-                    <button id="cleanupPartialUploadsBtn" class="btn-secondary" style="display: inline-flex; align-items: center; gap: 8px;">
+                    <button id="cleanupPartialUploadsBtn" class="btn-secondary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 6h18"></path>
                             <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
@@ -559,12 +560,12 @@
         </div>
 
         <!-- Enterprise Features Tab -->
-        <div id="enterpriseFeaturesTab" class="tab-content">
+        <div id="enterpriseFeaturesTab" class="tab-content" role="tabpanel" aria-labelledby="tab-enterpriseFeatures">
             <div class="settings-grid">
                 <!-- Feature Flags Section -->
                 <div class="settings-section">
                     <h2>Enterprise Feature Flags</h2>
-                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                    <p class="help-text u-mb-16">
                         Enable or disable enterprise features. Changes take effect immediately.
                     </p>
                     <form id="featureFlagsForm" class="settings-form">
@@ -627,7 +628,7 @@
                 <!-- MFA Configuration Section -->
                 <div class="settings-section" id="mfaConfigSection" style="display: none;">
                     <h2>MFA Configuration</h2>
-                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                    <p class="help-text u-mb-16">
                         Configure multi-factor authentication settings.
                     </p>
                     <form id="mfaConfigForm" class="settings-form">
@@ -685,7 +686,7 @@
                 <!-- SSO Configuration Section -->
                 <div class="settings-section" id="ssoConfigSection" style="display: none;">
                     <h2>SSO Configuration</h2>
-                    <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px;">
+                    <p class="help-text u-mb-16">
                         Configure single sign-on settings. SSO providers are managed in the <a href="#" id="link-switch-sso-providers">SSO Providers</a> tab.
                     </p>
                     <form id="ssoConfigForm" class="settings-form">
@@ -756,7 +757,7 @@
                             <span id="malwareScanStatusText">Disabled</span>
                         </div>
                     </div>
-                    <div class="alert-info" style="margin-top: 16px;">
+                    <div class="alert-info u-mt-16">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"></circle>
                             <line x1="12" y1="16" x2="12" y2="12"></line>
@@ -769,7 +770,7 @@
         </div>
 
         <!-- SSO Providers Tab -->
-        <div id="ssoProvidersTab" class="tab-content">
+        <div id="ssoProvidersTab" class="tab-content" role="tabpanel" aria-labelledby="tab-ssoProviders">
             <div class="table-controls">
                 <button id="createSSOProviderBtn" class="btn-primary">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -788,7 +789,7 @@
             </div>
 
             <!-- SSO Status Alert -->
-            <div id="ssoDisabledAlert" class="alert-warning" style="margin-bottom: 16px; display: none;">
+            <div id="ssoDisabledAlert" class="alert-warning u-mb-16" style="display: none;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                     <line x1="12" y1="9" x2="12" y2="13"></line>
@@ -798,7 +799,7 @@
             </div>
 
             <!-- SSO Providers Stats -->
-            <div class="stats-grid" style="margin-bottom: 20px;">
+            <div class="stats-grid u-mb-20" role="group" aria-label="SSO summary">
                 <div class="stat-card">
                     <h3>Total Providers</h3>
                     <p class="stat-value" id="statTotalProviders">-</p>
@@ -814,18 +815,18 @@
             </div>
 
             <!-- SSO Providers Table -->
-            <div class="table-container">
-                <h3 style="margin-bottom: 16px; color: var(--text-primary);">SSO Provider Configurations</h3>
+            <div class="table-container" tabindex="0" role="region" aria-label="SSO provider configurations">
+                <h3 class="u-mb-16">SSO Provider Configurations</h3>
                 <table class="data-table" id="ssoProvidersTable">
                     <thead>
                         <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>Issuer URL</th>
-                            <th>Status</th>
-                            <th>Linked Users</th>
-                            <th>Created</th>
-                            <th>Actions</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Issuer URL</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Linked Users</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="ssoProvidersTableBody">
@@ -837,17 +838,17 @@
             </div>
 
             <!-- SSO Links Table -->
-            <div class="table-container" style="margin-top: 32px;">
-                <h3 style="margin-bottom: 16px; color: var(--text-primary);">User SSO Links</h3>
+            <div class="table-container section-gap" tabindex="0" role="region" aria-label="User SSO links">
+                <h3 class="u-mb-16">User SSO Links</h3>
                 <table class="data-table" id="ssoLinksTable">
                     <thead>
                         <tr>
-                            <th>User</th>
-                            <th>Provider</th>
-                            <th>External ID</th>
-                            <th>Linked At</th>
-                            <th>Last Login</th>
-                            <th>Actions</th>
+                            <th scope="col">User</th>
+                            <th scope="col">Provider</th>
+                            <th scope="col">External ID</th>
+                            <th scope="col">Linked At</th>
+                            <th scope="col">Last Login</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="ssoLinksTableBody">
@@ -860,10 +861,10 @@
         </div>
 
         <!-- API Tokens Tab -->
-        <div id="apiTokensTab" class="tab-content">
+        <div id="apiTokensTab" class="tab-content" role="tabpanel" aria-labelledby="tab-apiTokens">
             <div class="table-controls">
-                <input type="text" id="tokenSearchInput" placeholder="Search by token name or user..." class="search-input">
-                <select id="tokenUserFilter" class="filter-select" style="min-width: 150px;">
+                <input type="text" id="tokenSearchInput" aria-label="Search API tokens" placeholder="Search by token name or user..." class="search-input">
+                <select id="tokenUserFilter" class="filter-select" aria-label="Filter tokens by user">
                     <option value="">All Users</option>
                     <!-- Populated by JavaScript -->
                 </select>
@@ -895,7 +896,7 @@
             </div>
 
             <!-- Token Usage Summary -->
-            <div class="stats-grid" style="margin-bottom: 20px;">
+            <div class="stats-grid u-mb-20" role="group" aria-label="API token summary">
                 <div class="stat-card">
                     <h3>Total Tokens</h3>
                     <p class="stat-value" id="statTotalTokens">-</p>
@@ -914,23 +915,23 @@
                 </div>
             </div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="API tokens">
                 <table class="data-table" id="tokensTable">
                     <thead>
                         <tr>
-                            <th style="width: 40px;">
-                                <input type="checkbox" id="selectAllTokensCheckbox" title="Select all tokens">
+                            <th scope="col" class="col-check">
+                                <input type="checkbox" id="selectAllTokensCheckbox" title="Select all tokens" aria-label="Select all tokens">
                             </th>
-                            <th>Token Name</th>
-                            <th>User</th>
-                            <th>Status</th>
-                            <th>Scopes</th>
-                            <th>Requests</th>
-                            <th>Data Transferred</th>
-                            <th>Created</th>
-                            <th>Expires</th>
-                            <th>Last Used</th>
-                            <th>Actions</th>
+                            <th scope="col">Token Name</th>
+                            <th scope="col">User</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Scopes</th>
+                            <th scope="col">Requests</th>
+                            <th scope="col">Data Transferred</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Expires</th>
+                            <th scope="col">Last Used</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="tokensTableBody">
@@ -947,10 +948,10 @@
         </div>
 
         <!-- Backups Tab -->
-        <div id="backupsTab" class="tab-content">
+        <div id="backupsTab" class="tab-content" role="tabpanel" aria-labelledby="tab-backups">
             <div class="table-controls">
-                <div style="display: flex; gap: 12px; align-items: center;">
-                    <select id="backupMode" class="webhook-filter">
+                <div class="toolbar-row">
+                    <select id="backupMode" class="webhook-filter" aria-label="Backup mode">
                         <option value="config">Config Only</option>
                         <option value="database">Database</option>
                         <option value="full">Full (DB + Files)</option>
@@ -974,7 +975,7 @@
                 </button>
             </div>
 
-            <div class="alert-info" style="margin-bottom: 16px;">
+            <div class="alert-info u-mb-16">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="12" y1="16" x2="12" y2="12"></line>
@@ -983,17 +984,17 @@
                 <span><strong>Backup Modes:</strong> Config = settings only | Database = settings + DB | Full = settings + DB + uploaded files</span>
             </div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Backups">
                 <table class="data-table" id="backupsTable">
                     <thead>
                         <tr>
-                            <th>Filename</th>
-                            <th>Mode</th>
-                            <th>Size</th>
-                            <th>Created</th>
-                            <th>Version</th>
-                            <th>Status</th>
-                            <th>Actions</th>
+                            <th scope="col">Filename</th>
+                            <th scope="col">Mode</th>
+                            <th scope="col">Size</th>
+                            <th scope="col">Created</th>
+                            <th scope="col">Version</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="backupsTableBody">
@@ -1006,7 +1007,7 @@
         </div>
 
         <!-- Audit Log Tab (ADR-018) -->
-        <div id="auditLogTab" class="tab-content">
+        <div id="auditLogTab" class="tab-content" role="tabpanel" aria-labelledby="tab-auditLog">
             <div class="table-controls audit-controls">
                 <div class="audit-filters">
                     <select id="auditFilterType" class="webhook-filter" aria-label="Event type">
@@ -1038,19 +1039,19 @@
 
             <div id="auditVerifyResult" class="audit-verify-result hidden" role="status" aria-live="polite"></div>
 
-            <div class="table-container">
+            <div class="table-container" tabindex="0" role="region" aria-label="Audit log">
                 <table class="data-table" id="auditTable">
                     <thead>
                         <tr>
-                            <th>#</th>
-                            <th>Time (UTC)</th>
-                            <th>Type</th>
-                            <th>Action</th>
-                            <th>Outcome</th>
-                            <th>User</th>
-                            <th>IP</th>
-                            <th>Resource</th>
-                            <th>Details</th>
+                            <th scope="col">#</th>
+                            <th scope="col">Time (UTC)</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Action</th>
+                            <th scope="col">Outcome</th>
+                            <th scope="col">User</th>
+                            <th scope="col">IP</th>
+                            <th scope="col">Resource</th>
+                            <th scope="col">Details</th>
                         </tr>
                     </thead>
                     <tbody id="auditTableBody">
@@ -1072,10 +1073,10 @@
         </div>
 
         <!-- Configuration Assistant Tab -->
-        <div id="configAssistantTab" class="tab-content">
-            <div class="settings-section" style="max-width: 900px; margin: 0 auto;">
+        <div id="configAssistantTab" class="tab-content" role="tabpanel" aria-labelledby="tab-configAssistant">
+            <div class="settings-section max-w-900">
                 <h2>Configuration Assistant</h2>
-                <p style="color: var(--text-secondary); margin-bottom: 24px;">
+                <p class="help-text u-mb-24">
                     This tool analyzes your environment and recommends optimal settings for SafeShare based on your network conditions, file sizes, and deployment scenario.
                 </p>
 
@@ -1145,7 +1146,7 @@
 
                         <div class="form-group">
                             <label for="usingCDN">
-                                <input type="checkbox" id="usingCDN" name="using_cdn" style="width: auto; margin-right: 8px;">
+                                <input class="check-inline" type="checkbox" id="usingCDN" name="using_cdn">
                                 Behind a CDN (Cloudflare, CloudFront, etc.)
                             </label>
                             <small>Check if SafeShare is behind a Content Delivery Network</small>
@@ -1159,7 +1160,7 @@
 
                         <div class="form-group">
                             <label for="encryptionEnabled">
-                                <input type="checkbox" id="encryptionEnabled" name="encryption_enabled" style="width: auto; margin-right: 8px;">
+                                <input class="check-inline" type="checkbox" id="encryptionEnabled" name="encryption_enabled">
                                 Encryption at Rest Enabled (ENCRYPTION_KEY set)
                             </label>
                             <small>Check if you have AES-256-GCM encryption enabled with ENCRYPTION_KEY environment variable</small>
@@ -1177,10 +1178,10 @@
                 </div>
 
                 <!-- Results Section (hidden initially) -->
-                <div id="recommendationsSection" style="display: none; margin-top: 32px;">
-                    <h3 style="margin-bottom: 16px; color: var(--text-primary);">Recommended Configuration</h3>
+                <div id="recommendationsSection" class="u-mt-32" style="display: none;">
+                    <h3 class="u-mb-16">Recommended Configuration</h3>
 
-                    <div class="alert-info" style="margin-bottom: 24px;">
+                    <div class="alert-info u-mb-24">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"></circle>
                             <line x1="12" y1="16" x2="12" y2="12"></line>
@@ -1190,18 +1191,18 @@
                     </div>
 
                     <!-- Immediate Settings Section -->
-                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
-                        <span style="background: var(--success-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">IMMEDIATE</span>
+                    <h4 class="u-mb-12">
+                        <span class="pill pill-success">IMMEDIATE</span>
                         Settings (Apply Now - No Restart Required)
                     </h4>
-                    <div class="table-container" style="margin-bottom: 32px;">
+                    <div class="table-container u-mb-32" tabindex="0" role="region" aria-label="Immediate settings comparison">
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th style="text-align: left;">Setting</th>
-                                    <th>Current Value</th>
-                                    <th>Recommended Value</th>
-                                    <th>Impact</th>
+                                    <th scope="col" class="text-left">Setting</th>
+                                    <th scope="col">Current Value</th>
+                                    <th scope="col">Recommended Value</th>
+                                    <th scope="col">Impact</th>
                                 </tr>
                             </thead>
                             <tbody id="immediateSettingsTableBody">
@@ -1211,18 +1212,18 @@
                     </div>
 
                     <!-- Performance Settings Section -->
-                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
-                        <span style="background: var(--warning-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">RESTART REQUIRED</span>
+                    <h4 class="u-mb-12">
+                        <span class="pill pill-warning">RESTART REQUIRED</span>
                         Performance Settings
                     </h4>
-                    <div class="table-container" style="margin-bottom: 32px;">
+                    <div class="table-container u-mb-32" tabindex="0" role="region" aria-label="Performance settings comparison">
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th style="text-align: left;">Setting</th>
-                                    <th>Current Value</th>
-                                    <th>Recommended Value</th>
-                                    <th>Impact</th>
+                                    <th scope="col" class="text-left">Setting</th>
+                                    <th scope="col">Current Value</th>
+                                    <th scope="col">Recommended Value</th>
+                                    <th scope="col">Impact</th>
                                 </tr>
                             </thead>
                             <tbody id="performanceSettingsTableBody">
@@ -1232,18 +1233,18 @@
                     </div>
 
                     <!-- Operational Settings Section -->
-                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">
-                        <span style="background: var(--warning-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">RESTART REQUIRED</span>
+                    <h4 class="u-mb-12">
+                        <span class="pill pill-warning">RESTART REQUIRED</span>
                         Operational Settings
                     </h4>
-                    <div class="table-container" style="margin-bottom: 24px;">
+                    <div class="table-container u-mb-24" tabindex="0" role="region" aria-label="Operational settings comparison">
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th style="text-align: left;">Setting</th>
-                                    <th>Current Value</th>
-                                    <th>Recommended Value</th>
-                                    <th>Impact</th>
+                                    <th scope="col" class="text-left">Setting</th>
+                                    <th scope="col">Current Value</th>
+                                    <th scope="col">Recommended Value</th>
+                                    <th scope="col">Impact</th>
                                 </tr>
                             </thead>
                             <tbody id="operationalSettingsTableBody">
@@ -1253,16 +1254,16 @@
                     </div>
 
                     <!-- .env File Generation -->
-                    <div id="envFileSection" style="margin-bottom: 24px; padding: 16px; background: var(--card-background); border: 1px solid var(--border-color); border-radius: 8px;">
-                        <h4 style="margin-bottom: 12px; color: var(--text-primary);">
-                            <span style="background: var(--primary-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 8px;">DOCKER</span>
+                    <div class="env-file-section" id="envFileSection">
+                        <h4 class="u-mb-12">
+                            <span class="pill pill-primary">DOCKER</span>
                             Environment Variables for Restart-Required Settings
                         </h4>
-                        <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 12px;">
+                        <p class="help-text u-mb-12">
                             Add these to your <code>.env</code> file or <code>docker-compose.yml</code> and restart SafeShare to apply performance and operational settings:
                         </p>
-                        <pre id="envFileContent" style="background: var(--background-color); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; font-family: 'Courier New', monospace; color: var(--text-primary);"></pre>
-                        <button id="copyEnvBtn" class="btn-secondary" style="margin-top: 8px;">
+                        <pre id="envFileContent"></pre>
+                        <button id="copyEnvBtn" class="btn-secondary u-mt-8">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -1272,14 +1273,14 @@
                     </div>
 
                     <!-- Additional Recommendations -->
-                    <div id="additionalRecommendations" style="display: none; margin-bottom: 24px;">
-                        <h4 style="margin-bottom: 12px; color: var(--text-primary);">Additional Recommendations</h4>
-                        <div id="additionalRecommendationsContent" style="color: var(--text-secondary); font-size: 14px; line-height: 1.6;">
+                    <div id="additionalRecommendations" class="u-mb-24" style="display: none;">
+                        <h4 class="u-mb-12">Additional Recommendations</h4>
+                        <div class="help-text" id="additionalRecommendationsContent">
                             <!-- Populated by JavaScript -->
                         </div>
                     </div>
 
-                    <div style="background: var(--info-light); padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; color: var(--text-primary);">
+                    <div class="note-box">
                         <strong>Note:</strong> "Apply Immediate Settings" will update settings that don't require restart. For performance and operational settings, use the .env file snippet above and restart SafeShare.
                     </div>
 
@@ -1301,7 +1302,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <!-- Create User Modal -->
     <div id="createUserModal" class="modal" style="display: none;">
@@ -1421,11 +1422,11 @@
     <div id="resetPasswordModal" class="modal" style="display: none;" data-modal-no-escape>
         <div class="modal-content">
             <h3>Password Reset</h3>
-            <div style="margin: 20px 0;">
+            <div class="u-my-20">
                 <p><strong>New Temporary Password:</strong></p>
-                <code id="resetPassword" style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; display: block; margin: 10px 0;"></code>
+                <code class="reset-password-display" id="resetPassword"></code>
                 <button class="btn-secondary" id="btn-copy-reset-password">Copy Password</button>
-                <div class="alert-info" style="margin-top: 16px;">
+                <div class="alert-info u-mt-16">
                     <span>Share this temporary password securely with the user.</span>
                 </div>
             </div>
@@ -1453,7 +1454,7 @@
             <h3>Extend Token Expiration</h3>
             <p>Extend expiration for <strong id="extendTokensCount">0 tokens</strong> by:</p>
             <div class="form-group">
-                <select id="extendDaysSelect" class="filter-select" style="width: 100%; padding: 10px;">
+                <select id="extendDaysSelect" class="filter-select" aria-label="Extend by">
                     <option value="30">30 days</option>
                     <option value="60">60 days</option>
                     <option value="90">90 days</option>
@@ -1483,7 +1484,7 @@
                     <label for="webhookSecret">Secret *</label>
                     <div class="input-with-button">
                         <input type="password" id="webhookSecret" name="secret" required placeholder="Enter webhook secret">
-                        <button type="button" class="btn-secondary btn-small" id="btn-generate-webhook-secret" style="white-space: nowrap;">
+                        <button type="button" class="btn-secondary btn-small nowrap" id="btn-generate-webhook-secret">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
                             </svg>
@@ -1494,9 +1495,9 @@
                 </div>
                 <div class="form-group" id="serviceTokenGroup" style="display: none;">
                     <label for="webhookServiceToken">Service Token</label>
-                    <div class="password-wrapper" style="position: relative;">
+                    <div class="password-wrapper">
                         <input type="password" id="webhookServiceToken" name="service_token" placeholder="Enter service authentication token">
-                        <button type="button" class="password-toggle" data-password-toggle="webhookServiceToken" aria-label="Toggle token visibility" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-secondary);">
+                        <button type="button" class="password-toggle" data-password-toggle="webhookServiceToken" aria-label="Toggle token visibility">
                             <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                                 <circle cx="12" cy="12" r="3"></circle>
@@ -1511,7 +1512,7 @@
                 </div>
                 <div class="form-group">
                     <label>
-                        <input type="checkbox" id="webhookEnabled" name="enabled" checked style="width: auto; margin-right: 8px;">
+                        <input class="check-inline" type="checkbox" id="webhookEnabled" name="enabled" checked>
                         Enabled
                     </label>
                 </div>
@@ -1527,22 +1528,22 @@
                 </div>
                 <div class="form-group">
                     <label>Event Types *</label>
-                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-                        <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" class="webhook-event" value="file.uploaded" style="width: auto; margin-right: 8px;">
-                            <span style="font-family: monospace; font-size: 14px;">file.uploaded</span>
+                    <div class="stack-8">
+                        <label class="label-row">
+                            <input type="checkbox" class="webhook-event check-inline" value="file.uploaded">
+                            <span class="mono">file.uploaded</span>
                         </label>
-                        <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" class="webhook-event" value="file.downloaded" style="width: auto; margin-right: 8px;">
-                            <span style="font-family: monospace; font-size: 14px;">file.downloaded</span>
+                        <label class="label-row">
+                            <input type="checkbox" class="webhook-event check-inline" value="file.downloaded">
+                            <span class="mono">file.downloaded</span>
                         </label>
-                        <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" class="webhook-event" value="file.deleted" style="width: auto; margin-right: 8px;">
-                            <span style="font-family: monospace; font-size: 14px;">file.deleted</span>
+                        <label class="label-row">
+                            <input type="checkbox" class="webhook-event check-inline" value="file.deleted">
+                            <span class="mono">file.deleted</span>
                         </label>
-                        <label style="display: flex; align-items: center; cursor: pointer;">
-                            <input type="checkbox" class="webhook-event" value="file.expired" style="width: auto; margin-right: 8px;">
-                            <span style="font-family: monospace; font-size: 14px;">file.expired</span>
+                        <label class="label-row">
+                            <input type="checkbox" class="webhook-event check-inline" value="file.expired">
+                            <span class="mono">file.expired</span>
                         </label>
                     </div>
                     <small>Select at least one event type</small>
@@ -1567,9 +1568,9 @@
 
     <!-- Webhook Delivery Detail Modal -->
     <div id="deliveryDetailModal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-content">
             <h3>Webhook Delivery Details</h3>
-            <div id="deliveryDetailContent" style="margin: 20px 0;">
+            <div class="u-my-20" id="deliveryDetailContent">
                 <!-- Content populated by JavaScript -->
             </div>
             <div class="modal-actions">
@@ -1582,10 +1583,10 @@
     <div id="restoreBackupModal" class="modal" style="display: none;">
         <div class="modal-content">
             <h3>Restore Backup</h3>
-            <div style="margin: 20px 0;">
-                <p id="restoreBackupInfo" style="margin-bottom: 16px;"></p>
+            <div class="u-my-20">
+                <p class="u-mb-16" id="restoreBackupInfo"></p>
                 
-                <div class="alert-warning" style="margin-bottom: 16px;">
+                <div class="alert-warning u-mb-16">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                         <line x1="12" y1="9" x2="12" y2="13"></line>
@@ -1596,7 +1597,7 @@
 
                 <div class="form-group">
                     <label>
-                        <input type="checkbox" id="restoreDryRun" checked style="width: auto; margin-right: 8px;">
+                        <input class="check-inline" type="checkbox" id="restoreDryRun" checked>
                         Dry Run (preview changes without applying)
                     </label>
                 </div>
@@ -1619,10 +1620,10 @@
 
     <!-- Backup Progress Modal -->
     <div id="backupProgressModal" class="modal" style="display: none;">
-        <div class="modal-content" style="text-align: center;">
+        <div class="modal-content text-center">
             <h3 id="backupProgressTitle">Creating Backup...</h3>
-            <div style="margin: 30px 0;">
-                <div class="spinner" style="margin: 0 auto 20px;"></div>
+            <div class="u-my-30">
+                <div class="spinner spinner-center"></div>
                 <p id="backupProgressMessage">Please wait while the backup is being created.</p>
             </div>
         </div>
@@ -1632,7 +1633,7 @@
     <div id="backupResultModal" class="modal" style="display: none;">
         <div class="modal-content">
             <h3 id="backupResultTitle">Backup Complete</h3>
-            <div id="backupResultContent" style="margin: 20px 0;">
+            <div class="u-my-20" id="backupResultContent">
                 <!-- Populated by JavaScript -->
             </div>
             <div class="modal-actions">
@@ -1643,7 +1644,7 @@
 
     <!-- Create/Edit SSO Provider Modal -->
     <div id="ssoProviderModal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content">
             <h3 id="ssoProviderModalTitle">Add SSO Provider</h3>
             <form id="ssoProviderForm">
                 <input type="hidden" id="ssoProviderId">
@@ -1714,7 +1715,7 @@
     <div id="ssoTestResultModal" class="modal" style="display: none;">
         <div class="modal-content">
             <h3>SSO Provider Test Result</h3>
-            <div id="ssoTestResultContent" style="margin: 20px 0;"></div>
+            <div class="u-my-20" id="ssoTestResultContent"></div>
             <div class="modal-actions">
                 <button class="btn-primary" id="btn-close-sso-test-result">Close</button>
             </div>
