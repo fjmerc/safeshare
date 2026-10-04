@@ -1783,6 +1783,20 @@ func TestGetBackupDirName(t *testing.T) {
 	if len(name) < 7 || name[:7] != "backup-" {
 		t.Errorf("GetBackupDirName should start with 'backup-', got %s", name)
 	}
+
+	// The timestamp must round-trip to today's date (the day field once held the hour)
+	ts, err := time.Parse(BackupDirNameLayout, name[len("backup-"):])
+	if err != nil {
+		t.Fatalf("GetBackupDirName timestamp %q does not parse: %v", name, err)
+	}
+	if now := time.Now().UTC(); ts.Year() != now.Year() || ts.YearDay() != now.YearDay() {
+		t.Errorf("GetBackupDirName = %s, want today's date (%s)", name, now.Format("2006-01-02"))
+	}
+
+	// Retention cleanup must recognize the names this produces
+	if !backupDirNameRegex.MatchString(name) {
+		t.Errorf("backupDirNameRegex does not match generated name %q, so retention would never delete it", name)
+	}
 }
 
 // Test ValidateDatabase with invalid database
