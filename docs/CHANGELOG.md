@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-05
+
 ### Added
 - **Install SafeShare as an app on your phone.** On Android and desktop Chrome, an **Install app** link appears under the title when your browser can install it. In Safari on iPhone and iPad, a short hint explains the **Share → Add to Home Screen** step; dismiss it once and it stays gone. Installed, SafeShare opens in its own window, and long-pressing the icon offers **Upload** and **My files** shortcuts.
 - **Offline page.** Without a connection, the upload page still opens from the copy stored on your device, and other pages show a clear "You're offline" message instead of the browser's error screen.

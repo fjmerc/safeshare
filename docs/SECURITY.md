@@ -1353,6 +1353,7 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.12.0 | Offline support kept copies of the dashboard and login pages, so after logout the dashboard page could still open from the stored copy (its data stayed protected) and the login page could skip its redirect | Low |
 | v1.11.1 | The upload page kept claim codes in the browser for 7 days and showed them in a pop-up to whoever used the browser next, even after logout | Low |
 | v1.11.0 | No tamper-evident record of security events (audit log added, ADR-018) | Medium |
 | v1.10.1 | Two concurrent first uploads of the same chunk with different bytes both succeeded; the later silently replaced the earlier | Low |
