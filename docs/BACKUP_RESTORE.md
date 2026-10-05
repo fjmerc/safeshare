@@ -75,8 +75,51 @@ The Admin Dashboard provides a convenient way to download backups without SSH/te
 
 **Technical details**:
 - Endpoint: `POST /admin/api/backups/download`
-- Request body: `{"filename": "safeshare-backup-YYYYMMDD-HHMMSS"}`
+- Request body: `{"filename": "backup-YYYY-MM-DDTHH-MM-SS"}`
 - Response: Streaming zip file with `Content-Type: application/zip`
+
+---
+
+## Scheduled Backups and Retention
+
+SafeShare can create backups on a schedule. The scheduler runs inside the SafeShare process and starts only when `AUTO_BACKUP_ENABLED=true`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTO_BACKUP_ENABLED` | `false` | Enable the backup scheduler |
+| `AUTO_BACKUP_SCHEDULE` | `0 2 * * *` | Cron expression (5 fields; daily at 02:00 by default) |
+| `AUTO_BACKUP_MODE` | `full` | `full`, `database`, or `config` |
+| `AUTO_BACKUP_RETENTION_DAYS` | `30` | Days to keep backups; `0` = keep forever |
+| `BACKUP_DIR` | `<DATA_DIR>/backups` | Directory backups are written to |
+
+At startup these variables create (or overwrite) a schedule named `default`. Changes made to that schedule through the admin API (the Admin Dashboard has no schedule editor) are replaced by the environment values on the next restart.
+
+### Retention Deletes Every Backup in `BACKUP_DIR`
+
+> **Warning**: Since v1.11.1, when a scheduled run finishes and the schedule's retention is greater than 0, SafeShare deletes **every** folder in `BACKUP_DIR` whose name matches `backup-*` (`backup-YYYY-MM-DDTHH-MM-SS`, or the older `backup-YYYYMMDD-HHMMSS`, optionally with a `-<number>` suffix) and whose modification time is older than the retention period. This includes **manual backups** made from the Admin Dashboard or the `safeshare-backup` CLI if they are written to the same directory. Folders that do not match that name pattern are left alone.
+>
+> To keep a backup longer than the retention period, copy it out of `BACKUP_DIR` (or download it from the Admin Dashboard), or set the schedule's retention to `0`.
+
+Retention also removes backup-run history records older than the cutoff.
+
+### Admin API
+
+All endpoints require an admin session. Endpoints that change state also require a CSRF token (`X-CSRF-Token`).
+
+| Method | Path | CSRF | Description |
+|--------|------|------|-------------|
+| `GET` | `/admin/api/backup-schedules` | No | List schedules (`{"schedules": [...]}`) |
+| `GET` | `/admin/api/backup-schedules/{id}` | No | Get one schedule |
+| `PUT` | `/admin/api/backup-schedules/{id}` | Yes | Update `name`, `enabled`, `schedule` (cron), `mode`, `retention_days` (unknown fields are rejected) |
+| `GET` | `/admin/api/backup-runs` | No | Run history. Query: `schedule_id`, `status`, `trigger_type`, `limit` (1-1000, default 100), `offset` |
+| `GET` | `/admin/api/backup-runs/{id}` | No | Get one run |
+| `GET` | `/admin/api/backup-stats` | No | Run statistics and `scheduler_running` |
+| `POST` | `/admin/api/backup-trigger` | Yes | Start a backup now. Body: `{"mode": "full"}` (default `full`). Returns `202`; `409` if one is already running |
+| `GET` | `/admin/api/backup-running` | No | `{"running": false}` or the running backup with `elapsed_ms` and an estimated `progress` |
+
+A backup started through `backup-trigger` is recorded as a run but is not tied to a schedule's retention until the next scheduled run applies it.
 
 ---
 
@@ -131,21 +174,21 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 \
 ```bash
 # Preview restore (dry run)
 ./safeshare-backup restore \
-    --backup /backups/safeshare-backup-20240101-120000 \
+    --backup /backups/backup-2024-01-01T12-00-00 \
     --db /app/data/safeshare.db \
     --uploads /app/uploads \
     --dry-run
 
 # Actual restore
 ./safeshare-backup restore \
-    --backup /backups/safeshare-backup-20240101-120000 \
+    --backup /backups/backup-2024-01-01T12-00-00 \
     --db /app/data/safeshare.db \
     --uploads /app/uploads \
     --enckey "your-64-char-hex-encryption-key"
 
 # Restore with orphan removal
 ./safeshare-backup restore \
-    --backup /backups/safeshare-backup-20240101-120000 \
+    --backup /backups/backup-2024-01-01T12-00-00 \
     --db /app/data/safeshare.db \
     --orphans remove
 ```
@@ -165,10 +208,10 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 \
 
 ```bash
 # Verify backup integrity
-./safeshare-backup verify --backup /backups/safeshare-backup-20240101-120000
+./safeshare-backup verify --backup /backups/backup-2024-01-01T12-00-00
 
 # JSON output
-./safeshare-backup verify --backup /backups/safeshare-backup-20240101-120000 --json
+./safeshare-backup verify --backup /backups/backup-2024-01-01T12-00-00 --json
 ```
 
 **Verification checks:**
@@ -190,10 +233,10 @@ docker run --rm -v "$PWD":/app -w /app golang:1.24 \
 
 ## Backup Structure
 
-Each backup is created as a directory with the following structure:
+Each backup is created as a directory named `backup-YYYY-MM-DDTHH-MM-SS` (UTC). If that name is already taken, `-<number>` is appended. Directories made by older versions may be named `backup-YYYYMMDD-HHMMSS`.
 
 ```
-safeshare-backup-YYYYMMDD-HHMMSS/
+backup-YYYY-MM-DDTHH-MM-SS/
 ├── manifest.json        # Backup metadata and checksums
 ├── database.db          # SQLite database backup
 └── uploads/             # Uploaded files (full mode only)
@@ -269,6 +312,12 @@ When creating backups with `--enckey`, SafeShare computes a SHA256 fingerprint o
 - Files encrypted with a different key cannot be decrypted
 - The restore will still proceed, but affected files won't be downloadable
 
+## Audit Log Key
+
+SafeShare's audit log (v1.11.0+) is signed with a key that is deliberately **not** stored in the database. Backups contain the database (including the audit log entries) but **not the key**.
+
+Back up `/app/data/audit.key` (the file sits next to the database; mode 0600) together with the database, or set the same `AUDIT_LOG_KEY` (64 hex characters) on the new server. If you restore onto a server with a different key, audit log integrity verification reports the older entries as signed with a different key. A restore on the same server keeps working because the key file stays in place. See the Audit Log section of [SECURITY.md](SECURITY.md).
+
 ## Best Practices
 
 ### Backup Strategy
@@ -276,6 +325,7 @@ When creating backups with `--enckey`, SafeShare computes a SHA256 fingerprint o
 1. **Daily database backups**: Run `--mode database` daily
 2. **Weekly full backups**: Run `--mode full` weekly
 3. **Before major changes**: Create a full backup before upgrades
+4. **Keep long-lived backups outside `BACKUP_DIR`** if scheduled retention is enabled (see [Scheduled Backups and Retention](#scheduled-backups-and-retention))
 
 ### Backup Script Example
 
@@ -298,11 +348,14 @@ ENCRYPTION_KEY="your-64-char-hex-key"
     --quiet
 
 # Verify the latest backup
-LATEST=$(ls -td "$BACKUP_DIR"/safeshare-backup-* | head -1)
+LATEST=$(ls -td "$BACKUP_DIR"/backup-* | head -1)
 ./safeshare-backup verify --backup "$LATEST" --quiet
 
-# Cleanup old backups (keep last 7 daily, 4 weekly)
-find "$BACKUP_DIR" -maxdepth 1 -name "safeshare-backup-*" -mtime +30 -exec rm -rf {} \;
+# Cleanup backups older than 30 days
+find "$BACKUP_DIR" -maxdepth 1 -type d -name "backup-*" -mtime +30 -exec rm -rf {} +
+
+# The audit log signing key (/app/data/audit.key) is NOT part of these backups.
+# Copy it to a separate, secured location (see "Audit Log Key" below).
 ```
 
 ### Docker Backup Example
@@ -362,14 +415,14 @@ result, err := backup.Create(backup.CreateOptions{
 
 // Restore from a backup
 result, err := backup.Restore(backup.RestoreOptions{
-    InputDir:      "/backups/safeshare-backup-20240101-120000",
+    InputDir:      "/backups/backup-2024-01-01T12-00-00",
     DBPath:        "/app/data/safeshare.db",
     UploadsDir:    "/app/uploads",
     HandleOrphans: backup.OrphanKeep,
 })
 
 // Verify a backup
-result := backup.Verify("/backups/safeshare-backup-20240101-120000")
+result := backup.Verify("/backups/backup-2024-01-01T12-00-00")
 
 // List backups
 backups, err := backup.ListBackups("/backups")
@@ -386,13 +439,13 @@ backups, err := backup.ListBackups("/backups")
 **Request Body** (JSON):
 ```json
 {
-  "filename": "safeshare-backup-20240101-120000"
+  "filename": "backup-2024-01-01T12-00-00"
 }
 ```
 
 **Response**:
 - **Content-Type**: `application/zip`
-- **Content-Disposition**: `attachment; filename="safeshare-backup-20240101-120000.zip"`
+- **Content-Disposition**: `attachment; filename="backup-2024-01-01T12-00-00.zip"`
 - **Body**: Streaming zip file containing backup directory
 
 **Example** (using curl with admin session):
@@ -401,7 +454,7 @@ curl -X POST https://share.example.com/admin/api/backups/download \
   -H "Content-Type: application/json" \
   -H "Cookie: admin_session=<session_token>" \
   -H "X-CSRF-Token: <csrf_token>" \
-  -d '{"filename": "safeshare-backup-20240101-120000"}' \
+  -d '{"filename": "backup-2024-01-01T12-00-00"}' \
   -o backup.zip
 ```
 

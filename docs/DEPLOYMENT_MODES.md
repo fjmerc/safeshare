@@ -41,14 +41,14 @@ flowchart TD
 | Dimension | Ghost | Standard | Hardened | Fortress |
 |-----------|-------|----------|----------|----------|
 | **Trust model** | Operator trusts no one (including themselves) | Moderate trust | Operator controls access | Zero trust, full audit |
-| **User authentication** | None | Optional | Required | Required + MFA + SSO |
+| **User authentication** | None | Optional | Required | Required; MFA and SSO available (MFA enrollment not yet enforced) |
 | **IP logging** | Redacted everywhere | Logged | Logged | Logged + tamper-evident |
 | **File content visibility** | Zero (E2E encrypted) | Server-side encrypted | Server-side encrypted | Server-side encrypted |
 | **Metadata stripping** | Always on | Off by default | Off by default | Off by default |
 | **Network access** | Tor only | Clearnet | Clearnet + proxy | Clearnet + proxy |
 | **Abuse prevention** | Minimal | Basic rate limits | Full controls | Full controls + audit |
-| **Audit trail** | None (by design: the audit log is off in anonymous mode) | Basic logs | Structured JSON logs | Full audit + backups |
-| **Database** | SQLite | SQLite | SQLite or PostgreSQL | PostgreSQL |
+| **Audit trail** | None (by design: the audit log is off in anonymous mode) | Tamper-evident audit log (on by default) + application logs | Tamper-evident audit log + structured JSON logs | Tamper-evident audit log + structured JSON logs + scheduled backups |
+| **Database** | SQLite | SQLite | SQLite (PostgreSQL planned, not yet supported) | SQLite (PostgreSQL planned, not yet supported) |
 | **Best for** | Whistleblowers, journalists | Personal use, small teams | Enterprises, internal tools | Regulated industries |
 
 ---
@@ -202,10 +202,11 @@ Enterprises sharing files internally or with partners, teams handling sensitive 
 
 The operator enforces accountability:
 - **All users must authenticate** before uploading
-- **MFA required** for admin access, available for all users
+- **MFA available** for database user accounts (TOTP, WebAuthn); enrolled users are challenged at login. `MFA_REQUIRED` is not yet enforced (it only logs a warning for users who haven't enrolled), and the env-based `ADMIN_USERNAME` admin is never challenged for MFA
 - **Webhooks** notify external systems of file events
 - **IP blocking** stops known bad actors
-- **Full audit logging** in structured JSON for SIEM integration
+- **Tamper-evident audit log** (on by default outside anonymous mode, `AUDIT_LOG=auto`): signed, chained entries for logins, admin actions, uploads and downloads, browsable in the admin dashboard's **Audit Log** tab
+- **Structured JSON application logs** for SIEM integration
 
 ### Configuration
 
@@ -223,7 +224,7 @@ services:
       # --- Encryption ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - HTTPS_ENABLED=true
-      # --- MFA ---
+      # --- MFA (users who enroll are challenged at login) ---
       - FEATURE_MFA=true
       - MFA_ENABLED=true
       # --- Integrations ---
@@ -245,6 +246,10 @@ services:
       - CLAMAV_MAX_FILE_SIZE=104857600
       - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
       - MALWARE_SCAN_REJECT_UNSCANNABLE=false
+      # --- Audit log (default AUDIT_LOG=auto is already on here). The signing key
+      #     is generated into /app/data/audit.key; back it up with the database,
+      #     or set AUDIT_LOG_KEY to a 64-hex-character secret instead. ---
+      # - AUDIT_LOG_KEY=${AUDIT_LOG_KEY}
       # --- Access control ---
       - BLOCKED_EXTENSIONS=.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm
       - RATE_LIMIT_UPLOAD=10
@@ -278,11 +283,11 @@ volumes:
 ### What this enables
 
 - **User management**: Invite-only registration, role-based access (user/admin)
-- **MFA**: TOTP authenticator apps for all users
+- **MFA**: TOTP authenticator apps and WebAuthn for database user accounts; enrolled users are challenged at login (`MFA_REQUIRED` is not yet enforced)
 - **Malware scanning**: Uploaded files scanned synchronously via ClamAV sidecar before storage — an infected file is rejected outright and never gets a download link (see ADR-015)
 - **Webhook notifications**: Real-time alerts on `file.uploaded`, `file.downloaded`, `file.expired`, `file.deleted`, `file.infected`
 - **API tokens**: Programmatic access with scoped permissions and rotation
-- **Audit logs**: Every upload, download, login, and admin action logged in structured JSON
+- **Audit log**: Logins, uploads, downloads, deletions and admin actions are recorded in a tamper-evident, HMAC-signed chain in the database (v1.11.0+), with filtering, CSV/JSON Lines export and integrity verification in the admin dashboard's **Audit Log** tab. See [SECURITY.md](SECURITY.md) for what is and isn't recorded
 
 ### Trade-offs
 
@@ -309,10 +314,10 @@ Financial services, healthcare (HIPAA), government agencies, defense contractors
 ### Trust model
 
 Zero trust with full audit:
-- **All authentication paths hardened** (MFA required, SSO enforced, short sessions)
-- **Production-grade database** (PostgreSQL for durability, replication, and audit)
+- **Authentication paths hardened** (MFA available and enforced at login for enrolled users, SSO available, short sessions). `MFA_REQUIRED` is not yet enforced, so enrollment cannot yet be made mandatory
+- **Database**: SQLite today. PostgreSQL support is planned but **not yet supported**; the server refuses to start with `DATABASE_TYPE=postgresql`
 - **Automated backups** with retention policies
-- **Every action auditable** through structured logs and database records
+- **Auditable actions** through the tamper-evident audit log (signed, chained entries in the database, on by default) plus structured application logs
 
 ### Configuration
 
@@ -330,7 +335,10 @@ services:
       # --- Encryption ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - HTTPS_ENABLED=true
-      # --- MFA (mandatory) ---
+      # --- MFA (available; enrolled users are challenged at login) ---
+      # MFA_REQUIRED=true is accepted but not yet enforced: it only logs a
+      # warning for users who haven't enrolled, and the env-based
+      # ADMIN_USERNAME admin is never challenged for MFA.
       - FEATURE_MFA=true
       - MFA_ENABLED=true
       - MFA_REQUIRED=true
@@ -359,6 +367,10 @@ services:
       - CLAMAV_MAX_FILE_SIZE=104857600
       - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
       - MALWARE_SCAN_REJECT_UNSCANNABLE=false
+      # --- Audit log (default AUDIT_LOG=auto is already on here). The signing key
+      #     is generated into /app/data/audit.key; back it up with the database,
+      #     or set AUDIT_LOG_KEY to a 64-hex-character secret instead. ---
+      # - AUDIT_LOG_KEY=${AUDIT_LOG_KEY}
       # --- PostgreSQL (not yet supported) ---
       # The server does not use PostgreSQL yet and refuses to start with
       # DATABASE_TYPE=postgresql; keep SQLite until PostgreSQL support ships.
@@ -382,6 +394,8 @@ services:
       - AUTO_BACKUP_ENABLED=true
       - AUTO_BACKUP_SCHEDULE=0 2 * * *
       - AUTO_BACKUP_MODE=full
+      # Retention (v1.11.1+) deletes EVERY backup-* folder in BACKUP_DIR older
+      # than 90 days after each scheduled run, including manual/CLI backups.
       - AUTO_BACKUP_RETENTION_DAYS=90
       # --- Proxy ---
       - TRUST_PROXY_HEADERS=auto
@@ -392,8 +406,6 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
       clamav:
         condition: service_started
 
@@ -403,24 +415,9 @@ services:
       - clam-db:/var/lib/clamav
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: safeshare
-      POSTGRES_USER: ${PG_USER}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d safeshare"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
 volumes:
   safeshare-data:
   safeshare-uploads:
-  postgres-data:
   clam-db:
 ```
 
@@ -430,7 +427,7 @@ Fortress mode requires infrastructure beyond a single Docker container:
 
 | Component | Purpose | Required? |
 |-----------|---------|-----------|
-| PostgreSQL 16+ | Durable database with replication support | Yes |
+| PostgreSQL 16+ | Durable database with replication support | Not yet supported (planned) |
 | ClamAV | Malware scanning sidecar (~1GB RAM for signature DB) | Yes |
 | Reverse proxy (Traefik/nginx) | TLS termination, security headers | Yes |
 | Log aggregation (ELK/Splunk/Datadog) | Centralized audit log storage | Recommended |
@@ -443,23 +440,23 @@ SafeShare features map to common compliance frameworks:
 
 | Requirement | SafeShare Feature |
 |-------------|-------------------|
-| **Access control** (HIPAA, SOC2, GDPR) | Auth required + MFA + SSO + role-based access |
+| **Access control** (HIPAA, SOC2, GDPR) | Auth required + MFA (enrolled users challenged; not yet enforceable) + SSO + role-based access |
 | **Encryption at rest** (HIPAA, PCI-DSS) | AES-256-GCM with `ENCRYPTION_KEY` |
 | **Encryption in transit** (all) | HTTPS via reverse proxy |
-| **Audit logging** (SOC2, HIPAA) | Structured JSON logs, admin action tracking |
+| **Audit logging** (SOC2, HIPAA) | Tamper-evident audit log (HMAC-signed chain, Audit Log tab, CSV/JSON Lines export, integrity verification, configurable retention) plus structured JSON logs. Ship application logs off-box so the periodic checkpoint lines can detect deleted newest entries |
 | **Data retention** (GDPR) | Configurable expiration, automated cleanup |
-| **Backup and recovery** (SOC2) | Automated backups with retention policies |
-| **User authentication** (all) | Username/password + MFA + SSO |
+| **Backup and recovery** (SOC2) | Automated backups with retention policies (retention also deletes manual backups in `BACKUP_DIR`; back up `audit.key` with the database) |
+| **User authentication** (all) | Username/password + MFA (enrolled users) + SSO |
 
 ### Trade-offs
 
-- Highest operational complexity — requires PostgreSQL, monitoring, backup infrastructure
-- Maximum friction for end users — MFA required, SSO integration, no anonymous access
-- Higher resource requirements — PostgreSQL, log storage, backup storage
+- Highest operational complexity — requires monitoring and backup infrastructure (PostgreSQL will be added when supported)
+- More friction for end users — MFA enrollment, SSO integration, no anonymous access
+- Higher resource requirements — ClamAV, log storage, backup storage
 
 ### Deep dives
 
-- [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) — High availability with PostgreSQL and S3
+- [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) — Planned high-availability design with PostgreSQL and S3 (**not yet supported**)
 - [PROMETHEUS.md](PROMETHEUS.md) — Monitoring, metrics, and alerting configuration
 - [BACKUP_RESTORE.md](BACKUP_RESTORE.md) — Backup procedures and disaster recovery
 - [SECURITY.md](SECURITY.md) — Compliance mapping details (HIPAA, SOC2, GDPR, PCI-DSS)
@@ -480,7 +477,7 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 | **Encryption at rest (server-side)** | On | On | On | On |
 | **Password-protected files** | Available | Available | Available | Available |
 | **User authentication** | Off | Optional | Required | Required |
-| **MFA (TOTP/WebAuthn)** | Off | Off | On | Required |
+| **MFA (TOTP/WebAuthn)** | Off | Off | Available | Available (`MFA_REQUIRED` not yet enforced) |
 | **SSO (OIDC)** | Off | Off | Optional | On |
 | **Admin dashboard** | On | On | On | On |
 | **IP blocking** | Off | Available | On | On |
@@ -489,10 +486,10 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 | **Extension blocking** | On | On | On | On |
 | **Webhooks** | Off | Off | On | On |
 | **API tokens** | Off | Off | On | On |
-| **PostgreSQL backend** | No | No | Optional | Yes |
+| **PostgreSQL backend** | No | No | Planned (not yet supported) | Planned (not yet supported) |
 | **Automated backups** | No | No | Optional | Yes |
 | **Prometheus metrics** | No | Optional | Recommended | Yes |
-| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Basic | Full | Full |
+| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Tamper-evident audit log (default `AUDIT_LOG=auto`) | Tamper-evident audit log + structured logs | Tamper-evident audit log + structured logs |
 | **Storage quotas** | Optional | Optional | On | On |
 | **File expiration (max)** | 24h | 7 days | 7 days | Configurable |
 
@@ -546,5 +543,5 @@ The admin can manage storage and delete files but cannot see who uploaded them.
 3. **Follow the deployment guide** for your chosen mode:
    - Ghost: [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md)
    - Standard/Hardened: [PRODUCTION.md](PRODUCTION.md)
-   - Fortress: [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md)
+   - Fortress: [PRODUCTION.md](PRODUCTION.md) (multi-instance HA with PostgreSQL/S3 in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) is planned, not yet supported)
 4. **Review the security checklist** in [SECURITY.md](SECURITY.md)

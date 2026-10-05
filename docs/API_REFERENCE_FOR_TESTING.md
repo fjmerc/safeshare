@@ -235,7 +235,7 @@
 **Request Body** (JSON):
 ```json
 {
-  "filename": "safeshare-backup-20240101-120000"
+  "filename": "backup-2024-01-01T12-00-00"
 }
 ```
 
@@ -249,7 +249,7 @@
 
 **Response Headers** (200):
 - `Content-Type: application/zip`
-- `Content-Disposition: attachment; filename="safeshare-backup-YYYYMMDD-HHMMSS.zip"`
+- `Content-Disposition: attachment; filename="backup-YYYY-MM-DDTHH-MM-SS.zip"`
 
 **Important Notes**:
 - Requires both admin authentication AND valid CSRF token
@@ -276,7 +276,7 @@ json.NewDecoder(loginRR.Body).Decode(&loginResp)
 
 // Download backup
 downloadReq := httptest.NewRequest("POST", "/admin/api/backups/download",
-    strings.NewReader(`{"filename":"safeshare-backup-20240101-120000"}`))
+    strings.NewReader(`{"filename":"backup-2024-01-01T12-00-00"}`))
 downloadReq.Header.Set("Content-Type", "application/json")
 downloadReq.Header.Set("X-CSRF-Token", loginResp.CSRFToken)
 downloadReq.AddCookie(sessionCookie)
