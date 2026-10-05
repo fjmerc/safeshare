@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline - SafeShare</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+    <meta name="theme-color" content="#2563eb">
+    <!-- Load theme before CSS to prevent flash -->
+    <script src="/assets/theme-init.js"></script>
+    <link rel="stylesheet" href="/assets/style.css">
+    <style>
+        .offline-container {
+            max-width: 600px;
+            margin: 2rem auto;
+            text-align: center;
+        }
+
+        .offline-icon {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        .offline-icon svg {
+            width: 64px;
+            height: 64px;
+        }
+
+        .offline-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .offline-message {
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        .offline-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0.625rem 1.5rem;
+            border-radius: var(--radius);
+            background: var(--primary-color);
+            color: #fff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .offline-action:hover {
+            background: var(--primary-hover);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo-container">
+                <img src="/assets/logo.svg" alt="SafeShare Logo" class="logo">
+            </div>
+            <h1>SafeShare</h1>
+        </header>
+
+        <main>
+        <div class="card offline-container">
+            <div class="offline-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+            </div>
+            <h2 class="offline-title">You're offline</h2>
+            <p class="offline-message">SafeShare can't reach the server right now. Uploads and downloads need a connection &mdash; check your network and try again.</p>
+            <a href="/" class="offline-action">Try again</a>
+        </div>
+        </main>
+    </div>
+</body>
+</html>

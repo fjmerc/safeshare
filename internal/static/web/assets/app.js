@@ -2,35 +2,7 @@
 (function() {
     'use strict';
 
-    // Register service worker for PWA functionality
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/service-worker.js')
-                .then((registration) => {
-                    console.log('Service Worker registered successfully:', registration.scope);
-
-                    // Check for updates
-                    registration.addEventListener('updatefound', () => {
-                        const newWorker = registration.installing;
-                        console.log('Service Worker update found');
-
-                        newWorker.addEventListener('statechange', () => {
-                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                // New service worker available, show update notification
-                                console.log('New service worker ready to activate');
-                                // Optionally show a toast notification to user about update
-                                if (window.showToast) {
-                                    showToast('A new version is available. Refresh to update.', 'info');
-                                }
-                            }
-                        });
-                    });
-                })
-                .catch((error) => {
-                    console.log('Service Worker registration failed:', error);
-                });
-        });
-    }
+    // Service worker registration lives in pwa.js (shared by every page)
 
     // State
     let selectedFile = null;
