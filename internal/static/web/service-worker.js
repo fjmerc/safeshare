@@ -1,12 +1,15 @@
 // SafeShare Service Worker
-// Enables PWA functionality with offline support for static assets
+// Enables PWA functionality: cache-first static assets, network-first pages
+// with an offline fallback, and the Web Share Target handler
 
-const CACHE_VERSION = 'safeshare-v79';
+const CACHE_VERSION = 'safeshare-v80';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 // Web Share Target cache - unversioned so page JS can always find it
 // Must match SHARE_TARGET_CACHE in app.js
 const SHARE_TARGET_CACHE = 'safeshare-share-target';
+// Shown when a page can't be reached and there is no cached copy to fall back on
+const OFFLINE_PAGE = '/assets/offline.html';
 
 // Assets to cache on service worker installation
 const STATIC_ASSETS = [
@@ -22,6 +25,8 @@ const STATIC_ASSETS = [
   '/assets/error-theme-toggle.js',
   '/assets/login.js',
   '/assets/dashboard.js',
+  '/assets/pwa.js',
+  '/assets/offline.html',
   '/assets/logo.svg',
   '/assets/android-chrome-192x192.png',
   '/assets/android-chrome-512x512.png',
@@ -44,7 +49,10 @@ self.addEventListener('install', (event) => {
         return self.skipWaiting();
       })
       .catch((error) => {
+        // Rethrow so the install fails and is retried on the next load, rather
+        // than activating with an empty cache and no offline fallback
         console.error('[Service Worker] Installation failed:', error);
+        throw error;
       })
   );
 });
@@ -78,7 +86,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event - serve from cache with network fallback
+// Fetch event - route requests by type (share target, pages, static assets)
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -141,7 +149,30 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For static assets and pages: Cache first, network fallback
+  // Page navigations: network first. Pages must never be answered from cache
+  // while the server is reachable - /login and /dashboard redirect based on the
+  // session cookie, and a cached copy would skip that check. Offline, '/' falls
+  // back to its precached copy; everything else gets the offline page.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request).catch(() => {
+        const fallback = url.pathname === '/'
+          ? caches.match('/').then((cached) => cached || caches.match(OFFLINE_PAGE))
+          : caches.match(OFFLINE_PAGE);
+        return fallback.then((response) => response || Response.error());
+      })
+    );
+    return;
+  }
+
+  // Only static assets are cached. Anything else (non-GET requests, and any
+  // future non-/assets/ route) goes straight to the network so per-session
+  // responses can never be cached and replayed.
+  if (request.method !== 'GET' || !url.pathname.startsWith('/assets/')) {
+    return;
+  }
+
+  // For static assets: Cache first, network fallback
   event.respondWith(
     caches.match(request)
       .then((cachedResponse) => {
