@@ -26,10 +26,12 @@ info:
     - Uploads: Configurable (default: 10/hour)
     - Downloads: Configurable (default: 50/hour)
     - Login attempts: 5 per 15 minutes
-    
+    - Chunked upload: `/init` at the upload limit, `/chunk` and `/complete` at
+      10x it, `/status` at 600x it (never under 6000/hour)
+
     When rate limited, endpoints return `429 Too Many Requests`.
-    
-  version: 2.8.4
+
+  version: 1.12.0
   contact:
     name: SafeShare Support
     url: https://github.com/fjmerc/safeshare
@@ -62,6 +64,10 @@ tags:
     description: Administrative operations (requires admin role)
   - name: Webhooks
     description: Webhook configuration and delivery management
+  - name: Audit Log
+    description: Tamper-evident audit log (admin only)
+  - name: Backups
+    description: Backup management and scheduling (admin only)
 
 paths:
   # ==================== Health Endpoints ====================
@@ -336,6 +342,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          description: |
+            The request body stopped arriving for 60 seconds, or averaged under
+            4 KiB/s (`code: UPLOAD_TIMEOUT`). Retry the upload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '413':
           description: File exceeds MAX_FILE_SIZE
           content:
@@ -413,8 +427,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (same limit as `/api/upload`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Chunked uploads disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '507':
+          description: |
+            The upload's full size does not fit in the remaining storage quota
+            (`code: QUOTA_EXCEEDED`) or disk space (`code: INSUFFICIENT_STORAGE`).
           content:
             application/json:
               schema:
@@ -486,6 +514,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          description: |
+            The chunk body stopped arriving for 60 seconds, or averaged under
+            4 KiB/s (`code: UPLOAD_TIMEOUT`). Re-send the chunk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '410':
           description: Upload session expired
           content:
@@ -494,6 +530,21 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '413':
           description: Chunk too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (10x the upload limit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '507':
+          description: |
+            Quota exceeded (`code: QUOTA_EXCEEDED`), e.g. the upload's
+            reservation lapsed after an hour without progress and the quota has
+            since filled, or disk full (`code: INSUFFICIENT_STORAGE`).
           content:
             application/json:
               schema:
@@ -583,6 +634,15 @@ paths:
                 $ref: '#/components/schemas/UploadStatusResponse'
         '404':
           description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: |
+            Rate limit exceeded: 600x `RATE_LIMIT_UPLOAD` per hour per IP (never
+            under 6000/hour). Clients polling this endpoint should keep polling
+            through a 429 rather than treating it as an upload failure.
           content:
             application/json:
               schema:
@@ -1908,6 +1968,683 @@ paths:
         '200':
           description: Deliveries cleared successfully
 
+  # ==================== Audit Log Endpoints ====================
+  /admin/api/audit-logs:
+    get:
+      tags:
+        - Audit Log
+      summary: List audit log entries
+      description: |
+        List audit log entries, newest first. Page with `before_id` set to the
+        previous page's `next_before_id`. Only available when the audit log is
+        enabled (default outside anonymous mode, `AUDIT_LOG=auto`).
+      operationId: listAuditLogs
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AuditEventType'
+        - $ref: '#/components/parameters/AuditOutcome'
+        - $ref: '#/components/parameters/AuditAction'
+        - $ref: '#/components/parameters/AuditUsername'
+        - $ref: '#/components/parameters/AuditIP'
+        - $ref: '#/components/parameters/AuditResourceType'
+        - $ref: '#/components/parameters/AuditResourceID'
+        - $ref: '#/components/parameters/AuditSearch'
+        - $ref: '#/components/parameters/AuditSince'
+        - $ref: '#/components/parameters/AuditUntil'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+          description: Page size (values above 1000 are clamped)
+        - name: before_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Return only entries with a smaller ID
+      responses:
+        '200':
+          description: Audit log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLogEntry'
+                  next_before_id:
+                    type: integer
+                    format: int64
+                    description: Present only when the page was full
+        '400':
+          description: 'Invalid filter (`code: INVALID_FILTER`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/audit-logs/export:
+    get:
+      tags:
+        - Audit Log
+      summary: Export audit log entries
+      description: |
+        Download matching entries, newest first, including `prev_hash`,
+        `entry_hash` and `key_id`. Capped at 100,000 entries; an export cut
+        short says so in its last line. The CSV prefixes text starting with
+        `=`, `+`, `-` or `@` with `'`, so it is not an exact copy of what was
+        signed; use JSON Lines for that. Each export is recorded in the audit log.
+      operationId: exportAuditLogs
+      security:
+        - adminAuth: []
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, jsonl]
+            default: csv
+        - $ref: '#/components/parameters/AuditEventType'
+        - $ref: '#/components/parameters/AuditOutcome'
+        - $ref: '#/components/parameters/AuditAction'
+        - $ref: '#/components/parameters/AuditUsername'
+        - $ref: '#/components/parameters/AuditIP'
+        - $ref: '#/components/parameters/AuditResourceType'
+        - $ref: '#/components/parameters/AuditResourceID'
+        - $ref: '#/components/parameters/AuditSearch'
+        - $ref: '#/components/parameters/AuditSince'
+        - $ref: '#/components/parameters/AuditUntil'
+      responses:
+        '200':
+          description: Attachment `safeshare-audit-YYYYMMDD-HHMMSS.csv|jsonl`
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/x-ndjson:
+              schema:
+                type: string
+        '400':
+          description: Invalid filter (`INVALID_FILTER`) or format (`INVALID_FORMAT`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/audit-logs/verify:
+    post:
+      tags:
+        - Audit Log
+      summary: Verify audit log integrity
+      description: Re-checks the whole signature chain. No request body.
+      operationId: verifyAuditLogs
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verification:
+                    $ref: '#/components/schemas/AuditVerification'
+                  key_id:
+                    type: string
+                  duration_ms:
+                    type: integer
+        '409':
+          description: A verification is already running (`VERIFY_IN_PROGRESS`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Audit log is not enabled (`FEATURE_DISABLED`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/audit-logs/retention:
+    get:
+      tags:
+        - Audit Log
+      summary: Get audit log retention
+      operationId: getAuditLogRetention
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: Current retention
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditRetention'
+    put:
+      tags:
+        - Audit Log
+      summary: Set audit log retention
+      description: |
+        `0` keeps entries forever; otherwise 30 to 36500 days. Shorter values
+        are rejected so recent history can't be pruned away.
+      operationId: setAuditLogRetention
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [retention_days]
+              properties:
+                retention_days:
+                  type: integer
+                  example: 365
+      responses:
+        '200':
+          description: Retention updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditRetention'
+        '400':
+          description: Missing or out-of-range `retention_days` (`INVALID_REQUEST`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==================== Backup Endpoints ====================
+  /admin/api/backups:
+    get:
+      tags:
+        - Backups
+      summary: List backups
+      description: Lists backup folders in `BACKUP_DIR` (default `<DATA_DIR>/backups`).
+      operationId: listBackups
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: Backups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename:
+                          type: string
+                          example: backup-2026-01-15T02-00-00
+                        path:
+                          type: string
+                        mode:
+                          type: string
+                          enum: [config, database, full]
+                        size:
+                          type: integer
+                          format: int64
+                        created_at:
+                          type: string
+                          format: date-time
+                        version:
+                          type: string
+                        verified:
+                          type: boolean
+    post:
+      tags:
+        - Backups
+      summary: Create a backup
+      description: Creates a backup synchronously.
+      operationId: createBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [config, database, full]
+                  default: full
+      responses:
+        '200':
+          description: Backup created
+        '400':
+          description: Invalid mode
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Backups
+      summary: Delete a backup
+      operationId: deleteBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - name: filename
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Backup folder name
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Backup deleted
+        '403':
+          description: Path outside `BACKUP_DIR`
+        '404':
+          description: Backup not found
+
+  /admin/api/backups/verify:
+    post:
+      tags:
+        - Backups
+      summary: Verify a backup
+      operationId: verifyBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+      responses:
+        '200':
+          description: Verification result (`valid`, `errors`, `mode`, `version`)
+        '400':
+          description: Missing filename
+        '403':
+          description: Path outside `BACKUP_DIR`
+
+  /admin/api/backups/restore:
+    post:
+      tags:
+        - Backups
+      summary: Restore a backup
+      operationId: restoreBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                handle_orphans:
+                  type: string
+                  enum: [keep, remove]
+                  default: keep
+                dry_run:
+                  type: boolean
+                force:
+                  type: boolean
+      responses:
+        '200':
+          description: Restore result
+        '400':
+          description: Invalid request
+        '403':
+          description: Path outside `BACKUP_DIR`
+        '500':
+          description: Restore failed
+
+  /admin/api/backups/download:
+    post:
+      tags:
+        - Backups
+      summary: Download a backup as a zip
+      operationId: downloadBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+      responses:
+        '200':
+          description: Zip stream
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Backup not found
+
+  /admin/api/backup-schedules:
+    get:
+      tags:
+        - Backups
+      summary: List backup schedules
+      operationId: listBackupSchedules
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: 'Schedules (`{"schedules": [...]}`)'
+
+  /admin/api/backup-schedules/{id}:
+    get:
+      tags:
+        - Backups
+      summary: Get a backup schedule
+      operationId: getBackupSchedule
+      security:
+        - adminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule
+        '404':
+          description: Schedule not found
+    put:
+      tags:
+        - Backups
+      summary: Update a backup schedule
+      description: |
+        Unknown fields are rejected. A scheduled run with `retention_days` > 0
+        deletes every `backup-*` folder in `BACKUP_DIR` older than that many
+        days, including manual backups. Note that the `default` schedule is
+        overwritten from the `AUTO_BACKUP_*` environment variables on restart.
+      operationId: updateBackupSchedule
+      security:
+        - adminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                enabled:
+                  type: boolean
+                schedule:
+                  type: string
+                  description: 5-field cron expression
+                  example: '0 2 * * *'
+                mode:
+                  type: string
+                  enum: [config, database, full]
+                retention_days:
+                  type: integer
+                  minimum: 0
+                  description: 0 = keep forever
+      responses:
+        '200':
+          description: Updated schedule
+        '400':
+          description: Invalid body, cron expression, mode or retention
+        '404':
+          description: Schedule not found
+
+  /admin/api/backup-runs:
+    get:
+      tags:
+        - Backups
+      summary: List backup runs
+      operationId: listBackupRuns
+      security:
+        - adminAuth: []
+      parameters:
+        - name: schedule_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: trigger_type
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: 'Runs (`{"runs": [...], "limit", "offset"}`)'
+
+  /admin/api/backup-runs/{id}:
+    get:
+      tags:
+        - Backups
+      summary: Get a backup run
+      operationId: getBackupRun
+      security:
+        - adminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Run
+        '404':
+          description: Run not found
+
+  /admin/api/backup-stats:
+    get:
+      tags:
+        - Backups
+      summary: Backup run statistics
+      operationId: getBackupStats
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: '`{"stats": {...}, "scheduler_running": true}`'
+
+  /admin/api/backup-trigger:
+    post:
+      tags:
+        - Backups
+      summary: Start a backup now
+      operationId: triggerBackup
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [config, database, full]
+                  default: full
+      responses:
+        '202':
+          description: Backup started (`{"message", "run"}`)
+        '400':
+          description: Invalid mode
+        '409':
+          description: A backup is already running
+        '503':
+          description: Backup scheduler not available
+
+  /admin/api/backup-running:
+    get:
+      tags:
+        - Backups
+      summary: Currently running backup
+      operationId: getRunningBackup
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: '`{"running": false}` or `{"running": true, "run", "elapsed_ms", "progress"}`'
+
+  # ==================== Admin Token / SSO Endpoints ====================
+  /admin/api/tokens/bulk-extend:
+    post:
+      tags:
+        - Admin
+      summary: Extend multiple API tokens
+      operationId: adminBulkExtendTokens
+      security:
+        - adminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CSRFToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_ids, days, confirm]
+              properties:
+                token_ids:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: integer
+                    format: int64
+                days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                confirm:
+                  type: boolean
+                  description: Must be true
+      responses:
+        '200':
+          description: Tokens extended
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  extended_count:
+                    type: integer
+        '400':
+          description: |
+            Validation failed. `code` is one of `CONFIRMATION_REQUIRED`,
+            `MISSING_TOKEN_IDS`, `INVALID_DAYS`, `DAYS_TOO_LARGE`,
+            `TOO_MANY_TOKENS`, `INVALID_TOKEN_ID`.
+
+  /admin/api/sso/links:
+    get:
+      tags:
+        - Admin
+      summary: List SSO links
+      operationId: adminListSSOLinks
+      security:
+        - adminAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: provider_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Links (`{"links", "page", "per_page", "total_count", "total_pages"}`)
+
+  /admin/api/sso/links/{id}:
+    delete:
+      tags:
+        - Admin
+      summary: Unlink a user's SSO identity
+      operationId: adminDeleteSSOLink
+      security:
+        - adminAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/CSRFToken'
+      responses:
+        '200':
+          description: Link deleted
+        '404':
+          description: SSO link not found
+
 components:
   securitySchemes:
     sessionAuth:
@@ -1939,7 +2676,154 @@ components:
         type: string
       description: CSRF token from csrf_token cookie
 
+    AuditEventType:
+      name: event_type
+      in: query
+      schema:
+        type: string
+        enum: [AUTH, FILE, ADMIN, SECURITY, CONFIG, SYSTEM]
+    AuditOutcome:
+      name: outcome
+      in: query
+      schema:
+        type: string
+        enum: [SUCCESS, FAILURE, DENIED]
+    AuditAction:
+      name: action
+      in: query
+      schema:
+        type: string
+      description: Exact action name
+    AuditUsername:
+      name: username
+      in: query
+      schema:
+        type: string
+      description: Exact username
+    AuditIP:
+      name: ip
+      in: query
+      schema:
+        type: string
+      description: Exact IP address
+    AuditResourceType:
+      name: resource_type
+      in: query
+      schema:
+        type: string
+    AuditResourceID:
+      name: resource_id
+      in: query
+      schema:
+        type: string
+    AuditSearch:
+      name: search
+      in: query
+      schema:
+        type: string
+      description: Substring of action, username, resource ID or details
+    AuditSince:
+      name: since
+      in: query
+      schema:
+        type: string
+      description: RFC 3339 time or YYYY-MM-DD (inclusive)
+    AuditUntil:
+      name: until
+      in: query
+      schema:
+        type: string
+      description: RFC 3339 time or YYYY-MM-DD (exclusive)
+
   schemas:
+    # ==================== Audit Log Schemas ====================
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          description: Fixed-width RFC 3339 UTC with microseconds
+        event_type:
+          type: string
+          enum: [AUTH, FILE, ADMIN, SECURITY, CONFIG, SYSTEM]
+        action:
+          type: string
+        outcome:
+          type: string
+          enum: [SUCCESS, FAILURE, DENIED]
+        user_id:
+          type: string
+        username:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        details:
+          type: string
+          description: JSON object serialized as a string
+        prev_hash:
+          type: string
+        entry_hash:
+          type: string
+        key_id:
+          type: string
+          description: Identifies the signing key (not secret)
+    AuditVerification:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        checked:
+          type: integer
+          format: int64
+        first_id:
+          type: integer
+          format: int64
+        last_id:
+          type: integer
+          format: int64
+        last_hash:
+          type: string
+        problem:
+          type: string
+        problem_id:
+          type: integer
+          format: int64
+        problems:
+          type: array
+          description: Up to 20 problems
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                format: int64
+              description:
+                type: string
+        problem_count:
+          type: integer
+          format: int64
+    AuditRetention:
+      type: object
+      properties:
+        retention_days:
+          type: integer
+          description: 0 = keep forever
+        enabled:
+          type: boolean
+        last_prune_error:
+          type: string
+        last_prune_error_at:
+          type: string
+
     # ==================== Error Response ====================
     ErrorResponse:
       type: object

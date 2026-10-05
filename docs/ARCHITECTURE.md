@@ -107,6 +107,7 @@ sequenceDiagram
 
     alt Simple Upload (< 100MB)
         C->>S: POST /api/upload (file)
+        S->>FS: Stream body to unlinked temp file in uploads/.spool/<br/>(60s idle / 4 KiB/s floor, else 408 UPLOAD_TIMEOUT)
         S->>S: Validate (size, extension)
         S->>S: Detect MIME type
         S->>ENC: Encrypt file (if key set)
@@ -116,12 +117,12 @@ sequenceDiagram
         S-->>C: {claim_code, download_url}
     else Chunked Upload (>= 100MB)
         C->>S: POST /api/upload/init
-        S->>DB: Create partial_upload
+        S->>DB: Create partial_upload, reserve full size against quota<br/>(507 QUOTA_EXCEEDED if it doesn't fit)
         S-->>C: {upload_id, chunk_size}
         
         loop For each chunk
             C->>S: POST /api/upload/chunk/:id/:num
-            S->>FS: Store chunk
+            S->>FS: Stream chunk to disk (408 UPLOAD_TIMEOUT if it stalls)
             S->>DB: Update progress
             S-->>C: {success}
         end
@@ -308,7 +309,34 @@ erDiagram
         string status
         int attempt_count
     }
+
+    audit_logs {
+        int id PK
+        string timestamp
+        string event_type
+        string action
+        string outcome
+        string user_id
+        string username
+        string ip_address
+        string user_agent
+        string resource_type
+        string resource_id
+        string details
+        string prev_hash
+        string entry_hash
+        string key_id
+    }
+
+    audit_log_state {
+        int id PK "always 1"
+        int anchor_id
+        string anchor_hash
+        int retention_days
+    }
 ```
+
+`audit_logs` entries are linked to the other tables only by value (`user_id` and `resource_id` are stored as text), so deleting a user or file never rewrites history. See [Audit Log Architecture](#audit-log-architecture-adr-018).
 
 ### At-Rest Encryption Architecture (SFSE1 / SFSE2)
 
@@ -604,7 +632,12 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 
 *Admin Backup Management:*
 - `AdminListBackupsHandler`: Lists all backups in the backup directory
+- `AdminCreateBackupHandler`, `AdminDeleteBackupHandler`, `AdminVerifyBackupHandler`, `AdminRestoreBackupHandler`: Create, delete, verify and restore backups (require CSRF)
 - `AdminDownloadBackupHandler`: Downloads backup as zip file (requires CSRF)
+- `BackupSchedulerHandler` (`internal/handlers/admin_backup_scheduler.go`): Backup schedules, run history, stats and manual triggers for the in-process scheduler (`internal/backup/scheduler.go`)
+
+*Admin Audit Log (ADR-018):*
+- `AdminAuditLogsHandler`, `AdminAuditLogsExportHandler`, `AdminAuditLogsVerifyHandler`, `AdminAuditLogsRetentionHandler` (`internal/handlers/admin_audit_logs.go`): List/filter, export, verify and configure retention. See [Audit Log Architecture](#audit-log-architecture-adr-018)
 
 *Admin User Management:*
 - `AdminCreateUserHandler`: Creates new user with optional or auto-generated temporary password
@@ -616,7 +649,7 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 
 **Frontend** (`internal/static/web/admin/`):
 - `login.html`: Login page with username/password form
-- `dashboard.html`: Five-tab interface (Files, Users, Blocked IPs, Backups, Settings)
+- `dashboard.html`: Eleven-tab interface (Files, Users, Blocked IPs, Enterprise Features, Webhooks, SSO Providers, API Tokens, Backups, Audit Log, Settings, Configuration Assistant)
 - `admin.css`: Responsive design with light theme
 - `admin.js`: Handles API calls, pagination, search, confirmations
 
@@ -634,7 +667,8 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 **Protected routes with CSRF** (require session + CSRF token):
 - File management: `POST /admin/api/files/delete`
 - IP management: `POST /admin/api/ip/block`, `POST /admin/api/ip/unblock`
-- Backup management: `POST /admin/api/backups/download`
+- Backup management: `POST /admin/api/backups` (create), `DELETE /admin/api/backups`, `POST /admin/api/backups/verify`, `POST /admin/api/backups/restore`, `POST /admin/api/backups/download`, `PUT /admin/api/backup-schedules/{id}`, `POST /admin/api/backup-trigger`
+- Audit log: `POST /admin/api/audit-logs/verify`, `PUT /admin/api/audit-logs/retention` (the list and export endpoints are session-only `GET`s)
 - Settings: `POST /admin/api/quota/update`, `POST /admin/api/settings/password`
 - User management: `POST /admin/api/users/create`, `PUT /admin/api/users/:id`, `DELETE /admin/api/users/:id`, etc.
 
@@ -643,15 +677,23 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 1. **Session Management**: Secure 32-byte random tokens, HttpOnly cookies, SameSite=Strict
 2. **CSRF Protection**: Separate CSRF tokens, token validation on all state-changing operations
 3. **Rate Limiting**: 5 login attempts per 15 minutes per IP
-4. **Audit Logging**: All admin actions logged with structured JSON logging
+4. **Audit Logging**: Admin actions are written to the tamper-evident audit log (see [Audit Log Architecture](#audit-log-architecture-adr-018)) and to the structured JSON application log
 
 ### Dashboard Features
+
+The dashboard has eleven tabs (`internal/static/web/admin/dashboard.html`):
 
 **Files Tab**: Table view with search, pagination, delete functionality
 **Users Tab**: User management with create, edit, enable/disable, reset password, delete
 **Blocked IPs Tab**: IP blocklist with add/unblock functionality
-**Backups Tab**: Backup management with list view and download functionality
+**Enterprise Features Tab**: Runtime feature flags (MFA, SSO, webhooks, API tokens, and so on)
+**Webhooks Tab**: Webhook configurations and delivery history
+**SSO Providers Tab**: OIDC provider management and user SSO links
+**API Tokens Tab**: All users' API tokens with usage stats, revoke, bulk revoke and bulk extend
+**Backups Tab**: Backup list, create, verify, restore, download and delete (schedules and run history are managed through the admin API only; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md))
+**Audit Log Tab**: Filter, page through, export (CSV or JSON Lines) and verify the audit log; adjust retention
 **Settings Tab**: Dynamic settings updates (storage, security, password, system info)
+**Configuration Assistant Tab**: Questionnaire that recommends timeouts, chunk size and limits for your network and file sizes
 **Real-time Stats**: Total files, storage used, quota usage, blocked IPs, total users
 
 ---
@@ -817,7 +859,7 @@ any value the Worker forges; a Worker that bypasses Cloudflare's proxy
 entirely can still forge `CF-Connecting-IP` itself, which requires
 Authenticated Origin Pulls or Cloudflare Tunnel exclusivity to fully close).
 
-### Chunked Upload (v2.0.0+)
+### Chunked Upload
 - `CHUNKED_UPLOAD_ENABLED`: Enable/disable chunked upload support (default: true)
 - `CHUNKED_UPLOAD_THRESHOLD`: Files >= this size use chunked upload in bytes (default: 100MB)
 - `CHUNK_SIZE`: Size of each chunk in bytes (default: 5MB)
@@ -884,11 +926,16 @@ This gives users control over download location (no automatic download).
 ### Theme Toggle
 Dark/light mode with localStorage persistence (reduced size: 2rem, opacity: 0.7 for less intrusiveness).
 
+### Installable App and Service Worker (v1.12.0+)
+- `assets/manifest.json` makes SafeShare installable, with **Upload** and **My files** shortcuts and a share target.
+- `assets/pwa.js` registers `service-worker.js` on every page and shows the **Install app** link or the iOS **Add to Home Screen** hint.
+- The service worker caches only `/assets/*` (cache-first, versioned by `CACHE_VERSION`). Page navigations go to the network first and are never cached, so session-dependent pages (`/login`, `/dashboard`) always reflect the current session. Offline, `/` falls back to its precached copy and other pages get `assets/offline.html`. API, admin, health and metrics requests bypass it.
+
 ---
 
 ## Chunked Upload Architecture
 
-SafeShare v2.0.0 introduces chunked/resumable uploads for large files (>100MB by default) to overcome HTTP timeout limitations.
+SafeShare supports chunked/resumable uploads for large files (>100MB by default) to overcome HTTP timeout limitations. (This was introduced under the old 2.x version numbering, before the November 2025 reset to 1.0.0; see the Version Reset Notice in [CHANGELOG.md](CHANGELOG.md).)
 
 **Full Documentation**: See [CHUNKED_UPLOAD.md](CHUNKED_UPLOAD.md) for complete API specifications.
 
@@ -929,15 +976,19 @@ Tracks upload sessions with upload_id (UUID), filename, total_size, chunk_size, 
 **Simple Upload** (files < threshold):
 ```
 1. POST /api/upload (multipart/form-data)
-2. Server stores file, generates claim code
-3. Return claim code to user
+2. Server streams the file part to an unlinked temp file under {UPLOAD_DIR}/.spool/
+   (not held in memory; the uploads volume needs free space for it)
+3. Server validates, encrypts if ENCRYPTION_KEY set, stores file, generates claim code
+4. Return claim code to user
 ```
+
+The request body is read under an idle/minimum-rate deadline (`internal/handlers/upload_stream.go`): no bytes for 60 seconds, or an average under 4 KiB/s, ends the request with `408 UPLOAD_TIMEOUT`. The overall per-request deadline scales with the expected size (assuming at least 64 KiB/s, plus 60 seconds, capped at 6 hours).
 
 **Chunked Upload** (files >= threshold):
 ```
 1. Frontend checks file size against CHUNKED_UPLOAD_THRESHOLD
 2. POST /api/upload/init (initialize session)
-3. Server creates partial_upload record, returns upload_id
+3. Server creates partial_upload record, reserves the full size against QUOTA_LIMIT_GB, returns upload_id
 4. Frontend splits file into chunks
 5. Upload chunks in parallel with retry
 6. POST /api/upload/complete/:upload_id
@@ -953,14 +1004,16 @@ Assembly (step 6) runs asynchronously in a background worker, guarded by a lease
 
 ### Security Features
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Rate limiting on upload initialization
+- Per-IP rate limiting on every step: `/init` at `RATE_LIMIT_UPLOAD`, `/chunk` and `/complete` at 10x it, `/status` at 600x it (never under 6,000/hour). Each has its own bucket
 - Validates upload_id, chunk_number, chunk_size
 - File extension blocking applied
 - Disk space validation before accepting chunks
 - Maximum 10,000 chunks per file (prevents DoS)
+- Idle/minimum-rate read deadline on chunk bodies (60s idle, 4 KiB/s floor) so a stalled client can't hold a chunk temp file open
+- Quota reservation lease (T30): `/init` reserves the upload's full size; after an hour without a new chunk the reservation shrinks to the bytes received so far, and the next new chunk re-reserves the rest (507 `QUOTA_EXCEEDED` if the quota has since filled)
 
 ### Error Handling
-Comprehensive error codes: 400, 404, 409, 410, 413, 503, 507
+Comprehensive error codes: 400, 404, 408 (`UPLOAD_TIMEOUT`), 409, 410, 413, 429, 503, 507
 
 ### Performance Characteristics
 - Chunk assembly: ~3 seconds for 5000 chunks (25GB file)
@@ -969,9 +1022,35 @@ Comprehensive error codes: 400, 404, 409, 410, 413, 503, 507
 
 ---
 
+## Audit Log Architecture (ADR-018)
+
+Since v1.11.0 SafeShare records security-relevant events in a tamper-evident log stored in the database. User-facing behavior (what is and isn't recorded, limits of the protection) is documented in [SECURITY.md](SECURITY.md) (Audit Log section); this section covers the design.
+
+### Components
+
+- **Package** `internal/audit`: `Logger` (append, verify, prune, checkpoint), key loading (`key.go`), and `audit.Record(r, cfg, event)` used by handlers.
+- **Tables** (`internal/database/migrations/027_audit_logs.sql`): `audit_logs` (one row per entry) and `audit_log_state` (singleton row holding the chain's anchor after pruning, and `retention_days`, default 365). A PostgreSQL equivalent exists in the unwired PostgreSQL backend.
+- **Models** (`internal/models/audit_log.go`): event types `AUTH`, `FILE`, `ADMIN`, `SECURITY`, `CONFIG`, `SYSTEM`; outcomes `SUCCESS`, `FAILURE`, `DENIED`.
+- **Admin API** (`internal/handlers/admin_audit_logs.go`): list, export, verify, retention. See [API_REFERENCE.md](API_REFERENCE.md).
+- **Frontend**: the **Audit Log** tab of the admin dashboard.
+
+### Integrity design
+
+1. Each entry's `entry_hash` is an HMAC-SHA256 over all of its fields plus the previous entry's hash (`prev_hash`), forming a chain. IDs are assigned by the application inside the append transaction, so they are contiguous: a deleted entry shows as a gap, an edited one as a bad hash.
+2. The signing key is **not in the database**. It comes from `AUDIT_LOG_KEY` (64 hex characters) or from `audit.key`, generated with mode 0600 in the database's directory on first start. Entries record a non-secret `key_id` so entries signed with another key can be told apart from tampered ones.
+3. Retention prunes only the oldest entries, verifying them first, in batches; each prune writes a signed `SYSTEM` entry (`retention_prune`) and moves the anchor, so verification can start from the anchor.
+4. The newest entry's number and hash are written to the application log (`audit log checkpoint`) every 100 entries, hourly, and at startup and shutdown, so deleting the newest entries can be detected from logs shipped off-box.
+5. Verification (`POST /admin/api/audit-logs/verify`) walks the whole chain, reports every problem it finds (up to 20 detailed), and only one verification runs at a time.
+
+### Enabling
+
+`AUDIT_LOG=auto` (default) enables it except in anonymous mode; `true`/`false` force it. Any other value stops startup. Instances that share one database must share one key (`AUDIT_LOG_KEY`). Backups contain the table but not the key; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
+
+---
+
 ## Webhook Architecture
 
-SafeShare v2.8.0 introduces an event-driven webhook notification system for real-time file lifecycle monitoring.
+SafeShare introduced (under the old 2.x numbering, before the November 2025 version reset) an event-driven webhook notification system for real-time file lifecycle monitoring.
 
 ### Overview
 **Problem Solved**: External systems need real-time notifications when files are uploaded, downloaded, deleted, or expired for integration with monitoring tools, notification services, and automated workflows.
@@ -1216,7 +1295,9 @@ The admin dashboard includes a Webhooks tab with:
 
 ## Enterprise Backend Architecture
 
-SafeShare v1.5.0+ introduces enterprise-grade backend support for production deployments requiring high availability, horizontal scaling, and object storage.
+> **PostgreSQL and S3 are not yet supported by the server.** Repository and storage implementations for both exist in the codebase (`internal/repository/postgres`, `internal/storage/s3`) and the configuration package validates their settings, but `cmd/safeshare` always builds the SQLite repositories and filesystem storage. To avoid silently keeping data on local disk, the server refuses to start with `DATABASE_TYPE` other than `sqlite` or `STORAGE_TYPE` other than `filesystem` (`cmd/safeshare/backends.go`). The rest of this section describes the planned setup. Multi-instance deployments are likewise not yet supported.
+
+SafeShare v1.5.0+ includes the building blocks (repository pattern, PostgreSQL and S3 implementations) for production deployments requiring high availability, horizontal scaling, and object storage; wiring them into the server is planned.
 
 ### Overview
 
@@ -1226,7 +1307,7 @@ SafeShare v1.5.0+ introduces enterprise-grade backend support for production dep
 - Limited horizontal scaling capabilities
 - Local filesystem storage doesn't support multi-node shared storage
 
-**Solution**: Repository pattern abstraction allows switching between SQLite, PostgreSQL, and S3-compatible storage backends via environment variables without code changes.
+**Planned solution**: Repository pattern abstraction so SQLite, PostgreSQL, and S3-compatible storage backends can be switched via environment variables without code changes. Today only SQLite and the local filesystem are selectable.
 
 ### Repository Pattern
 
@@ -1261,20 +1342,7 @@ type UserRepository interface {
 // - SSORepository (single sign-on providers)
 ```
 
-**Factory Pattern** (`internal/repository/factory.go`):
-
-```go
-func NewRepositoryFactory(dbType string, db *sql.DB, s3Client *s3.Client) (*RepositoryFactory, error) {
-    switch dbType {
-    case "sqlite":
-        return NewSQLiteFactory(db), nil
-    case "postgres":
-        return NewPostgresFactory(db), nil
-    default:
-        return nil, fmt.Errorf("unsupported database type: %s", dbType)
-    }
-}
-```
+**Factories**: `internal/repository/factory.go` defines the `Repositories` struct that bundles every repository. Each backend has its own constructor: `sqlite.NewRepositories(cfg, db)` (`internal/repository/sqlite`, the only one `cmd/safeshare` calls) and `postgres.NewRepositories(cfg)` (`internal/repository/postgres`, not yet wired into the server).
 
 **Storage Backend Interface** (`internal/storage/interfaces.go`):
 
@@ -1308,22 +1376,26 @@ All 14 repository interfaces implemented with PostgreSQL-specific optimizations:
 - `MFARepository`: TOTP secret storage with encryption
 - `SSORepository`: OIDC provider configuration storage
 
+> **Not yet supported by the server.** The server refuses to start with `DATABASE_TYPE=postgresql`. The configuration below describes the intended setup and the variable names the config package already reads.
+
 **Configuration** (Environment Variables):
 
 ```bash
-# Enable PostgreSQL backend
-DATABASE_TYPE=postgres
+# Enable PostgreSQL backend (NOT YET SUPPORTED by the server)
+DATABASE_TYPE=postgresql
 
 # Connection settings
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=safeshare
-POSTGRES_PASSWORD=secure_password
-POSTGRES_DB=safeshare
-POSTGRES_SSLMODE=require  # Options: disable, require, verify-ca, verify-full
+PG_HOST=localhost             # default: localhost
+PG_PORT=5432                  # default: 5432
+PG_USER=safeshare
+PG_PASSWORD=secure_password
+PG_DATABASE=safeshare
+PG_SSL_MODE=require           # default: prefer; options: disable, prefer, require, verify-ca, verify-full
 
-# Connection pooling
-POSTGRES_MAX_CONNECTIONS=25  # Default: 25
+# Connection pooling and schema
+PG_MAX_CONNECTIONS=25         # default: 25
+PG_AUTO_MIGRATE=true          # default: true
+PG_OPTIONS=                   # extra connection options
 ```
 
 **Database Schema**:
@@ -1338,15 +1410,9 @@ PostgreSQL schema matches SQLite schema with these enhancements:
 
 **Migration System**:
 
-Automatic schema migration on startup:
-- `internal/repository/postgres/migrations/` contains versioned SQL files
-- `001_initial_schema.sql` creates all tables
-- `002_add_webhooks.sql` adds webhook support
-- `003_add_api_tokens.sql` adds API token tables
-- `004_add_mfa.sql` adds MFA support
-- `005_add_sso.sql` adds SSO provider tables
-
-Migrations tracked in `schema_migrations` table.
+Schema migration is planned to run on startup (`PG_AUTO_MIGRATE`):
+- `internal/repository/postgres/migrations.go` holds the ordered, named migrations (`001_initial`, then later additions such as the audit log table)
+- Applied migrations are tracked in the `migrations` table
 
 **Connection Pooling**:
 
@@ -1364,7 +1430,7 @@ db.SetConnMaxLifetime(5 * time.Minute)  // Connection lifetime
 - File lookups by claim code: <2ms
 - Webhook delivery tracking: <5ms
 
-**High Availability Setup**:
+**High Availability Setup** (planned; not yet supported):
 
 ```yaml
 # PostgreSQL primary-replica setup
@@ -1382,13 +1448,15 @@ postgres-replica:
 
 safeshare-node1:
   environment:
-    DATABASE_TYPE: postgres
-    POSTGRES_HOST: postgres-primary
+    DATABASE_TYPE: postgresql
+    PG_HOST: postgres-primary
+    AUDIT_LOG_KEY: ${AUDIT_LOG_KEY}   # instances sharing a database must share one audit key
 
 safeshare-node2:
   environment:
-    DATABASE_TYPE: postgres
-    POSTGRES_HOST: postgres-primary
+    DATABASE_TYPE: postgresql
+    PG_HOST: postgres-primary
+    AUDIT_LOG_KEY: ${AUDIT_LOG_KEY}
 ```
 
 **Testing**:
@@ -1440,7 +1508,7 @@ func (s *S3Storage) SaveFile(ctx context.Context, filename string, data io.Reade
 **Configuration** (Environment Variables):
 
 ```bash
-# Enable S3 storage backend
+# Enable S3 storage backend (NOT YET SUPPORTED by the server)
 STORAGE_TYPE=s3
 
 # S3 connection settings
@@ -1453,7 +1521,8 @@ S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
 # MinIO-specific settings
-S3_USE_PATH_STYLE=true  # Required for MinIO
+S3_PATH_STYLE=true  # Required for MinIO (default: false)
+S3_STORAGE_QUOTA=0  # Optional quota in bytes (default: 0)
 ```
 
 **Features**:
@@ -1510,12 +1579,12 @@ safeshare:
     S3_ENDPOINT: http://minio:9000
     S3_ACCESS_KEY_ID: minioadmin
     S3_SECRET_ACCESS_KEY: minioadmin
-    S3_USE_PATH_STYLE: true
+    S3_PATH_STYLE: true
 ```
 
 ### High Availability Architecture
 
-**Multi-Node Deployment** with PostgreSQL + S3:
+**Multi-Node Deployment** with PostgreSQL + S3 (planned design; **not yet supported** — the server only runs against SQLite and local disk):
 
 ```
                     ┌──────────────────┐
@@ -1560,7 +1629,7 @@ safeshare:
 
 ### Migration Guide
 
-**SQLite to PostgreSQL Migration**:
+**SQLite to PostgreSQL Migration** (planned; not yet supported — the server refuses `DATABASE_TYPE=postgresql`):
 
 ```bash
 # 1. Export SQLite data
@@ -1574,12 +1643,12 @@ sed 's/INTEGER PRIMARY KEY/SERIAL PRIMARY KEY/g' postgres.sql
 psql -h localhost -U safeshare -d safeshare < postgres.sql
 
 # 4. Update SafeShare configuration
-export DATABASE_TYPE=postgres
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=5432
-export POSTGRES_USER=safeshare
-export POSTGRES_PASSWORD=password
-export POSTGRES_DB=safeshare
+export DATABASE_TYPE=postgresql
+export PG_HOST=localhost
+export PG_PORT=5432
+export PG_USER=safeshare
+export PG_PASSWORD=password
+export PG_DATABASE=safeshare
 
 # 5. Restart SafeShare
 docker restart safeshare
@@ -1609,6 +1678,8 @@ rm -rf ./uploads/*
 ```
 
 ### Monitoring & Observability
+
+*(Applies once PostgreSQL/S3 are supported.)*
 
 **PostgreSQL Monitoring**:
 - Connection pool metrics: `db.Stats()` exposed via `/health` endpoint

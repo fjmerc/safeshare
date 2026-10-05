@@ -1,5 +1,14 @@
 # High Availability Deployment Guide
 
+> **WARNING: Multi-instance HA with PostgreSQL and S3 is NOT yet supported.**
+> This guide describes a planned design, not something you can deploy today. The server runs against a single SQLite database and the local filesystem, and **refuses to start** when `DATABASE_TYPE` is anything but `sqlite` or `STORAGE_TYPE` is anything but `filesystem` (`cmd/safeshare/backends.go`). Do not run several instances against one database or uploads directory.
+>
+> **Many environment variables in this guide do not exist in the current server** and would be silently ignored: `DATABASE_URL`, `STORAGE_BACKEND`, `S3_FORCE_PATH_STYLE`, `S3_ACCELERATE`, `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `LOG_LEVEL`, `LOG_FORMAT`, `RATE_LIMIT_BACKEND`, `RATE_LIMIT_WINDOW`, `SHUTDOWN_TIMEOUT`, `HTTP_SHUTDOWN_TIMEOUT` and `UPLOAD_WAIT_TIMEOUT`. The configuration package's own names are `DATABASE_TYPE=postgresql` with `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_SSL_MODE`, `PG_MAX_CONNECTIONS`, and `STORAGE_TYPE=s3` with `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_PATH_STYLE`; but those backends are not wired into the server yet.
+>
+> When multi-instance support arrives, **all instances sharing a database must also share one audit log key**: set the same `AUDIT_LOG_KEY` (64 hex characters) on every instance, otherwise each instance's audit entries fail verification on the others (see [SECURITY.md](SECURITY.md), Audit Log section).
+>
+> For a supported single-node production setup, see [PRODUCTION.md](PRODUCTION.md). Architecture notes on the planned backends are in [ARCHITECTURE.md](ARCHITECTURE.md) (Enterprise Backend Architecture).
+
 This guide covers deploying SafeShare in a high availability (HA) configuration with multiple instances, shared storage, and database backends.
 
 ## Overview

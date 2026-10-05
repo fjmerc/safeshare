@@ -598,6 +598,8 @@ Check the status of a chunked upload session.
 - `completed`: Upload complete, claim code available
 - `failed`: Upload failed (check `error_message`; `error_code` gives a machine-readable reason, e.g. `MALWARE_DETECTED`, `SCAN_UNAVAILABLE`, when applicable)
 
+**Rate limit**: This endpoint is limited per IP to 600x `RATE_LIMIT_UPLOAD` requests per hour (never under 6,000/hour), well above the ~1,800/hour sent by a client polling every 2 seconds. If you do receive `429`, keep polling (back off briefly) rather than treating it as an upload failure; the assembly continues server-side.
+
 ---
 
 ### Download File
@@ -1174,6 +1176,166 @@ Analyze deployment environment and get optimized configuration recommendations.
 
 ---
 
+### Admin: Audit Log
+
+Tamper-evident audit log (ADR-018). Enabled by default except in anonymous mode (`AUDIT_LOG=auto`); see [SECURITY.md](SECURITY.md) (Audit Log section). All endpoints require an admin session; state-changing requests (`verify`, and `PUT` on `retention`) also require a CSRF token (`X-CSRF-Token`).
+
+#### List Entries
+
+**Endpoint**: `GET /admin/api/audit-logs`
+
+**Query parameters** (all optional):
+
+| Parameter | Description |
+|-----------|-------------|
+| `event_type` | `AUTH`, `FILE`, `ADMIN`, `SECURITY`, `CONFIG`, or `SYSTEM` |
+| `outcome` | `SUCCESS`, `FAILURE`, or `DENIED` |
+| `action` | Exact action name (for example `backup_create`) |
+| `username` | Exact username |
+| `ip` | Exact IP address |
+| `resource_type`, `resource_id` | Resource the action touched |
+| `search` | Substring of action, username, resource ID or details |
+| `since`, `until` | RFC 3339 time or `YYYY-MM-DD`; `since` is inclusive, `until` exclusive |
+| `limit` | Page size (default 50, maximum 1000) |
+| `before_id` | Return only entries with a smaller ID (paging) |
+
+Entries are returned newest first. To fetch the next page, pass `next_before_id` from the previous response as `before_id`.
+
+```bash
+curl -b "admin_session=<session>" \
+  "https://share.example.com/admin/api/audit-logs?event_type=AUTH&outcome=FAILURE&limit=100"
+```
+
+**Response** (200 OK):
+```json
+{
+  "entries": [
+    {
+      "id": 1842,
+      "timestamp": "2026-01-15T10:30:00.123456Z",
+      "event_type": "AUTH",
+      "action": "login",
+      "outcome": "FAILURE",
+      "username": "alice",
+      "ip_address": "203.0.113.7",
+      "user_agent": "Mozilla/5.0 ...",
+      "resource_type": "user",
+      "details": "{\"reason\":\"missing_credentials\"}",
+      "prev_hash": "...",
+      "entry_hash": "...",
+      "key_id": "a1b2c3d4e5f60718"
+    }
+  ],
+  "next_before_id": 1743
+}
+```
+
+`next_before_id` is present only when the page was full. Empty fields (`user_id`, `username`, `resource_type`, etc.) are omitted. `details` is a JSON object serialized as a string. Values in the example are illustrative.
+
+**Errors**: `400 INVALID_FILTER` (bad date, `limit` or `before_id`), `401`, `500`.
+
+#### Export
+
+**Endpoint**: `GET /admin/api/audit-logs/export?format=csv|jsonl`
+
+Accepts the same filters as the list endpoint (except paging). `format` defaults to `csv`. Returns an attachment named `safeshare-audit-YYYYMMDD-HHMMSS.csv` (`text/csv`) or `.jsonl` (`application/x-ndjson`), newest first, including `prev_hash`, `entry_hash` and `key_id`. An export is capped at 100,000 entries; if it stops early the last line says so (`# export incomplete: ...` in CSV, `{"export_incomplete": true, ...}` in JSON Lines), so narrow the filters. The CSV prefixes text starting with `=`, `+`, `-` or `@` with `'` to block spreadsheet formula injection, so it is not an exact copy of what was signed; use JSON Lines for that. Each export is itself recorded in the audit log.
+
+**Errors**: `400 INVALID_FILTER`, `400 INVALID_FORMAT`.
+
+#### Verify Integrity
+
+**Endpoint**: `POST /admin/api/audit-logs/verify`
+
+**Authentication**: Admin session + CSRF token
+
+Re-checks the whole signature chain. No request body.
+
+**Response** (200 OK):
+```json
+{
+  "verification": { "valid": true, "checked": 1842, "last_id": 1842 },
+  "key_id": "a1b2c3d4e5f60718",
+  "duration_ms": 41
+}
+```
+
+The `verification` object also carries `first_id`, `last_hash` and, when `valid` is `false`, `problem`/`problem_id` (the first inconsistency), `problems` (up to 20 `{id, description}` items) and `problem_count`. Checking continues past the first problem. Each verification is recorded in the audit log.
+
+**Errors**: `409 VERIFY_IN_PROGRESS` (one is already running), `503 FEATURE_DISABLED` (audit log is off), `500`.
+
+#### Retention
+
+**Endpoint**: `GET /admin/api/audit-logs/retention` and `PUT /admin/api/audit-logs/retention`
+
+**Authentication**: Admin session; `PUT` also requires a CSRF token
+
+`GET` returns the current setting; `PUT` changes it. Both return:
+
+```json
+{ "retention_days": 365, "enabled": true }
+```
+
+`last_prune_error` and `last_prune_error_at` are included if the most recent daily prune failed.
+
+**PUT body**: `{"retention_days": 365}`. `0` keeps entries forever; otherwise the value must be between 30 and 36500. Anything else returns `400 INVALID_REQUEST`.
+
+---
+
+### Admin: Backups
+
+Manage backups in `BACKUP_DIR` (default `<DATA_DIR>/backups`). Backup folder names look like `backup-2026-01-15T02-00-00`. All endpoints require an admin session; everything except the list also requires a CSRF token. Details and CLI usage: [BACKUP_RESTORE.md](BACKUP_RESTORE.md).
+
+| Method | Path | Body / query | Description |
+|--------|------|--------------|-------------|
+| `GET` | `/admin/api/backups` | none | List backups: `{"backups": [{"filename", "path", "mode", "size", "created_at", "version", "verified"}]}` |
+| `POST` | `/admin/api/backups` | `{"mode": "full"}` (`config`, `database` or `full`; default `full`) | Create a backup synchronously |
+| `DELETE` | `/admin/api/backups` | `?filename=<name>` (or `{"backup_path": ...}`) | Delete a backup folder |
+| `POST` | `/admin/api/backups/verify` | `{"filename": "<name>"}` (or `backup_path`) | Verify checksums; returns `{"valid", "errors", "mode", "version"}` and marks a valid backup as verified |
+| `POST` | `/admin/api/backups/restore` | `{"filename": "<name>", "handle_orphans": "keep"\|"remove", "dry_run": false, "force": false}` | Restore the database (and uploads for full backups) |
+| `POST` | `/admin/api/backups/download` | `{"filename": "<name>"}` | Stream the backup as a zip |
+
+Paths outside `BACKUP_DIR` are rejected with `403`.
+
+### Admin: Backup Scheduler
+
+Scheduled backups (enabled with `AUTO_BACKUP_ENABLED=true`). See [BACKUP_RESTORE.md](BACKUP_RESTORE.md#scheduled-backups-and-retention), including the warning that scheduled retention deletes **every** `backup-*` folder in `BACKUP_DIR` older than the retention period, manual backups included.
+
+| Method | Path | CSRF | Description |
+|--------|------|------|-------------|
+| `GET` | `/admin/api/backup-schedules` | No | `{"schedules": [...]}` |
+| `GET` / `PUT` | `/admin/api/backup-schedules/{id}` | PUT only | Get or update (`name`, `enabled`, `schedule`, `mode`, `retention_days`) |
+| `GET` | `/admin/api/backup-runs` | No | Run history; query `schedule_id`, `status`, `trigger_type`, `limit` (max 1000, default 100), `offset` |
+| `GET` | `/admin/api/backup-runs/{id}` | No | One run |
+| `GET` | `/admin/api/backup-stats` | No | `{"stats": {...}, "scheduler_running": true}` |
+| `POST` | `/admin/api/backup-trigger` | Yes | Start a backup now (`{"mode": "full"}`); `202 Accepted`, or `409` if one is running |
+| `GET` | `/admin/api/backup-running` | No | `{"running": false}` or `{"running": true, "run": {...}, "elapsed_ms", "progress"}` |
+
+### Admin: Bulk Extend Tokens
+
+**Endpoint**: `POST /admin/api/tokens/bulk-extend`
+
+**Authentication**: Admin session + CSRF token
+
+**Request Body** (JSON):
+```json
+{ "token_ids": [12, 13, 14], "days": 30, "confirm": true }
+```
+
+`confirm` must be `true`. At most 100 token IDs per request; `days` must be 1-365.
+
+**Response** (200 OK): `{"message": "...", "extended_count": 3}`
+
+**Errors** (`code`): `CONFIRMATION_REQUIRED`, `MISSING_TOKEN_IDS`, `INVALID_DAYS`, `DAYS_TOO_LARGE`, `TOO_MANY_TOKENS`, `INVALID_TOKEN_ID` (all `400`).
+
+### Admin: SSO Links
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/api/sso/links` | List links between users and SSO providers. Query: `page` (default 1), `per_page` (default 50, max 100), `provider_id`. Returns `{"links": [...], "page", "per_page", "total_count", "total_pages"}` |
+| `DELETE` | `/admin/api/sso/links/{id}` | Unlink a user's SSO identity (CSRF token required). `404` if the link doesn't exist |
+
+---
+
 ## Health & Monitoring
 
 ### Comprehensive Health Check
@@ -1355,6 +1517,7 @@ All endpoints return consistent error format:
 - **401 Unauthorized**: Authentication required or failed
 - **403 Forbidden**: Insufficient permissions
 - **404 Not Found**: Resource doesn't exist
+- **408 Request Timeout**: An upload body stalled (nothing received for 60 seconds, or under 4 KiB/s on average) - `UPLOAD_TIMEOUT`; retry the upload or chunk
 - **410 Gone**: Resource expired or limit reached
 - **413 Payload Too Large**: File exceeds size limit
 - **416 Range Not Satisfiable**: `Range` header was syntactically valid but describes bytes the resource doesn't have (a malformed or multi-range `Range` header is not an error — it's ignored and the full resource is returned instead)
@@ -1391,7 +1554,9 @@ All endpoints return consistent error format:
 
 SafeShare implements IP-based rate limiting:
 
-- **Uploads**: Configurable (default: 10 per hour per IP)
+- **Uploads**: Configurable (default: 10 per hour per IP). Applies to `/api/upload` and `/api/upload/init`
+- **Chunk uploads**: 10x the upload limit (`/api/upload/chunk/...` and `/api/upload/complete/...`, each counted separately per IP)
+- **Upload status**: 600x the upload limit, never under 6,000 per hour (`/api/upload/status/...`)
 - **Downloads**: Configurable (default: 50 per hour per IP)
 - **Admin Login**: 5 attempts per 15 minutes per IP
 - **User Login**: 5 attempts per 15 minutes per IP

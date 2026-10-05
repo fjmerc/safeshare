@@ -69,12 +69,14 @@ MFA is configured via environment variables in your Docker deployment.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MFA_ENABLED` | `false` | Enable MFA feature globally |
-| `MFA_REQUIRED` | `false` | Require MFA for all users (not yet enforced) |
+| `MFA_REQUIRED` | `false` | Require MFA for all users (not yet enforced: a user who hasn't enrolled can still sign in; only a log line is written) |
 | `MFA_ISSUER` | `SafeShare` | Issuer name shown in authenticator apps |
 | `MFA_TOTP_ENABLED` | `true` | Enable TOTP as an MFA method |
 | `MFA_WEBAUTHN_ENABLED` | `true` | Enable WebAuthn as an MFA method |
 | `MFA_RECOVERY_CODES_COUNT` | `10` | Number of recovery codes to generate (5-20) |
 | `MFA_CHALLENGE_EXPIRY_MINUTES` | `5` | How long MFA challenges remain valid (1-30) |
+
+**Note**: The built-in admin account defined by `ADMIN_USERNAME`/`ADMIN_PASSWORD` is not challenged for MFA. Only database user accounts (including admin-role users) that have enrolled a method are.
 
 ### Example Docker Configuration
 
