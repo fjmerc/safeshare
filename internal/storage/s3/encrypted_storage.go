@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/storage"
 	"github.com/fjmerc/safeshare/internal/utils"
 )
@@ -154,7 +155,7 @@ func (es *S3EncryptedStorage) Store(ctx context.Context, filename string, reader
 	slog.Debug("encrypted file stored in S3",
 		"filename", filename,
 		"plaintext_size", size,
-		"sha256", plaintextHash[:16]+"...",
+		"sha256", privacy.LogHash(plaintextHash[:16]+"..."),
 	)
 	return filename, plaintextHash, nil
 }
@@ -666,7 +667,7 @@ func (es *S3EncryptedStorage) AssembleChunks(ctx context.Context, uploadID strin
 	slog.Debug("assembled file encrypted in S3",
 		"dest_filename", destFilename,
 		"plaintext_size", totalPlaintextLen,
-		"sha256", hashHex[:16]+"...",
+		"sha256", privacy.LogHash(hashHex[:16]+"..."),
 	)
 	return hashHex, nil
 }

@@ -51,7 +51,7 @@ func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Han
 			userCookie, userErr := r.Cookie("user_session")
 			if userErr != nil {
 				slog.Warn("admin authentication failed - no session cookie",
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to admin login page
@@ -76,7 +76,7 @@ func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Han
 
 			if userSession == nil {
 				slog.Warn("admin authentication failed - invalid session token",
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to admin login page
@@ -101,7 +101,7 @@ func AdminAuth(repos *repository.Repositories, anonymousMode bool) func(http.Han
 
 			if user.Role != "admin" {
 				slog.Warn("admin authentication failed - insufficient permissions",
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 					"user_id", user.ID,
 					"username", user.Username,
 					"role", user.Role,
@@ -184,7 +184,7 @@ func CSRFProtection(repos *repository.Repositories, anonymousMode bool) func(htt
 
 				if !hasValidSession {
 					slog.Warn("CSRF validation failed - no valid session",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden", http.StatusForbidden)
@@ -195,7 +195,7 @@ func CSRFProtection(repos *repository.Repositories, anonymousMode bool) func(htt
 				csrfCookie, err := r.Cookie("csrf_token")
 				if err != nil || csrfToken == "" || csrfCookie == nil {
 					slog.Warn("CSRF validation failed - missing token",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 						"has_csrf_header", csrfToken != "",
 						"has_csrf_cookie", csrfCookie != nil,
@@ -207,7 +207,7 @@ func CSRFProtection(repos *repository.Repositories, anonymousMode bool) func(htt
 				// Use constant-time comparison to prevent timing attacks
 				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
 					slog.Warn("CSRF validation failed - token mismatch",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)
@@ -251,7 +251,7 @@ func SetUserCSRFCookie(w http.ResponseWriter, cfg *config.Config) (string, error
 	cookie := &http.Cookie{
 		Name:     "user_csrf_token",
 		Value:    token,
-		Path:     "/", // Site-wide for user routes
+		Path:     "/",   // Site-wide for user routes
 		HttpOnly: false, // JavaScript needs to read this
 		Secure:   cfg.HTTPSEnabled,
 		SameSite: http.SameSiteStrictMode,
@@ -289,7 +289,7 @@ func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func
 
 				if !hasValidSession {
 					slog.Warn("user CSRF validation failed - no valid session",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - No valid session", http.StatusForbidden)
@@ -300,7 +300,7 @@ func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func
 				csrfCookie, err := r.Cookie("user_csrf_token")
 				if err != nil || csrfToken == "" || csrfCookie == nil {
 					slog.Warn("user CSRF validation failed - missing token",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 						"has_csrf_header", csrfToken != "",
 						"has_csrf_cookie", csrfCookie != nil,
@@ -312,7 +312,7 @@ func UserCSRFProtection(repos *repository.Repositories, anonymousMode bool) func
 				// Use constant-time comparison to prevent timing attacks
 				if subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(csrfToken)) != 1 {
 					slog.Warn("user CSRF validation failed - token mismatch",
-						"path", r.URL.Path,
+						"path", logPath(r.URL.Path),
 						"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 					)
 					http.Error(w, "Forbidden - Invalid CSRF token", http.StatusForbidden)

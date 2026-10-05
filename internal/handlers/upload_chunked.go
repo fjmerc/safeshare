@@ -93,6 +93,18 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			return
 		}
 
+		// Enforced client-side encryption (REQUIRE_CLIENT_ENCRYPTION): reject
+		// before any session or chunk storage is allocated. The flag is a
+		// client-declared hint and cannot be verified server-side.
+		if clientEncryptedHeader(r) {
+			// The header declares E2E too; record it on the session so the
+			// chunk/complete checks agree.
+			req.ClientEncrypted = true
+		}
+		if rejectIfClientEncryptionRequired(w, cfg, req.ClientEncrypted) {
+			return
+		}
+
 		// Validate filename
 		if req.Filename == "" {
 			sendError(w, "Filename is required", "MISSING_FILENAME", http.StatusBadRequest)
@@ -112,7 +124,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 		if !allowed {
 			clientIP := getClientIP(r)
 			slog.Warn("blocked file extension during chunked upload init",
-				"filename", req.Filename,
+				"filename", logFilename(req.Filename, cfg),
 				"extension", blockedExt,
 				"client_ip", logIP(clientIP, cfg),
 			)
@@ -316,7 +328,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 		slog.Info("chunked upload initialized",
 			"upload_id", uploadID,
-			"filename", req.Filename,
+			"filename", logFilename(req.Filename, cfg),
 			"total_size", req.TotalSize,
 			"chunk_size", cfg.ChunkSize,
 			"total_chunks", totalChunks,
@@ -386,6 +398,12 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		if partialUpload == nil {
 			sendError(w, "Upload session not found", "UPLOAD_NOT_FOUND", http.StatusNotFound)
+			return
+		}
+
+		// A session opened before client encryption became required (e.g. an
+		// operator toggled the setting mid-session) must not complete as plaintext.
+		if rejectIfClientEncryptionRequired(w, cfg, partialUpload.ClientEncrypted) {
 			return
 		}
 
@@ -715,7 +733,7 @@ func UploadChunkHandler(repos *repository.Repositories, cfg *config.Config) http
 			"chunk_size", chunkSize,
 			"chunks_received", chunksReceived,
 			"total_chunks", partialUpload.TotalChunks,
-			"filename", chunkPart.FileName(),
+			"filename", logFilename(chunkPart.FileName(), cfg),
 		)
 	}
 }
@@ -895,6 +913,12 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 
 		if partialUpload == nil {
 			sendError(w, "Upload session not found", "UPLOAD_NOT_FOUND", http.StatusNotFound)
+			return
+		}
+
+		// A session opened before client encryption became required (e.g. an
+		// operator toggled the setting mid-session) must not complete as plaintext.
+		if rejectIfClientEncryptionRequired(w, cfg, partialUpload.ClientEncrypted) {
 			return
 		}
 
@@ -1121,7 +1145,7 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 		// Return immediately with status "processing"
 		slog.Info("chunked upload accepted for async assembly",
 			"upload_id", uploadID,
-			"filename", partialUpload.Filename,
+			"filename", logFilename(partialUpload.Filename, cfg),
 			"size", partialUpload.TotalSize,
 			"total_chunks", partialUpload.TotalChunks,
 			"attempt", partialUploadCopy.AssemblyAttempts,

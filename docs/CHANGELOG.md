@@ -35,6 +35,21 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+- **Anonymous (Ghost) mode now keeps the promises its documentation makes.** An audit found that several of them weren't true.
+  - **Client-side encryption is required.** The operator could read files that weren't end-to-end encrypted. `REQUIRE_CLIENT_ENCRYPTION` is new and defaults to on in anonymous mode: uploads not encrypted in the browser are refused with `400 CLIENT_ENCRYPTION_REQUIRED`, and the upload page locks the encryption option on. Browsers without Web Crypto can't upload; Tor Browser on a `.onion` address can.
+  - **Metadata is stripped in the browser.** The server can't strip encrypted files, so the browser now removes JPEG and PNG metadata (EXIF, GPS, XMP, text chunks) before encrypting. Other formats get a warning. `STRIP_METADATA` now defaults to on in anonymous mode. Files the server can't strip, including encrypted PDFs and files over 100 MB, are rejected with `422 METADATA_STRIP_FAILED` instead of being kept with their metadata.
+  - **No content hash is kept.** Anonymous mode no longer stores or returns a SHA-256 of uploads, which could have confirmed that a known document was shared. Deleted database rows are overwritten (`secure_delete`), and the write-ahead log is truncated after deletions.
+  - **Fewer identifying details are kept.** User agents are no longer stored. Filenames, user agents and claim codes are kept out of logs, and SSO login state no longer stores raw IPs.
+  - **No outbound connections or exposed metrics.** Webhooks and SSO can't be enabled in anonymous mode, and SSO provider tests are refused. `/metrics` isn't served unless `METRICS_IN_ANONYMOUS_MODE=true`.
+  - **Fewer traces on the visitor's device.** No recent-uploads list, resume state or filenames in notifications. In every mode, the end-to-end key is removed from the address bar and history after it's read.
+  - **Action required** for existing anonymous-mode servers: uploads from the SDKs, scripts and the import tool will be refused. Set `REQUIRE_CLIENT_ENCRYPTION=false` to keep accepting them, at the cost of the operator being able to read those files.
+
+### Fixed
+- **Turning off the webhooks feature now stops webhook deliveries.** Webhooks that were already configured kept firing after the feature was switched off. Deliveries, and the webhook admin API, now respect the feature flag.
+- **Saving one admin setting no longer resets the others on restart.** Saving a single setting (the storage quota, or a feature toggle) created the settings record with built-in defaults. After the next restart those defaults overrode environment settings such as `DEFAULT_EXPIRATION_HOURS` and `MAX_EXPIRATION_HOURS`. The first save now stores every setting with the values in effect at the time. Servers whose record was already created this way should check their settings in the admin dashboard.
+- **Backups record the right version.** They had recorded SafeShare version 1.4.1 in their manifest.
+
 ## [1.12.0] - 2026-10-05
 
 ### Added

@@ -398,6 +398,10 @@ Defaults are read from the configuration code (`internal/config`, `internal/util
 | `AUTO_BACKUP_RETENTION_DAYS` | `30` | Days to keep backups; `0` = forever. **Deletes every `backup-*` folder in `BACKUP_DIR` older than this, including manual backups** |
 | `AUDIT_LOG` | `auto` | Tamper-evident audit log: `auto` (on, except in anonymous mode), `true`, `false`. Other values stop startup |
 | `AUDIT_LOG_KEY` | generated `audit.key` | 64 hex characters (32 bytes) used to sign the audit log. If unset, a key is generated into `audit.key` next to the database on first start. Instances sharing a database must share it |
+| `ANONYMOUS_MODE` | `false` | Ghost mode: keeps IPs, user agents and upload hashes out of storage and identifying data out of logs; blocks webhooks and SSO. See [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md#ghost-mode) |
+| `REQUIRE_CLIENT_ENCRYPTION` | value of `ANONYMOUS_MODE` | Refuse uploads that weren't encrypted in the browser (`400 CLIENT_ENCRYPTION_REQUIRED`). See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) |
+| `STRIP_METADATA` | value of `ANONYMOUS_MODE` | Strip identifying metadata from uploads (in the browser before encryption for JPEG and PNG; on the server for unencrypted uploads) |
+| `METRICS_IN_ANONYMOUS_MODE` | `false` | Keep serving `/metrics` in anonymous mode |
 
 **Chunked upload assembly**
 

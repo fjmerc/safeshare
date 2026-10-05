@@ -17,30 +17,30 @@ import (
 
 // AdminSSOProviderResponse represents an SSO provider in admin responses.
 type AdminSSOProviderResponse struct {
-	ID                int64                      `json:"id"`
-	Name              string                     `json:"name"`
-	Slug              string                     `json:"slug"`
-	Type              repository.SSOProviderType `json:"type"`
-	Enabled           bool                       `json:"enabled"`
-	IssuerURL         string                     `json:"issuer_url,omitempty"`
-	ClientID          string                     `json:"client_id,omitempty"`
-	AuthorizationURL  string                     `json:"authorization_url,omitempty"`
-	TokenURL          string                     `json:"token_url,omitempty"`
-	UserinfoURL       string                     `json:"userinfo_url,omitempty"`
-	JWKSURL           string                     `json:"jwks_url,omitempty"`
-	Scopes            string                     `json:"scopes,omitempty"`
-	RedirectURL       string                     `json:"redirect_url,omitempty"`
-	AutoProvision     bool                       `json:"auto_provision"`
-	DefaultRole       string                     `json:"default_role,omitempty"`
-	DomainAllowlist   string                     `json:"domain_allowlist,omitempty"`
-	IconURL           string                     `json:"icon_url,omitempty"`
-	ButtonColor       string                     `json:"button_color,omitempty"`
-	ButtonTextColor   string                     `json:"button_text_color,omitempty"`
-	DisplayOrder      int                        `json:"display_order"`
-	LinkedUsersCount  int                        `json:"linked_users_count,omitempty"`
-	LoginCount24h     int                        `json:"login_count_24h,omitempty"`
-	CreatedAt         time.Time                  `json:"created_at"`
-	UpdatedAt         time.Time                  `json:"updated_at"`
+	ID               int64                      `json:"id"`
+	Name             string                     `json:"name"`
+	Slug             string                     `json:"slug"`
+	Type             repository.SSOProviderType `json:"type"`
+	Enabled          bool                       `json:"enabled"`
+	IssuerURL        string                     `json:"issuer_url,omitempty"`
+	ClientID         string                     `json:"client_id,omitempty"`
+	AuthorizationURL string                     `json:"authorization_url,omitempty"`
+	TokenURL         string                     `json:"token_url,omitempty"`
+	UserinfoURL      string                     `json:"userinfo_url,omitempty"`
+	JWKSURL          string                     `json:"jwks_url,omitempty"`
+	Scopes           string                     `json:"scopes,omitempty"`
+	RedirectURL      string                     `json:"redirect_url,omitempty"`
+	AutoProvision    bool                       `json:"auto_provision"`
+	DefaultRole      string                     `json:"default_role,omitempty"`
+	DomainAllowlist  string                     `json:"domain_allowlist,omitempty"`
+	IconURL          string                     `json:"icon_url,omitempty"`
+	ButtonColor      string                     `json:"button_color,omitempty"`
+	ButtonTextColor  string                     `json:"button_text_color,omitempty"`
+	DisplayOrder     int                        `json:"display_order"`
+	LinkedUsersCount int                        `json:"linked_users_count,omitempty"`
+	LoginCount24h    int                        `json:"login_count_24h,omitempty"`
+	CreatedAt        time.Time                  `json:"created_at"`
+	UpdatedAt        time.Time                  `json:"updated_at"`
 }
 
 // AdminSSOLinkResponse represents an SSO link in admin responses.
@@ -534,6 +534,13 @@ func AdminTestSSOProviderHandler(repos *repository.Repositories, cfg *config.Con
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// The test runs OIDC discovery against the provider URL: an outbound
+		// connection, which anonymous mode must not make.
+		if cfg.IsAnonymousMode() {
+			sendAnonymousModeConflict(w, "SSO provider testing")
 			return
 		}
 

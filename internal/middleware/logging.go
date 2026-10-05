@@ -113,12 +113,18 @@ func LoggingMiddleware(anonymousMode bool) func(http.Handler) http.Handler {
 
 			slog.Info("http request",
 				"method", r.Method,
-				"path", redactPathClaimCodes(r.URL.Path),
+				"path", privacy.RedactPath(redactPathClaimCodes(r.URL.Path), anonymousMode),
 				"status", wrapped.statusCode,
 				"duration", duration,
 				"ip", privacy.RedactIP(ip, anonymousMode),
-				"user_agent", r.UserAgent(),
+				"user_agent", privacy.RedactUserAgent(r.UserAgent(), anonymousMode),
 			)
 		})
 	}
+}
+
+// logPath returns a request path for log output: claim codes are masked, and
+// in anonymous mode (process-wide switch) only the route prefix is kept.
+func logPath(path string) string {
+	return privacy.RedactPath(redactPathClaimCodes(path), privacy.AnonymousMode())
 }

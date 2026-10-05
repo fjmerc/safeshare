@@ -296,7 +296,7 @@ func SSOLoginHandler(repos *repository.Repositories, cfg *config.Config) http.Ha
 			state,
 			nonce,
 			returnURL,
-			clientIP,
+			storeIP(clientIP, cfg),
 			nil, // No user ID - this is a new login
 			cfg.SSO.StateExpiryMinutes,
 		)
@@ -331,7 +331,7 @@ func SSOCallbackHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		ctx := r.Context()
 		clientIP := getClientIP(r)
-		userAgent := getUserAgent(r)
+		userAgent := storeUserAgent(getUserAgent(r), cfg)
 
 		// Check if SSO is globally enabled
 		if cfg.SSO == nil || !cfg.SSO.Enabled {
@@ -913,7 +913,7 @@ func SSOLinkAccountHandler(repos *repository.Repositories, cfg *config.Config) h
 			state,
 			nonce,
 			returnURL,
-			clientIP,
+			storeIP(clientIP, cfg),
 			&userID, // Include user ID for linking
 			cfg.SSO.StateExpiryMinutes,
 		)

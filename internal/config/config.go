@@ -130,6 +130,8 @@ type Config struct {
 	RateLimitIPv6Prefix         int    // Width (bits) of the IPv6 prefix per-client rate limiters/concurrency caps group by (T43). Default 64; valid range 48-128. 128 = per-address (pre-T43 behavior).
 	StripMetadata               bool   // Strip EXIF/metadata from uploaded images (JPEG, PNG)
 	anonymousMode               bool   // When true, IPs are not stored and redacted from logs
+	requireClientEncryption     bool   // When true, uploads must declare client_encrypted=true (REQUIRE_CLIENT_ENCRYPTION; defaults to ANONYMOUS_MODE)
+	MetricsInAnonymousMode      bool   // When true, /metrics stays mounted in anonymous mode (METRICS_IN_ANONYMOUS_MODE, default false)
 	AllowPrivateWebhookTargets  bool   // When true, webhook deliveries may target private/loopback IPs (SH-1.1 opt-out for homelab/dev)
 	AssemblyWorkersMax          int    // Max concurrent chunked-upload assembly workers (SH-1.4). 503 returned beyond this; raise to absorb burstier upload completions.
 	MaxInFlightPerIPPerFile     int    // SH-2.3 bug-hunter M3: max concurrent download reservations per (file, IP). Defence against Slowloris-style reservation exhaustion. 0 disables the cap. Default 3.
@@ -165,7 +167,7 @@ func Load() (*Config, error) {
 		UploadDir:                   getEnv("UPLOAD_DIR", "./uploads"),
 		BackupDir:                   getEnv("BACKUP_DIR", ""), // Empty = DataDir/backups
 		DataDir:                     getEnv("DATA_DIR", "./data"),
-		Version:                     getEnv("APP_VERSION", "1.4.1"),
+		Version:                     getEnv("APP_VERSION", ""), // Empty = main.go fills in the real release version (handlers.Version)
 		CleanupIntervalMinutes:      getEnvInt("CLEANUP_INTERVAL_MINUTES", 60),
 		PublicURL:                   getEnv("PUBLIC_URL", ""),
 		DownloadURL:                 getEnv("DOWNLOAD_URL", ""), // Optional: bypasses CDN for large downloads
@@ -185,6 +187,7 @@ func Load() (*Config, error) {
 		RateLimitIPv6Prefix:         getEnvInt("RATE_LIMIT_IPV6_PREFIX", proxytrust.DefaultRateLimitIPv6PrefixBits),
 		StripMetadata:               getEnvBool("STRIP_METADATA", false),
 		anonymousMode:               getEnvBool("ANONYMOUS_MODE", false),
+		MetricsInAnonymousMode:      getEnvBool("METRICS_IN_ANONYMOUS_MODE", false),
 		AllowPrivateWebhookTargets:  getEnvBool("WEBHOOK_ALLOW_PRIVATE_TARGETS", false),
 		AssemblyWorkersMax:          getEnvInt("ASSEMBLY_WORKERS_MAX", 10),
 		MaxInFlightPerIPPerFile:     getEnvInt("MAX_INFLIGHT_PER_IP_PER_FILE", 3),
@@ -234,6 +237,14 @@ func Load() (*Config, error) {
 		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),     // 0 = unlimited (default)
 		adminPassword:          getEnv("ADMIN_PASSWORD", ""),         // Required for admin access
 	}
+
+	// Fail-closed default: client-side encryption is mandatory whenever the
+	// server runs in anonymous (Ghost) mode; an explicit env value overrides.
+	cfg.requireClientEncryption = getEnvBool("REQUIRE_CLIENT_ENCRYPTION", cfg.anonymousMode)
+
+	// Metadata stripping likewise defaults on in anonymous mode; an explicit
+	// STRIP_METADATA value still wins.
+	cfg.StripMetadata = getEnvBool("STRIP_METADATA", cfg.anonymousMode)
 
 	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
 	if cfg.DatabaseType == "postgresql" {
@@ -342,6 +353,12 @@ func (c *Config) IsStripMetadata() bool {
 // IsAnonymousMode returns whether anonymous mode is enabled
 func (c *Config) IsAnonymousMode() bool {
 	return c.anonymousMode
+}
+
+// IsClientEncryptionRequired returns whether uploads must be declared as
+// client-side (E2E) encrypted. Defaults to the anonymous-mode setting.
+func (c *Config) IsClientEncryptionRequired() bool {
+	return c.requireClientEncryption
 }
 
 // Setter methods for mutable fields (thread-safe writes with validation)

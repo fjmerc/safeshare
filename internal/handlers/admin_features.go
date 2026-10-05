@@ -74,6 +74,19 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 			return
 		}
 
+		// Anonymous mode: refuse to turn on features that make outbound
+		// connections to third parties (webhook targets, OIDC providers).
+		if cfg.IsAnonymousMode() {
+			if req.EnableWebhooks != nil && *req.EnableWebhooks {
+				sendAnonymousModeConflict(w, "webhooks")
+				return
+			}
+			if req.EnableSSO != nil && *req.EnableSSO {
+				sendAnonymousModeConflict(w, "SSO")
+				return
+			}
+		}
+
 		// Get current flags from database (or defaults)
 		currentFlags, err := repos.Settings.GetFeatureFlags(ctx)
 		if err != nil {
@@ -177,4 +190,16 @@ func AdminUpdateFeatureFlagsHandler(repos *repository.Repositories, cfg *config.
 		}
 		json.NewEncoder(w).Encode(response)
 	}
+}
+
+// sendAnonymousModeConflict responds 409 for an attempt to enable a feature
+// that is incompatible with anonymous mode (it would contact third parties
+// and so reveal this server's address, or deanonymize users via an IdP).
+func sendAnonymousModeConflict(w http.ResponseWriter, feature string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "disabled in anonymous mode: " + feature + " makes outbound connections to third parties and cannot be enabled while ANONYMOUS_MODE is on",
+		"code":  "DISABLED_IN_ANONYMOUS_MODE",
+	})
 }

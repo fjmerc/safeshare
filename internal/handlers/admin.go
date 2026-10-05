@@ -70,7 +70,7 @@ func AdminLoginHandler(repos *repository.Repositories, cfg *config.Config) http.
 		}
 
 		clientIP := getClientIP(r)
-		userAgent := getUserAgent(r)
+		userAgent := storeUserAgent(getUserAgent(r), cfg)
 
 		// Track authentication method and user (if applicable)
 		var authenticatedUser *models.User
@@ -625,7 +625,7 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 
 		slog.Info("admin deleted file",
 			"claim_code", redactClaimCode(claimCode),
-			"filename", file.OriginalFilename,
+			"filename", logFilename(file.OriginalFilename, cfg),
 			"size", file.FileSize,
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)

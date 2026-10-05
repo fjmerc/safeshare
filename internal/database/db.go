@@ -169,8 +169,51 @@ func EnsureConnectionHook() {
 	registerConnectionHook()
 }
 
+// Options tunes how Initialize opens the database.
+type Options struct {
+	// SecureDelete sets PRAGMA secure_delete=ON on every pooled connection so
+	// deleted rows are overwritten with zeros instead of left recoverable in
+	// free pages (anonymous mode).
+	SecureDelete bool
+}
+
+// CheckpointTruncate runs PRAGMA wal_checkpoint(TRUNCATE): it flushes the WAL
+// into the main database file and truncates the WAL to zero bytes, so rows
+// deleted earlier do not linger in the -wal file. Best-effort for callers.
+func CheckpointTruncate(ctx context.Context, db *sql.DB) error {
+	const attempts = 4
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			// Short backoff: a busy checkpoint usually means a reader or
+			// writer held the WAL for a moment.
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("wal checkpoint: %w", ctx.Err())
+			case <-time.After(time.Duration(i) * 100 * time.Millisecond):
+			}
+		}
+		var busy, logFrames, checkpointed int
+		if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+			lastErr = fmt.Errorf("wal checkpoint: %w", err)
+			continue
+		}
+		if busy != 0 {
+			lastErr = fmt.Errorf("wal checkpoint incomplete: database busy (log=%d checkpointed=%d)", logFrames, checkpointed)
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
 // Initialize opens the SQLite database and creates the schema
 func Initialize(dbPath string) (*sql.DB, error) {
+	return InitializeWithOptions(dbPath, Options{})
+}
+
+// InitializeWithOptions is Initialize with explicit Options.
+func InitializeWithOptions(dbPath string, opts Options) (*sql.DB, error) {
 	// Register connection hook BEFORE opening database
 	// This ensures all connections (including pooled ones) get proper pragmas
 	registerConnectionHook()
@@ -186,6 +229,11 @@ func Initialize(dbPath string) (*sql.DB, error) {
 	//
 	// Reference: https://pkg.go.dev/modernc.org/sqlite - _txlock parameter
 	dsn := dbPath + "?_txlock=immediate"
+	if opts.SecureDelete {
+		// The driver applies _pragma on every new connection it opens, so
+		// this covers the whole pool (unlike a one-off db.Exec).
+		dsn += "&_pragma=secure_delete(1)"
+	}
 
 	// Open database connection
 	db, err := sql.Open("sqlite", dsn)
@@ -428,8 +476,8 @@ func isSQLiteBusyError(err error) bool {
 	return strings.Contains(errStr, "database is locked") ||
 		strings.Contains(errStr, "sqlite_busy") ||
 		strings.Contains(errStr, "sqlite_locked") ||
-		strings.Contains(errStr, "(5)") ||   // SQLITE_BUSY
-		strings.Contains(errStr, "(6)") ||   // SQLITE_LOCKED
+		strings.Contains(errStr, "(5)") || // SQLITE_BUSY
+		strings.Contains(errStr, "(6)") || // SQLITE_LOCKED
 		strings.Contains(errStr, "(517)") || // SQLITE_BUSY_SNAPSHOT (WAL mode)
-		strings.Contains(errStr, "(262)")    // SQLITE_BUSY_RECOVERY
+		strings.Contains(errStr, "(262)") // SQLITE_BUSY_RECOVERY
 }

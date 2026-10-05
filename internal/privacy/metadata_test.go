@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"hash/crc32"
 	"io"
 	"os"
@@ -43,11 +44,11 @@ func buildJPEG(includeAPP1 bool) []byte {
 
 	// SOF0 (Start of Frame)
 	sof0Data := []byte{
-		0x08,                  // precision
-		0x00, 0x01,            // height = 1
-		0x00, 0x01,            // width = 1
-		0x01,                  // num components
-		0x01, 0x11, 0x00,     // component 1
+		0x08,       // precision
+		0x00, 0x01, // height = 1
+		0x00, 0x01, // width = 1
+		0x01,             // num components
+		0x01, 0x11, 0x00, // component 1
 	}
 	buf.Write([]byte{0xFF, 0xC0})
 	binary.Write(&buf, binary.BigEndian, uint16(len(sof0Data)+2))
@@ -55,8 +56,8 @@ func buildJPEG(includeAPP1 bool) []byte {
 
 	// SOS + minimal scan data
 	sosData := []byte{
-		0x01,             // num components
-		0x01, 0x00,       // component selector, dc/ac table
+		0x01,       // num components
+		0x01, 0x00, // component selector, dc/ac table
 		0x00, 0x3F, 0x00, // spectral selection, successive approx
 	}
 	buf.Write([]byte{0xFF, 0xDA})
@@ -157,8 +158,8 @@ func buildPNG(includeText bool) []byte {
 	ihdrData := make([]byte, 13)
 	binary.BigEndian.PutUint32(ihdrData[0:4], 1) // width
 	binary.BigEndian.PutUint32(ihdrData[4:8], 1) // height
-	ihdrData[8] = 8                               // bit depth
-	ihdrData[9] = 2                               // color type (RGB)
+	ihdrData[8] = 8                              // bit depth
+	ihdrData[9] = 2                              // color type (RGB)
 	buf.Write(buildPNGChunk("IHDR", ihdrData))
 
 	if includeText {
@@ -677,8 +678,8 @@ func TestSupportsMetadataStripping_OfficeFormats(t *testing.T) {
 		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
 		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true},
 		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", true},
-		{"application/msword", false},           // Legacy .doc not supported
-		{"application/vnd.ms-excel", false},      // Legacy .xls not supported
+		{"application/msword", false},       // Legacy .doc not supported
+		{"application/vnd.ms-excel", false}, // Legacy .xls not supported
 	}
 
 	for _, tt := range tests {
@@ -956,4 +957,33 @@ func containsPNGChunk(data []byte, chunkType string) bool {
 		i += int(12 + chunkLen) // 4 len + 4 type + data + 4 CRC
 	}
 	return false
+}
+
+func TestStripFileMetadata_TooLarge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.pdf")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sparse file just over the limit; no real disk is used.
+	if err := f.Truncate(maxStrippableFileSize + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	err = StripFileMetadata(path, "application/pdf")
+	if !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("expected ErrFileTooLarge, got %v", err)
+	}
+}
+
+func TestStripFileMetadata_UnparseablePDFReportsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "enc.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.4\ngarbage that is not a valid pdf\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Garbage fails to parse, which must also be an error (never nil).
+	if err := StripFileMetadata(path, "application/pdf"); err == nil {
+		t.Fatal("expected an error for an unstrippable PDF")
+	}
 }

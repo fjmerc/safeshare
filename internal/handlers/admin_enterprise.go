@@ -276,6 +276,12 @@ func AdminUpdateSSOConfigHandler(repos *repository.Repositories, cfg *config.Con
 			return
 		}
 
+		// Anonymous mode: SSO contacts an external identity provider.
+		if cfg.IsAnonymousMode() && req.Enabled != nil && *req.Enabled {
+			sendAnonymousModeConflict(w, "SSO")
+			return
+		}
+
 		// Get current SSO config from database
 		currentCfg, err := repos.Settings.GetSSOConfig(ctx)
 		if err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
 	"github.com/pquerna/otp/totp"
@@ -30,9 +31,9 @@ const totpVerificationMinTime = 100 * time.Millisecond
 
 // TOTPSetupResponse is returned when setting up TOTP
 type TOTPSetupResponse struct {
-	Secret string `json:"secret"`  // Base32-encoded secret for manual entry
-	URL    string `json:"url"`     // otpauth:// URL for QR code generation
-	Issuer string `json:"issuer"`  // Issuer name (e.g., "SafeShare")
+	Secret string `json:"secret"` // Base32-encoded secret for manual entry
+	URL    string `json:"url"`    // otpauth:// URL for QR code generation
+	Issuer string `json:"issuer"` // Issuer name (e.g., "SafeShare")
 }
 
 // TOTPVerifyRequest is the request body for verifying TOTP setup
@@ -53,14 +54,14 @@ type TOTPDisableRequest struct {
 
 // MFAStatusResponse represents the MFA status for a user
 type MFAStatusResponse struct {
-	Enabled                bool   `json:"enabled"`                      // Whether MFA feature is enabled globally
-	TOTPServerEnabled      bool   `json:"totp_server_enabled"`         // Whether TOTP is enabled on server
-	TOTPEnabled            bool   `json:"totp_enabled"`                 // Whether user has TOTP enabled
-	TOTPVerifiedAt         string `json:"totp_verified_at,omitempty"`   // When TOTP was verified
-	WebAuthnServerEnabled  bool   `json:"webauthn_server_enabled"`     // Whether WebAuthn is enabled on server
-	WebAuthnEnabled        bool   `json:"webauthn_enabled"`             // Whether user has WebAuthn enabled
-	WebAuthnCredentials    int    `json:"webauthn_credentials"`         // Number of WebAuthn credentials
-	RecoveryCodesRemaining int    `json:"recovery_codes_remaining"`     // Remaining unused recovery codes
+	Enabled                bool   `json:"enabled"`                    // Whether MFA feature is enabled globally
+	TOTPServerEnabled      bool   `json:"totp_server_enabled"`        // Whether TOTP is enabled on server
+	TOTPEnabled            bool   `json:"totp_enabled"`               // Whether user has TOTP enabled
+	TOTPVerifiedAt         string `json:"totp_verified_at,omitempty"` // When TOTP was verified
+	WebAuthnServerEnabled  bool   `json:"webauthn_server_enabled"`    // Whether WebAuthn is enabled on server
+	WebAuthnEnabled        bool   `json:"webauthn_enabled"`           // Whether user has WebAuthn enabled
+	WebAuthnCredentials    int    `json:"webauthn_credentials"`       // Number of WebAuthn credentials
+	RecoveryCodesRemaining int    `json:"recovery_codes_remaining"`   // Remaining unused recovery codes
 }
 
 // MFATOTPSetupHandler handles POST /api/user/mfa/totp/setup
@@ -203,8 +204,8 @@ func MFATOTPSetupHandler(repos *repository.Repositories, cfg *config.Config) htt
 
 		// Return the setup information
 		response := TOTPSetupResponse{
-			Secret: secret,        // Base32 secret for manual entry
-			URL:    key.URL(),     // otpauth:// URL for QR code
+			Secret: secret,    // Base32 secret for manual entry
+			URL:    key.URL(), // otpauth:// URL for QR code
 			Issuer: cfg.MFA.Issuer,
 		}
 
@@ -718,7 +719,7 @@ func AdminGetUserMFAStatusHandler(repos *repository.Repositories, cfg *config.Co
 		userID, err := parseUserIDFromMFAPath(r.URL.Path)
 		if err != nil {
 			slog.Warn("invalid user ID in MFA status request",
-				"path", r.URL.Path,
+				"path", privacy.LogPath(r.URL.Path),
 				"admin_user_id", adminUserID,
 				"admin_username", adminUsername,
 				"ip", logIP(clientIP, cfg),
@@ -817,7 +818,7 @@ func AdminResetUserMFAHandler(repos *repository.Repositories, cfg *config.Config
 		userID, err := parseUserIDFromMFAPath(r.URL.Path)
 		if err != nil {
 			slog.Warn("invalid user ID in MFA reset request",
-				"path", r.URL.Path,
+				"path", privacy.LogPath(r.URL.Path),
 				"ip", logIP(clientIP, cfg),
 				"admin", adminUsername,
 			)

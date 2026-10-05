@@ -1,9 +1,21 @@
 package privacy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
+
+// ErrFileTooLarge is returned (wrapped) by StripFileMetadata when a file of a
+// supported type exceeds maxStrippableFileSize and therefore was NOT stripped.
+// Callers that must fail closed (anonymous mode) treat this like any other
+// stripping failure; best-effort callers may continue with the original file.
+var ErrFileTooLarge = errors.New("file too large for metadata stripping")
+
+// ErrEncryptedDocument is returned (wrapped) by StripFileMetadata when a
+// document is password-protected or encrypted and therefore was NOT stripped.
+// Like ErrFileTooLarge, fail-closed callers reject the upload.
+var ErrEncryptedDocument = errors.New("encrypted document cannot be stripped")
 
 // maxStrippableFileSize is the maximum file size we'll attempt to strip metadata from.
 // Files larger than this are skipped (non-fatal) to prevent excessive memory usage,
@@ -44,6 +56,9 @@ func StripFileMetadata(filePath string, mimeType string) error {
 	}
 	if info.Size() == 0 {
 		return fmt.Errorf("file is empty")
+	}
+	if info.Size() > maxStrippableFileSize {
+		return fmt.Errorf("%w: %d bytes (max %d)", ErrFileTooLarge, info.Size(), maxStrippableFileSize)
 	}
 
 	return stripFunc(filePath)

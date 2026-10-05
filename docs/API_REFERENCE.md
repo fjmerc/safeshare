@@ -467,8 +467,10 @@ curl -X POST \
 
 **Error Responses**:
 - 400 Bad Request: Invalid parameters or missing file
+- 400 Bad Request (`CLIENT_ENCRYPTION_REQUIRED`): the server only accepts files encrypted in the browser (`REQUIRE_CLIENT_ENCRYPTION`, on by default in anonymous mode). Send the header `X-SafeShare-Client-Encrypted: true` and the form field `client_encrypted=true`; without the header the request is rejected before the body is read
 - 403 Forbidden: Authentication required (if REQUIRE_AUTH_FOR_UPLOAD=true)
 - 413 Payload Too Large: File exceeds MAX_FILE_SIZE
+- 422 Unprocessable Entity (`METADATA_STRIP_FAILED`): anonymous mode with server-side stripping, and the file's metadata couldn't be removed (unparseable, over 100 MB, or an encrypted PDF); nothing is stored
 - 422 Unprocessable Entity (`MALWARE_DETECTED`): the file was scanned and found infected; it is rejected and never stored — no claim code is issued
 - 422 Unprocessable Entity (`UNSCANNABLE_UPLOAD`): the file cannot be scanned (end-to-end encrypted or exceeds the scan size limit) and this server requires all uploads to be scannable (`MALWARE_SCAN_REJECT_UNSCANNABLE=true`)
 - 503 Service Unavailable (`SCAN_UNAVAILABLE`, `Retry-After` header set): malware scanning is enabled but the scanner could not be reached; retry after the given delay
@@ -1477,20 +1479,22 @@ Retrieve public-facing configuration (no authentication required).
 **Response** (200 OK):
 ```json
 {
-  "version": "2.8.0",
+  "version": "1.12.0",
   "max_file_size": 104857600,
-  "default_expiration_hours": 24,
   "max_expiration_hours": 168,
   "chunked_upload_enabled": true,
   "chunked_upload_threshold": 104857600,
   "chunk_size": 10485760,
   "require_auth_for_upload": false,
   "malware_scan_enabled": false,
-  "unscannable_uploads_rejected": false
+  "unscannable_uploads_rejected": false,
+  "anonymous_mode": false,
+  "client_encryption_required": false,
+  "strip_metadata": false
 }
 ```
 
-`malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all.
+`malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all. `anonymous_mode`, `client_encryption_required` and `strip_metadata` tell clients to force end-to-end encryption, keep nothing identifying on the device, and strip metadata before encrypting (the server can't strip ciphertext).
 
 **Use Case**: Frontend configuration, dynamic UI updates
 
@@ -1543,6 +1547,9 @@ All endpoints return consistent error format:
 - `extension_blocked`: File type not allowed
 - `MALWARE_DETECTED`: Upload scanned and rejected as infected (ADR-015; not retryable)
 - `UNSCANNABLE_UPLOAD`: Upload cannot be scanned (E2E encrypted or too large) and this server requires scannable uploads
+- `CLIENT_ENCRYPTION_REQUIRED`: The server only accepts client-side encrypted uploads (`REQUIRE_CLIENT_ENCRYPTION`)
+- `METADATA_STRIP_FAILED`: Anonymous mode couldn't strip the file's metadata, so the upload was rejected
+- `DISABLED_IN_ANONYMOUS_MODE`: Webhooks, SSO and the SSO provider test can't be used in anonymous mode (409)
 - `SCAN_UNAVAILABLE`: Malware scanner unreachable/timed out; retryable after the `Retry-After` delay
 - `FILE_QUARANTINED`: Download blocked — the file was found infected
 - `SCAN_PENDING`: Download blocked — the file's scan hasn't completed yet; retryable after the `Retry-After` delay

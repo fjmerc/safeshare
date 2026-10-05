@@ -192,6 +192,34 @@ func storeIP(ip string, cfg *config.Config) string {
 	return privacy.AnonymizeIP(ip, cfg.IsAnonymousMode())
 }
 
+// storeUserAgent returns the User-Agent for database storage, respecting
+// anonymous mode (stored as empty: a user agent is a fingerprinting signal).
+func storeUserAgent(ua string, cfg *config.Config) string {
+	return privacy.AnonymizeUserAgent(ua, cfg.IsAnonymousMode())
+}
+
+// logUserAgent returns the User-Agent for log output, respecting anonymous mode.
+func logUserAgent(ua string, cfg *config.Config) string {
+	return privacy.RedactUserAgent(ua, cfg.IsAnonymousMode())
+}
+
+// logFilename returns a client-supplied filename for log output, respecting
+// anonymous mode. Database storage of filenames is unaffected.
+func logFilename(name string, cfg *config.Config) string {
+	return privacy.RedactFilename(name, cfg.IsAnonymousMode())
+}
+
+// storeSHA256 returns the plaintext SHA-256 for database storage. In anonymous
+// mode it is not recorded (empty = "not recorded", the same convention as
+// legacy rows): a stored plaintext hash lets anyone holding a candidate file
+// prove it was uploaded here, which an operator could be compelled to do.
+func storeSHA256(hash string, cfg *config.Config) string {
+	if cfg.IsAnonymousMode() {
+		return ""
+	}
+	return hash
+}
+
 // getUserAgent returns the client User-Agent header
 func getUserAgent(r *http.Request) string {
 	ua := r.Header.Get("User-Agent")
@@ -205,6 +233,9 @@ func getUserAgent(r *http.Request) string {
 // Shows first 3 and last 2 characters only (e.g., "Xy9...wE")
 // Claim codes are like passwords and should not be logged in full
 func redactClaimCode(code string) string {
+	if privacy.AnonymousMode() {
+		return "[redacted]"
+	}
 	if len(code) <= 5 {
 		return "***"
 	}
@@ -322,6 +353,10 @@ func shouldRetryError(code string) (bool, int) {
 		"SCAN_FAILED":         true, // ADR-015: scan errored and could not be verified - not client-retryable
 		"UNSCANNABLE_UPLOAD":  true, // ADR-015: content can never be scanned as submitted
 		"FILE_QUARANTINED":    true, // ADR-015: confirmed infected - retry won't help
+
+		"CLIENT_ENCRYPTION_REQUIRED": true, // server policy: only browser-encrypted uploads
+		"METADATA_STRIP_FAILED":      true, // anonymous mode: this file can't be stripped
+		"DISABLED_IN_ANONYMOUS_MODE": true, // server policy
 	}
 
 	// Check if explicitly non-retryable

@@ -1,8 +1,27 @@
 package handlers
 
 import (
+	"sync/atomic"
+
 	"github.com/fjmerc/safeshare/internal/webhooks"
 )
+
+// webhookEmitGate decides, per event, whether webhooks may be emitted at all.
+// It is consulted on every EmitWebhookEvent call (not cached) so a runtime
+// feature-flag change takes effect immediately. Nil gate = always allowed
+// (test setups, CLI tools).
+var webhookEmitGate atomic.Pointer[func() bool]
+
+// SetWebhookEmitGate installs the per-event gate. main.go passes a function
+// that is true only when the Webhooks feature flag is on and anonymous mode
+// is off.
+func SetWebhookEmitGate(gate func() bool) {
+	if gate == nil {
+		webhookEmitGate.Store(nil)
+		return
+	}
+	webhookEmitGate.Store(&gate)
+}
 
 // Global webhook dispatcher (set by main.go)
 var globalWebhookDispatcher *webhooks.Dispatcher
@@ -14,6 +33,9 @@ func SetWebhookDispatcher(dispatcher *webhooks.Dispatcher) {
 
 // EmitWebhookEvent emits a webhook event if dispatcher is initialized
 func EmitWebhookEvent(event *webhooks.Event) {
+	if g := webhookEmitGate.Load(); g != nil && !(*g)() {
+		return
+	}
 	if globalWebhookDispatcher != nil {
 		globalWebhookDispatcher.Emit(event)
 	}
