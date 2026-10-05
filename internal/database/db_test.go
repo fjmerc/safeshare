@@ -301,3 +301,73 @@ func seedOneFile(t *testing.T, db *sql.DB) int64 {
 	}
 	return id
 }
+
+func TestInitializeWithOptions_SecureDelete(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+		want int
+	}{
+		{"enabled", Options{SecureDelete: true}, 1},
+		{"disabled", Options{}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := InitializeWithOptions(filepath.Join(t.TempDir(), "sd.db"), tt.opts)
+			if err != nil {
+				t.Fatalf("InitializeWithOptions: %v", err)
+			}
+			defer db.Close()
+
+			// Hold several connections open at once so the pragma is
+			// verified on more than the first pooled connection.
+			ctx := context.Background()
+			var conns []*sql.Conn
+			for i := 0; i < 3; i++ {
+				c, err := db.Conn(ctx)
+				if err != nil {
+					t.Fatalf("Conn: %v", err)
+				}
+				conns = append(conns, c)
+			}
+			for i, c := range conns {
+				var got int
+				if err := c.QueryRowContext(ctx, "PRAGMA secure_delete").Scan(&got); err != nil {
+					t.Fatalf("conn %d: %v", i, err)
+				}
+				if got != tt.want {
+					t.Errorf("conn %d: secure_delete = %d, want %d", i, got, tt.want)
+				}
+				c.Close()
+			}
+		})
+	}
+}
+
+func TestCheckpointTruncate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cp.db")
+	db, err := Initialize(path)
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("CREATE TABLE cp_t (v TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		if _, err := db.Exec("INSERT INTO cp_t (v) VALUES (?)", strings.Repeat("x", 1024)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fi, err := os.Stat(path + "-wal"); err != nil || fi.Size() == 0 {
+		t.Fatalf("expected non-empty WAL before checkpoint, got %v %v", fi, err)
+	}
+
+	if err := CheckpointTruncate(context.Background(), db); err != nil {
+		t.Fatalf("CheckpointTruncate: %v", err)
+	}
+	if fi, err := os.Stat(path + "-wal"); err == nil && fi.Size() != 0 {
+		t.Errorf("WAL size after TRUNCATE = %d, want 0", fi.Size())
+	}
+}

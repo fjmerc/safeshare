@@ -891,7 +891,7 @@ func serveFileWithRangeSupport(
 
 	slog.Info("claim download served",
 		"claim_code", redactClaimCode(file.ClaimCode),
-		"filename", file.OriginalFilename,
+		"filename", logFilename(file.OriginalFilename, cfg),
 		"method", r.Method,
 		"status", csw.status,
 		"range_kind", decision.Kind.String(),
@@ -900,7 +900,7 @@ func serveFileWithRangeSupport(
 		"commitable", commitable,
 		"error", streamErr,
 		"client_ip", logIP(getClientIP(r), cfg),
-		"user_agent", getUserAgent(r),
+		"user_agent", logUserAgent(getUserAgent(r), cfg),
 	)
 	return commitable
 }

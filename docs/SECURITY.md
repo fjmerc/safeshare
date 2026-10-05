@@ -180,7 +180,7 @@ X-CSRF-Token: <token>
 ## 🕵️ Anonymous Mode
 
 ### Overview
-Anonymous mode prevents SafeShare from storing or displaying IP addresses, protecting uploader identity even from server administrators. This is critical for whistleblower scenarios and privacy-sensitive deployments.
+Anonymous mode keeps SafeShare from storing or logging anything that identifies the people using it, and from keeping records that could confirm what passed through. It is the core of [Ghost mode](DEPLOYMENT_MODES.md#ghost-mode). It protects uploaders even from the server's own administrators, which matters for whistleblower drops and other privacy-sensitive deployments.
 
 ### Setup
 
@@ -189,23 +189,47 @@ Enable anonymous mode by setting the environment variable:
 docker run -e ANONYMOUS_MODE=true ...
 ```
 
+`ANONYMOUS_MODE` is read from the environment only; it can't be changed from the admin dashboard.
+
 ### What It Does
 
-- **Database**: Uploader IP addresses are not stored (NULL instead of IP)
-- **Logs**: IP addresses are redacted in all log output (replaced with `[redacted]`)
-- **Admin dashboard**: IP columns show `[redacted]` instead of real IPs
-- **Rate limiting**: Still functional (uses hashed IPs internally, never stored)
+**Identity**
+- **Database**: IP addresses are stored as `anonymous` (uploads, sessions, API token usage, SSO login state), and user agents are stored empty
+- **Logs**: IP addresses and user agents are logged as `redacted`, and filenames as `[redacted]`. Request paths that can contain a claim code are reduced to their prefix (for example `/api/[redacted]`)
+- **Admin dashboard**: IP columns show `anonymous`
+
+**Contents**
+- **Client-side encryption required**: `REQUIRE_CLIENT_ENCRYPTION` defaults to on. Uploads not marked as encrypted in the browser are refused with `400 CLIENT_ENCRYPTION_REQUIRED`. See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) for what that does and doesn't guarantee
+- **Metadata stripping**: `STRIP_METADATA` defaults to on. The browser strips JPEG and PNG metadata before encrypting. When the server strips (only possible with `REQUIRE_CLIENT_ENCRYPTION=false`), a file it can't strip is rejected with `422 METADATA_STRIP_FAILED` instead of being stored with its metadata. That includes files over 100 MB and encrypted PDFs
+
+**Records**
+- **No content hash**: the SHA-256 of uploads isn't stored or returned by `/api/claim/{code}/info`, so the server can't be used to confirm that a known document was shared
+- **Secure deletion**: SQLite overwrites deleted rows (`secure_delete`), and the write-ahead log is truncated after deletions, so expired files' records can't be recovered from the database files
 - **Audit log**: off by default. With `AUDIT_LOG=true`, entries record what happened but nothing about who: no IP address, account, username, user agent or filename
+
+**Outbound connections and exposure**
+- **Webhooks and SSO** can't be turned on, because both contact outside servers. The admin API returns `409 DISABLED_IN_ANONYMOUS_MODE`, and either flag found on at startup is switched off
+- **`/metrics`** isn't served, unless `METRICS_IN_ANONYMOUS_MODE=true`
+
+**Visitor's device**
+- No **Recent uploads** list, no saved resume state and no filenames in notifications. Existing entries are cleared when the page loads
+
+### What It Doesn't Do
+
+- **Rate limiting still uses the raw client IP**, held in memory only and never stored. Behind Tor every visitor shares one address, so each limit is a single budget for the whole service (see [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md#upload-and-download-rate-limits))
+- **It doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before anonymous mode was turned on stay until those files expire or are deleted. Start anonymous deployments on a fresh database
+- **The server still knows each file's** size, upload and expiry times, download count and claim code, and its filename unless the uploader hides it. These are deleted with the file
+- **Docker's own logs** still contain whatever SafeShare logs. Use `logging: driver: none` for full deniability
 
 ### Behavior
 
 - **Default**: Disabled (`ANONYMOUS_MODE=false`)
-- **Combines with other features**: Works alongside `STRIP_METADATA`, E2E encryption, and Tor deployment for maximum anonymity
-- **Irreversible per-upload**: IPs are never written to disk, so there is no data to recover later
+- **Combines with other features**: Works alongside E2E encryption and Tor deployment; see [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md)
+- **Irreversible per-upload**: identifying data is never written to disk, so there is nothing to recover later
 
 ### What it doesn't hide on the visitor's device
 
-Anonymous mode controls what the server keeps, not what the visitor's browser keeps. Like any installable web app, SafeShare registers a service worker and stores its own scripts, styles and icons in the browser so it can be installed and open offline. Nothing in that storage identifies the visitor, and none of it is sent to the server, but it does show that the browser has visited the site. Clearing the normal browser cache doesn't remove it; **Clear site data** (or the browser's per-site storage settings) does. Tor Browser turns service workers off by default, so visitors using it over a hidden service don't get this trace.
+In anonymous mode the page itself keeps no recent-uploads list, resume state or filenames on the visitor's device (see above), but the browser still keeps some things of its own. Like any installable web app, SafeShare registers a service worker and stores its own scripts, styles and icons in the browser so it can be installed and open offline. Nothing in that storage identifies the visitor, and none of it is sent to the server, but it does show that the browser has visited the site. Clearing the normal browser cache doesn't remove it; **Clear site data** (or the browser's per-site storage settings) does. Tor Browser turns service workers off by default, so visitors using it over a hidden service don't get this trace.
 
 ---
 
@@ -1353,6 +1377,7 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.13.0 | Anonymous (Ghost) mode did not keep several documented promises: the operator could read files not encrypted in the browser, metadata and a content hash were kept, user agents and filenames were stored or logged, and webhooks, SSO and metrics could still be enabled | Medium |
 | v1.12.0 | Offline support kept copies of the dashboard and login pages, so after logout the dashboard page could still open from the stored copy (its data stayed protected) and the login page could skip its redirect | Low |
 | v1.11.1 | The upload page kept claim codes in the browser for 7 days and showed them in a pop-up to whoever used the browser next, even after logout | Low |
 | v1.11.0 | No tamper-evident record of security events (audit log added, ADR-018) | Medium |

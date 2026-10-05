@@ -41,21 +41,21 @@ flowchart TD
 | Dimension | Ghost | Standard | Hardened | Fortress |
 |-----------|-------|----------|----------|----------|
 | **Trust model** | Operator trusts no one (including themselves) | Moderate trust | Operator controls access | Zero trust, full audit |
-| **User authentication** | None | Optional | Required | Required + MFA + SSO |
-| **IP logging** | Redacted everywhere | Logged | Logged | Logged + tamper-evident |
-| **File content visibility** | Zero (E2E encrypted) | Server-side encrypted | Server-side encrypted | Server-side encrypted |
-| **Metadata stripping** | Always on | Off by default | Off by default | Off by default |
+| **User authentication** | None | Optional | Required | Required; MFA and SSO available (MFA enrollment not yet enforced) |
+| **IP logging** | Never received (Tor); not stored or logged | Logged | Logged | Logged + tamper-evident |
+| **File content visibility** | None: browser encryption required | Server-side encrypted | Server-side encrypted | Server-side encrypted |
+| **Metadata stripping** | In browser before upload (JPEG, PNG) | Off by default | Off by default | Off by default |
 | **Network access** | Tor only | Clearnet | Clearnet + proxy | Clearnet + proxy |
 | **Abuse prevention** | Minimal | Basic rate limits | Full controls | Full controls + audit |
-| **Audit trail** | None (by design: the audit log is off in anonymous mode) | Basic logs | Structured JSON logs | Full audit + backups |
-| **Database** | SQLite | SQLite | SQLite or PostgreSQL | PostgreSQL |
+| **Audit trail** | None (by design: the audit log is off in anonymous mode) | Tamper-evident audit log (on by default) + application logs | Tamper-evident audit log + structured JSON logs | Tamper-evident audit log + structured JSON logs + scheduled backups |
+| **Database** | SQLite | SQLite | SQLite (PostgreSQL planned, not yet supported) | SQLite (PostgreSQL planned, not yet supported) |
 | **Best for** | Whistleblowers, journalists | Personal use, small teams | Enterprises, internal tools | Regulated industries |
 
 ---
 
 ## Ghost Mode
 
-**Maximum Anonymity** — the operator can't identify users, can't read files, and can't produce records if compelled.
+**Maximum Anonymity**: the operator can't identify users, can't read what they upload, and keeps as little as possible that could be handed over if compelled.
 
 ### Who it's for
 
@@ -63,11 +63,12 @@ Whistleblower drops, journalist source protection, human rights organizations, a
 
 ### Trust model
 
-The operator deliberately minimizes their own capabilities:
-- **Cannot** identify who uploaded a file (IPs redacted from database and logs)
-- **Cannot** read file contents (client-side E2E encryption, key never touches server)
-- **Cannot** recover metadata from uploads (EXIF, GPS, author info stripped)
-- **Cannot** be reached via network analysis (Tor hidden service, no clearnet exposure)
+The operator deliberately limits what they can see and keep:
+- **Cannot see who uploaded or downloaded a file.** Visitors arrive over Tor, so the server never receives their IP address. With `ANONYMOUS_MODE=true` the server also doesn't store or log IP addresses or user agents. Filenames are kept out of logs, and claim codes are removed from request paths in logs.
+- **Cannot read file contents.** `REQUIRE_CLIENT_ENCRYPTION` defaults to on in anonymous mode. Every upload must be encrypted in the visitor's browser, and the key travels only in the share link's `#` fragment, which never reaches the server. The server refuses uploads that aren't marked as browser-encrypted. The `ENCRYPTION_KEY` the operator holds only adds a second layer around ciphertext it can't open.
+- **Strips identifying metadata before upload.** With `STRIP_METADATA=true`, the browser removes EXIF/GPS/XMP data from JPEGs and text, EXIF and timestamp chunks from PNGs before encrypting them. The server can't strip ciphertext, so other formats (PDF, Office, video, audio) are uploaded as is, with a warning. See [What Ghost mode doesn't do](#what-ghost-mode-doesnt-do).
+- **Keeps little that could be handed over.** No hash of uploaded content is stored, so a compelled operator can't confirm that a known document passed through. Deleted rows are overwritten in the database (`secure_delete`), and the write-ahead log is truncated after each cleanup. The audit log is off. Webhooks and SSO can't be turned on, and `/metrics` isn't served.
+- **Reachable only as a Tor onion service.** The app has no published port and sits on an internal network that only the Tor container can reach.
 
 ### Configuration
 
@@ -78,16 +79,23 @@ services:
     image: fjmerc/safeshare:latest
     environment:
       # --- Anonymity ---
-      - ANONYMOUS_MODE=true
+      - ANONYMOUS_MODE=true            # also turns on REQUIRE_CLIENT_ENCRYPTION
       - STRIP_METADATA=true
       - REQUIRE_AUTH_FOR_UPLOAD=false
-      # --- Encryption ---
+      # --- Encryption at rest (second layer around browser-encrypted files) ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       # --- Network ---
       - TRUST_PROXY_HEADERS=false
       - PUBLIC_URL=http://${ONION_ADDRESS}
       - READ_TIMEOUT=300
       - WRITE_TIMEOUT=300
+      # --- Limits: behind Tor every visitor shares one address, so each
+      #     per-IP limit below is a ceiling for the whole service ---
+      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (chunks: 10x this)
+      - RATE_LIMIT_DOWNLOAD=500        # downloads/hour for everyone
+      - MAX_ENCRYPTED_DOWNLOADS_PER_IP=0
+      - MAX_INFLIGHT_PER_IP_PER_FILE=0
+      - QUOTA_LIMIT_GB=50
       # --- Short-lived files ---
       - DEFAULT_EXPIRATION_HOURS=1
       - MAX_EXPIRATION_HOURS=24
@@ -98,9 +106,11 @@ services:
     volumes:
       - safeshare-data:/app/data
       - safeshare-uploads:/app/uploads
-    # No port exposure — only accessible via Tor
+    # No published ports, and no route to the internet
     networks:
-      - tor-net
+      - onion-internal
+    logging:
+      driver: "none"
 
   tor:
     image: goldy/tor-hidden-service
@@ -110,7 +120,8 @@ services:
     volumes:
       - tor-keys:/var/lib/tor/hidden_service
     networks:
-      - tor-net
+      - onion-internal   # reaches SafeShare
+      - tor-egress       # reaches the Tor network
 
 volumes:
   safeshare-data:
@@ -118,21 +129,38 @@ volumes:
   tor-keys:
 
 networks:
-  tor-net:
+  onion-internal:
+    internal: true
+  tor-egress:
     driver: bridge
 ```
 
+Until an admin saves a setting in the dashboard, these environment variables are authoritative. The first save stores every setting (quota, file size, expiration, rate limits, blocked extensions, feature flags), taking the values that are in effect at the time. From then on the stored settings take precedence over the environment on restart. Saving one setting no longer resets the others to built-in defaults.
+
+### What Ghost mode doesn't do
+
+These limits are inherent to the design. Plan around them rather than assuming they're covered:
+
+- **Browser encryption is checked by flag, not proven.** The server can't tell ciphertext from plaintext. Requiring the flag protects honest uploaders from sending plaintext by mistake. It doesn't stop someone who deliberately uploads plaintext with the flag set.
+- **Uploading needs Tor Browser or another browser with Web Crypto.** Tor Browser treats `.onion` pages as secure contexts, so encryption works over `http://`. Browsers that don't (for example Chromium behind a Tor proxy) are shown a message and can't upload. The SDKs and the import tool don't encrypt client-side, so they can't upload to a Ghost server.
+- **Files are encrypted in browser memory.** Very large files (warned above 500 MB) can exhaust the tab's memory.
+- **Metadata stripping covers JPEG and PNG only.** Other formats keep their metadata. Tell sources to scrub them first, for example with [mat2](https://0xacab.org/jvoisin/mat2). If a JPEG or PNG can't be parsed, the upload is stopped rather than sent unstripped. For uploads the server can strip (only when `REQUIRE_CLIENT_ENCRYPTION=false`), a failure, a file over 100 MB, or an encrypted PDF is rejected with `422 METADATA_STRIP_FAILED`.
+- **The server still knows some things about each file.** It knows the ciphertext size, upload and expiry times to the second, download counts and the claim code. It also knows the filename unless **Hide filename** is checked, which is the default in Ghost mode. The admin dashboard shows these. They are deleted when the file expires.
+- **Rate limits are shared by everyone.** Every Tor visitor arrives from the Tor container's address, so each per-IP limit is one budget for the whole service. That includes the login lockout. One heavy user can use it up for everyone until the hour rolls over. Size the limits above as service-wide ceilings.
+- **Turning on anonymous mode doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before `ANONYMOUS_MODE=true` was set stay in the database until those files expire or you delete them. Start Ghost deployments on a fresh database.
+- **Some traces remain on the visitor's device.** The service worker caches the app's static assets (scripts, styles, icons), which shows the site was visited. Pages, uploads and downloads are never cached. In anonymous mode the browser keeps no recent-uploads list, no resume state and no filenames in notifications. In every mode, the E2E key is removed from the address bar and history once read. Tor Browser's own session clearing removes the rest.
+
 ### Trade-offs
 
-- No abuse prevention — the operator cannot inspect or moderate content
-- No user accountability — anonymous uploads mean no way to trace bad actors
-- No content scanning — E2E encryption makes server-side scanning impossible
+- No abuse prevention: the operator cannot inspect or moderate content
+- No user accountability: anonymous uploads mean no way to trace bad actors
+- No content scanning: ciphertext can't be scanned (`MALWARE_SCAN_REJECT_UNSCANNABLE=true` conflicts with required browser encryption)
 - Tor adds latency (200-500ms per hop) and limits throughput (1-5 MB/s)
 
 ### Deep dives
 
-- [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md) — Complete Tor hidden service setup, verification, and threat model
-- [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md) — Client-side encryption technical details and limitations
+- [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md): Complete Tor hidden service setup, verification, and threat model
+- [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md): Client-side encryption, required encryption, and in-browser metadata stripping
 
 ---
 
@@ -202,10 +230,11 @@ Enterprises sharing files internally or with partners, teams handling sensitive 
 
 The operator enforces accountability:
 - **All users must authenticate** before uploading
-- **MFA required** for admin access, available for all users
+- **MFA available** for database user accounts (TOTP, WebAuthn); enrolled users are challenged at login. `MFA_REQUIRED` is not yet enforced (it only logs a warning for users who haven't enrolled), and the env-based `ADMIN_USERNAME` admin is never challenged for MFA
 - **Webhooks** notify external systems of file events
 - **IP blocking** stops known bad actors
-- **Full audit logging** in structured JSON for SIEM integration
+- **Tamper-evident audit log** (on by default outside anonymous mode, `AUDIT_LOG=auto`): signed, chained entries for logins, admin actions, uploads and downloads, browsable in the admin dashboard's **Audit Log** tab
+- **Structured JSON application logs** for SIEM integration
 
 ### Configuration
 
@@ -223,7 +252,7 @@ services:
       # --- Encryption ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - HTTPS_ENABLED=true
-      # --- MFA ---
+      # --- MFA (users who enroll are challenged at login) ---
       - FEATURE_MFA=true
       - MFA_ENABLED=true
       # --- Integrations ---
@@ -245,6 +274,10 @@ services:
       - CLAMAV_MAX_FILE_SIZE=104857600
       - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
       - MALWARE_SCAN_REJECT_UNSCANNABLE=false
+      # --- Audit log (default AUDIT_LOG=auto is already on here). The signing key
+      #     is generated into /app/data/audit.key; back it up with the database,
+      #     or set AUDIT_LOG_KEY to a 64-hex-character secret instead. ---
+      # - AUDIT_LOG_KEY=${AUDIT_LOG_KEY}
       # --- Access control ---
       - BLOCKED_EXTENSIONS=.exe,.bat,.cmd,.sh,.ps1,.dll,.so,.msi,.scr,.vbs,.jar,.com,.app,.deb,.rpm
       - RATE_LIMIT_UPLOAD=10
@@ -278,11 +311,11 @@ volumes:
 ### What this enables
 
 - **User management**: Invite-only registration, role-based access (user/admin)
-- **MFA**: TOTP authenticator apps for all users
+- **MFA**: TOTP authenticator apps and WebAuthn for database user accounts; enrolled users are challenged at login (`MFA_REQUIRED` is not yet enforced)
 - **Malware scanning**: Uploaded files scanned synchronously via ClamAV sidecar before storage — an infected file is rejected outright and never gets a download link (see ADR-015)
 - **Webhook notifications**: Real-time alerts on `file.uploaded`, `file.downloaded`, `file.expired`, `file.deleted`, `file.infected`
 - **API tokens**: Programmatic access with scoped permissions and rotation
-- **Audit logs**: Every upload, download, login, and admin action logged in structured JSON
+- **Audit log**: Logins, uploads, downloads, deletions and admin actions are recorded in a tamper-evident, HMAC-signed chain in the database (v1.11.0+), with filtering, CSV/JSON Lines export and integrity verification in the admin dashboard's **Audit Log** tab. See [SECURITY.md](SECURITY.md) for what is and isn't recorded
 
 ### Trade-offs
 
@@ -309,10 +342,10 @@ Financial services, healthcare (HIPAA), government agencies, defense contractors
 ### Trust model
 
 Zero trust with full audit:
-- **All authentication paths hardened** (MFA required, SSO enforced, short sessions)
-- **Production-grade database** (PostgreSQL for durability, replication, and audit)
+- **Authentication paths hardened** (MFA available and enforced at login for enrolled users, SSO available, short sessions). `MFA_REQUIRED` is not yet enforced, so enrollment cannot yet be made mandatory
+- **Database**: SQLite today. PostgreSQL support is planned but **not yet supported**; the server refuses to start with `DATABASE_TYPE=postgresql`
 - **Automated backups** with retention policies
-- **Every action auditable** through structured logs and database records
+- **Auditable actions** through the tamper-evident audit log (signed, chained entries in the database, on by default) plus structured application logs
 
 ### Configuration
 
@@ -330,7 +363,10 @@ services:
       # --- Encryption ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - HTTPS_ENABLED=true
-      # --- MFA (mandatory) ---
+      # --- MFA (available; enrolled users are challenged at login) ---
+      # MFA_REQUIRED=true is accepted but not yet enforced: it only logs a
+      # warning for users who haven't enrolled, and the env-based
+      # ADMIN_USERNAME admin is never challenged for MFA.
       - FEATURE_MFA=true
       - MFA_ENABLED=true
       - MFA_REQUIRED=true
@@ -359,6 +395,10 @@ services:
       - CLAMAV_MAX_FILE_SIZE=104857600
       - MALWARE_SCAN_ALLOW_UNVERIFIED=false  # see docs/SECURITY.md: uploader-triggerable, effectively an opt-out of scanning under attack
       - MALWARE_SCAN_REJECT_UNSCANNABLE=false
+      # --- Audit log (default AUDIT_LOG=auto is already on here). The signing key
+      #     is generated into /app/data/audit.key; back it up with the database,
+      #     or set AUDIT_LOG_KEY to a 64-hex-character secret instead. ---
+      # - AUDIT_LOG_KEY=${AUDIT_LOG_KEY}
       # --- PostgreSQL (not yet supported) ---
       # The server does not use PostgreSQL yet and refuses to start with
       # DATABASE_TYPE=postgresql; keep SQLite until PostgreSQL support ships.
@@ -382,6 +422,8 @@ services:
       - AUTO_BACKUP_ENABLED=true
       - AUTO_BACKUP_SCHEDULE=0 2 * * *
       - AUTO_BACKUP_MODE=full
+      # Retention (v1.11.1+) deletes EVERY backup-* folder in BACKUP_DIR older
+      # than 90 days after each scheduled run, including manual/CLI backups.
       - AUTO_BACKUP_RETENTION_DAYS=90
       # --- Proxy ---
       - TRUST_PROXY_HEADERS=auto
@@ -392,8 +434,6 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
       clamav:
         condition: service_started
 
@@ -403,24 +443,9 @@ services:
       - clam-db:/var/lib/clamav
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: safeshare
-      POSTGRES_USER: ${PG_USER}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d safeshare"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
 volumes:
   safeshare-data:
   safeshare-uploads:
-  postgres-data:
   clam-db:
 ```
 
@@ -430,7 +455,7 @@ Fortress mode requires infrastructure beyond a single Docker container:
 
 | Component | Purpose | Required? |
 |-----------|---------|-----------|
-| PostgreSQL 16+ | Durable database with replication support | Yes |
+| PostgreSQL 16+ | Durable database with replication support | Not yet supported (planned) |
 | ClamAV | Malware scanning sidecar (~1GB RAM for signature DB) | Yes |
 | Reverse proxy (Traefik/nginx) | TLS termination, security headers | Yes |
 | Log aggregation (ELK/Splunk/Datadog) | Centralized audit log storage | Recommended |
@@ -443,23 +468,23 @@ SafeShare features map to common compliance frameworks:
 
 | Requirement | SafeShare Feature |
 |-------------|-------------------|
-| **Access control** (HIPAA, SOC2, GDPR) | Auth required + MFA + SSO + role-based access |
+| **Access control** (HIPAA, SOC2, GDPR) | Auth required + MFA (enrolled users challenged; not yet enforceable) + SSO + role-based access |
 | **Encryption at rest** (HIPAA, PCI-DSS) | AES-256-GCM with `ENCRYPTION_KEY` |
 | **Encryption in transit** (all) | HTTPS via reverse proxy |
-| **Audit logging** (SOC2, HIPAA) | Structured JSON logs, admin action tracking |
+| **Audit logging** (SOC2, HIPAA) | Tamper-evident audit log (HMAC-signed chain, Audit Log tab, CSV/JSON Lines export, integrity verification, configurable retention) plus structured JSON logs. Ship application logs off-box so the periodic checkpoint lines can detect deleted newest entries |
 | **Data retention** (GDPR) | Configurable expiration, automated cleanup |
-| **Backup and recovery** (SOC2) | Automated backups with retention policies |
-| **User authentication** (all) | Username/password + MFA + SSO |
+| **Backup and recovery** (SOC2) | Automated backups with retention policies (retention also deletes manual backups in `BACKUP_DIR`; back up `audit.key` with the database) |
+| **User authentication** (all) | Username/password + MFA (enrolled users) + SSO |
 
 ### Trade-offs
 
-- Highest operational complexity — requires PostgreSQL, monitoring, backup infrastructure
-- Maximum friction for end users — MFA required, SSO integration, no anonymous access
-- Higher resource requirements — PostgreSQL, log storage, backup storage
+- Highest operational complexity — requires monitoring and backup infrastructure (PostgreSQL will be added when supported)
+- More friction for end users — MFA enrollment, SSO integration, no anonymous access
+- Higher resource requirements — ClamAV, log storage, backup storage
 
 ### Deep dives
 
-- [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) — High availability with PostgreSQL and S3
+- [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) — Planned high-availability design with PostgreSQL and S3 (**not yet supported**)
 - [PROMETHEUS.md](PROMETHEUS.md) — Monitoring, metrics, and alerting configuration
 - [BACKUP_RESTORE.md](BACKUP_RESTORE.md) — Backup procedures and disaster recovery
 - [SECURITY.md](SECURITY.md) — Compliance mapping details (HIPAA, SOC2, GDPR, PCI-DSS)
@@ -474,25 +499,25 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 |---------|:-----:|:--------:|:--------:|:--------:|
 | **Anonymous uploads** | On | On | Off | Off |
 | **Anonymous mode (IP redaction)** | On | Off | Off | Off |
-| **Metadata stripping** | On | Off | Off | Off |
+| **Metadata stripping** | On (in browser: JPEG, PNG) | Off | Off | Off |
 | **Tor hidden service** | Yes | No | No | No |
-| **E2E encryption (client-side)** | Encouraged | Available | Available | Available |
+| **E2E encryption (client-side)** | Required (`REQUIRE_CLIENT_ENCRYPTION`) | Available | Available | Available |
 | **Encryption at rest (server-side)** | On | On | On | On |
 | **Password-protected files** | Available | Available | Available | Available |
 | **User authentication** | Off | Optional | Required | Required |
-| **MFA (TOTP/WebAuthn)** | Off | Off | On | Required |
-| **SSO (OIDC)** | Off | Off | Optional | On |
+| **MFA (TOTP/WebAuthn)** | Off | Off | Available | Available (`MFA_REQUIRED` not yet enforced) |
+| **SSO (OIDC)** | Blocked in anonymous mode | Off | Optional | On |
 | **Admin dashboard** | On | On | On | On |
 | **IP blocking** | Off | Available | On | On |
-| **Rate limiting** | On | On | On | Strict |
+| **Rate limiting** | On (service-wide behind Tor) | On | On | Strict |
 | **Malware scanning (ClamAV)** | Off | Off | On | On |
 | **Extension blocking** | On | On | On | On |
-| **Webhooks** | Off | Off | On | On |
+| **Webhooks** | Blocked in anonymous mode | Off | On | On |
 | **API tokens** | Off | Off | On | On |
-| **PostgreSQL backend** | No | No | Optional | Yes |
+| **PostgreSQL backend** | No | No | Planned (not yet supported) | Planned (not yet supported) |
 | **Automated backups** | No | No | Optional | Yes |
-| **Prometheus metrics** | No | Optional | Recommended | Yes |
-| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Basic | Full | Full |
+| **Prometheus metrics** | Not served (`METRICS_IN_ANONYMOUS_MODE` to override) | Optional | Recommended | Yes |
+| **Structured audit logs** | Disabled (off in anonymous mode unless `AUDIT_LOG=true`; entries recorded before switching an existing server to anonymous mode are kept) | Tamper-evident audit log (default `AUDIT_LOG=auto`) | Tamper-evident audit log + structured logs | Tamper-evident audit log + structured logs |
 | **Storage quotas** | Optional | Optional | On | On |
 | **File expiration (max)** | 24h | 7 days | 7 days | Configurable |
 
@@ -509,7 +534,8 @@ These profiles are guidelines, not hard rules. You can mix settings to fit your 
 | `ANONYMOUS_MODE=true` | IP blocking via admin dashboard | You can't ban IPs you don't record |
 | E2E encryption (client-side) | Content scanning / inspection | You can't scan what you can't read |
 | `REQUIRE_AUTH_FOR_UPLOAD=true` | `ANONYMOUS_MODE=true` | Auth creates identity; anonymous mode erases it |
-| Tor-only deployment | Webhooks to external services | Webhooks leak the server's network identity |
+| Tor-only deployment | Webhooks to external services | Webhooks leak the server's network identity (SafeShare refuses to enable webhooks or SSO in anonymous mode) |
+| `REQUIRE_CLIENT_ENCRYPTION=true` | `MALWARE_SCAN_REJECT_UNSCANNABLE=true` | Every browser-encrypted upload is unscannable, so every upload would be rejected (logged as an error at startup) |
 
 ### Common hybrids
 
@@ -535,7 +561,7 @@ Corporate control with an option for users to add E2E for sensitive files.
 -e ADMIN_USERNAME=admin
 -e ADMIN_PASSWORD="..."
 ```
-The admin can manage storage and delete files but cannot see who uploaded them.
+The admin can manage storage and delete files but cannot see who uploaded them or open their contents. Uploads still have to be encrypted in the browser, because anonymous mode turns on `REQUIRE_CLIENT_ENCRYPTION`. The first dashboard save stores all settings with the values in effect at that moment, and those then override the environment on later restarts. Saving one setting doesn't reset the others, so Ghost's short expirations survive the admin's first visit.
 
 ---
 
@@ -546,5 +572,5 @@ The admin can manage storage and delete files but cannot see who uploaded them.
 3. **Follow the deployment guide** for your chosen mode:
    - Ghost: [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md)
    - Standard/Hardened: [PRODUCTION.md](PRODUCTION.md)
-   - Fortress: [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md)
+   - Fortress: [PRODUCTION.md](PRODUCTION.md) (multi-instance HA with PostgreSQL/S3 in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) is planned, not yet supported)
 4. **Review the security checklist** in [SECURITY.md](SECURITY.md)

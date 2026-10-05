@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/fjmerc/safeshare/internal/config"
+	"github.com/fjmerc/safeshare/internal/repository"
 )
 
 // setupSettingsTestDB creates an in-memory SQLite database with settings table.
@@ -598,5 +601,157 @@ func TestSettingsRepository_AllUpdatesPreserveOtherFields(t *testing.T) {
 	}
 	if len(settings.BlockedExtensions) != 2 {
 		t.Errorf("expected blocked extensions preserved, got %d", len(settings.BlockedExtensions))
+	}
+}
+
+func TestSettingsRepository_SeedIfMissing_PartialUpdateKeepsSeededValues(t *testing.T) {
+	db := setupSettingsTestDB(t)
+	defer db.Close()
+	repo := NewSettingsRepository(db)
+	ctx := context.Background()
+
+	seed := &repository.Settings{
+		QuotaLimitGB:              0,
+		MaxFileSizeBytes:          5 << 20,
+		DefaultExpirationHours:    6,
+		MaxExpirationHours:        12,
+		RateLimitUpload:           3,
+		RateLimitDownload:         77,
+		BlockedExtensions:         []string{".exe", ".zip"},
+		FeatureMalwareScan:        true,
+		FeatureAPITokens:          true,
+		MFAIssuer:                 "Acme",
+		MFATOTPEnabled:            true,
+		MFAWebAuthnEnabled:        false,
+		MFARecoveryCodesCount:     8,
+		MFAChallengeExpiryMinutes: 7,
+		SSODefaultRole:            "user",
+		SSOSessionLifetime:        60,
+		SSOStateExpiryMinutes:     15,
+	}
+
+	inserted, err := repo.SeedIfMissing(ctx, seed)
+	if err != nil || !inserted {
+		t.Fatalf("first SeedIfMissing = %v, %v; want true, nil", inserted, err)
+	}
+
+	// A second seed must not overwrite anything.
+	other := *seed
+	other.DefaultExpirationHours = 999
+	if inserted, err := repo.SeedIfMissing(ctx, &other); err != nil || inserted {
+		t.Fatalf("second SeedIfMissing = %v, %v; want false, nil", inserted, err)
+	}
+
+	// The partial UPSERT must only touch its own column.
+	if err := repo.UpdateQuota(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %v, %v", got, err)
+	}
+	if got.QuotaLimitGB != 5 {
+		t.Errorf("QuotaLimitGB = %d, want 5", got.QuotaLimitGB)
+	}
+	if got.DefaultExpirationHours != 6 || got.MaxExpirationHours != 12 {
+		t.Errorf("expiration = %d/%d, want 6/12 (UpdateQuota must not reset them)", got.DefaultExpirationHours, got.MaxExpirationHours)
+	}
+	if got.RateLimitUpload != 3 || got.RateLimitDownload != 77 {
+		t.Errorf("rate limits = %d/%d, want 3/77", got.RateLimitUpload, got.RateLimitDownload)
+	}
+	if got.MaxFileSizeBytes != 5<<20 {
+		t.Errorf("MaxFileSizeBytes = %d", got.MaxFileSizeBytes)
+	}
+	if strings.Join(got.BlockedExtensions, ",") != ".exe,.zip" {
+		t.Errorf("BlockedExtensions = %v", got.BlockedExtensions)
+	}
+	if !got.FeatureMalwareScan || !got.FeatureAPITokens || got.FeatureWebhooks {
+		t.Errorf("feature flags not seeded correctly: %+v", got)
+	}
+	if got.MFAIssuer != "Acme" || got.MFAWebAuthnEnabled || got.MFARecoveryCodesCount != 8 || got.SSOSessionLifetime != 60 {
+		t.Errorf("MFA/SSO columns not seeded: %+v", got)
+	}
+}
+
+// Documents the bug the seeding fixes: without it the first partial UPSERT
+// creates the row with schema defaults.
+func TestSettingsRepository_UpdateQuota_WithoutSeedUsesSchemaDefaults(t *testing.T) {
+	db := setupSettingsTestDB(t)
+	defer db.Close()
+	repo := NewSettingsRepository(db)
+	ctx := context.Background()
+
+	if err := repo.UpdateQuota(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %v, %v", got, err)
+	}
+	if got.DefaultExpirationHours != 24 || got.MaxExpirationHours != 168 {
+		t.Errorf("unexpected defaults: %d/%d", got.DefaultExpirationHours, got.MaxExpirationHours)
+	}
+}
+
+func TestSettingsRepository_SeedIfMissing_ExistingRowNotOverwritten(t *testing.T) {
+	db := setupSettingsTestDB(t)
+	defer db.Close()
+	repo := NewSettingsRepository(db)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO settings (id, quota_limit_gb, default_expiration_hours, rate_limit_download, feature_webhooks)
+		VALUES (1, 42, 48, 9, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	inserted, err := repo.SeedIfMissing(ctx, &repository.Settings{
+		QuotaLimitGB: 1, DefaultExpirationHours: 1, RateLimitDownload: 1, MaxExpirationHours: 1,
+		MFAIssuer: "X", SSODefaultRole: "user",
+	})
+	if err != nil || inserted {
+		t.Fatalf("SeedIfMissing = %v, %v; want false, nil", inserted, err)
+	}
+	got, _ := repo.Get(ctx)
+	if got.QuotaLimitGB != 42 || got.DefaultExpirationHours != 48 || got.RateLimitDownload != 9 || !got.FeatureWebhooks {
+		t.Errorf("existing row was modified: %+v", got)
+	}
+}
+
+// With no admin save there is no settings row, so environment config stays
+// authoritative across restarts; the first partial save creates the row from
+// the live config instead of schema defaults.
+func TestSettingsRepository_FirstAdminSaveSeedsFromLiveConfig(t *testing.T) {
+	t.Setenv("DEFAULT_EXPIRATION_HOURS", "6")
+	t.Setenv("MAX_EXPIRATION_HOURS", "12")
+	t.Setenv("RATE_LIMIT_DOWNLOAD", "77")
+	t.Setenv("FEATURE_API_TOKENS", "true")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db := setupSettingsTestDB(t)
+	defer db.Close()
+	repo := NewSettingsRepositoryWithSeed(db, func() *repository.Settings { return SettingsFromConfig(cfg) })
+	ctx := context.Background()
+
+	if got, err := repo.Get(ctx); err != nil || got != nil {
+		t.Fatalf("before any admin save Get = %v, %v; want nil, nil (env stays authoritative)", got, err)
+	}
+
+	if err := repo.UpdateQuota(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %v, %v", got, err)
+	}
+	if got.QuotaLimitGB != 5 || got.DefaultExpirationHours != 6 || got.MaxExpirationHours != 12 || got.RateLimitDownload != 77 {
+		t.Errorf("row = %+v; want quota 5 and env expiration 6/12, download limit 77", got)
+	}
+	if !got.FeatureAPITokens {
+		t.Error("feature flags were not seeded from env")
+	}
+	if got.MFAIssuer == "" || got.SSODefaultRole == "" || got.SSOSessionLifetime <= 0 {
+		t.Errorf("MFA/SSO columns not seeded with usable values: %+v", got)
 	}
 }

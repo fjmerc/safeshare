@@ -6,7 +6,12 @@ This guide provides version-specific upgrade instructions for SafeShare. Always 
 
 - [General Upgrade Process](#general-upgrade-process)
 - [Pre-Upgrade Checklist](#pre-upgrade-checklist)
+- [Version Numbering Note](#version-numbering-note)
 - [Version-Specific Upgrades](#version-specific-upgrades)
+  - [Upgrading to v1.11.x](#upgrading-to-v111x)
+  - [Upgrading to v1.10.x](#upgrading-to-v110x)
+  - [Upgrading to v1.9.0](#upgrading-to-v190)
+  - [Upgrading to v1.6.0](#upgrading-to-v160)
   - [Upgrading to v2.8.x](#upgrading-to-v28x)
   - [Upgrading to v2.7.x](#upgrading-to-v27x)
   - [Upgrading to v2.6.x](#upgrading-to-v26x)
@@ -30,8 +35,8 @@ This guide provides version-specific upgrade instructions for SafeShare. Always 
 
 # 2. Pull new image
 docker pull safeshare:latest
-# Or specific version:
-docker pull safeshare:v2.8.3
+# Or a specific version (see CHANGELOG.md for the latest release):
+docker pull safeshare:<version>
 
 # 3. Stop current container
 docker stop safeshare
@@ -43,7 +48,7 @@ docker rm safeshare
 docker run -d \
   --name safeshare \
   # ... your existing configuration ...
-  safeshare:v2.8.3
+  safeshare:<version>
 
 # 6. Verify health
 curl http://localhost:8080/health
@@ -59,8 +64,8 @@ docker logs safeshare | head -50
 docker-compose exec safeshare /app/backup.sh
 
 # 2. Update image tag in docker-compose.yml
-# Change: image: safeshare:v2.7.0
-# To:     image: safeshare:v2.8.3
+# Change: image: safeshare:<old-version>
+# To:     image: safeshare:<new-version>
 
 # 3. Pull and recreate
 docker-compose pull
@@ -78,6 +83,7 @@ Before upgrading, ensure:
 
 - [ ] **Backup database:** `cp /app/data/safeshare.db /backup/safeshare-$(date +%Y%m%d).db`
 - [ ] **Backup uploads:** `tar -czf /backup/uploads-$(date +%Y%m%d).tar.gz /app/uploads`
+- [ ] **Backup `audit.key`:** `cp -p /app/data/audit.key /backup/` (v1.11.0+; or note your `AUDIT_LOG_KEY`). The audit log's signing key is not in the database or in SafeShare's built-in backups
 - [ ] **Document encryption key:** Verify you have the encryption key stored securely
 - [ ] **Note current version:** `curl http://localhost:8080/api/config | jq .version`
 - [ ] **Check disk space:** Ensure sufficient space for migrations
@@ -86,7 +92,47 @@ Before upgrading, ensure:
 
 ---
 
+## Version Numbering Note
+
+SafeShare's version numbers were reset in November 2025 from v2.8.3 to v1.0.0 (see the Version Reset Notice in [CHANGELOG.md](CHANGELOG.md)). v1.0.0 contains everything in v2.8.3. The **v1.6.0 and later** sections below use the current numbering. The sections titled **v2.x** (and "from v1.x to v2.x") describe the older numbering that preceded the reset, so a "v2.x" install is older than any current v1.x release, and the `v2.x` image tags in those sections are historical.
+
+---
+
 ## Version-Specific Upgrades
+
+### Upgrading to v1.11.x
+
+#### v1.11.1
+
+**Backup retention now deletes old backups, including manual ones.** Before v1.11.1, backup folders were named with the hour where the day belongs (`backup-YYYY-10-10T10-52-...`), and the scheduled-backup retention sweep did not recognise that name format, so old backups were never removed. Names now use the real date (`backup-YYYY-MM-DDTHH-MM-SS`, UTC) and the sweep recognises every format SafeShare has produced.
+
+> **Action required if you use scheduled backups with retention** (`AUTO_BACKUP_ENABLED=true` and `AUTO_BACKUP_RETENTION_DAYS` above 0): after upgrading, the first scheduled backup run deletes **every** `backup-*` folder in `BACKUP_DIR` (default `/app/data/backups`) older than the retention period, including manual and CLI backups stored there. Copy anything you want to keep out of `BACKUP_DIR` first. Installs without an enabled schedule are unaffected. See [BACKUP_RESTORE.md](BACKUP_RESTORE.md#scheduled-backups-and-retention).
+
+Frontend: the upload page no longer shows an "Upload Completed" pop-up; claim codes saved in the browser by earlier versions are deleted on the next visit and replaced by a **Recent uploads on this device** list for anonymous uploads. After upgrading, purge your CDN cache for `/assets/*` so browsers pick up the new client.
+
+#### v1.11.0
+
+- **Database migration (automatic):** SQLite `027_audit_logs` creates the `audit_logs` and `audit_log_state` tables. Back up first as usual.
+- **Tamper-evident audit log, on by default.** It is enabled unless the server is in anonymous mode (`AUDIT_LOG=auto`); set `AUDIT_LOG=false` to turn it off, or `AUDIT_LOG=true` to record in anonymous mode too (without anything identifying). Any other value stops startup. Entries are kept 365 days by default (adjustable in the admin dashboard's **Audit Log** tab; 0 keeps them forever).
+- **Signing key:** on first start SafeShare generates `audit.key` (mode 0600) in the database's directory (`/app/data` in the Docker image, so it lives on the data volume). To supply your own key, set `AUDIT_LOG_KEY` to 64 hex characters (`openssl rand -hex 32`). **Keep the key with the database**: when moving to a new server, copy `audit.key` or set the same `AUDIT_LOG_KEY`; otherwise verification reports older entries as signed with a different key. SafeShare's own backups do not include it.
+- **Multiple instances sharing one database must share one key** (set the same `AUDIT_LOG_KEY` on all of them); with separate generated keys, each instance's entries fail verification on the others. (Multi-instance deployments are not otherwise supported yet; see [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md).)
+- Ship the application logs off the server: the newest entry's signature is logged every 100 entries and hourly, which is how deletion of the newest entries can be detected. See [SECURITY.md](SECURITY.md) (Audit Log section).
+
+### Upgrading to v1.10.x
+
+No configuration changes and no database migrations.
+
+- **v1.10.1:** two simultaneous uploads of the same chunk with different contents no longer silently replace one another; the first stored wins and the other gets `409 CHUNK_CONFLICT` (success if its bytes are identical). On a filesystem without hard links the old behaviour is kept and a warning is logged once. The Go, Python and TypeScript SDKs now keep polling `/api/upload/status` through `429` instead of abandoning the upload; upgrade your SDKs. Dialogs and notifications are now screen-reader and keyboard accessible.
+- **v1.10.0:** Pickup-tab downloads are handed to the browser's own download manager instead of being buffered in page memory (the in-page progress bar and Pause/Cancel buttons are gone; end-to-end encrypted files are unchanged). **Quota behaviour (T30):** a chunked upload that stores no new chunk for an hour stops reserving its full size against `QUOTA_LIMIT_GB` and counts only the bytes received; its next new chunk re-reserves the rest, or fails with `507 QUOTA_EXCEEDED` if the quota has filled meanwhile. Purge your CDN cache for `/assets/*` after upgrading.
+
+### Upgrading to v1.9.0
+
+No database migrations. Behaviour changes to review:
+
+- **Uploads now stream to disk instead of memory.** Regular uploads are written to a temporary file under `.spool/` in the uploads directory (`/app/uploads/.spool/` in the Docker image), and chunks are streamed to disk as they arrive. Server memory use no longer grows with file size, but **the uploads volume now needs free space for in-flight uploads** and should be a local filesystem. The temporary files are unlinked as soon as they are created, so none are left behind after a crash.
+- **Stalled uploads are cut off with `408 UPLOAD_TIMEOUT`.** An upload or chunk body that sends nothing for 60 seconds, or averages under 4 KiB/s, is aborted (previously it could hold the connection for up to 6 hours). The web client retries a timed-out chunk automatically; SDK upload calls return the error. A client that sends request headers too slowly is disconnected after 20 seconds. If you have scripts that upload over very slow links, make sure they keep sending data.
+- **The upload status endpoint is rate limited.** `GET /api/upload/status/{id}` is limited per IP to 600x `RATE_LIMIT_UPLOAD` per hour (never under 6,000/hour). Clients should keep polling through a `429` rather than treating it as a failure; the web uploader does since v1.9.0 (SDKs since v1.10.1).
+- Purge your CDN cache for `/assets/*` after upgrading.
 
 ### Upgrading to v1.6.0
 
@@ -380,14 +426,14 @@ chmod 600 /backup/encryption-key-backup.txt
 #### Step 3: Upgrade
 
 ```bash
-docker pull safeshare:v2.8.3
+docker pull safeshare:<version>
 docker rm safeshare
 docker run -d \
   --name safeshare \
   # ... your existing config ...
   # Add new recommended options:
   -e TRUST_PROXY_HEADERS=auto \
-  safeshare:v2.8.3
+  safeshare:<version>
 ```
 
 #### Step 4: Verify
@@ -437,7 +483,7 @@ docker rm safeshare
 docker run -d \
   --name safeshare \
   # ... same config ...
-  safeshare:v2.7.0  # Previous version
+  safeshare:<previous-version>
 ```
 
 ### Rollback with Database Restore
@@ -456,7 +502,7 @@ docker run --rm \
   alpine sh -c "rm /data/safeshare.db* && tar xzf /backup/safeshare-pre-upgrade.tar.gz -C /"
 
 # 3. Start previous version
-docker run -d --name safeshare ... safeshare:v2.7.0
+docker run -d --name safeshare ... safeshare:<previous-version>
 ```
 
 ### Rollback Considerations
@@ -574,5 +620,5 @@ If you encounter issues during upgrade:
 
 ---
 
-**Last Updated:** December 2025
-**SafeShare Version:** 1.5.0
+**Last Updated:** October 2026
+**SafeShare Version:** 1.11.1

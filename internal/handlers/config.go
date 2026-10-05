@@ -18,6 +18,9 @@ type PublicConfigResponse struct {
 	ChunkSize                  int64  `json:"chunk_size"`
 	MalwareScanEnabled         bool   `json:"malware_scan_enabled"`         // ADR-015
 	UnscannableUploadsRejected bool   `json:"unscannable_uploads_rejected"` // ADR-015: E2E/oversized uploads are rejected outright rather than accepted as "not_scanned"
+	AnonymousMode              bool   `json:"anonymous_mode"`               // Ghost mode: no IPs/user agents/hashes recorded
+	ClientEncryptionRequired   bool   `json:"client_encryption_required"`   // Uploads must be encrypted in the browser (REQUIRE_CLIENT_ENCRYPTION)
+	StripMetadata              bool   `json:"strip_metadata"`               // Server strips metadata from supported file types
 }
 
 // PublicConfigHandler returns public configuration settings to the frontend
@@ -40,6 +43,9 @@ func PublicConfigHandler(cfg *config.Config) http.HandlerFunc {
 			ChunkSize:                  cfg.ChunkSize,
 			MalwareScanEnabled:         cfg.Features.IsMalwareScanEnabled(),
 			UnscannableUploadsRejected: cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.RejectUnscannable,
+			AnonymousMode:              cfg.IsAnonymousMode(),
+			ClientEncryptionRequired:   cfg.IsClientEncryptionRequired(),
+			StripMetadata:              cfg.IsStripMetadata(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

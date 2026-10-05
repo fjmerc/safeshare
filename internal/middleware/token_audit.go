@@ -66,7 +66,7 @@ func APITokenAuditLog(repos *repository.Repositories, anonymousMode bool) func(h
 			// Log the usage asynchronously to not delay the response
 			endpoint := r.URL.Path
 			clientIP := privacy.AnonymizeIP(getClientIP(r), anonymousMode)
-			userAgent := r.Header.Get("User-Agent")
+			userAgent := privacy.AnonymizeUserAgent(r.Header.Get("User-Agent"), anonymousMode)
 			status := captured.statusCode
 
 			go func() {

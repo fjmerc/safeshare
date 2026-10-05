@@ -77,8 +77,17 @@
         chunked_upload_threshold: 104857600, // Default 100MB
         chunk_size: 5242880, // Default 5MB
         malware_scan_enabled: false,
-        unscannable_uploads_rejected: false
+        unscannable_uploads_rejected: false,
+        anonymous_mode: false,            // Ghost mode (older servers omit these: treated as false)
+        client_encryption_required: false,
+        strip_metadata: false
     };
+
+    // True when this server enforces E2E but the browser cannot do it
+    let uploadBlocked = false;
+    // One-time notices about metadata stripping
+    let metadataNoticeShown = false;
+    let orientationNoticeShown = false;
 
     // Note: Toast notification system is now loaded from toast.js
 
@@ -89,7 +98,12 @@
         await checkAuth(); // Wait for auth check before handling tabs
         updateDropoffTabVisibility(); // Update tab visibility based on config and auth
         fetchMaxFileSize();
+        if (serverConfig.anonymous_mode) clearOnDeviceTraces(); // Ghost mode: leave nothing behind
         initE2EEncryption(); // Show/hide E2E toggle based on browser support
+        // Ghost mode fails closed: no metadata stripper means no upload
+        if (serverConfig.anonymous_mode && serverConfig.strip_metadata && !window.SafeShareMetadata) {
+            blockUpload('Uploads are paused because a required privacy script (metadata removal) did not load. Reload the page to try again.');
+        }
         setupEventListeners();
         handleInitialTab();
         initRecentUploads(); // Quiet per-device list for anonymous uploaders (replaces the old pop-up)
@@ -105,7 +119,32 @@
         // Check for encrypted download URL fragment
         const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
         if (e2eFragment) {
+            // The key lives only in this in-memory object from here on; take it
+            // out of the address bar and history so it isn't left behind.
+            scrubLocationFragment();
             handleEncryptedDownload(e2eFragment);
+        }
+    }
+
+    // Remove the URL fragment (the E2E key) from the address bar and history entry
+    function scrubLocationFragment() {
+        try {
+            history.replaceState(history.state, document.title,
+                window.location.pathname + window.location.search);
+        } catch (e) {
+            console.warn('Could not clear URL fragment:', e);
+        }
+    }
+
+    // Ghost mode: drop recent-uploads list and any saved chunked-upload state
+    function clearOnDeviceTraces() {
+        try {
+            if (typeof ChunkedUploader !== 'undefined') {
+                ChunkedUploader.clearRecentUploads();
+                ChunkedUploader.clearAllSavedUploads();
+            }
+        } catch (e) {
+            console.warn('Could not clear on-device traces:', e);
         }
     }
 
@@ -229,12 +268,22 @@
         const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
         if (!e2eGroup || !e2eToggle) return;
 
-        if (window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported()) {
+        const supported = !!(window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported());
+        const required = !!serverConfig.client_encryption_required;
+        const ghost = !!serverConfig.anonymous_mode;
+
+        if (required && !supported) {
+            // Cannot upload at all: say why, and keep the button disabled.
+            blockUpload();
+            return;
+        }
+
+        if (supported) {
             // ADR-015: when the server rejects uploads it can't scan,
             // end-to-end encrypted content (opaque ciphertext to the server)
             // is one of those cases — hide the toggle entirely rather than
             // let someone enable it and then hit UNSCANNABLE_UPLOAD.
-            if (serverConfig.unscannable_uploads_rejected) {
+            if (serverConfig.unscannable_uploads_rejected && !required) {
                 e2eGroup.classList.add('hidden');
                 return;
             }
@@ -251,7 +300,52 @@
                     }
                 }
             });
+
+            // Enforced / Ghost defaults: E2E on, filename hidden (still changeable)
+            if (required || ghost) {
+                applyE2EDefaults();
+            }
         }
+    }
+
+    // Disable uploading and show an accessible (role=alert) explanation.
+    // With no text, the message keeps its default (browser lacks Web Crypto).
+    function blockUpload(text) {
+        uploadBlocked = true;
+        uploadButton.disabled = true;
+        uploadButton.setAttribute('aria-disabled', 'true');
+        const msg = document.getElementById('e2eUnsupportedMsg');
+        if (msg) {
+            if (text) msg.textContent = text;
+            msg.classList.remove('hidden');
+        }
+    }
+
+    // Set the E2E toggle to its enforced/default state (also used by resetForm)
+    function applyE2EDefaults() {
+        const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameGroup = document.getElementById('e2eHideFilenameGroup');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
+        if (!e2eToggle) return;
+        const required = !!serverConfig.client_encryption_required;
+        const ghost = !!serverConfig.anonymous_mode;
+        const supported = !!(window.SafeShareCrypto && SafeShareCrypto.isClientEncryptionSupported());
+        if (!supported || !(required || ghost)) return;
+
+        e2eToggle.checked = true;
+        if (hideFilenameGroup) hideFilenameGroup.classList.remove('hidden');
+        if (hideFilenameToggle) hideFilenameToggle.checked = true;
+
+        if (required) {
+            e2eToggle.disabled = true;
+            e2eToggle.setAttribute('aria-disabled', 'true');
+            const note = document.getElementById('e2eEnforcedNote');
+            if (note) {
+                note.classList.remove('hidden');
+                e2eToggle.setAttribute('aria-describedby', 'e2eEnforcedNote');
+            }
+        }
+        updateE2ESizeWarning();
     }
 
     // Show/hide E2E size warning based on selected file size
@@ -927,7 +1021,7 @@
 
             dropZone.querySelector('h2').textContent = selectedFile.name;
             dropZone.querySelector('p').textContent = `Size: ${formatFileSize(selectedFile.size)}`;
-            uploadButton.disabled = false;
+            uploadButton.disabled = uploadBlocked;
             uploadButton.textContent = 'Upload File';
             updateRemoveButtonState();
         }
@@ -935,7 +1029,7 @@
 
     // Handle upload - routes to chunked or simple upload based on file size
     async function handleUpload() {
-        if (!selectedFile) return;
+        if (!selectedFile || uploadBlocked) return;
 
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
         const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
@@ -952,7 +1046,16 @@
                 progressText.textContent = 'Reading file...';
                 setProgress(progressFill, 0);
 
-                const arrayBuffer = await selectedFile.arrayBuffer();
+                let arrayBuffer = await selectedFile.arrayBuffer();
+
+                // The server can't strip metadata from ciphertext, so do it here first
+                if (serverConfig.strip_metadata && window.SafeShareMetadata) {
+                    progressText.textContent = 'Removing metadata...';
+                    arrayBuffer = stripMetadataForUpload(arrayBuffer);
+                } else if (serverConfig.strip_metadata) {
+                    // Stripper failed to load. Ghost mode is blocked at init; here, warn and continue.
+                    showToast('Metadata removal is unavailable (script failed to load); uploading without it.', 'warning', 6000);
+                }
 
                 progressText.textContent = 'Encrypting...';
                 setProgress(progressFill, 10);
@@ -978,7 +1081,10 @@
                 // Reset progress for the actual upload tracking
                 uploadProgress.classList.add('hidden');
             } catch (error) {
-                showToast('Encryption failed: ' + error.message, 'error', 4000);
+                const message = error && error.metadataAbort
+                    ? error.message
+                    : 'Encryption failed: ' + error.message;
+                showToast(message, 'error', 6000);
                 resetProgress();
                 return;
             }
@@ -995,6 +1101,44 @@
             console.log('Using simple upload for file:', formatFileSize(fileToUpload.size));
             await handleSimpleUpload(fileToUpload, useE2E);
         }
+    }
+
+    // Strip JPEG/PNG metadata in the browser. Ghost mode fails closed; otherwise
+    // falls back to the original bytes with a warning. Other types pass through
+    // with a one-time notice.
+    function stripMetadataForUpload(arrayBuffer) {
+        let result;
+        try {
+            result = SafeShareMetadata.stripMetadata(arrayBuffer);
+        } catch (err) {
+            if (serverConfig.anonymous_mode) {
+                const abort = new Error('Could not remove metadata from this image, so the upload was stopped. Re-save or scrub the file (for example with mat2) and try again.');
+                abort.metadataAbort = true;
+                throw abort;
+            }
+            showToast('Could not remove metadata from this image; uploading it unchanged.', 'warning', 6000);
+            return arrayBuffer;
+        }
+        if (!result.supported && !metadataNoticeShown) {
+            metadataNoticeShown = true;
+            showToast('Metadata in this file type (PDF, Office, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
+        }
+        if (result.orientation && result.orientation !== 1 && !orientationNoticeShown) {
+            orientationNoticeShown = true;
+            showToast('This photo is stored rotated. After its metadata is removed it may appear rotated; rotate it before uploading if that matters.', 'warning', 8000);
+        }
+        return result.data;
+    }
+
+    // Human messages for Ghost mode server rejections; null when not one of them
+    function ghostErrorMessage(code) {
+        if (code === 'CLIENT_ENCRYPTION_REQUIRED') {
+            return 'This server only accepts files encrypted in your browser. Reload the page and try again, using a browser that supports encryption.';
+        }
+        if (code === 'METADATA_STRIP_FAILED') {
+            return 'The server could not remove metadata from this file, so it was not stored. Scrub the metadata first (for example with mat2) and try again.';
+        }
+        return null;
     }
 
     // Show upload warning banner
@@ -1091,6 +1235,8 @@
                         showToast(`Upload rejected: ${error.error}`, 'error', 6000);
                     } else if (error.code === 'SCAN_UNAVAILABLE') {
                         showToast('Malware scanning is temporarily unavailable. Please try again shortly.', 'error', 5000);
+                    } else if (ghostErrorMessage(error.code)) {
+                        showToast(ghostErrorMessage(error.code), 'error', 7000);
                     } else if (error.code === 'UNSCANNABLE_UPLOAD') {
                         showToast('This file cannot be scanned for malware (end-to-end encrypted or too large) and this server requires all uploads to be scanned.', 'error', 6000);
                     } else {
@@ -1113,6 +1259,7 @@
             });
 
             xhr.open('POST', '/api/upload');
+            if (isClientEncrypted) xhr.setRequestHeader('X-SafeShare-Client-Encrypted', 'true');
             xhr.send(formData);
 
         } catch (error) {
@@ -1150,7 +1297,8 @@
                 expiresInHours: (expiresIn >= 0) ? expiresIn : 24, // Support 0 for "never expire"
                 maxDownloads: maxDl,
                 password: password,
-                clientEncrypted: !!isClientEncrypted
+                clientEncrypted: !!isClientEncrypted,
+                persistState: !serverConfig.anonymous_mode // Ghost mode: no resume state on this device
             });
             currentChunkedUploader = uploader; // Store for cancellation
 
@@ -1180,6 +1328,8 @@
                     errorMessage = data.error;
                 } else if (data.code === 'SCAN_UNAVAILABLE') {
                     errorMessage = 'Malware scanning is temporarily unavailable. Please try again shortly.';
+                } else if (ghostErrorMessage(data.code)) {
+                    errorMessage = ghostErrorMessage(data.code);
                 } else if (data.error && data.error.includes('Failed to fetch')) {
                     // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
                     errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
@@ -1315,7 +1465,7 @@
             // Signed-in users find every upload in My Uploads; anonymous uploads go
             // in this device's recent list (not E2E: the code alone can't decrypt)
             document.getElementById('resultDashboardLink')?.classList.toggle('hidden', !currentUser);
-            if (!currentUser && !isE2E) {
+            if (!currentUser && !isE2E && !serverConfig.anonymous_mode) {
                 ChunkedUploader.saveRecentUpload(data);
                 renderRecentUploads();
             }
@@ -1437,7 +1587,9 @@
         if (uploadSettingsContent) {
             // Disable all form inputs
             uploadSettingsContent.querySelectorAll('input').forEach(input => {
-                input.disabled = disabled;
+                // The E2E toggle stays locked when the server requires encryption
+                const locked = input.id === 'e2eEncryptionToggle' && serverConfig.client_encryption_required;
+                input.disabled = disabled || !!locked;
             });
 
             // Disable all buttons (quick select and password toggles)
@@ -1473,7 +1625,10 @@
         maxDownloads.value = '';
         document.getElementById('uploadPassword').value = '';
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
-        if (e2eToggle) e2eToggle.checked = false;
+        if (e2eToggle && !serverConfig.client_encryption_required) e2eToggle.checked = false;
+        const hideToggle = document.getElementById('e2eHideFilenameToggle');
+        if (hideToggle) hideToggle.checked = false;
+        applyE2EDefaults(); // Re-assert forced / Ghost defaults after the reset
 
         resetProgress();
 
@@ -1523,7 +1678,7 @@
         setProgress(progressFill, 0);
         progressText.textContent = 'Uploading...';
         resetUploadStats();
-        uploadButton.disabled = false;
+        uploadButton.disabled = uploadBlocked;
         setUploadSettingsDisabled(false);
         setDropZoneDisabled(false);
 
@@ -2197,7 +2352,7 @@
     function initRecentUploads() {
         if (typeof ChunkedUploader === 'undefined') return;
         ChunkedUploader.dropLegacyCompletions();
-        if (currentUser) ChunkedUploader.clearRecentUploads();
+        if (currentUser || serverConfig.anonymous_mode) ChunkedUploader.clearRecentUploads();
 
         document.getElementById('clearRecentUploads')?.addEventListener('click', () => {
             ChunkedUploader.clearRecentUploads();
@@ -2217,7 +2372,7 @@
         const list = document.getElementById('recentUploadsList');
         if (!section || !list || typeof ChunkedUploader === 'undefined') return;
 
-        const uploads = currentUser ? [] : ChunkedUploader.getRecentUploads();
+        const uploads = (currentUser || serverConfig.anonymous_mode) ? [] : ChunkedUploader.getRecentUploads();
         section.classList.toggle('hidden', uploads.length === 0);
         list.replaceChildren(...uploads.map(buildRecentUploadItem));
     }
@@ -2329,7 +2484,9 @@
     function showNotification(data) {
         try {
             const notification = new Notification('Upload Complete!', {
-                body: `${data.original_filename} (${formatFileSize(data.file_size)}) is ready to download`,
+                body: serverConfig.anonymous_mode
+                    ? 'Your upload is ready to share'
+                    : `${data.original_filename} (${formatFileSize(data.file_size)}) is ready to download`,
                 icon: '/assets/logo.svg',
                 badge: '/assets/logo.svg',
                 tag: 'safeshare-upload',

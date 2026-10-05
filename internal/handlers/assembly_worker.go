@@ -27,6 +27,10 @@ import (
 // scanned-vs-assembled content integrity check fails. Deliberately generic
 // (L3 bug-hunter finding): it must not describe internal chunk paths or
 // mechanics — those go to the server log instead, via logIntegrityMismatch.
+// metadataStripFailedMessage is the uploader-visible message when anonymous
+// mode rejects a file because its metadata could not be stripped.
+const metadataStripFailedMessage = "Metadata could not be removed from this file, so it was rejected"
+
 const integrityMismatchMessage = "Upload could not be verified and was rejected"
 
 // genericAssemblyFailureMessage is the uploader-visible error_message for
@@ -167,6 +171,11 @@ var (
 	// just re-run the same race; the uploader must re-upload from scratch
 	// (a fresh /api/upload/init), not retry /complete.
 	errIntegrityMismatch = assemblyFailure{code: "INTEGRITY_ERROR", retryable: false}
+	// errMetadataStripFailed: terminal — anonymous mode promises metadata is
+	// removed; the file's type supports stripping but stripping failed (or
+	// the file exceeds the stripper's size limit). Retrying cannot change
+	// the outcome for the same bytes.
+	errMetadataStripFailed = assemblyFailure{code: "METADATA_STRIP_FAILED", retryable: false}
 	// errScanUnavailable: retryable — clamd was unreachable after retries.
 	errScanUnavailable = assemblyFailure{code: "SCAN_UNAVAILABLE", retryable: true}
 	// errAssemblyFailed: retryable — the catch-all for IO/DB/encryption/
@@ -520,7 +529,7 @@ func (w *assemblyWorker) run() {
 
 	slog.Info("starting async assembly",
 		"upload_id", uploadID,
-		"filename", partialUpload.Filename,
+		"filename", logFilename(partialUpload.Filename, cfg),
 		"total_chunks", partialUpload.TotalChunks,
 		"total_size", partialUpload.TotalSize,
 		"attempt", partialUpload.AssemblyAttempts,
@@ -756,7 +765,7 @@ func (w *assemblyWorker) run() {
 		slog.Info("assembling chunks into final file",
 			"upload_id", uploadID,
 			"total_chunks", partialUpload.TotalChunks,
-			"filename", partialUpload.Filename,
+			"filename", logFilename(partialUpload.Filename, cfg),
 		)
 
 		var err error
@@ -807,7 +816,14 @@ func (w *assemblyWorker) run() {
 					"upload_id", uploadID,
 					"mime_type", mimeType,
 				)
-				// Non-fatal: continue with original file
+				if cfg.IsAnonymousMode() {
+					// Fail closed: anonymous mode must not publish a file
+					// whose metadata could not be removed.
+					os.Remove(finalPath)
+					w.fail(errMetadataStripFailed, metadataStripFailedMessage)
+					return
+				}
+				// Non-fatal outside anonymous mode: continue with original file
 			} else {
 				// Recompute hash and size after stripping
 				newHash, err := computeFileHash(finalPath)
@@ -907,7 +923,7 @@ func (w *assemblyWorker) run() {
 		UploaderIP:       storeIP(clientIP, cfg),
 		PasswordHash:     partialUpload.PasswordHash,
 		UserID:           partialUpload.UserID,
-		SHA256Hash:       sha256Hash,
+		SHA256Hash:       storeSHA256(sha256Hash, cfg),
 		ClientEncrypted:  partialUpload.ClientEncrypted,
 		EncFileID:        encFileID,
 	}
@@ -1052,7 +1068,7 @@ func (w *assemblyWorker) run() {
 	slog.Info("async assembly completed successfully",
 		"upload_id", uploadID,
 		"claim_code", redactClaimCode(claimCode),
-		"filename", partialUpload.Filename,
+		"filename", logFilename(partialUpload.Filename, cfg),
 		"size", totalBytesWritten,
 		"total_chunks", partialUpload.TotalChunks,
 		"password_protected", partialUpload.PasswordHash != "",

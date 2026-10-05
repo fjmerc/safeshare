@@ -121,20 +121,27 @@ docker run -p 8081:8080 safeshare:latest
 **Causes & Solutions:**
 
 1. **Timeout issues (large files):**
-   ```bash
-   # Increase timeouts
-   docker run \
-     -e READ_TIMEOUT=300 \
-     -e WRITE_TIMEOUT=300 \
-     safeshare:latest
-   ```
 
-2. **File modified during upload:**
+   Upload and chunk requests get a transfer deadline that scales with the expected size (assuming at least 64 KiB/s, plus a 60-second margin, capped at 6 hours). `READ_TIMEOUT` and `WRITE_TIMEOUT` (120 seconds by default) are kept as a floor, so you normally don't need to raise them for large files. On top of that deadline, a request body that sends nothing for **60 seconds**, or averages **under 4 KiB/s**, is cut off with `408 UPLOAD_TIMEOUT` (see below).
+
+   If a proxy or CDN in front of SafeShare times out first, raise its limits instead (see [REVERSE_PROXY.md](REVERSE_PROXY.md)) or use chunked uploads, which split the transfer into short requests.
+
+2. **`408 UPLOAD_TIMEOUT` ("Upload stalled and timed out"):**
+   - The server stopped receiving data for 60 seconds, or the connection averaged under 4 KiB/s.
+   - Retry the upload. The web client retries a timed-out chunk automatically; SDK upload calls return the error, and retrying the upload works.
+   - Common causes: a very slow or unstable uplink (mobile, Tor), a client that paused mid-upload (for example a laptop going to sleep), or a proxy that stalls while forwarding the body. Check the proxy's logs for upstream timeouts at the same time.
+
+3. **`429` while polling upload status:**
+   - After a chunked upload, clients poll `GET /api/upload/status/{id}` until the file is assembled. That endpoint is limited per IP to 600x `RATE_LIMIT_UPLOAD` requests per hour (never under 6,000/hour), so you normally only hit it when many uploads share one IP (a busy NAT, or Tor).
+   - Keep polling more slowly: the assembly continues on the server. The web uploader (v1.9.0+) and the SDKs (v1.10.1+) already do this. Older SDKs abandon the upload on a 429; upgrade them.
+   - Raise `RATE_LIMIT_UPLOAD` if it happens regularly.
+
+4. **File modified during upload:**
    - Ensure file isn't being downloaded or modified
    - Wait for antivirus scans to complete
    - Error message: "ERR_UPLOAD_FILE_CHANGED"
 
-3. **Network instability:**
+5. **Network instability:**
    - Chunked uploads automatically retry
    - Check network connectivity
    - Try again on stable connection
@@ -180,6 +187,10 @@ docker run -p 8081:8080 safeshare:latest
 3. **Clean up expired files manually:**
    - Wait for automatic cleanup (runs every hour by default)
    - Or restart container to trigger immediate cleanup
+
+4. **Chunked uploads reserve their full size up front:** `POST /api/upload/init` returns `507 QUOTA_EXCEEDED` if the whole file doesn't fit in the remaining quota. A started upload that stores no new chunk for an hour stops reserving its full size; its next new chunk re-reserves the rest, or fails with `507 QUOTA_EXCEEDED` if the quota has filled in the meantime.
+
+5. **Disk full (`507 INSUFFICIENT_STORAGE`):** uploads are spooled to `.spool/` inside the uploads volume and chunks to `.partial/`, so the volume needs free space beyond the stored files.
 
 ### Rate limit exceeded (HTTP 429)
 
@@ -590,13 +601,16 @@ See [REVERSE_PROXY.md](REVERSE_PROXY.md) for detailed configurations.
 
 **Causes & Solutions:**
 
-1. **Large file encryption (pre-v2.1.0):**
-   - Upgrade to v2.1.0+ which uses streaming encryption
-   - Memory usage should be ~64MB constant
+1. **Older versions buffered uploads in memory:**
+   - Since v1.9.0, regular uploads stream to a temporary file under `.spool/` in the uploads directory and chunks stream straight to disk, so memory no longer grows with file size (a 512 MB upload peaked at about 2 GB of RAM before). If you see high memory with an older version, upgrade.
+   - Large end-to-end encrypted files are decrypted in the browser, which needs the whole file in memory; that is browser memory, not the server's.
 
-2. **Many concurrent uploads:**
-   - Limit concurrent assembly operations (default: 10)
-   - Scale horizontally if needed
+2. **Many concurrent encrypted downloads:**
+   - Legacy-format encrypted files are decrypted fully in memory. `DOWNLOAD_DECRYPT_MEMORY_BUDGET` (default 256 MiB) caps decrypt memory across all downloads, and `LEGACY_DECRYPT_MAX_BYTES` (default 128 MiB) refuses larger legacy files. Run `migrate-encryption` to move legacy files to the streaming format.
+
+3. **Many concurrent uploads:**
+   - Concurrent chunked-upload assembly is capped by `ASSEMBLY_WORKERS_MAX` (default: 10); requests beyond it get `503`
+   - Memory itself is not the limiting factor for uploads; check disk space and I/O instead
 
 3. **Database queries:**
    ```bash
@@ -776,7 +790,8 @@ See [REVERSE_PROXY.md](REVERSE_PROXY.md) for detailed configurations.
 
 3. **Add cache-busting:**
    - Frontend assets should have version in filename
-   - Or use query strings: `app.js?v=2.8.3`
+   - Or use query strings: `app.js?v=<version>`
+   - Browsers also keep a service-worker cache; it is refreshed when `CACHE_VERSION` in `service-worker.js` changes (see [FRONTEND.md](FRONTEND.md))
 
 ### Assets not loading (CORS errors)
 
@@ -901,12 +916,11 @@ curl http://localhost:8080/health | jq .status_details
 
 ## Debug Logging
 
-### Enable verbose logging
+### Log level and format
 
-```bash
-# Set log level to debug
-docker run -e LOG_LEVEL=debug safeshare:latest
-```
+SafeShare writes JSON-structured logs to stdout at a fixed `INFO` level. There is no `LOG_LEVEL` or `LOG_FORMAT` setting, so debug-level messages are not available. Read the logs with `docker logs safeshare`.
+
+For a record of who did what (logins, admin actions, uploads and downloads), use the tamper-evident audit log in the admin dashboard's **Audit Log** tab (see [SECURITY.md](SECURITY.md)); it is separate from the application log.
 
 ### View specific log types
 
@@ -953,5 +967,5 @@ If you've tried the solutions above and still have issues:
 
 ---
 
-**Last Updated:** December 2025
-**SafeShare Version:** 1.5.0
+**Last Updated:** October 2026
+**SafeShare Version:** 1.11.1

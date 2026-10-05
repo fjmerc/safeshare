@@ -21,6 +21,29 @@ const (
 // SettingsRepository implements repository.SettingsRepository for SQLite.
 type SettingsRepository struct {
 	db *sql.DB
+
+	// seed, when non-nil, supplies the full row to insert (if none exists)
+	// before any partial update, so the update never creates the row with
+	// schema defaults. See SettingsFromConfig.
+	seed func() *repository.Settings
+}
+
+// NewSettingsRepositoryWithSeed is NewSettingsRepository plus a seed source
+// used by every Update* method (see SettingsRepository.seed).
+func NewSettingsRepositoryWithSeed(db *sql.DB, seed func() *repository.Settings) *SettingsRepository {
+	return &SettingsRepository{db: db, seed: seed}
+}
+
+// ensureSeeded inserts the full seed row if the settings row does not exist
+// yet. A failure aborts the calling update.
+func (r *SettingsRepository) ensureSeeded(ctx context.Context) error {
+	if r.seed == nil {
+		return nil
+	}
+	if _, err := r.SeedIfMissing(ctx, r.seed()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // NewSettingsRepository creates a new SQLite settings repository.
@@ -103,9 +126,50 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 	return &s, nil
 }
 
+// SeedIfMissing inserts a full settings row from s if none exists.
+func (r *SettingsRepository) SeedIfMissing(ctx context.Context, s *repository.Settings) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("settings cannot be nil")
+	}
+	query := `
+		INSERT INTO settings (
+			id, quota_limit_gb, max_file_size_bytes, default_expiration_hours,
+			max_expiration_hours, rate_limit_upload, rate_limit_download, blocked_extensions,
+			feature_postgresql, feature_s3_storage, feature_sso, feature_mfa,
+			feature_webhooks, feature_api_tokens, feature_malware_scan, feature_backups,
+			mfa_required, mfa_issuer, mfa_totp_enabled, mfa_webauthn_enabled,
+			mfa_recovery_codes_count, mfa_challenge_expiry_minutes,
+			sso_auto_provision, sso_default_role, sso_session_lifetime, sso_state_expiry_minutes,
+			updated_at
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO NOTHING
+	`
+	res, err := r.db.ExecContext(ctx, query,
+		s.QuotaLimitGB, s.MaxFileSizeBytes, s.DefaultExpirationHours,
+		s.MaxExpirationHours, s.RateLimitUpload, s.RateLimitDownload, strings.Join(s.BlockedExtensions, ","),
+		boolToInt(s.FeaturePostgreSQL), boolToInt(s.FeatureS3Storage), boolToInt(s.FeatureSSO), boolToInt(s.FeatureMFA),
+		boolToInt(s.FeatureWebhooks), boolToInt(s.FeatureAPITokens), boolToInt(s.FeatureMalwareScan), boolToInt(s.FeatureBackups),
+		boolToInt(s.MFARequired), s.MFAIssuer, boolToInt(s.MFATOTPEnabled), boolToInt(s.MFAWebAuthnEnabled),
+		s.MFARecoveryCodesCount, s.MFAChallengeExpiryMinutes,
+		boolToInt(s.SSOAutoProvision), s.SSODefaultRole, s.SSOSessionLifetime, s.SSOStateExpiryMinutes,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to seed settings: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to seed settings: %w", err)
+	}
+	return n > 0, nil
+}
+
 // UpdateQuota saves the quota_limit_gb setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateQuota(ctx context.Context, quotaGB int64) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if quotaGB < 0 {
 		return fmt.Errorf("quota cannot be negative")
 	}
@@ -128,6 +192,10 @@ func (r *SettingsRepository) UpdateQuota(ctx context.Context, quotaGB int64) err
 // UpdateMaxFileSize saves the max_file_size_bytes setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateMaxFileSize(ctx context.Context, sizeBytes int64) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if sizeBytes < 0 {
 		return fmt.Errorf("max file size cannot be negative")
 	}
@@ -150,6 +218,10 @@ func (r *SettingsRepository) UpdateMaxFileSize(ctx context.Context, sizeBytes in
 // UpdateDefaultExpiration saves the default_expiration_hours setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateDefaultExpiration(ctx context.Context, hours int) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if hours < 0 {
 		return fmt.Errorf("default expiration hours cannot be negative")
 	}
@@ -172,6 +244,10 @@ func (r *SettingsRepository) UpdateDefaultExpiration(ctx context.Context, hours 
 // UpdateMaxExpiration saves the max_expiration_hours setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateMaxExpiration(ctx context.Context, hours int) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if hours < 0 {
 		return fmt.Errorf("max expiration hours cannot be negative")
 	}
@@ -194,6 +270,10 @@ func (r *SettingsRepository) UpdateMaxExpiration(ctx context.Context, hours int)
 // UpdateRateLimitUpload saves the rate_limit_upload setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateRateLimitUpload(ctx context.Context, limit int) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if limit < 0 {
 		return fmt.Errorf("rate limit upload cannot be negative")
 	}
@@ -216,6 +296,10 @@ func (r *SettingsRepository) UpdateRateLimitUpload(ctx context.Context, limit in
 // UpdateRateLimitDownload saves the rate_limit_download setting to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateRateLimitDownload(ctx context.Context, limit int) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if limit < 0 {
 		return fmt.Errorf("rate limit download cannot be negative")
 	}
@@ -243,6 +327,10 @@ func (r *SettingsRepository) UpdateRateLimitDownload(ctx context.Context, limit 
 // - Each extension is limited to 20 characters
 // - Total string length is limited to 10000 characters
 func (r *SettingsRepository) UpdateBlockedExtensions(ctx context.Context, extensions []string) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	// Validate extensions
 	for _, ext := range extensions {
 		if strings.Contains(ext, ",") {
@@ -318,6 +406,10 @@ func (r *SettingsRepository) GetFeatureFlags(ctx context.Context) (*repository.F
 // UpdateFeatureFlags saves all feature flags to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateFeatureFlags(ctx context.Context, flags *repository.FeatureFlags) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if flags == nil {
 		return fmt.Errorf("feature flags cannot be nil")
 	}
@@ -408,6 +500,10 @@ func (r *SettingsRepository) GetMFAConfig(ctx context.Context) (*repository.MFAC
 // UpdateMFAConfig saves MFA configuration to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateMFAConfig(ctx context.Context, cfg *repository.MFAConfig) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if cfg == nil {
 		return fmt.Errorf("MFA config cannot be nil")
 	}
@@ -520,6 +616,10 @@ func (r *SettingsRepository) GetSSOConfig(ctx context.Context) (*repository.SSOC
 // UpdateSSOConfig saves SSO configuration to the database.
 // Uses atomic UPSERT pattern to prevent race conditions.
 func (r *SettingsRepository) UpdateSSOConfig(ctx context.Context, cfg *repository.SSOConfig) error {
+	if err := r.ensureSeeded(ctx); err != nil {
+		return err
+	}
+
 	if cfg == nil {
 		return fmt.Errorf("SSO config cannot be nil")
 	}

@@ -41,7 +41,7 @@ func UserLoginHandler(repos *repository.Repositories, cfg *config.Config) http.H
 		}
 
 		clientIP := getClientIP(r)
-		userAgent := getUserAgent(r)
+		userAgent := storeUserAgent(getUserAgent(r), cfg)
 
 		// Validate input
 		if req.Username == "" || req.Password == "" {
@@ -369,4 +369,3 @@ func UserGetCurrentHandler(repos *repository.Repositories) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 	}
 }
-

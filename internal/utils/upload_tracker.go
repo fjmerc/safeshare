@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/fjmerc/safeshare/internal/privacy"
 )
 
 // UploadTracker tracks in-progress uploads for graceful shutdown.
@@ -58,7 +60,7 @@ func (ut *UploadTracker) StartUpload(id, filename string, size int64) bool {
 
 	slog.Debug("upload started",
 		"upload_id", id,
-		"filename", filename,
+		"filename", privacy.LogFilename(filename),
 		"size", size,
 		"active_uploads", len(ut.activeUploads),
 	)
@@ -182,7 +184,7 @@ func (ut *UploadTracker) WaitForUploads(timeout time.Duration) bool {
 		for _, u := range active {
 			slog.Warn("upload tracker: abandoned upload",
 				"upload_id", u.ID,
-				"filename", u.Filename,
+				"filename", privacy.LogFilename(u.Filename),
 				"duration", time.Since(u.StartTime),
 			)
 		}

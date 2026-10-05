@@ -218,7 +218,7 @@ func MFAWebAuthnRegisterFinishHandler(repos *repository.Repositories, cfg *confi
 		}
 
 		clientIP := getClientIP(r)
-		userAgent := getUserAgent(r)
+		userAgent := storeUserAgent(getUserAgent(r), cfg)
 
 		// Check if WebAuthn is enabled
 		if cfg.MFA == nil || !cfg.MFA.Enabled || !cfg.MFA.WebAuthnEnabled {

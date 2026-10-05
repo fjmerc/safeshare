@@ -11,6 +11,7 @@ import (
 
 	"github.com/fjmerc/safeshare/internal/backup"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/webhooks"
 	"github.com/google/uuid"
@@ -23,14 +24,17 @@ type WebhookEmitter func(event *webhooks.Event)
 // StartCleanupWorker starts a background goroutine that periodically
 // deletes expired files from the database and filesystem
 // emitWebhook callback is optional - if nil, webhook events will not be emitted
-func StartCleanupWorker(ctx context.Context, repos *repository.Repositories, uploadDir string, intervalMinutes int, emitWebhook WebhookEmitter) {
+//
+// afterDeleted, if non-nil, is called after each run that deleted at least one
+// file (e.g. to checkpoint/truncate the SQLite WAL in anonymous mode).
+func StartCleanupWorker(ctx context.Context, repos *repository.Repositories, uploadDir string, intervalMinutes int, emitWebhook WebhookEmitter, afterDeleted func(deleted int)) {
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
 	slog.Info("cleanup worker started", "interval_minutes", intervalMinutes)
 
 	// Run cleanup immediately on start
-	runCleanup(repos, uploadDir, emitWebhook)
+	runCleanup(repos, uploadDir, emitWebhook, afterDeleted)
 
 	for {
 		select {
@@ -38,13 +42,13 @@ func StartCleanupWorker(ctx context.Context, repos *repository.Repositories, upl
 			slog.Info("cleanup worker shutting down")
 			return
 		case <-ticker.C:
-			runCleanup(repos, uploadDir, emitWebhook)
+			runCleanup(repos, uploadDir, emitWebhook, afterDeleted)
 		}
 	}
 }
 
 // runCleanup performs the actual cleanup operation
-func runCleanup(repos *repository.Repositories, uploadDir string, emitWebhook WebhookEmitter) {
+func runCleanup(repos *repository.Repositories, uploadDir string, emitWebhook WebhookEmitter, afterDeleted func(deleted int)) {
 	start := time.Now()
 	ctx := context.Background()
 
@@ -78,6 +82,9 @@ func runCleanup(repos *repository.Repositories, uploadDir string, emitWebhook We
 
 	if deleted > 0 {
 		slog.Info("cleanup completed", "deleted_files", deleted, "duration", duration)
+		if afterDeleted != nil {
+			afterDeleted(deleted)
+		}
 	} else {
 		slog.Debug("cleanup completed", "deleted_files", deleted, "duration", duration)
 	}
@@ -190,7 +197,7 @@ func CleanupAbandonedUploads(repos *repository.Repositories, uploadDir string, e
 
 		slog.Info("cleaned up abandoned partial upload",
 			"upload_id", upload.UploadID,
-			"filename", upload.Filename,
+			"filename", privacy.LogFilename(upload.Filename),
 			"chunks_received", upload.ChunksReceived,
 			"total_chunks", upload.TotalChunks,
 			"last_activity", upload.LastActivity,
@@ -489,8 +496,8 @@ func runPartialUploadCleanup(repos *repository.Repositories, uploadDir string, e
 
 		slog.Debug("cleaned up old completed upload",
 			"upload_id", upload.UploadID,
-			"filename", upload.Filename,
-			"claim_code", upload.ClaimCode,
+			"filename", privacy.LogFilename(upload.Filename),
+			"claim_code", logClaimCodePtr(upload.ClaimCode),
 		)
 
 		completedCount++
@@ -529,4 +536,17 @@ func runPartialUploadCleanup(repos *repository.Repositories, uploadDir string, e
 			"duration", duration,
 		)
 	}
+}
+
+// logClaimCodePtr returns a claim code for log output: never the code itself
+// in anonymous mode, and only a masked form otherwise.
+func logClaimCodePtr(code *string) string {
+	if code == nil || privacy.AnonymousMode() {
+		return "[redacted]"
+	}
+	c := *code
+	if len(c) <= 5 {
+		return "***"
+	}
+	return c[:3] + "..." + c[len(c)-2:]
 }

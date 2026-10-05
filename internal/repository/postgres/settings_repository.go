@@ -98,6 +98,39 @@ func (r *SettingsRepository) Get(ctx context.Context) (*repository.Settings, err
 	return &s, nil
 }
 
+// SeedIfMissing inserts a full settings row from s if none exists.
+func (r *SettingsRepository) SeedIfMissing(ctx context.Context, s *repository.Settings) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("settings cannot be nil")
+	}
+	query := `
+		INSERT INTO settings (
+			id, quota_limit_gb, max_file_size_bytes, default_expiration_hours,
+			max_expiration_hours, rate_limit_upload, rate_limit_download, blocked_extensions,
+			feature_postgresql, feature_s3_storage, feature_sso, feature_mfa,
+			feature_webhooks, feature_api_tokens, feature_malware_scan, feature_backups,
+			mfa_required, mfa_issuer, mfa_totp_enabled, mfa_webauthn_enabled,
+			mfa_recovery_codes_count, mfa_challenge_expiry_minutes,
+			sso_auto_provision, sso_default_role, sso_session_lifetime, sso_state_expiry_minutes,
+			updated_at
+		) VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, CURRENT_TIMESTAMP)
+		ON CONFLICT (id) DO NOTHING
+	`
+	tag, err := r.pool.Exec(ctx, query,
+		s.QuotaLimitGB, s.MaxFileSizeBytes, s.DefaultExpirationHours,
+		s.MaxExpirationHours, s.RateLimitUpload, s.RateLimitDownload, strings.Join(s.BlockedExtensions, ","),
+		s.FeaturePostgreSQL, s.FeatureS3Storage, s.FeatureSSO, s.FeatureMFA,
+		s.FeatureWebhooks, s.FeatureAPITokens, s.FeatureMalwareScan, s.FeatureBackups,
+		s.MFARequired, s.MFAIssuer, s.MFATOTPEnabled, s.MFAWebAuthnEnabled,
+		s.MFARecoveryCodesCount, s.MFAChallengeExpiryMinutes,
+		s.SSOAutoProvision, s.SSODefaultRole, s.SSOSessionLifetime, s.SSOStateExpiryMinutes,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to seed settings: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // UpdateQuota saves the quota_limit_gb setting to the database.
 func (r *SettingsRepository) UpdateQuota(ctx context.Context, quotaGB int64) error {
 	if quotaGB < 0 {

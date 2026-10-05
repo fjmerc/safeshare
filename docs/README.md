@@ -24,7 +24,7 @@ This directory contains comprehensive documentation for SafeShare.
 | Document | Description | Audience |
 |----------|-------------|----------|
 | [REVERSE_PROXY.md](REVERSE_PROXY.md) | Traefik, nginx, Caddy, Apache, Cloudflare config | DevOps, sysadmins |
-| [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) | High availability with PostgreSQL and S3 | DevOps, architects |
+| [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) | Planned high availability design with PostgreSQL and S3 (not yet supported) | DevOps, architects |
 | [BACKUP_RESTORE.md](BACKUP_RESTORE.md) | Backup procedures and disaster recovery | Admins, DevOps |
 | [PROMETHEUS.md](PROMETHEUS.md) | Monitoring, metrics, and alerting | SRE, DevOps |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and solutions | All users |

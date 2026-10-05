@@ -28,7 +28,7 @@ func FeatureFlagRequired(checker FeatureFlagChecker, featureName string) func(ht
 				}
 				slog.Warn("feature flag check failed",
 					"feature", featureName,
-					"path", path,
+					"path", logPath(path),
 					"method", r.Method,
 				)
 
@@ -74,4 +74,25 @@ func SSOEnabled(cfg *config.Config) func(http.Handler) http.Handler {
 // MalwareScanEnabled creates a middleware that requires malware scan feature to be enabled.
 func MalwareScanEnabled(cfg *config.Config) func(http.Handler) http.Handler {
 	return FeatureFlagRequired(cfg.Features.IsMalwareScanEnabled, "malware_scan")
+}
+
+// DisabledInAnonymousMode rejects every request with 409
+// DISABLED_IN_ANONYMOUS_MODE while anonymous mode is on. Use it for admin
+// actions that would make outbound connections (webhook create/update/test,
+// SSO provider test).
+func DisabledInAnonymousMode(cfg *config.Config, feature string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.IsAnonymousMode() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": "disabled in anonymous mode: " + feature + " makes outbound connections and cannot be used while ANONYMOUS_MODE is on",
+					"code":  "DISABLED_IN_ANONYMOUS_MODE",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

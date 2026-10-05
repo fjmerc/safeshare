@@ -85,7 +85,9 @@ chmod 600 /secure/path/safeshare-encryption-key.txt
 
 ### 1. Fix Critical Security Issues
 
-**Required changes before production deployment:**
+> **Note**: Both fixes below are already part of current releases: `HTTPS_ENABLED=true` turns on the `Secure` cookie flag, and user login is rate limited per IP (5 failed attempts per 15 minutes). On a current image you only need to set `HTTPS_ENABLED=true`; the code listings are kept for reference when building from a very old checkout.
+
+**Required changes before production deployment (older versions only):**
 
 #### A. Enable Secure Cookie Flag
 
@@ -212,7 +214,7 @@ mux.Handle("/api/auth/login", rateLimitedUserLogin)
 
 **Rebuild after making these changes:**
 ```bash
-docker build -t safeshare:v1.0.0 .
+docker build -t safeshare:<version> .
 ```
 
 ---
@@ -380,6 +382,61 @@ DEFAULT_EXPIRATION_HOURS=24           # Default file expiration
 CLEANUP_INTERVAL_MINUTES=60           # Cleanup worker interval
 ```
 
+### Additional Environment Variables
+
+Defaults are read from the configuration code (`internal/config`, `internal/utils/assembly_lease.go`).
+
+**Data, audit log and backups**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATA_DIR` | `./data` | Data directory; backups go to `<DATA_DIR>/backups` unless `BACKUP_DIR` is set. The Docker image runs from `/app`, so this resolves to `/app/data` |
+| `BACKUP_DIR` | `<DATA_DIR>/backups` | Where backups are written (and where scheduled-backup retention deletes from; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md)) |
+| `AUTO_BACKUP_ENABLED` | `false` | Enable scheduled backups |
+| `AUTO_BACKUP_SCHEDULE` | `0 2 * * *` | Cron expression |
+| `AUTO_BACKUP_MODE` | `full` | `full`, `database` or `config` |
+| `AUTO_BACKUP_RETENTION_DAYS` | `30` | Days to keep backups; `0` = forever. **Deletes every `backup-*` folder in `BACKUP_DIR` older than this, including manual backups** |
+| `AUDIT_LOG` | `auto` | Tamper-evident audit log: `auto` (on, except in anonymous mode), `true`, `false`. Other values stop startup |
+| `AUDIT_LOG_KEY` | generated `audit.key` | 64 hex characters (32 bytes) used to sign the audit log. If unset, a key is generated into `audit.key` next to the database on first start. Instances sharing a database must share it |
+| `ANONYMOUS_MODE` | `false` | Ghost mode: keeps IPs, user agents and upload hashes out of storage and identifying data out of logs; blocks webhooks and SSO. See [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md#ghost-mode) |
+| `REQUIRE_CLIENT_ENCRYPTION` | value of `ANONYMOUS_MODE` | Refuse uploads that weren't encrypted in the browser (`400 CLIENT_ENCRYPTION_REQUIRED`). See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) |
+| `STRIP_METADATA` | value of `ANONYMOUS_MODE` | Strip identifying metadata from uploads (in the browser before encryption for JPEG and PNG; on the server for unencrypted uploads) |
+| `METRICS_IN_ANONYMOUS_MODE` | `false` | Keep serving `/metrics` in anonymous mode |
+
+**Chunked upload assembly**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASSEMBLY_WORKERS_MAX` | `10` | Maximum concurrent chunked-upload assembly workers; requests beyond this get `503` |
+| `ASSEMBLY_LEASE_TTL` | `2m` | How long an assembly worker's lease lasts before it must renew or be taken over (Go duration, 30s to 30m; out-of-range values fall back to the default) |
+| `ASSEMBLY_MAX_ATTEMPTS` | `5` | Attempts per upload before it fails with `ASSEMBLY_RETRIES_EXHAUSTED` (1 to 20) |
+| `ASSEMBLY_SHUTDOWN_GRACE` | `30s` | How long shutdown waits for in-progress assemblies (Go duration, 5s to 5m) |
+
+**Downloads of encrypted files**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOWNLOAD_DECRYPT_MEMORY_BUDGET` | `268435456` (256 MiB) | Process-wide ceiling on decrypt memory across concurrent encrypted downloads; must be positive. A download that can't get a share in a few seconds gets `503` with `Retry-After` |
+| `LEGACY_DECRYPT_MAX_BYTES` | `134217728` (128 MiB) | Largest legacy (pre-SFSE) encrypted file that will be decrypted into memory; larger ones fail with `500`. Run `migrate-encryption` to upgrade them. Must be positive |
+| `MAX_ENCRYPTED_DOWNLOADS_PER_IP` | `8` | Concurrent encrypted downloads per client IP across all files; `0` disables. Raise or disable behind a proxy where all clients share one IP (for example Tor) |
+| `MAX_INFLIGHT_PER_IP_PER_FILE` | `3` | Concurrent download reservations per (file, IP); `0` disables |
+
+**API tokens, MFA, SSO, webhooks**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_API_TOKENS_PER_USER` | `10` | Maximum API tokens per user (1 to 1000) |
+| `MAX_API_TOKEN_EXPIRY_DAYS` | `365` | Maximum API token lifetime in days (1 to 3650) |
+| `MFA_ENABLED` | `false` | Enable MFA |
+| `MFA_REQUIRED` | `false` | Not yet enforced: only logs a message for users without MFA (see [MFA_SETUP.md](MFA_SETUP.md)) |
+| `MFA_ISSUER` | `SafeShare` | Issuer name in authenticator apps (1 to 64 characters) |
+| `MFA_TOTP_ENABLED` | `true` | Allow authenticator-app (TOTP) codes |
+| `MFA_WEBAUTHN_ENABLED` | `true` | Allow security keys (WebAuthn). At least one of the two methods must be enabled when MFA is on |
+| `MFA_RECOVERY_CODES_COUNT` | `10` | Recovery codes generated per user (5 to 20) |
+| `MFA_CHALLENGE_EXPIRY_MINUTES` | `5` | How long a login MFA challenge stays valid (1 to 30) |
+| `SSO_STATE_EXPIRY_MINUTES` | `10` | How long an SSO login state is valid (5 to 60) |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | `false` | Allow webhook deliveries to private/loopback addresses (homelab/dev opt-out of the default block) |
+
 ### Dynamic Settings (v1.1.0+)
 
 **Important:** Starting with v1.1.0, most admin settings persist to the database and can be changed dynamically via the admin dashboard **without requiring a restart**.
@@ -482,6 +539,12 @@ docker run -d \
   -v /var/safeshare/uploads:/app/uploads \
   safeshare:latest
 ```
+
+### Storage Requirements
+
+- **SQLite and local filesystem only**: the server runs against a SQLite database and a local uploads directory. PostgreSQL and S3 are not yet supported (the server refuses to start with `DATABASE_TYPE=postgresql` or `STORAGE_TYPE=s3`), and running multiple instances against one database is not supported.
+- **Uploads volume must be a local filesystem with free space for uploads in flight**: uploads are streamed to a temporary file under `/app/uploads/.spool/` (v1.9.0+) and chunks are stored under `/app/uploads/.partial/` before the final file is written, so budget free space beyond the stored files. Avoid network filesystems for the uploads volume (chunk handling uses hard links and fails over to a less strict path on filesystems without them, with a warning in the logs).
+- The temporary spool files are unlinked as soon as they are created, so nothing is left behind after a crash.
 
 ### Database Maintenance
 
@@ -800,6 +863,9 @@ scrape_configs:
 1. **Database** (`/app/data/safeshare.db`) - Contains all metadata
 2. **Uploads** (`/app/uploads/`) - Contains actual files
 3. **Encryption Key** - CRITICAL: Lost key = lost encrypted files
+4. **Audit log key** (`/app/data/audit.key`, or the `AUDIT_LOG_KEY` value) - The audit log's signing key is deliberately not stored in the database. Back it up with the database; without it, audit log integrity verification reports the older entries as signed with a different key after a restore onto a new server. The `/data` volume backup in the script below already includes `audit.key`; if you set `AUDIT_LOG_KEY` instead, keep that secret with your encryption key.
+
+SafeShare's built-in backups (Admin Dashboard, `safeshare-backup` CLI, scheduled backups) cover the database and uploads but not `audit.key`; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md). If you enable scheduled backups with retention, note that retention deletes every `backup-*` folder in `BACKUP_DIR` older than the retention period, manual backups included.
 
 ### Backup Script
 
@@ -995,8 +1061,8 @@ openssl s_client -connect share.yourdomain.com:443 | openssl x509 -noout -dates
 # 1. Backup current state
 ./backup-safeshare.sh
 
-# 2. Pull new version
-docker pull safeshare:v1.1.0
+# 2. Pull new version (read the CHANGELOG and UPGRADING.md first)
+docker pull safeshare:<new-version>
 
 # 3. Stop current container
 docker stop safeshare
@@ -1008,7 +1074,7 @@ docker rm safeshare
 docker run -d \
   --name safeshare \
   # ... same configuration ...
-  safeshare:v1.1.0
+  safeshare:<new-version>
 
 # 6. Verify health
 curl https://share.yourdomain.com/health
@@ -1019,7 +1085,9 @@ docker logs safeshare | tail -50
 # 8. Rollback if needed
 # docker stop safeshare
 # docker rm safeshare
-# docker run ... safeshare:v1.0.0
+# docker run ... safeshare:<previous-version>
+# (database migrations only move forward: restore the pre-upgrade backup of
+#  /app/data if the new version changed the schema)
 ```
 
 ---

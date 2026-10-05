@@ -2,7 +2,7 @@
 // Enables PWA functionality: cache-first static assets, network-first pages
 // with an offline fallback, and the Web Share Target handler
 
-const CACHE_VERSION = 'safeshare-v80';
+const CACHE_VERSION = 'safeshare-v82';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 // Web Share Target cache - unversioned so page JS can always find it
@@ -21,6 +21,7 @@ const STATIC_ASSETS = [
   '/assets/chunked-uploader.js',
   '/assets/qrcode.min.js',
   '/assets/crypto.js',
+  '/assets/metadata-strip.js',
   '/assets/theme-init.js',
   '/assets/error-theme-toggle.js',
   '/assets/login.js',

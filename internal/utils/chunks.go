@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
+
+	"github.com/fjmerc/safeshare/internal/privacy"
 )
 
 // ErrChunkMissing is returned (wrapped) by chunkSequenceReader.Read when a
@@ -378,7 +380,7 @@ func AssembleChunks(uploadDir, uploadID string, totalChunks int, outputPath stri
 		"total_bytes", totalBytesWritten,
 		"duration_ms", durationMs,
 		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
-		"sha256_hash", sha256Hash[:16]+"...", // Log first 16 chars for verification
+		"sha256_hash", privacy.LogHash(sha256Hash[:16]+"..."), // Log first 16 chars for verification
 	)
 
 	return totalBytesWritten, sha256Hash, nil
@@ -550,7 +552,7 @@ func AssembleChunksEncrypted(uploadDir, uploadID string, totalChunks int, totalS
 		"plaintext_bytes", counted.n,
 		"duration_ms", duration.Milliseconds(),
 		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
-		"sha256_hash", sha256Hash[:16]+"...",
+		"sha256_hash", privacy.LogHash(sha256Hash[:16]+"..."),
 	)
 
 	return counted.n, sha256Hash, nil

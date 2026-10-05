@@ -493,6 +493,10 @@ func TestShouldRetryError(t *testing.T) {
 		wantRetry      bool
 		wantRetryAfter int
 	}{
+		// Server policy rejections (anonymous mode) are never retryable
+		{name: "CLIENT_ENCRYPTION_REQUIRED", errorCode: "CLIENT_ENCRYPTION_REQUIRED", wantRetry: false},
+		{name: "METADATA_STRIP_FAILED", errorCode: "METADATA_STRIP_FAILED", wantRetry: false},
+		{name: "DISABLED_IN_ANONYMOUS_MODE", errorCode: "DISABLED_IN_ANONYMOUS_MODE", wantRetry: false},
 		// Retryable errors
 		{
 			name:           "INTERNAL_ERROR",

@@ -1153,3 +1153,52 @@ func clearEnvVars(t *testing.T) {
 		os.Unsetenv(v)
 	}
 }
+
+func TestLoad_RequireClientEncryption(t *testing.T) {
+	tests := []struct {
+		name string
+		anon string
+		req  string
+		want bool
+	}{
+		{"default off", "", "", false},
+		{"anonymous defaults on", "true", "", true},
+		{"anonymous explicit off", "true", "false", false},
+		{"normal explicit on", "false", "true", true},
+		{"normal explicit on via 1", "", "1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ANONYMOUS_MODE", tt.anon)
+			t.Setenv("REQUIRE_CLIENT_ENCRYPTION", tt.req)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.IsClientEncryptionRequired(); got != tt.want {
+				t.Errorf("IsClientEncryptionRequired() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_MetricsInAnonymousModeAndVersionDefaults(t *testing.T) {
+	t.Setenv("METRICS_IN_ANONYMOUS_MODE", "")
+	t.Setenv("APP_VERSION", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsInAnonymousMode {
+		t.Error("MetricsInAnonymousMode should default to false")
+	}
+	if cfg.Version != "" {
+		t.Errorf("Version = %q, want empty (main.go fills in the release version)", cfg.Version)
+	}
+	t.Setenv("METRICS_IN_ANONYMOUS_MODE", "true")
+	t.Setenv("APP_VERSION", "9.9.9")
+	cfg, _ = Load()
+	if !cfg.MetricsInAnonymousMode || cfg.Version != "9.9.9" {
+		t.Errorf("overrides not honored: %v %q", cfg.MetricsInAnonymousMode, cfg.Version)
+	}
+}

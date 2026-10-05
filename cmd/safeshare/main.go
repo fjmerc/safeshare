@@ -22,6 +22,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/metrics"
 	"github.com/fjmerc/safeshare/internal/middleware"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository/sqlite"
 	"github.com/fjmerc/safeshare/internal/static"
 	"github.com/fjmerc/safeshare/internal/storage"
@@ -54,10 +55,16 @@ func run() error {
 	if err := requireWiredBackends(cfg); err != nil {
 		return err
 	}
+	// APP_VERSION unset: report the real release version (config cannot
+	// import handlers, so the fallback is applied here).
+	if cfg.Version == "" {
+		cfg.Version = handlers.Version
+	}
 
 	// Apply proxy trust settings process-wide so helpers without config
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
 	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
+	privacy.SetAnonymousMode(cfg.IsAnonymousMode())
 
 	// T43: apply the IPv6 rate-limit grouping width process-wide so every
 	// per-IP limiter/concurrency cap (upload/download rate limits, login
@@ -73,7 +80,9 @@ func run() error {
 	)
 
 	// Initialize database
-	db, err := database.Initialize(cfg.DBPath)
+	// Anonymous mode: overwrite deleted rows instead of leaving them
+	// recoverable in free pages (PRAGMA secure_delete on every connection).
+	db, err := database.InitializeWithOptions(cfg.DBPath, database.Options{SecureDelete: cfg.IsAnonymousMode()})
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
@@ -122,6 +131,10 @@ func run() error {
 		}
 		slog.Info("admin credentials initialized", "username", cfg.AdminUsername)
 	}
+
+	// Anonymous mode must never run egress features, even if the environment
+	// enables them (in-memory here; the database copy is corrected below).
+	enforceAnonymousModeEgress(context.Background(), cfg, nil)
 
 	// Load all settings from database (overrides environment variables if set)
 	if dbSettings, err := repos.Settings.Get(context.Background()); err != nil {
@@ -201,6 +214,14 @@ func run() error {
 		)
 	}
 
+	// Database flags may have enabled egress features in anonymous mode.
+	enforceAnonymousModeEgress(context.Background(), cfg, repos.Settings)
+
+	if cfg.IsClientEncryptionRequired() {
+		slog.Info("client-side encryption is required for uploads (REQUIRE_CLIENT_ENCRYPTION)")
+		clientEncryptionScanConflict(cfg)
+	}
+
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 		return fmt.Errorf("failed to create upload directory: %w", err)
@@ -276,23 +297,32 @@ func run() error {
 		}
 	}
 
-	// Initialize webhook dispatcher
-	webhookMetrics := webhooks.NewPrometheusMetrics()
-	webhookDB := database.NewWebhookDBAdapter(db)
-	webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
-	// SH-1.1: SSRF guard on webhook delivery. Off by default; operators that
-	// legitimately webhook against localhost (homelab / dev) opt in via
-	// WEBHOOK_ALLOW_PRIVATE_TARGETS (mapped onto cfg.AllowPrivateWebhookTargets).
-	webhooks.SetAllowPrivateNetworks(cfg.AllowPrivateWebhookTargets)
-	webhookDispatcher.Start()
-	defer webhookDispatcher.Shutdown()
-	slog.Info("webhook dispatcher started",
-		"workers", 5,
-		"buffer_size", 1000,
-		"allow_private_targets", cfg.AllowPrivateWebhookTargets)
+	// Initialize webhook dispatcher. Anonymous mode never runs one: webhooks
+	// connect to third-party URLs. Outside anonymous mode the emit gate also
+	// re-checks the Webhooks feature flag on every event.
+	handlers.SetWebhookEmitGate(func() bool {
+		return !cfg.IsAnonymousMode() && cfg.Features.IsWebhooksEnabled()
+	})
+	if cfg.IsAnonymousMode() {
+		slog.Info("webhook dispatcher not started (anonymous mode)")
+	} else {
+		webhookMetrics := webhooks.NewPrometheusMetrics()
+		webhookDB := database.NewWebhookDBAdapter(db)
+		webhookDispatcher := webhooks.NewDispatcher(webhookDB, 5, 1000, webhookMetrics)
+		// SH-1.1: SSRF guard on webhook delivery. Off by default; operators that
+		// legitimately webhook against localhost (homelab / dev) opt in via
+		// WEBHOOK_ALLOW_PRIVATE_TARGETS (mapped onto cfg.AllowPrivateWebhookTargets).
+		webhooks.SetAllowPrivateNetworks(cfg.AllowPrivateWebhookTargets)
+		webhookDispatcher.Start()
+		defer webhookDispatcher.Shutdown()
+		slog.Info("webhook dispatcher started",
+			"workers", 5,
+			"buffer_size", 1000,
+			"allow_private_targets", cfg.AllowPrivateWebhookTargets)
 
-	// Make webhook dispatcher available to handlers
-	handlers.SetWebhookDispatcher(webhookDispatcher)
+		// Make webhook dispatcher available to handlers
+		handlers.SetWebhookDispatcher(webhookDispatcher)
+	}
 
 	// Initialize WebAuthn service if MFA + WebAuthn is enabled
 	if cfg.MFA != nil && cfg.MFA.Enabled && cfg.MFA.WebAuthnEnabled {
@@ -408,7 +438,13 @@ func run() error {
 
 	// Prometheus metrics endpoint (no auth required for Prometheus scraper)
 	// Note: Metrics handler still uses *sql.DB - use repos.DB for backward compatibility
-	mux.Handle("/metrics", handlers.MetricsHandler(repos.DB, cfg))
+	// Anonymous mode: not mounted unless METRICS_IN_ANONYMOUS_MODE=true, since
+	// it is unauthenticated and exposes usage statistics.
+	if metricsEndpointEnabled(cfg) {
+		mux.Handle("/metrics", handlers.MetricsHandler(repos.DB, cfg))
+	} else {
+		slog.Info("/metrics endpoint not mounted in anonymous mode (set METRICS_IN_ANONYMOUS_MODE=true to enable)")
+	}
 
 	// Public configuration endpoint (no auth required)
 	mux.HandleFunc("/api/config", handlers.PublicConfigHandler(cfg))
@@ -858,7 +894,13 @@ func run() error {
 
 		// Webhook management routes
 		// Note: Webhook handlers still use *sql.DB - use repos.DB for backward compatibility
-		mux.HandleFunc("/admin/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		// Every webhook route requires the Webhooks feature flag; create, update
+		// and test are additionally refused (409) in anonymous mode.
+		webhooksOn := middleware.WebhooksEnabled(cfg)
+		noWebhooksInAnon := middleware.DisabledInAnonymousMode(cfg, "webhooks")
+		// 409 in anonymous mode takes precedence over the 403 flag check.
+		webhooksOnNoAnon := func(h http.Handler) http.Handler { return noWebhooksInAnon(webhooksOn(h)) }
+		mux.Handle("/admin/api/webhooks", webhooksOnNoAnon(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "GET" {
 				adminAuth(http.HandlerFunc(handlers.ListWebhookConfigsHandler(repos.DB))).ServeHTTP(w, r)
 			} else if r.Method == "POST" {
@@ -866,35 +908,35 @@ func run() error {
 			} else {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			}
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhooks/update", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhooks/update", webhooksOnNoAnon(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.UpdateWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhooks/delete", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhooks/delete", webhooksOn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhooks/test", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhooks/test", webhooksOnNoAnon(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.TestWebhookConfigHandler(repos.DB)))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhook-deliveries", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhook-deliveries", webhooksOn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(handlers.ListWebhookDeliveriesHandler(repos.DB))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhook-deliveries/detail", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhook-deliveries/detail", webhooksOn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(http.HandlerFunc(handlers.GetWebhookDeliveryHandler(repos.DB))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhook-deliveries/clear", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhook-deliveries/clear", webhooksOn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.ClearWebhookDeliveriesHandler(repos.DB)))).ServeHTTP(w, r)
-		})
+		})))
 
-		mux.HandleFunc("/admin/api/webhook-deliveries/delete", func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/admin/api/webhook-deliveries/delete", webhooksOn(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.DeleteWebhookDeliveryHandler(repos.DB)))).ServeHTTP(w, r)
-		})
+		})))
 
 		// Tamper-evident audit log (ADR-018)
 		mux.HandleFunc("/admin/api/audit-logs", func(w http.ResponseWriter, r *http.Request) {
@@ -1115,7 +1157,7 @@ func run() error {
 	defer rateLimiter.Stop()
 
 	// Wrap with middleware (order: Recovery -> Logging -> Metrics -> Security -> RateLimit -> handlers)
-	handler := middleware.RecoveryMiddleware(
+	handler := middleware.NewRecoveryMiddleware(cfg.IsAnonymousMode())(
 		middleware.LoggingMiddleware(cfg.IsAnonymousMode())(
 			metrics.Middleware(
 				middleware.SecurityHeadersMiddleware(
@@ -1135,6 +1177,9 @@ func run() error {
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: handler,
+		// net/http's own error lines embed remote addresses; route them
+		// through slog and mask them in anonymous mode.
+		ErrorLog: newServerErrorLog(cfg.IsAnonymousMode()),
 		// Headers arrive in one go from any real client or proxy; without
 		// this, a client trickling its headers is held for the full
 		// ReadTimeout (120s by default).
@@ -1163,11 +1208,42 @@ func run() error {
 		}()
 	}
 
+	// Anonymous mode: periodically truncate the WAL so rows deleted by any path
+	// (download-limit auto-delete, user/admin delete, partial-upload cleanup,
+	// expiry) do not linger in the -wal file. Best-effort.
+	if cfg.IsAnonymousMode() {
+		workerWg.Add(1)
+		go func() {
+			defer workerWg.Done()
+			ticker := time.NewTicker(3 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := database.CheckpointTruncate(ctx, db); err != nil && ctx.Err() == nil {
+						slog.Warn("periodic WAL checkpoint failed", "error", err)
+					}
+				}
+			}
+		}()
+	}
+
 	// Start file cleanup worker
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		utils.StartCleanupWorker(ctx, repos, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent)
+		var afterDeleted func(int)
+		if cfg.IsAnonymousMode() {
+			// Flush deleted rows out of the WAL file (best-effort).
+			afterDeleted = func(int) {
+				if err := database.CheckpointTruncate(context.Background(), db); err != nil {
+					slog.Warn("WAL checkpoint after cleanup failed", "error", err)
+				}
+			}
+		}
+		utils.StartCleanupWorker(ctx, repos, cfg.UploadDir, cfg.CleanupIntervalMinutes, handlers.EmitWebhookEvent, afterDeleted)
 	}()
 
 	// Start partial upload cleanup worker (runs every 6 hours)

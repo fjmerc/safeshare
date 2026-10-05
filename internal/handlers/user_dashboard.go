@@ -205,8 +205,8 @@ func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", file.ID,
-			"claim_code", file.ClaimCode,
-			"filename", file.OriginalFilename,
+			"claim_code", redactClaimCode(file.ClaimCode),
+			"filename", logFilename(file.OriginalFilename, cfg),
 		)
 		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
 			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
@@ -313,8 +313,8 @@ func UserRenameFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", req.FileID,
-			"old_filename", req.NewFilename,
-			"new_filename", sanitizedFilename,
+			"old_filename", logFilename(req.NewFilename, cfg),
+			"new_filename", logFilename(sanitizedFilename, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -483,7 +483,7 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 		if err != nil {
 			slog.Warn("user file deletion by claim code failed",
 				"user_id", user.ID,
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"error", err,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -524,8 +524,8 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", file.ID,
-			"claim_code", file.ClaimCode,
-			"filename", file.OriginalFilename,
+			"claim_code", redactClaimCode(file.ClaimCode),
+			"filename", logFilename(file.OriginalFilename, cfg),
 		)
 		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
 			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
@@ -619,7 +619,7 @@ func UserRenameFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 		if err != nil {
 			slog.Warn("user file rename by claim code failed",
 				"user_id", user.ID,
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"error", err,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -633,8 +633,8 @@ func UserRenameFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 		slog.Info("user renamed file by claim code",
 			"user_id", user.ID,
 			"username", user.Username,
-			"claim_code", claimCode,
-			"new_filename", sanitizedFilename,
+			"claim_code", redactClaimCode(claimCode),
+			"new_filename", logFilename(sanitizedFilename, cfg),
 		)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -727,7 +727,7 @@ func UserEditExpirationByClaimCodeHandler(repos *repository.Repositories, cfg *c
 		if err != nil {
 			slog.Warn("user file expiration update by claim code failed",
 				"user_id", user.ID,
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"error", err,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -741,7 +741,7 @@ func UserEditExpirationByClaimCodeHandler(repos *repository.Repositories, cfg *c
 		slog.Info("user updated file expiration by claim code",
 			"user_id", user.ID,
 			"username", user.Username,
-			"claim_code", claimCode,
+			"claim_code", redactClaimCode(claimCode),
 			"new_expiration", newExpiration,
 		)
 
@@ -807,7 +807,7 @@ func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, c
 			}
 			slog.Error("failed to regenerate claim code",
 				"error", err,
-				"claim_code", claimCode,
+				"claim_code", redactClaimCode(claimCode),
 				"user_id", user.ID,
 			)
 			w.Header().Set("Content-Type", "application/json")
@@ -822,9 +822,9 @@ func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, c
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", result.FileID,
-			"filename", result.OriginalFilename,
-			"old_claim_code", claimCode,
-			"new_claim_code", result.NewClaimCode,
+			"filename", logFilename(result.OriginalFilename, cfg),
+			"old_claim_code", redactClaimCode(claimCode),
+			"new_claim_code", redactClaimCode(result.NewClaimCode),
 			"client_ip", logIP(clientIP, cfg),
 		)
 		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "claim_code_regenerate", Outcome: models.AuditOutcomeSuccess,
@@ -948,9 +948,9 @@ func UserRegenerateClaimCodeHandler(repos *repository.Repositories, cfg *config.
 			"user_id", user.ID,
 			"username", user.Username,
 			"file_id", req.FileID,
-			"filename", result.OriginalFilename,
-			"old_claim_code", result.OldClaimCode,
-			"new_claim_code", result.NewClaimCode,
+			"filename", logFilename(result.OriginalFilename, cfg),
+			"old_claim_code", redactClaimCode(result.OldClaimCode),
+			"new_claim_code", redactClaimCode(result.NewClaimCode),
 			"client_ip", logIP(clientIP, cfg),
 		)
 		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "claim_code_regenerate", Outcome: models.AuditOutcomeSuccess,

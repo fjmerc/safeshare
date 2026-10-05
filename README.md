@@ -5,7 +5,7 @@
 
 Self-hosted file sharing that gets out of your way. Upload a file, get a link, share it. Files auto-expire when you want them to. No accounts required.
 
-**Version**: 1.5.4
+**Version**: 1.12.0
 
 ![SafeShare Main Interface](docs/screenshots/main.png)
 *Drag-drop upload, QR codes, dark mode, and installable as a PWA*
@@ -101,7 +101,8 @@ chmod +x safeshare-linux-amd64
 - **User accounts** with invite-only registration, MFA, and SSO (optional)
 - **API with tokens** for programmatic access and integrations
 - **Webhook notifications** for file lifecycle events
-- **PostgreSQL and S3** backends for production scale
+- **Tamper-evident audit log** of logins, admin actions and file events (on by default outside anonymous mode)
+- **Scheduled backups** with retention, plus a backup CLI
 - **~26MB Docker image**, starts in under a second, runs on ~15MB RAM
 - **Installable PWA** with offline support
 
@@ -122,8 +123,8 @@ Protect users from the system                    Protect the operator from users
 |------|-----|---------------|
 | **Ghost** | Whistleblowers, journalists, activists | Tor hidden service, no IP logging, E2E encryption, metadata stripping |
 | **Standard** | Personal use, small teams | Secure defaults out of the box, minimal config |
-| **Hardened** | Enterprises, internal tools | Auth required, MFA, webhooks, full audit logging |
-| **Fortress** | Regulated industries (HIPAA, SOC2) | PostgreSQL, SSO, automated backups, compliance-ready |
+| **Hardened** | Enterprises, internal tools | Auth required, optional MFA, webhooks, tamper-evident audit log |
+| **Fortress** | Regulated industries (HIPAA, SOC2) | SSO, automated backups, audit log, malware scanning (PostgreSQL/S3 planned, not yet supported) |
 
 Each mode comes with a complete docker-compose example and configuration guide. See **[Deployment Modes](docs/DEPLOYMENT_MODES.md)** for details.
 

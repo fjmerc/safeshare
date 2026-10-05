@@ -69,6 +69,15 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			return
 		}
 
+		// Enforced client-side encryption, early gate: reject BEFORE the body is
+		// read (no multipart parsing, spooling to disk, quota checks or password
+		// hashing) unless the request declares itself client-encrypted via the
+		// header. The form field is still checked after parsing as a backstop.
+		if cfg.IsClientEncryptionRequired() && !clientEncryptedHeader(r) {
+			rejectClientEncryptionRequired(w)
+			return
+		}
+
 		// Validate and retrieve uploaded file
 		file, header, err := validateAndGetUploadedFile(w, r, cfg)
 		if err != nil {
@@ -94,6 +103,13 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 		params, err := parseUploadParameters(w, r, cfg)
 		if err != nil {
 			return // Error already sent to client
+		}
+
+		// Backstop for the early header gate above: the multipart form field
+		// must also declare client_encrypted. By this point the body has been
+		// parsed (and may be spooled), but nothing is stored yet.
+		if rejectIfClientEncryptionRequired(w, cfg, params.clientEncrypted) {
+			return
 		}
 
 		// ADR-015: when the operator has opted into rejecting uploads that
@@ -129,7 +145,7 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			if !cfg.ClamAV.AllowUnverified {
 				slog.Error("malware scan failed; rejecting upload (fail closed)",
 					"error", scanErr,
-					"filename", header.Filename,
+					"filename", logFilename(header.Filename, cfg),
 					"client_ip", logIP(getClientIP(r), cfg),
 				)
 				w.Header().Set("Retry-After", "30")
@@ -138,7 +154,7 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			}
 			slog.Warn("malware scan failed; proceeding unverified (MALWARE_SCAN_ALLOW_UNVERIFIED)",
 				"error", scanErr,
-				"filename", header.Filename,
+				"filename", logFilename(header.Filename, cfg),
 			)
 			verdict = scanVerdict{status: scanning.ScanStatusError, result: scanErr.Error()}
 		}
@@ -175,7 +191,7 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			os.Remove(result.filePath)
 			slog.Error("stored content does not match scanned content; rejecting upload",
 				"claim_code", redactClaimCode(claimCode),
-				"filename", header.Filename,
+				"filename", logFilename(header.Filename, cfg),
 			)
 			sendSmartError(w, "Upload could not be verified and was rejected", "INTEGRITY_MISMATCH", http.StatusInternalServerError)
 			return
@@ -186,16 +202,58 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 			if err := stripMetadataFromUpload(result, cfg); err != nil {
 				slog.Warn("failed to strip metadata",
 					"error", err,
-					"filename", header.Filename,
+					"filename", logFilename(header.Filename, cfg),
 					"mime_type", result.detectedMimeType,
 				)
-				// Non-fatal: continue with original file
+				if cfg.IsAnonymousMode() {
+					// Fail closed: anonymous mode must not store a file whose
+					// metadata could not be removed (includes files over the
+					// stripper's size limit, which surface as an error here).
+					os.Remove(result.filePath)
+					sendSmartError(w, metadataStripFailedMessage, "METADATA_STRIP_FAILED", http.StatusUnprocessableEntity)
+					return
+				}
+				// Non-fatal outside anonymous mode: continue with original file
 			}
 		}
 
 		// Create database record and handle response
 		createRecordAndRespond(ctx, w, r, repos, cfg, header, params, claimCode, result, quotaConfigured, verdict)
 	}
+}
+
+// rejectIfClientEncryptionRequired sends a 400 CLIENT_ENCRYPTION_REQUIRED and
+// returns true when the server requires client-side (E2E) encryption and the
+// upload does not declare itself as client-encrypted.
+//
+// Honest limits: client_encrypted is an unauthenticated, client-declared flag;
+// the server cannot see inside ciphertext and cannot verify it. This check
+// protects honest uploaders (a stale cached page, a script, or a misconfigured
+// client) from accidentally sending plaintext to a server that promised not to
+// receive it. It is not a defence against a client that lies about the flag.
+func rejectIfClientEncryptionRequired(w http.ResponseWriter, cfg *config.Config, clientEncrypted bool) bool {
+	if !cfg.IsClientEncryptionRequired() || clientEncrypted {
+		return false
+	}
+	rejectClientEncryptionRequired(w)
+	return true
+}
+
+func rejectClientEncryptionRequired(w http.ResponseWriter) {
+	sendSmartError(w,
+		"This server only accepts files encrypted in your browser",
+		"CLIENT_ENCRYPTION_REQUIRED",
+		http.StatusBadRequest,
+	)
+}
+
+// clientEncryptedHeaderName is sent by the web client on upload requests that
+// carry client-side (E2E) ciphertext, so the server can refuse plaintext
+// before reading the body. Like the form field it is a client declaration.
+const clientEncryptedHeaderName = "X-SafeShare-Client-Encrypted"
+
+func clientEncryptedHeader(r *http.Request) bool {
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get(clientEncryptedHeaderName)), "true")
 }
 
 // isUnscannable reports whether an upload's content cannot be scanned at
@@ -292,7 +350,7 @@ func recordInfectedUpload(ctx context.Context, repos *repository.Repositories, c
 	slog.Warn("malware detected in upload; rejected before storage",
 		"virus_name", verdict.result,
 		"claim_code", redactClaimCode(claimCode),
-		"filename", sanitizedFilename,
+		"filename", logFilename(sanitizedFilename, cfg),
 		"declared_size", header.Size,
 		"client_ip", logIP(clientIP, cfg),
 	)
@@ -364,9 +422,9 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	if err := utils.ValidateUploadFilename(header.Filename); err != nil {
 		clientIP := getClientIP(r)
 		slog.Warn("rejected filename with control characters",
-			"filename", header.Filename,
+			"filename", logFilename(header.Filename, cfg),
 			"error", err,
-			"client_ip", clientIP,
+			"client_ip", logIP(clientIP, cfg),
 		)
 		sendError(w, "Invalid filename", "INVALID_FILENAME", http.StatusBadRequest)
 		return nil, nil, err
@@ -385,7 +443,7 @@ func validateAndGetUploadedFile(w http.ResponseWriter, r *http.Request, cfg *con
 	if !allowed {
 		clientIP := getClientIP(r)
 		slog.Warn("blocked file extension",
-			"filename", header.Filename,
+			"filename", logFilename(header.Filename, cfg),
 			"extension", blockedExt,
 			"client_ip", logIP(clientIP, cfg),
 		)
@@ -539,7 +597,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 	}
 
 	// Detect MIME type from file content
-	detectedMimeType, fullReader, err := detectMimeTypeAndCreateReader(w, file, header)
+	detectedMimeType, fullReader, err := detectMimeTypeAndCreateReader(w, file, header, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -562,7 +620,7 @@ func processAndStoreFile(w http.ResponseWriter, file multipart.File, header *mul
 }
 
 // detectMimeTypeAndCreateReader detects MIME type and creates a reader for the full file
-func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, header *multipart.FileHeader) (string, io.Reader, error) {
+func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, header *multipart.FileHeader, cfg *config.Config) (string, io.Reader, error) {
 	// Read first 512 bytes for MIME detection
 	mimeBuffer := make([]byte, 512)
 	n, err := io.ReadFull(file, mimeBuffer)
@@ -577,7 +635,7 @@ func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, h
 	mtype := mimetype.Detect(mimeBuffer)
 	detectedMimeType := mtype.String()
 	slog.Debug("MIME type detected",
-		"filename", header.Filename,
+		"filename", logFilename(header.Filename, cfg),
 		"detected", detectedMimeType,
 		"user_provided", header.Header.Get("Content-Type"),
 		"bytes_analyzed", n,
@@ -633,7 +691,7 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 		written = header.Size
 		slog.Debug("file encrypted with SFSE2 streaming encryption",
 			"original_size", header.Size,
-			"filename", header.Filename,
+			"filename", logFilename(header.Filename, cfg),
 		)
 	} else {
 		written, err = io.Copy(tempFile, hashedReader)
@@ -699,7 +757,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		UploaderIP:       storeIP(clientIP, cfg),
 		PasswordHash:     params.passwordHash,
 		UserID:           userID,
-		SHA256Hash:       result.sha256Hash,
+		SHA256Hash:       storeSHA256(result.sha256Hash, cfg),
 		ClientEncrypted:  params.clientEncrypted,
 		EncFileID:        result.encFileID,
 	}
@@ -797,7 +855,7 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 
 	slog.Info("file uploaded",
 		"claim_code", redactClaimCode(claimCode),
-		"filename", header.Filename,
+		"filename", logFilename(header.Filename, cfg),
 		"file_extension", utils.GetFileExtension(header.Filename),
 		"size", result.written,
 		"expires_at", fileRecord.ExpiresAt,
@@ -805,7 +863,7 @@ func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		"password_protected", passwordHash != "",
 		"scan_status", fileRecord.ScanStatus,
 		"client_ip", logIP(clientIP, cfg),
-		"user_agent", getUserAgent(r),
+		"user_agent", logUserAgent(getUserAgent(r), cfg),
 	)
 }
 

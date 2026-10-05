@@ -10,27 +10,47 @@ Deploy SafeShare as a Tor hidden service (.onion address) for maximum anonymity.
 
 ## Quick Start with Docker Compose
 
-The simplest deployment uses SafeShare + a Tor sidecar container. The Tor container creates and manages the hidden service automatically.
+The simplest deployment uses SafeShare + a Tor sidecar container. The Tor container creates and manages the hidden service automatically. SafeShare sits on an `internal` network with no published port and no route to the internet; only the Tor container can reach it. This is the same configuration as Ghost mode in [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md#ghost-mode).
 
 ```yaml
 # docker-compose.tor.yml
 services:
   safeshare:
-    image: safeshare:latest
+    image: fjmerc/safeshare:latest
     environment:
-      - ANONYMOUS_MODE=true
+      # --- Anonymity ---
+      - ANONYMOUS_MODE=true            # also turns on REQUIRE_CLIENT_ENCRYPTION
       - STRIP_METADATA=true
+      - REQUIRE_AUTH_FOR_UPLOAD=false
+      # --- Encryption at rest (second layer around browser-encrypted files) ---
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # --- Network ---
       - TRUST_PROXY_HEADERS=false
       - PUBLIC_URL=http://${ONION_ADDRESS}
+      - READ_TIMEOUT=300
+      - WRITE_TIMEOUT=300
+      # --- Limits: behind Tor every visitor shares one address, so each
+      #     per-IP limit below is a ceiling for the whole service ---
+      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (chunks: 10x this)
+      - RATE_LIMIT_DOWNLOAD=500        # downloads/hour for everyone
+      - MAX_ENCRYPTED_DOWNLOADS_PER_IP=0
+      - MAX_INFLIGHT_PER_IP_PER_FILE=0
+      - QUOTA_LIMIT_GB=50
+      # --- Short-lived files ---
+      - DEFAULT_EXPIRATION_HOURS=1
+      - MAX_EXPIRATION_HOURS=24
+      - CLEANUP_INTERVAL_MINUTES=15
+      # --- Admin (still needed for management) ---
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     volumes:
       - safeshare-data:/app/data
       - safeshare-uploads:/app/uploads
-    # IMPORTANT: No port exposure — only accessible via Tor
+    # No published ports, and no route to the internet
     networks:
-      - tor-net
+      - onion-internal
+    logging:
+      driver: "none"
 
   tor:
     image: goldy/tor-hidden-service
@@ -40,7 +60,8 @@ services:
     volumes:
       - tor-keys:/var/lib/tor/hidden_service
     networks:
-      - tor-net
+      - onion-internal   # reaches SafeShare
+      - tor-egress       # reaches the Tor network
 
 volumes:
   safeshare-data:
@@ -48,7 +69,9 @@ volumes:
   tor-keys:
 
 networks:
-  tor-net:
+  onion-internal:
+    internal: true
+  tor-egress:
     driver: bridge
 ```
 
@@ -98,12 +121,15 @@ These environment variables are recommended for Tor deployments:
 
 | Variable | Value | Why |
 |----------|-------|-----|
-| `ANONYMOUS_MODE` | `true` | Prevents IP storage in database and logs |
-| `STRIP_METADATA` | `true` | Removes EXIF/GPS data and document author info from uploads |
+| `ANONYMOUS_MODE` | `true` | Keeps IPs and user agents out of the database and logs, filenames and claim codes out of logs, and stores no hash of uploads. Turns on secure deletion in the database, keeps the audit log off, blocks webhooks and SSO, and stops serving `/metrics` |
+| `REQUIRE_CLIENT_ENCRYPTION` | `true` (the default when `ANONYMOUS_MODE=true`) | Refuses uploads that weren't encrypted in the browser, so the server only ever stores ciphertext |
+| `STRIP_METADATA` | `true` | The browser strips JPEG and PNG metadata before encrypting. Other formats keep theirs (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#metadata-stripping-and-e2ee)) |
 | `TRUST_PROXY_HEADERS` | `false` | Tor connections are direct, not proxied |
 | `PUBLIC_URL` | `http://<onion>.onion` | Ensures correct download URLs |
-| `ENCRYPTION_KEY` | 64-char hex | Encrypts files at rest on disk |
-| `REQUIRE_AUTH_FOR_UPLOAD` | `true` (optional) | Limits uploads to registered users |
+| `ENCRYPTION_KEY` | 64-char hex | Second layer of encryption at rest, around the browser-encrypted file |
+| `REQUIRE_AUTH_FOR_UPLOAD` | `false` | Accounts create identity; requiring them works against anonymity (see [DEPLOYMENT_MODES.md](DEPLOYMENT_MODES.md#contradictory-combinations)) |
+| `RATE_LIMIT_UPLOAD` / `RATE_LIMIT_DOWNLOAD` | Sized for the whole service | Per-IP limits are shared by every Tor visitor (see below) |
+| `MAX_INFLIGHT_PER_IP_PER_FILE` | `0` (disabled), or sized to expected concurrent visitors | The default of 3 concurrent downloads of one file applies to all Tor visitors combined |
 | `MAX_ENCRYPTED_DOWNLOADS_PER_IP` | `0` (disabled), or a value sized to expected concurrent visitors | See below — the default of 8 applies per *apparent* IP, and every Tor visitor shares the same one |
 
 ### `MAX_ENCRYPTED_DOWNLOADS_PER_IP` and hidden services
@@ -116,6 +142,10 @@ This is the same reason `TRUST_PROXY_HEADERS=false` is recommended above (a hidd
 - **Raise `MAX_ENCRYPTED_DOWNLOADS_PER_IP`** to a value sized for your expected number of concurrent Tor visitors, if you'd still like some ceiling (both concurrency and memory share) on how much of the shared budget flows through this one apparent address.
 
 This limitation is inherent to not being able to distinguish visitors behind a single forwarding point — it applies equally to any non-Tor deployment sitting behind a proxy that doesn't forward (or isn't trusted to forward) real client IPs.
+
+### Upload and download rate limits
+
+`RATE_LIMIT_UPLOAD` (default 10/hour) and `RATE_LIMIT_DOWNLOAD` (default 50/hour) are counted per apparent client IP. Chunked uploads are allowed 10× the upload limit in chunk and completion requests, and status polling 600×. Behind Tor all of these are one budget for every visitor combined. A single 1 GB upload in 10 MB chunks uses 100 chunk requests, so with the defaults it would use the whole service's chunk budget for an hour. Set these as service-wide ceilings, for example `RATE_LIMIT_UPLOAD=100` and `RATE_LIMIT_DOWNLOAD=500`, and use `QUOTA_LIMIT_GB` to cap disk use.
 
 ### Login lockout and hidden services
 
@@ -131,14 +161,15 @@ The MFA step is the exception: wrong two-factor codes (TOTP or recovery) are lim
 
 ## Security Hardening Checklist
 
-- [ ] **Enable `ANONYMOUS_MODE=true`** — IPs never written to database or logs
-- [ ] **Enable `STRIP_METADATA=true`** — Uploaded files scrubbed of identifying metadata
+- [ ] **Enable `ANONYMOUS_MODE=true`**: no IPs, user agents or upload hashes stored; filenames and claim codes kept out of logs
+- [ ] **Leave `REQUIRE_CLIENT_ENCRYPTION` on** (the default in anonymous mode): the server only accepts browser-encrypted files
+- [ ] **Start on a fresh database**: switching an existing server to anonymous mode doesn't erase IPs, user agents, hashes or audit entries already recorded
+- [ ] **Enable `STRIP_METADATA=true`**: the browser strips JPEG and PNG metadata before encrypting. Tell sources to scrub other formats (PDF, Office, video) first, for example with mat2
 - [ ] **Set a strong `ENCRYPTION_KEY`** — 64 hex chars, generated with `openssl rand -hex 32`
-- [ ] **Do NOT expose port 8080** — SafeShare should only be reachable through Tor
+- [ ] **Do NOT expose port 8080**: SafeShare should only be reachable through Tor. Keep it on an `internal: true` network so it also has no route out
 - [ ] **Do NOT use a reverse proxy that logs IPs** — defeats the purpose of Tor
 - [ ] **Use a strong admin password** — generated, not guessable
 - [ ] **Keep Tor keys backed up** — losing `tor-keys` volume means losing your .onion address
-- [ ] **Consider client-side encryption** — for maximum protection, even a compromised server cannot read files
 - [ ] **Disable Docker logging** if you need full deniability:
   ```yaml
   services:
@@ -217,16 +248,28 @@ Note: Bind to `127.0.0.1:8080` (not `0.0.0.0:8080`) so SafeShare is only reachab
 ### Confirm no IP leakage
 
 ```bash
-# Check SafeShare logs — should show "redacted" not real IPs
-docker logs safeshare 2>&1 | grep -i "ip\|address"
+# Check SafeShare logs (if you kept logging on): client_ip and user_agent
+# should read "redacted", paths should look like /api/[redacted], and
+# filenames like [redacted]
+docker logs safeshare 2>&1 | grep -i "client_ip\|user_agent\|filename"
 
-# If ANONYMOUS_MODE is working, you'll see "redacted" instead of IPs
+# The startup log confirms the anonymous-mode settings
+docker logs safeshare 2>&1 | grep -i "anonymous\|client-side encryption\|metrics"
 ```
 
 ### Confirm metadata stripping
 
 1. Upload a JPEG with GPS data through Tor Browser
-2. Download it and check with `exiftool` — GPS/EXIF data should be removed
+2. Download it through the share link and check it with `exiftool`. The GPS and EXIF data should be gone
+3. Upload a PDF and confirm the page warns that its metadata can't be removed in the browser
+
+### Confirm uploads must be encrypted
+
+```bash
+# Through Tor (e.g. torsocks), a plain upload must be refused with 400
+torsocks curl -s -F "file=@test.txt" http://<onion>.onion/api/upload
+# {"error":"This server only accepts files encrypted in your browser","code":"CLIENT_ENCRYPTION_REQUIRED"}
+```
 
 ## Performance Considerations
 
@@ -257,9 +300,11 @@ environment:
 |--------|-----------|-------|
 | Network observer sees server IP | Yes | Tor hides the server's real IP |
 | Network observer sees user IP | Yes | Tor hides the user's real IP |
-| Server operator identifies uploaders | Yes (with `ANONYMOUS_MODE`) | No IPs stored |
-| File metadata reveals identity | Yes (with `STRIP_METADATA`) | EXIF/author data stripped |
-| Server compromise reveals file contents | Partial | Server-side encryption protects at rest; client-side encryption provides full protection |
+| Server operator identifies uploaders | Yes | Tor hides IPs from the server; `ANONYMOUS_MODE` keeps IPs and user agents out of storage and logs |
+| Server operator reads uploaded files | Yes (with `REQUIRE_CLIENT_ENCRYPTION`, default in anonymous mode) | Files are encrypted in the browser and the key never reaches the server. The server can't verify the client's claim, so it only protects uploaders who use the web page as intended |
+| Operator compelled to confirm a known document was shared | Yes (with `ANONYMOUS_MODE`) | No content hash is stored, and deleted rows are overwritten |
+| File metadata reveals identity | Partial (with `STRIP_METADATA`) | JPEG and PNG metadata stripped in the browser. Other formats keep theirs; scrub before uploading |
+| Server compromise reveals file contents | Yes for files already uploaded (with required client-side encryption) | An attacker who controls the server could serve modified JavaScript to future visitors |
 | Correlation attacks (timing) | Partial | Tor provides some protection; high-traffic services are harder to correlate |
 
 ## Troubleshooting
