@@ -135,6 +135,37 @@ header h1 {
     font-size: 1.1rem;
 }
 
+/* PWA install affordances (toggled by pwa.js) */
+.install-app-btn[hidden],
+.ios-install-hint[hidden] {
+    display: none;
+}
+
+.ios-install-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.ios-install-hint-dismiss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.ios-install-hint-dismiss:hover {
+    color: var(--text-primary);
+}
+
 .theme-toggle {
     background: var(--bg-primary);
     border: 1px solid var(--border-strong);

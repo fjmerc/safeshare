@@ -35,6 +35,17 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+- **Install SafeShare as an app on your phone.** On Android and desktop Chrome, an **Install app** link appears under the title when your browser can install it. In Safari on iPhone and iPad, a short hint explains the **Share → Add to Home Screen** step; dismiss it once and it stays gone. Installed, SafeShare opens in its own window, and long-pressing the icon offers **Upload** and **My files** shortcuts.
+- **Offline page.** Without a connection, the upload page still opens from the copy stored on your device, and other pages show a clear "You're offline" message instead of the browser's error screen.
+
+### Changed
+- **New logo.** The shield is replaced by a document with a padlock and an arrow, across the page header, browser tab icons, home-screen icons and the Android adaptive icon.
+- iPhone and iPad now use the SafeShare icon and name when you add any page (including the login and dashboard pages) to the home screen.
+
+### Fixed
+- **Signed-out users could see a stored copy of the dashboard.** SafeShare's offline support kept copies of the dashboard and login pages and showed them instead of asking the server, so after logging out the dashboard page could still open (its data stayed protected) and the login page could skip its redirect. Pages now always come from the server, and only static files are stored for offline use.
+
 ## [1.11.1] - 2026-10-04
 
 ### Changed

@@ -13,6 +13,10 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     <link rel="manifest" href="/assets/manifest.json">
     <meta name="theme-color" content="#2563eb">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="SafeShare">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
     <!-- Load theme before CSS to prevent flash -->
     <script src="/assets/theme-init.js"></script>
@@ -85,6 +89,14 @@
             </div>
             <h1>SafeShare</h1>
             <p class="subtitle">Secure temporary file sharing with automatic expiration</p>
+            <!-- Install affordances (shown by pwa.js only when the browser supports them) -->
+            <button type="button" class="btn-link-small install-app-btn" id="installAppBtn" hidden>Install app</button>
+            <p class="ios-install-hint" id="iosInstallHint" hidden>
+                <span>To install, tap <strong>Share</strong> then <strong>Add to Home Screen</strong>.</span>
+                <button type="button" class="ios-install-hint-dismiss" id="iosInstallHintDismiss" aria-label="Dismiss install hint">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </p>
         </header>
 
         <main id="main">
@@ -550,5 +562,6 @@
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
     <script src="/assets/app.js"></script>
+    <script src="/assets/pwa.js"></script>
 </body>
 </html>

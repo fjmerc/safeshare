@@ -1,45 +1,53 @@
-<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Shield base -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="337 213 560 560" width="120" height="120">
   <defs>
-    <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    <linearGradient id="doc" x1="440" y1="280" x2="790" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14a4ff"/>
+      <stop offset="0.55" stop-color="#0a5ae6"/>
+      <stop offset="1" stop-color="#0a2fb8"/>
     </linearGradient>
+    <linearGradient id="fold" x1="690" y1="280" x2="790" y2="385" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6fe0ff"/>
+      <stop offset="1" stop-color="#3fb4ff"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="360" y1="520" x2="880" y2="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#26ebff"/>
+      <stop offset="0.45" stop-color="#1690ff"/>
+      <stop offset="1" stop-color="#28ecff"/>
+    </linearGradient>
+    <!-- Swoosh body: tail behind the document's upper-left, sweeping around the bottom to the arrowhead -->
+    <path id="swoosh" d="M432 416 C372 448 340 508 356 566 C382 662 512 694 622 684 C724 674 806 630 850 562 L806 514 C762 566 692 600 602 608 C502 615 422 590 393 545 C377 516 392 482 432 460 Z"/>
+    <path id="head" d="M775 491 L874 446 Q884 442 883 452 L876 558 Q875 570 865 563 Z"/>
+    <!-- Transparent gap where the swoosh passes in front of the document -->
+    <mask id="gap" maskUnits="userSpaceOnUse" x="337" y="213" width="560" height="560">
+      <rect x="337" y="213" width="560" height="560" fill="#fff"/>
+      <g clip-path="url(#front)" fill="#000" stroke="#000" stroke-width="16" stroke-linejoin="round" stroke-linecap="round">
+        <use href="#swoosh" stroke="none"/>
+        <path d="M806 514 C762 566 692 600 602 608 C502 615 422 590 393 545" fill="none"/>
+        <use href="#head"/>
+      </g>
+    </mask>
+    <clipPath id="front">
+      <rect x="337" y="472" width="560" height="301"/>
+    </clipPath>
   </defs>
 
-  <!-- Main shield shape -->
-  <path d="M60 10 L95 25 L95 55 Q95 80 60 105 Q25 80 25 55 L25 25 Z"
-        fill="url(#shieldGradient)"
-        stroke="none"/>
+  <!-- Swoosh tail (behind the document) -->
+  <use href="#swoosh" fill="url(#arrow)"/>
 
-  <!-- Lock body -->
-  <rect x="48" y="55" width="24" height="20" rx="2"
-        fill="white"
-        opacity="0.95"/>
+  <g mask="url(#gap)">
+    <!-- Document with folded corner -->
+    <path d="M474 271 H680 L797 388 V669 A45 45 0 0 1 752 714 H474 A45 45 0 0 1 429 669 V316 A45 45 0 0 1 474 271 Z" fill="url(#doc)"/>
+    <path d="M680 271 V343 A45 45 0 0 0 725 388 H797 Z" fill="url(#fold)"/>
+    <!-- Padlock -->
+    <path d="M560 468 V440 A53.5 53.5 0 0 1 667 440 V468" fill="none" stroke="#f4f6fa" stroke-width="30"/>
+    <rect x="522" y="462" width="183" height="145" rx="26" fill="#f4f6fa"/>
+    <circle cx="612" cy="518" r="21" fill="#071233"/>
+    <path d="M603 530 H621 L627 568 Q628 573 623 573 H601 Q596 573 597 568 Z" fill="#071233"/>
+  </g>
 
-  <!-- Lock shackle -->
-  <path d="M52 55 L52 48 Q52 42 60 42 Q68 42 68 48 L68 55"
-        stroke="white"
-        stroke-width="3"
-        fill="none"
-        stroke-linecap="round"
-        opacity="0.95"/>
-
-  <!-- Keyhole -->
-  <circle cx="60" cy="62" r="2.5" fill="url(#shieldGradient)"/>
-  <rect x="58.5" y="62" width="3" height="6" fill="url(#shieldGradient)"/>
-
-  <!-- Share arrow (subtle, integrated) -->
-  <path d="M60 75 L60 82 M57 79 L60 82 L63 79"
-        stroke="white"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        opacity="0.7"/>
-
-  <!-- Share dots (representing file transfer) -->
-  <circle cx="45" cy="85" r="2" fill="white" opacity="0.5"/>
-  <circle cx="52" cy="88" r="2" fill="white" opacity="0.6"/>
-  <circle cx="68" cy="88" r="2" fill="white" opacity="0.6"/>
-  <circle cx="75" cy="85" r="2" fill="white" opacity="0.5"/>
+  <!-- Swoosh front and arrowhead -->
+  <g clip-path="url(#front)">
+    <use href="#swoosh" fill="url(#arrow)"/>
+  </g>
+  <use href="#head" fill="url(#arrow)" stroke="url(#arrow)" stroke-width="6" stroke-linejoin="round"/>
 </svg>
