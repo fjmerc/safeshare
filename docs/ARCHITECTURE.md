@@ -926,6 +926,11 @@ This gives users control over download location (no automatic download).
 ### Theme Toggle
 Dark/light mode with localStorage persistence (reduced size: 2rem, opacity: 0.7 for less intrusiveness).
 
+### Installable App and Service Worker (v1.12.0+)
+- `assets/manifest.json` makes SafeShare installable, with **Upload** and **My files** shortcuts and a share target.
+- `assets/pwa.js` registers `service-worker.js` on every page and shows the **Install app** link or the iOS **Add to Home Screen** hint.
+- The service worker caches only `/assets/*` (cache-first, versioned by `CACHE_VERSION`). Page navigations go to the network first and are never cached, so session-dependent pages (`/login`, `/dashboard`) always reflect the current session. Offline, `/` falls back to its precached copy and other pages get `assets/offline.html`. API, admin, health and metrics requests bypass it.
+
 ---
 
 ## Chunked Upload Architecture

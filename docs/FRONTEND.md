@@ -96,7 +96,10 @@ internal/static/
     │   ├── toast.js           # Toast notifications and ARIA live regions
     │   ├── login.js           # Login page logic
     │   ├── dashboard.js       # User dashboard logic
-    │   ├── manifest.json      # PWA manifest
+    │   ├── manifest.json      # PWA manifest (icons, shortcuts, share target)
+    │   ├── pwa.js             # Registers the service worker; Install app link and iOS hint
+    │   ├── offline.html       # Shown for page navigations when offline
+    │   ├── maskable-512x512.png # Android adaptive icon
     │   ├── logo.svg, favicon*, android-chrome-*, apple-touch-icon.png
     └── admin/
         ├── login.html         # Admin login page
@@ -128,7 +131,7 @@ The dashboard talks to the `/admin/api/...` endpoints documented in [API_REFEREN
 
 1. **No build tools required** - Simple deployment
 2. **Fast loading** - Minimal overhead, static assets embedded in the binary
-3. **Works offline for the app shell** - the service worker caches the page and its assets after the first visit
+3. **Installable, with an offline fallback** - the service worker stores static assets; offline, the upload page opens from its stored copy and other pages show `offline.html`
 4. **Easy to customize** - Plain HTML/CSS/JS
 5. **Security-focused** - No third-party scripts; the default Content-Security-Policy is `script-src 'self'`
 
@@ -182,7 +185,7 @@ Edit `internal/static/web/index.html` (title and tagline) and replace `assets/lo
 
 ### Service Worker and Cache Version
 
-The service worker (`service-worker.js`) serves static files cache-first. **Any change to HTML, JS or CSS under `internal/static/web/` requires bumping `CACHE_VERSION`** in `service-worker.js` (for example `safeshare-v79` to `safeshare-v80`); otherwise browsers keep serving the old cached files. New assets that should work offline must also be added to its `STATIC_ASSETS` list. The service worker never intercepts `/api/`, `/admin/`, `/health` or `/metrics`.
+The service worker (`service-worker.js`) serves files under `/assets/` cache-first. Page navigations always go to the network first and are never cached, so `/login` and `/dashboard` always see the current session; offline, `/` falls back to its precached copy and other pages to `/assets/offline.html`. `pwa.js`, loaded on every page, registers the service worker, shows a "new version" toast when one is waiting, and shows the **Install app** link (or the iOS **Add to Home Screen** hint) on the home page. **Any change to HTML, JS or CSS under `internal/static/web/` requires bumping `CACHE_VERSION`** in `service-worker.js` (for example `safeshare-v79` to `safeshare-v80`); otherwise browsers keep serving the old cached files. New assets that should work offline must also be added to its `STATIC_ASSETS` list. The service worker never intercepts `/api/`, `/admin/`, `/health` or `/metrics`.
 
 If SafeShare is behind a CDN, purge its cache for the changed assets after deploying.
 
