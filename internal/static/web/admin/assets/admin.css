@@ -695,8 +695,11 @@ button:disabled {
     padding: 0 24px;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
     box-shadow: var(--shadow-sm);
-    /* 11 tabs overflow between ~769px and ~1400px */
+    /* 11 tabs overflow between ~769px and ~1400px. overflow-y must be set
+       explicitly: with overflow-x: auto, a visible overflow-y computes to auto,
+       and any vertical overflow from the tabs shows a vertical scrollbar. */
     overflow-x: auto;
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
 }
 
@@ -709,7 +712,6 @@ button:disabled {
     color: var(--text-secondary);
     cursor: pointer;
     border-bottom: 3px solid transparent;
-    margin-bottom: -2px;
     transition: var(--transition);
     position: relative;
     white-space: nowrap;

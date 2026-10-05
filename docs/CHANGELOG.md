@@ -35,6 +35,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+- **Admin dashboard tab bar showed a vertical scrollbar.** The row of tabs had a small up-and-down scrollbar at every screen width. It's gone; the tabs still scroll sideways when they don't all fit.
+
 ## [1.13.0] - 2026-10-05
 
 ### Security
