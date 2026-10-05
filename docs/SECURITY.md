@@ -203,6 +203,10 @@ docker run -e ANONYMOUS_MODE=true ...
 - **Combines with other features**: Works alongside `STRIP_METADATA`, E2E encryption, and Tor deployment for maximum anonymity
 - **Irreversible per-upload**: IPs are never written to disk, so there is no data to recover later
 
+### What it doesn't hide on the visitor's device
+
+Anonymous mode controls what the server keeps, not what the visitor's browser keeps. Like any installable web app, SafeShare registers a service worker and stores its own scripts, styles and icons in the browser so it can be installed and open offline. Nothing in that storage identifies the visitor, and none of it is sent to the server, but it does show that the browser has visited the site. Clearing the normal browser cache doesn't remove it; **Clear site data** (or the browser's per-site storage settings) does. Tor Browser turns service workers off by default, so visitors using it over a hidden service don't get this trace.
+
 ---
 
 ## 📜 Audit Log
