@@ -353,6 +353,10 @@ func shouldRetryError(code string) (bool, int) {
 		"SCAN_FAILED":         true, // ADR-015: scan errored and could not be verified - not client-retryable
 		"UNSCANNABLE_UPLOAD":  true, // ADR-015: content can never be scanned as submitted
 		"FILE_QUARANTINED":    true, // ADR-015: confirmed infected - retry won't help
+
+		"CLIENT_ENCRYPTION_REQUIRED": true, // server policy: only browser-encrypted uploads
+		"METADATA_STRIP_FAILED":      true, // anonymous mode: this file can't be stripped
+		"DISABLED_IN_ANONYMOUS_MODE": true, // server policy
 	}
 
 	// Check if explicitly non-retryable
