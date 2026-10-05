@@ -1377,6 +1377,7 @@ Notable security improvements:
 
 | Version | Fix | Severity |
 |---------|-----|----------|
+| v1.13.0 | Anonymous (Ghost) mode did not keep several documented promises: the operator could read files not encrypted in the browser, metadata and a content hash were kept, user agents and filenames were stored or logged, and webhooks, SSO and metrics could still be enabled | Medium |
 | v1.12.0 | Offline support kept copies of the dashboard and login pages, so after logout the dashboard page could still open from the stored copy (its data stayed protected) and the login page could skip its redirect | Low |
 | v1.11.1 | The upload page kept claim codes in the browser for 7 days and showed them in a pop-up to whoever used the browser next, even after logout | Low |
 | v1.11.0 | No tamper-evident record of security events (audit log added, ADR-018) | Medium |

@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-05
+
 ### Security
 - **Anonymous (Ghost) mode now keeps the promises its documentation makes.** An audit found that several of them weren't true.
   - **Client-side encryption is required.** The operator could read files that weren't end-to-end encrypted. `REQUIRE_CLIENT_ENCRYPTION` is new and defaults to on in anonymous mode: uploads not encrypted in the browser are refused with `400 CLIENT_ENCRYPTION_REQUIRED`, and the upload page locks the encryption option on. Browsers without Web Crypto can't upload; Tor Browser on a `.onion` address can.
