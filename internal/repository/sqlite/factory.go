@@ -51,7 +51,7 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 		Files:           NewFileRepository(db),
 		Users:           NewUserRepository(db),
 		Admin:           NewAdminRepository(db),
-		Settings:        NewSettingsRepository(db),
+		Settings:        newSettingsForConfig(cfg, db),
 		PartialUploads:  NewPartialUploadRepository(db),
 		Webhooks:        NewWebhookRepository(db),
 		APITokens:       NewAPITokenRepository(db),
@@ -68,4 +68,13 @@ func NewRepositories(cfg *config.Config, db *sql.DB) (*repository.Repositories, 
 			db.Close()
 		},
 	}, nil
+}
+
+// newSettingsForConfig wires config-based seeding into the settings repository
+// (nil cfg, as in some tests, means no seeding).
+func newSettingsForConfig(cfg *config.Config, db *sql.DB) *SettingsRepository {
+	if cfg == nil {
+		return NewSettingsRepository(db)
+	}
+	return NewSettingsRepositoryWithSeed(db, func() *repository.Settings { return SettingsFromConfig(cfg) })
 }

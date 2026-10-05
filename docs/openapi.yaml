@@ -293,11 +293,24 @@ paths:
         upload threshold (default: 100MB).
         
         Authentication is optional unless `REQUIRE_AUTH_FOR_UPLOAD` is enabled.
+
+        When the server requires client-side encryption (`client_encryption_required`
+        in `/api/config`; on by default in anonymous mode), the request must carry
+        `X-SafeShare-Client-Encrypted: true` and the `client_encrypted=true` form
+        field. Without the header it is rejected before the body is read.
       operationId: uploadFile
       security:
         - {}
         - sessionAuth: []
         - bearerAuth: []
+      parameters:
+        - name: X-SafeShare-Client-Encrypted
+          in: header
+          required: false
+          description: Set to `true` when the file was encrypted client-side. Required when the server requires client-side encryption.
+          schema:
+            type: string
+            enum: ["true"]
       requestBody:
         required: true
         content:
@@ -323,6 +336,10 @@ paths:
                   type: string
                   description: Password protection for the file
                   format: password
+                client_encrypted:
+                  type: string
+                  enum: ["true", "false"]
+                  description: "`true` when the file was encrypted in the browser (end-to-end encryption). Required when the server requires client-side encryption"
       responses:
         '201':
           description: Upload successful
@@ -331,7 +348,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/UploadResponse'
         '400':
-          description: Invalid parameters or missing file
+          description: Invalid parameters or missing file, or `CLIENT_ENCRYPTION_REQUIRED` (the server only accepts client-side encrypted uploads)
           content:
             application/json:
               schema:
@@ -362,7 +379,10 @@ paths:
             `MALWARE_DETECTED` (the file was scanned and found infected; no
             claim code is ever issued) or `UNSCANNABLE_UPLOAD` (the file
             can't be scanned — end-to-end encrypted or over the scan size
-            limit — and this server requires scannable uploads).
+            limit — and this server requires scannable uploads). In anonymous
+            mode with server-side stripping, `METADATA_STRIP_FAILED` means the
+            file's metadata couldn't be removed (unparseable, over 100 MB, or an
+            encrypted PDF), so it was not stored.
           content:
             application/json:
               schema:
@@ -2918,13 +2938,11 @@ components:
       properties:
         version:
           type: string
-          example: "2.8.4"
+          example: "1.12.0"
         max_file_size:
           type: integer
           format: int64
           description: Maximum file size in bytes
-        default_expiration_hours:
-          type: integer
         max_expiration_hours:
           type: integer
         chunked_upload_enabled:
@@ -2937,6 +2955,20 @@ components:
           format: int64
         require_auth_for_upload:
           type: boolean
+        malware_scan_enabled:
+          type: boolean
+        unscannable_uploads_rejected:
+          type: boolean
+          description: End-to-end encrypted uploads are rejected because they can't be scanned
+        anonymous_mode:
+          type: boolean
+          description: The server runs in anonymous (Ghost) mode
+        client_encryption_required:
+          type: boolean
+          description: Uploads must be encrypted client-side (REQUIRE_CLIENT_ENCRYPTION)
+        strip_metadata:
+          type: boolean
+          description: Metadata stripping is on; clients that encrypt should strip metadata before encrypting
 
     # ==================== Authentication Schemas ====================
     LoginRequest:

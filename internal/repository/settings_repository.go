@@ -2,6 +2,18 @@ package repository
 
 import "context"
 
+// Schema defaults for the MFA/SSO settings columns (mirrors migrations 017-019;
+// SQL DDL cannot import Go constants, so keep them in sync by hand). Used to
+// seed a settings row for values the environment does not configure.
+const (
+	DefaultMFAIssuer                 = "SafeShare"
+	DefaultMFARecoveryCodesCount     = 10
+	DefaultMFAChallengeExpiryMinutes = 5
+	DefaultSSORole                   = "user"
+	DefaultSSOSessionLifetime        = 480
+	DefaultSSOStateExpiryMinutes     = 10
+)
+
 // Settings represents all admin-configurable settings stored in the database.
 type Settings struct {
 	QuotaLimitGB           int64
@@ -43,6 +55,13 @@ type SettingsRepository interface {
 	// Get retrieves all settings from the database.
 	// Returns nil, nil if no settings exist (indicating to use environment variable defaults).
 	Get(ctx context.Context) (*Settings, error)
+
+	// SeedIfMissing inserts a complete settings row (id=1) from s when none
+	// exists, and does nothing when one does (ON CONFLICT DO NOTHING). It
+	// reports whether a row was inserted. Call before Get at startup so that
+	// partial updaters (UpdateQuota, UpdateFeatureFlags, ...) never create the
+	// row with schema defaults that would later override environment config.
+	SeedIfMissing(ctx context.Context, s *Settings) (bool, error)
 
 	// UpdateQuota saves the quota_limit_gb setting to the database.
 	UpdateQuota(ctx context.Context, quotaGB int64) error

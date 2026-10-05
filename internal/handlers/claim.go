@@ -205,7 +205,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				slog.Warn("deprecated password-in-query-string usage",
 					"claim_code", redactClaimCode(claimCode),
 					"client_ip", logIP(getClientIP(r), cfg),
-					"user_agent", getUserAgent(r),
+					"user_agent", logUserAgent(getUserAgent(r), cfg),
 				)
 				metrics.DownloadsTotal.WithLabelValues("password_via_query_deprecated").Inc()
 			}
@@ -216,9 +216,9 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				slog.Warn("file access denied",
 					"reason", "incorrect_password",
 					"claim_code", redactClaimCode(claimCode),
-					"filename", file.OriginalFilename,
+					"filename", logFilename(file.OriginalFilename, cfg),
 					"client_ip", logIP(getClientIP(r), cfg),
-					"user_agent", getUserAgent(r),
+					"user_agent", logUserAgent(getUserAgent(r), cfg),
 				)
 				if r.Method != http.MethodHead { // the web UI's password pre-check is a HEAD
 					audit.Record(r, cfg, audit.Event{Type: models.AuditEventSecurity, Action: "download_denied", Outcome: models.AuditOutcomeFailure,
@@ -254,7 +254,7 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 				slog.Warn("file access denied",
 					"reason", "download_limit_reached",
 					"claim_code", redactClaimCode(claimCode),
-					"filename", file.OriginalFilename,
+					"filename", logFilename(file.OriginalFilename, cfg),
 					"client_ip", logIP(getClientIP(r), cfg),
 				)
 				sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
@@ -500,10 +500,15 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"download_limit_reached": downloadLimitReached,
 			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
 			"download_url":           downloadURL,
-			"sha256_hash":            file.SHA256Hash, // SHA256 checksum for client verification
 			"client_encrypted":       file.ClientEncrypted,
 			"scan_status":            file.ScanStatus,
 			"download_available":     !gate.blocked,
+		}
+
+		// SHA256 checksum for client verification. Empty means "not recorded"
+		// (legacy rows, and all rows in anonymous mode): omit the key.
+		if file.SHA256Hash != "" {
+			response["sha256_hash"] = file.SHA256Hash
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -512,7 +517,7 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 
 		slog.Info("file info retrieved",
 			"claim_code", redactClaimCode(claimCode),
-			"filename", file.OriginalFilename,
+			"filename", logFilename(file.OriginalFilename, cfg),
 		)
 	}
 }

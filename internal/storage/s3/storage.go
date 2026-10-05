@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/storage"
 )
 
@@ -235,7 +236,7 @@ func (s *S3Storage) Store(ctx context.Context, filename string, reader io.Reader
 	slog.Debug("file stored in S3",
 		"filename", filename,
 		"size", size,
-		"hash", hash[:16]+"...",
+		"hash", privacy.LogHash(hash[:16]+"..."),
 	)
 
 	return filename, hash, nil
@@ -664,7 +665,7 @@ func (s *S3Storage) AssembleChunks(ctx context.Context, uploadID string, totalCh
 		"total_bytes", totalBytesRead,
 		"duration_ms", duration.Milliseconds(),
 		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
-		"sha256_hash", hash[:16]+"...",
+		"sha256_hash", privacy.LogHash(hash[:16]+"..."),
 	)
 
 	return hash, nil

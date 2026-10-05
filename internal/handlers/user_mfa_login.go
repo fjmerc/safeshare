@@ -290,7 +290,7 @@ func UserLoginWithMFAHandler(repos *repository.Repositories, cfg *config.Config)
 		}
 
 		clientIP := getClientIP(r)
-		userAgent := getUserAgent(r)
+		userAgent := storeUserAgent(getUserAgent(r), cfg)
 
 		// Validate input
 		if req.Username == "" || req.Password == "" {
@@ -882,7 +882,7 @@ type MFAWebAuthnLoginBeginRequest struct {
 
 // MFAWebAuthnLoginBeginResponse is returned when starting WebAuthn login MFA
 type MFAWebAuthnLoginBeginResponse struct {
-	Options         *protocol.CredentialAssertion `json:"options"`
+	Options           *protocol.CredentialAssertion `json:"options"`
 	WebAuthnChallenge string                        `json:"webauthn_challenge"` // Base64-encoded WebAuthn challenge
 }
 

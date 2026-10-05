@@ -30,9 +30,9 @@ var pdfInfoKeys = []string{
 // CreationDate, ModDate, Subject, Keywords, Title), removes any XMP metadata
 // stream attached to the document catalog, and clears the document ID array.
 //
-// Encrypted or password-protected PDFs are skipped gracefully (nil is
-// returned) because modifying their structure without the owner password would
-// corrupt the file.
+// Encrypted or password-protected PDFs are left untouched and reported with
+// ErrEncryptedDocument, because modifying their structure without the owner
+// password would corrupt the file.
 //
 // The caller (metadata.go / StripFileMetadata) is responsible for the
 // maxStrippableFileSize guard; this function does not duplicate that check.
@@ -51,18 +51,18 @@ func stripPDFMetadata(filePath string) error {
 	if err != nil {
 		// pdfcpu returns ErrWrongPassword when the document requires a password
 		// for reading (open password) or when it is encrypted but we have no key.
-		// In both cases we cannot safely rewrite the file, so skip gracefully.
+		// In both cases we cannot safely rewrite the file.
 		if errors.Is(err, pdfcpu.ErrWrongPassword) {
-			return nil
+			return ErrEncryptedDocument
 		}
 		return fmt.Errorf("read PDF: %w", err)
 	}
 
 	// A non-nil Encrypt field means the document carries an encryption
 	// dictionary. Rewriting encrypted PDFs without the owner password risks
-	// corrupting the file, so skip them gracefully.
+	// corrupting the file, so leave it untouched.
 	if ctx.XRefTable.Encrypt != nil {
-		return nil
+		return ErrEncryptedDocument
 	}
 
 	// --- Clear Info dictionary entries ---

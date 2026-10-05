@@ -97,7 +97,7 @@ func UserAuth(repos *repository.Repositories, anonymousMode bool) func(http.Hand
 			}
 			if user == nil {
 				slog.Warn("user authentication failed - no valid credentials",
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 					"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 				)
 				// Redirect HTML requests to login page
@@ -168,7 +168,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 	if !utils.ValidateAPITokenFormat(token) {
 		normalizeResponseTime()
 		slog.Warn("invalid API token format",
-			"path", r.URL.Path,
+			"path", logPath(r.URL.Path),
 			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
@@ -196,7 +196,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 	if apiToken == nil {
 		normalizeResponseTime()
 		slog.Warn("API token not found or revoked",
-			"path", r.URL.Path,
+			"path", logPath(r.URL.Path),
 			"ip", privacy.RedactIP(getClientIP(r), anonymousMode),
 		)
 		return nil, nil, &authError{
@@ -211,7 +211,7 @@ func authenticateWithAPIToken(repos *repository.Repositories, r *http.Request, t
 		slog.Warn("API token expired",
 			"token_id", apiToken.ID,
 			"token_prefix", apiToken.TokenPrefix,
-			"path", r.URL.Path,
+			"path", logPath(r.URL.Path),
 		)
 		return nil, nil, &authError{
 			message:    "Invalid API token",
@@ -402,7 +402,7 @@ func RequireScope(requiredScope string) func(http.Handler) http.Handler {
 				slog.Warn("API token missing required scope",
 					"required", requiredScope,
 					"has", scopes,
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 				)
 				http.Error(w, fmt.Sprintf("Token missing required scope: %s", requiredScope), http.StatusForbidden)
 				return

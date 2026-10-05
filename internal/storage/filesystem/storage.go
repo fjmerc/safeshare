@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/storage"
 )
 
@@ -159,7 +160,7 @@ func (fs *FilesystemStorage) Store(ctx context.Context, filename string, reader 
 	slog.Debug("file stored",
 		"filename", filename,
 		"size", written,
-		"hash", hash[:16]+"...",
+		"hash", privacy.LogHash(hash[:16]+"..."),
 	)
 
 	return filename, hash, nil
@@ -544,7 +545,7 @@ func (fs *FilesystemStorage) AssembleChunks(ctx context.Context, uploadID string
 		"total_bytes", totalBytesWritten,
 		"duration_ms", duration.Milliseconds(),
 		"throughput_mbps", fmt.Sprintf("%.1f", throughputMBps),
-		"sha256_hash", hash[:16]+"...",
+		"sha256_hash", privacy.LogHash(hash[:16]+"..."),
 	)
 
 	return hash, nil

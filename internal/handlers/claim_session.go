@@ -206,7 +206,7 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 			slog.Warn("file access denied",
 				"reason", "download_limit_reached",
 				"claim_code", redactClaimCode(claimCode),
-				"filename", file.OriginalFilename,
+				"filename", logFilename(file.OriginalFilename, cfg),
 				"client_ip", logIP(getClientIP(r), cfg),
 			)
 			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
@@ -462,7 +462,7 @@ func serveCappedDownload(ctx context.Context, w http.ResponseWriter, r *http.Req
 				})
 				slog.Info("file expired due to download limit",
 					"claim_code", redactClaimCode(claimCode),
-					"filename", file.OriginalFilename,
+					"filename", logFilename(file.OriginalFilename, cfg),
 					"download_count", fresh.DownloadCount,
 					"max_downloads", *file.MaxDownloads,
 				)

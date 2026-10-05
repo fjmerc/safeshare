@@ -33,6 +33,8 @@ class ChunkedUploader {
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
             clientEncrypted: !!options.clientEncrypted,
+            // false (Ghost mode): never write resume state (it holds the filename) to localStorage
+            persistState: options.persistState !== false,
             concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
             // 6 attempts with jittered 1s→30s backoff ride out ~30-60s of
             // network trouble (Wi-Fi handoff, brief outage) per chunk.
@@ -153,9 +155,9 @@ class ChunkedUploader {
             const response = await fetch('/api/upload/init', {
                 method: 'POST',
                 signal: this.abortController.signal,
-                headers: {
+                headers: Object.assign({
                     'Content-Type': 'application/json'
-                },
+                }, this.options.clientEncrypted ? { 'X-SafeShare-Client-Encrypted': 'true' } : {}),
                 body: JSON.stringify({
                     filename: this.file.name,
                     total_size: this.file.size,
@@ -877,7 +879,7 @@ class ChunkedUploader {
      * Save upload state to localStorage for resume capability
      */
     saveState() {
-        if (!this.storageKey) return;
+        if (!this.storageKey || this.options.persistState === false) return;
 
         // Never persist the upload password: it is only needed for /init, and
         // localStorage is plaintext that outlives failed uploads.
@@ -962,6 +964,22 @@ class ChunkedUploader {
             localStorage.removeItem(this.storageKey);
         } catch (e) {
             console.warn('Failed to clear upload state from localStorage:', e);
+        }
+    }
+
+    /**
+     * Delete every saved resume state (they contain filenames). Used in Ghost mode.
+     */
+    static clearAllSavedUploads() {
+        try {
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('chunked_upload_')) keys.push(key);
+            }
+            keys.forEach(key => localStorage.removeItem(key));
+        } catch (e) {
+            console.warn('Failed to clear saved upload states:', e);
         }
     }
 

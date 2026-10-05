@@ -230,6 +230,7 @@
                                     </span>
                                 </label>
                                 <p class="e2e-description">Encrypt in your browser. The server never sees your file.</p>
+                                <p class="e2e-description hidden" id="e2eEnforcedNote">This server only accepts files encrypted in your browser.</p>
                                 <p class="e2e-size-warning hidden" id="e2eSizeWarning">Large files (>500 MB) may cause browser memory issues. Consider server-side encryption for very large files.</p>
 
                                 <div class="e2e-suboption hidden" id="e2eHideFilenameGroup">
@@ -257,6 +258,7 @@
                         </div>
                     </div>
 
+                    <p id="e2eUnsupportedMsg" class="e2e-size-warning hidden" role="alert" tabindex="-1">This server only accepts files encrypted in your browser, and this browser cannot do that. Open SafeShare over HTTPS in a current browser with Web Crypto support, or use the .onion address in Tor Browser.</p>
                     <button id="uploadButton" class="btn-primary" disabled>Upload File</button>
                 </div>
             </div>
@@ -559,6 +561,8 @@
     <script src="/assets/dialogs.js"></script>
     <!-- Client-Side Encryption (must load before app.js) -->
     <script src="/assets/crypto.js"></script>
+    <!-- Client-side metadata stripping (JPEG/PNG) used before E2E encryption -->
+    <script src="/assets/metadata-strip.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
     <script src="/assets/app.js"></script>

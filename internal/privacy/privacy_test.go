@@ -70,3 +70,42 @@ func TestRedactUsername(t *testing.T) {
 		})
 	}
 }
+
+func TestAnonymizeAndRedactUserAgentFilenamePath(t *testing.T) {
+	const ua = "Mozilla/5.0 (X11; Linux)"
+	if got := AnonymizeUserAgent(ua, true); got != "" {
+		t.Errorf("AnonymizeUserAgent(anon) = %q, want empty", got)
+	}
+	if got := AnonymizeUserAgent(ua, false); got != ua {
+		t.Errorf("AnonymizeUserAgent(normal) = %q, want %q", got, ua)
+	}
+	if got := RedactUserAgent(ua, true); got != "redacted" {
+		t.Errorf("RedactUserAgent(anon) = %q", got)
+	}
+	if got := RedactUserAgent(ua, false); got != ua {
+		t.Errorf("RedactUserAgent(normal) = %q", got)
+	}
+	if got := RedactFilename("secret.pdf", true); got != "[redacted]" {
+		t.Errorf("RedactFilename(anon) = %q", got)
+	}
+	if got := RedactFilename("secret.pdf", false); got != "secret.pdf" {
+		t.Errorf("RedactFilename(normal) = %q", got)
+	}
+	tests := []struct {
+		path string
+		anon bool
+		want string
+	}{
+		{"/api/claim/AbCdEf123456", true, "/api/[redacted]"},
+		{"/api/claim/AbCdEf123456", false, "/api/claim/AbCdEf123456"},
+		{"/health", true, "/health"},
+		{"/", true, "/"},
+		{"", true, ""},
+		{"/claim/AbCdEf", true, "/claim/[redacted]"},
+	}
+	for _, tt := range tests {
+		if got := RedactPath(tt.path, tt.anon); got != tt.want {
+			t.Errorf("RedactPath(%q, %v) = %q, want %q", tt.path, tt.anon, got, tt.want)
+		}
+	}
+}

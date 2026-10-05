@@ -281,7 +281,7 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 					"ip", privacy.RedactIP(ip, rl.config.IsAnonymousMode()),
 					"limit_type", limitType,
 					"limit", limit,
-					"path", r.URL.Path,
+					"path", logPath(r.URL.Path),
 				)
 
 				w.Header().Set("Content-Type", "application/json")

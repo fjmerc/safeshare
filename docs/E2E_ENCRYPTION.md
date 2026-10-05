@@ -56,18 +56,48 @@ The decryption key lives in the URL fragment. If the fragment is lost, the file 
 
 - Copying only the base URL (without the `#...` portion) produces a broken link.
 - Some messaging applications and link-preview systems strip or truncate URL fragments.
-- Browser history may retain the full URL including the fragment — consider this when sharing on shared or monitored systems.
+- When a recipient opens the link, SafeShare removes the fragment from the address bar and the browser's history entry as soon as it has read the key, so the key doesn't stay in history on the recipient's device. Anywhere the link itself was pasted (chat logs, email, notes) still holds the key, so treat the link as the secret it is.
 
 Always share the complete URL, including everything after and including the `#` character.
 
-### Requires HTTPS (or Localhost)
+### Requires a Secure Context
 
 The Web Crypto API is only available in [secure contexts](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). This means E2EE requires:
 
-- **HTTPS** in production, or
+- **HTTPS** in production,
+- **a `.onion` address opened in Tor Browser**, which treats onion services as secure contexts even over `http://` (Tor itself provides the end-to-end encryption and authentication), or
 - **localhost** for local development.
 
-On insecure HTTP connections, the E2EE toggle is hidden automatically and cannot be enabled.
+SafeShare checks for Web Crypto itself rather than for `https:`, so the toggle appears wherever the browser provides it. Browsers that don't treat `.onion` as a secure context (for example a regular Chromium routed through a Tor proxy) don't provide Web Crypto on `http://` onion pages.
+
+On insecure HTTP connections the E2EE toggle is hidden. If the server requires client-side encryption (see below), uploading is disabled on those connections with a message explaining why, instead of sending the file unencrypted.
+
+## Requiring Client-Side Encryption
+
+Set `REQUIRE_CLIENT_ENCRYPTION=true` to make the server refuse any upload that wasn't encrypted in the browser. It defaults to the value of `ANONYMOUS_MODE`, so anonymous (Ghost) deployments require it unless you set `REQUIRE_CLIENT_ENCRYPTION=false`.
+
+When it's on:
+
+- The E2EE toggle is checked and locked, and **Hide filename** starts checked (it can still be turned off).
+- `POST /api/upload` must carry the header `X-SafeShare-Client-Encrypted: true`; without it the request is rejected with `400 CLIENT_ENCRYPTION_REQUIRED` before the body is read, so no plaintext reaches the server's disk. The `client_encrypted=true` form field is still required as well.
+- `POST /api/upload/init` must have `client_encrypted: true`, and chunks or completion for a session opened without it are rejected the same way.
+- `GET /api/config` reports `client_encryption_required: true` so clients and SDKs can tell up front.
+
+The server can't verify that a file really is ciphertext; `client_encrypted` is the client's own claim. The requirement protects honest uploaders from sending plaintext by mistake (an old bookmarked page, a browser without Web Crypto, a script that forgot the flag). It does not stop someone who deliberately sends plaintext with the flag set, and it doesn't need to: the only person that hurts is that uploader.
+
+The requirement can't be combined with `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, which rejects every E2EE upload because ciphertext can't be scanned. The server logs an error at startup when both are set.
+
+The SDKs and the CLI import tool don't encrypt client-side, so they can't upload to a server that requires it.
+
+### Metadata Stripping and E2EE
+
+The server can't strip metadata from ciphertext. When `STRIP_METADATA=true`, the browser strips metadata itself before encrypting:
+
+- **JPEG**: APP1–APP15 segments (EXIF, GPS, XMP, IPTC, maker notes, ICC profiles) and comments are removed, including any between progressive scans. The JFIF header keeps no embedded thumbnail, and anything after the end-of-image marker (secondary images, vendor trailers) is dropped. The Adobe APP14 colour-transform marker is kept so CMYK images still decode. Removing EXIF also removes the orientation flag, so the page warns when a photo may display rotated.
+- **PNG**: only image-rendering chunks are kept (`IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `cHRM`, `gAMA`, `iCCP`, `sBIT`, `sRGB`, `bKGD`, `pHYs` and the APNG animation chunks). Text, EXIF, timestamps, private chunks and anything after `IEND` are removed.
+- **Anything else** (PDF, Office documents, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
+
+In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upload is stopped instead of sending the original.
 
 ## Technical Details
 
@@ -115,17 +145,20 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
 | Admin file inspection | Not applicable | Admins can see file metadata (size, upload time, claim code) but cannot read E2EE file contents. |
 | Import tool (`cmd/import-file`) | Not supported | The CLI import tool does not perform client-side encryption. Use standard server-side encryption at rest for imported files. |
+| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG and PNG metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
+| Malware scanning | Not compatible | Ciphertext can't be scanned. With `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, E2EE uploads are rejected and the toggle is hidden. |
 
 ## Security Properties
 
 - **Zero server knowledge**: The server stores only the encrypted blob. It never receives the plaintext or the key.
 - **Authenticated encryption**: AES-256-GCM provides both confidentiality and integrity. A tampered ciphertext will fail to decrypt.
 - **Unique IV per file**: Each upload uses a freshly generated random IV, preventing IV reuse attacks.
-- **No additional endpoints**: E2EE is implemented entirely in the browser. It requires no new API endpoints, no new database fields, and no server configuration.
+- **No additional endpoints**: E2EE is implemented entirely in the browser. It requires no new API endpoints and no new database fields.
+- **What the server still sees**: the ciphertext size, upload and expiry times, download counts, and the filename unless **Hide filename** is checked. In anonymous mode the server does not record a hash of the upload.
 
 ## Setup
 
-E2EE requires no server configuration. It is available to all users on any SafeShare deployment served over HTTPS.
+E2EE requires no server configuration. It is available to all users on any SafeShare deployment served over HTTPS, or over a `.onion` address in Tor Browser. To make it mandatory, set `REQUIRE_CLIENT_ENCRYPTION=true` (the default in anonymous mode).
 
 To ensure the feature is accessible:
 

@@ -104,7 +104,7 @@ func RecoverAssembly(ctx context.Context, repos *repository.Repositories, cfg *c
 
 	slog.Info("recovering interrupted/stalled assembly",
 		"upload_id", upload.UploadID,
-		"filename", upload.Filename,
+		"filename", logFilename(upload.Filename, cfg),
 		"attempt", uploadCopy.AssemblyAttempts,
 		"max_attempts", maxAttempts,
 	)
