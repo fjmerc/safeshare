@@ -248,14 +248,14 @@ func TestRedactPathClaimCodes(t *testing.T) {
 			input: "/api/claim/Xy9kLm8pQz4vDwE",
 			wantFunc: func(output string) bool {
 				// Should show first 3 and last 2 chars
-				return strings.Contains(output, "Xy9") && strings.Contains(output, "wE") && strings.Contains(output, "...")
+				return output == "/api/claim/Xy..."
 			},
 		},
 		{
 			name:  "claim code with info endpoint",
 			input: "/api/claim/Xy9kLm8pQz4vDwE/info",
 			wantFunc: func(output string) bool {
-				return strings.Contains(output, "Xy9") && strings.Contains(output, "wE") && strings.Contains(output, "/info")
+				return output == "/api/claim/Xy.../info"
 			},
 		},
 		{
@@ -270,7 +270,7 @@ func TestRedactPathClaimCodes(t *testing.T) {
 			input: "/api/claim/Code123ABC /api/claim/XYZ789def",
 			wantFunc: func(output string) bool {
 				// Both should be redacted
-				return strings.Contains(output, "Cod...BC") && strings.Contains(output, "XYZ...ef")
+				return strings.Contains(output, "C...") && strings.Contains(output, "X...") && !strings.Contains(output, "Code123")
 			},
 		},
 	}
@@ -313,5 +313,59 @@ func TestLoggingMiddleware_SupportsResponseControllerDeadlines(t *testing.T) {
 		if err := <-errCh; err != nil {
 			t.Errorf("ResponseController deadline through LoggingMiddleware failed: %v", err)
 		}
+	}
+}
+
+func TestRedactPathClaimCodes_ShortLinks(t *testing.T) {
+	const code = "Xy9kLm8pQz4vDwE_"
+	if got := redactPathClaimCodes("/" + code); got != "/Xy9...E_" {
+		t.Errorf("short link redaction = %q, want %q", got, "/Xy9...E_")
+	}
+	// Non-canonical spellings still carry the secret.
+	for _, p := range []string{"//" + code, "/" + code + "/", "//" + code + "//"} {
+		if got := redactPathClaimCodes(p); strings.Contains(got, code) || got != "/Xy9...E_" {
+			t.Errorf("redactPathClaimCodes(%q) = %q", p, got)
+		}
+	}
+	for _, path := range []string{"/", "/dashboard", "/dashboard/", "/login", "/health", "/metrics", "/assets", "/api/config", "/service-worker.js"} {
+		if got := redactPathClaimCodes(path); got != path {
+			t.Errorf("redactPathClaimCodes(%q) = %q, want unchanged", path, got)
+		}
+	}
+	// The API form keeps working.
+	if got := redactPathClaimCodes("/api/claim/" + code); got != "/api/claim/Xy9...E_" {
+		t.Errorf("api form redaction = %q", got)
+	}
+}
+
+func TestRedactPath_Combined(t *testing.T) {
+	const code = "Xy9kLm8pQz4vDwE_"
+	tests := []struct {
+		name, path string
+		anon       bool
+		want       string
+	}{
+		{"anon short link", "/" + code, true, "/[redacted]"},
+		{"anon short link trailing slash", "/" + code + "/", true, "/[redacted]"},
+		{"anon short link double slash", "//" + code, true, "/[redacted]"},
+		{"anon api claim", "/api/claim/" + code, true, "/api/[redacted]"},
+		{"anon other path", "/api/config", true, "/api/[redacted]"},
+		{"anon reserved", "/dashboard", true, "/dashboard"},
+		{"normal short link", "/" + code, false, "/Xy9...E_"},
+		{"normal api claim", "/api/claim/" + code, false, "/api/claim/Xy9...E_"},
+		{"normal other path", "/api/config", false, "/api/config"},
+		{"normal reserved", "/dashboard", false, "/dashboard"},
+		{"normal 8-char code", "/abcdefgh", false, "/a..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactPath(tt.path, tt.anon)
+			if got != tt.want {
+				t.Errorf("redactPath(%q, %v) = %q, want %q", tt.path, tt.anon, got, tt.want)
+			}
+			if tt.anon && strings.Contains(got, "Xy9") {
+				t.Errorf("anonymous output leaks code characters: %q", got)
+			}
+		})
 	}
 }

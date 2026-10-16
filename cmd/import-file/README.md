@@ -193,7 +193,15 @@ Get machine-readable output:
 | `--uploads <path>` | Path to SafeShare uploads directory | **required** |
 | `--enckey <key>` | Encryption key (64 hex chars) - **optional** | - |
 | `--public-url <url>` | Public URL for download links | `https://share.example.com` |
+| `--claim-code-length <n>` | Claim code length, 8-32. An explicit out-of-range value (including 0) is an error | `CLAIM_CODE_LENGTH` env var, else `16` |
 | `--ip <address>` | Uploader IP to record | `import-tool` |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CLAIM_CODE_LENGTH` | Claim code length (8-32, default 16); used when `--claim-code-length` is not given. Use the same value as the server. An invalid value is an error |
+| `SHORT_CLAIM_LINKS` | When `true`, printed links are `<public-url>/<code>` instead of `<public-url>/api/claim/<code>` (match the server's setting) |
 
 ### Behavior Flags
 

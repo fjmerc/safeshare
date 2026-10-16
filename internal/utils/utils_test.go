@@ -3,6 +3,8 @@ package utils
 import (
 	"strings"
 	"testing"
+
+	"github.com/fjmerc/safeshare/internal/claimcode"
 )
 
 // TestGenerateClaimCode tests claim code generation
@@ -272,5 +274,82 @@ func TestFormatBytes_Precision(t *testing.T) {
 
 	if !strings.HasPrefix(result, "1.5") {
 		t.Errorf("FormatBytes(1536) = %q, want to start with '1.5'", result)
+	}
+}
+
+// TestGenerateClaimCodeN verifies exact length and alphabet for every
+// supported length.
+func TestGenerateClaimCodeN(t *testing.T) {
+	for n := 8; n <= 32; n++ {
+		for i := 0; i < 20; i++ {
+			code, err := GenerateClaimCodeN(n)
+			if err != nil {
+				t.Fatalf("GenerateClaimCodeN(%d) error: %v", n, err)
+			}
+			if len(code) != n {
+				t.Fatalf("GenerateClaimCodeN(%d) length = %d (%q)", n, len(code), code)
+			}
+			if err := ValidateClaimCode(code); err != nil {
+				t.Fatalf("GenerateClaimCodeN(%d) = %q failed validation: %v", n, code, err)
+			}
+		}
+	}
+}
+
+func TestGenerateClaimCodeN_OutOfRange(t *testing.T) {
+	for _, n := range []int{-1, 0, 7, 33, 100} {
+		if _, err := GenerateClaimCodeN(n); err == nil {
+			t.Errorf("GenerateClaimCodeN(%d) expected error", n)
+		}
+	}
+}
+
+func TestSetClaimCodeLength(t *testing.T) {
+	prev := ClaimCodeLength()
+	t.Cleanup(func() { _ = SetClaimCodeLength(prev) })
+
+	for _, n := range []int{7, 33, 0, -5} {
+		if err := SetClaimCodeLength(n); err == nil {
+			t.Errorf("SetClaimCodeLength(%d) expected error", n)
+		}
+		if got := ClaimCodeLength(); got != prev {
+			t.Errorf("length changed to %d after rejected SetClaimCodeLength(%d)", got, n)
+		}
+	}
+
+	for _, n := range []int{8, 20, 32} {
+		if err := SetClaimCodeLength(n); err != nil {
+			t.Fatalf("SetClaimCodeLength(%d) error: %v", n, err)
+		}
+		code, err := GenerateClaimCode()
+		if err != nil {
+			t.Fatalf("GenerateClaimCode() error: %v", err)
+		}
+		if len(code) != n {
+			t.Errorf("GenerateClaimCode() length = %d, want %d", len(code), n)
+		}
+	}
+}
+
+func TestClaimCodeLengthDefault(t *testing.T) {
+	if got := ClaimCodeLength(); got != 16 {
+		t.Errorf("default claim code length = %d, want 16", got)
+	}
+}
+
+// TestValidateClaimCodeAgreesWithClaimcodeValid pins utils.ValidateClaimCode to
+// the shared claimcode.Valid format rules.
+func TestValidateClaimCodeAgreesWithClaimcodeValid(t *testing.T) {
+	inputs := []string{
+		"", "a", "abcdefg", "abcdefgh", "abcdefg-", "abcdefg_", "ABCDEFGH12345678",
+		strings.Repeat("a", 32), strings.Repeat("a", 33), "abcdefg!", "abcdefg ", "abcdefg\n",
+		"abc/defgh", "abc.defgh", "ábcdefgh", "abcdefgh\x00",
+	}
+	for _, in := range inputs {
+		wantOK := claimcode.Valid(in)
+		err := ValidateClaimCode(in)
+		if (err == nil) != wantOK {
+			t.Errorf("ValidateClaimCode(%q) err=%v, but claimcode.Valid=%v", in, err, wantOK)
+		}
 	}
 }

@@ -55,6 +55,11 @@ func run() error {
 	if err := requireWiredBackends(cfg); err != nil {
 		return err
 	}
+	// Apply CLAIM_CODE_LENGTH process-wide: the repository layer's claim-code
+	// regeneration has no config access and reads the length from utils.
+	if err := utils.SetClaimCodeLength(cfg.ClaimCodeLength); err != nil {
+		return fmt.Errorf("failed to apply CLAIM_CODE_LENGTH: %w", err)
+	}
 	// APP_VERSION unset: report the real release version (config cannot
 	// import handlers, so the fallback is applied here).
 	if cfg.Version == "" {
@@ -1127,30 +1132,7 @@ func run() error {
 	// Service worker route (must be at root scope for PWA)
 	mux.HandleFunc("/service-worker.js", serveServiceWorker())
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Serve index.html for root path only
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Use embedded file system
-		fs := static.FileSystem()
-		file, err := fs.Open("index.html")
-		if err != nil {
-			http.Error(w, "Not found", http.StatusNotFound)
-			return
-		}
-		defer file.Close()
-
-		stat, err := file.Stat()
-		if err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-
-		http.ServeContent(w, r, "index.html", stat.ModTime(), file.(io.ReadSeeker))
-	})
+	mux.HandleFunc("/", rootHandler(cfg))
 
 	// Create rate limiter (pass config pointer for runtime updates)
 	rateLimiter := middleware.NewRateLimiter(cfg)
@@ -1527,5 +1509,38 @@ func serveServiceWorker() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeContent(w, r, "service-worker.js", stat.ModTime(), file.(io.ReadSeeker))
+	}
+}
+
+// rootHandler serves the "/" catch-all route: index.html for the root path,
+// the opt-in short claim link redirect (SHORT_CLAIM_LINKS) for "/<code>", and
+// 404 for everything else. Exact-path routes registered on the mux (/login,
+// /dashboard, /health, ...) take precedence over this handler.
+func rootHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			if handlers.TryShortClaimRedirect(w, r, cfg) {
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+
+		// Use embedded file system
+		fs := static.FileSystem()
+		file, err := fs.Open("index.html")
+		if err != nil {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+
+		stat, err := file.Stat()
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+
+		http.ServeContent(w, r, "index.html", stat.ModTime(), file.(io.ReadSeeker))
 	}
 }

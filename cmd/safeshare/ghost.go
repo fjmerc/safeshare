@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/fjmerc/safeshare/internal/claimcode"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/repository"
 )
@@ -89,6 +90,24 @@ var remoteAddrPattern = regexp.MustCompile(`(\[[0-9a-fA-F:.%]+\]|\b\d{1,3}(?:\.\
 // messages ("http: panic serving ...: GET /api/claim/<code> ...").
 var claimPathPattern = regexp.MustCompile(`/(api/claim|claim|c)/[^\s/?"]+`)
 
+// requestLinePattern matches "GET /path" / "HEAD /path" request lines in
+// net/http's error messages, capturing the whole path (up to whitespace or a
+// query string) so claimcode.ShortPath can judge it exactly, including codes
+// that end in '-' or '_' and the reserved-route exemptions.
+var requestLinePattern = regexp.MustCompile(`\b(GET|HEAD) (/[^\s?]*)`)
+
+// redactShortClaimPaths masks the code in request lines for short claim links
+// ("GET /<code>"). Paths that are not short claim links are left untouched.
+func redactShortClaimPaths(msg string) string {
+	return requestLinePattern.ReplaceAllStringFunc(msg, func(m string) string {
+		sub := requestLinePattern.FindStringSubmatch(m)
+		if _, ok := claimcode.ShortPath(sub[2]); !ok {
+			return m
+		}
+		return sub[1] + " /[redacted]"
+	})
+}
+
 // slogWriter forwards net/http's own error log lines to slog. In anonymous
 // mode it masks remote addresses, which the stdlib otherwise writes raw.
 type slogWriter struct{ anonymous bool }
@@ -98,6 +117,7 @@ func (w slogWriter) Write(p []byte) (int, error) {
 	if w.anonymous {
 		msg = remoteAddrPattern.ReplaceAllString(msg, "[redacted]")
 		msg = claimPathPattern.ReplaceAllString(msg, "/$1/[redacted]")
+		msg = redactShortClaimPaths(msg)
 	}
 	slog.Warn("http server", "message", msg)
 	return len(p), nil

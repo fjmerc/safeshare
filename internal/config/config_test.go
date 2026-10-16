@@ -1148,6 +1148,7 @@ func clearEnvVars(t *testing.T) {
 		"LEGACY_DECRYPT_MAX_BYTES", "DOWNLOAD_DECRYPT_MEMORY_BUDGET",
 		"MAX_ENCRYPTED_DOWNLOADS_PER_IP",
 		"TRUST_PROXY_HEADERS", "TRUSTED_PROXY_IPS", "RATE_LIMIT_IPV6_PREFIX",
+		"CLAIM_CODE_LENGTH", "SHORT_CLAIM_LINKS",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -1200,5 +1201,66 @@ func TestLoad_MetricsInAnonymousModeAndVersionDefaults(t *testing.T) {
 	cfg, _ = Load()
 	if !cfg.MetricsInAnonymousMode || cfg.Version != "9.9.9" {
 		t.Errorf("overrides not honored: %v %q", cfg.MetricsInAnonymousMode, cfg.Version)
+	}
+}
+
+func TestLoad_ClaimCodeLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    int
+		wantErr bool
+	}{
+		{"unset defaults to 16", "", 16, false},
+		{"minimum 8", "8", 8, false},
+		{"maximum 32", "32", 32, false},
+		{"custom 20", "20", 20, false},
+		{"7 rejected", "7", 0, true},
+		{"33 rejected", "33", 0, true},
+		{"zero rejected", "0", 0, true},
+		{"negative rejected", "-16", 0, true},
+		{"non-integer rejected", "abc", 0, true},
+		{"float rejected", "16.5", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnvVars(t)
+			if tt.value != "" {
+				t.Setenv("CLAIM_CODE_LENGTH", tt.value)
+			}
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with CLAIM_CODE_LENGTH=%q: expected error, got ClaimCodeLength=%d", tt.value, cfg.ClaimCodeLength)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if cfg.ClaimCodeLength != tt.want {
+				t.Errorf("ClaimCodeLength = %d, want %d", cfg.ClaimCodeLength, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_ShortClaimLinks(t *testing.T) {
+	clearEnvVars(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.ShortClaimLinks {
+		t.Error("ShortClaimLinks should default to false")
+	}
+
+	t.Setenv("SHORT_CLAIM_LINKS", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.ShortClaimLinks {
+		t.Error("ShortClaimLinks should be true when SHORT_CLAIM_LINKS=true")
 	}
 }

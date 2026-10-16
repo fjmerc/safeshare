@@ -109,3 +109,32 @@ func TestAnonymizeAndRedactUserAgentFilenamePath(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactPath_ShortClaimLink(t *testing.T) {
+	tests := []struct {
+		path string
+		anon bool
+		want string
+	}{
+		{"/Xy9kLm8pQz4vDwE_", true, "/[redacted]"},
+		{"/Xy9kLm8pQz4vDwE_", false, "/Xy9kLm8pQz4vDwE_"},
+		{"/dashboard", true, "/dashboard"},
+		{"/login", true, "/login"},
+		{"/health", true, "/health"},
+		{"/", true, "/"},
+		{"/api/claim/Xy9kLm8pQz4vDwE_", true, "/api/[redacted]"},
+	}
+	for _, tt := range tests {
+		if got := RedactPath(tt.path, tt.anon); got != tt.want {
+			t.Errorf("RedactPath(%q, %v) = %q, want %q", tt.path, tt.anon, got, tt.want)
+		}
+	}
+}
+
+func TestRedactPath_ShortLinkNonCanonical(t *testing.T) {
+	for _, p := range []string{"/abcdefgh/", "/abcdefgh//"} {
+		if got := RedactPath(p, true); got != "/[redacted]" {
+			t.Errorf("RedactPath(%q) = %q, want /[redacted]", p, got)
+		}
+	}
+}

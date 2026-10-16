@@ -727,3 +727,70 @@ func TestValidateDiskSpace(t *testing.T) {
 		t.Errorf("Expected error with non-existent directory, got nil")
 	}
 }
+
+func TestApplyClaimCodeLength(t *testing.T) {
+	prev := utils.ClaimCodeLength()
+	t.Cleanup(func() { _ = utils.SetClaimCodeLength(prev) })
+
+	tests := []struct {
+		name    string
+		flagVal int
+		flagSet bool
+		env     string
+		want    int
+		wantErr bool
+	}{
+		{"default", 0, false, "", 16, false},
+		{"env", 0, false, "20", 20, false},
+		{"flag overrides env", 12, true, "20", 12, false},
+		{"env min", 0, false, "8", 8, false},
+		{"env max", 0, false, "32", 32, false},
+		{"env too small", 0, false, "7", 0, true},
+		{"env too large", 0, false, "33", 0, true},
+		{"env not integer", 0, false, "abc", 0, true},
+		{"flag too small", 7, true, "", 0, true},
+		{"flag too large", 33, true, "", 0, true},
+		{"explicit flag zero is an error", 0, true, "20", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = utils.SetClaimCodeLength(16)
+			err := applyClaimCodeLength(tt.flagVal, tt.flagSet, tt.env)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := utils.ClaimCodeLength(); got != tt.want {
+				t.Errorf("length = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShareLink(t *testing.T) {
+	if got := shareLink("https://s.example.com/", "abcdefgh", true); got != "https://s.example.com/abcdefgh" {
+		t.Errorf("trailing slash not trimmed: %q", got)
+	}
+	if got := shareLink("https://s.example.com", "abcdefgh", false); got != "https://s.example.com/api/claim/abcdefgh" {
+		t.Errorf("long form = %q", got)
+	}
+	if got := shareLink("https://s.example.com", "abcdefgh", true); got != "https://s.example.com/abcdefgh" {
+		t.Errorf("short form = %q", got)
+	}
+}
+
+func TestShortClaimLinksFromEnv(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "false": false, "true": true, "TRUE": true, "1": true, "on": true, "yes": true, "nope": false} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("SHORT_CLAIM_LINKS", v)
+			if got := shortClaimLinksFromEnv(); got != want {
+				t.Errorf("SHORT_CLAIM_LINKS=%q -> %v, want %v", v, got, want)
+			}
+		})
+	}
+}

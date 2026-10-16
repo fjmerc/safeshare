@@ -371,6 +371,8 @@ SESSION_EXPIRY_HOURS=24               # Session lifetime
 # Operational
 TZ=Europe/Berlin                      # Timezone for display (logs always UTC)
 PUBLIC_URL=https://share.yourdomain.com  # Public-facing URL
+CLAIM_CODE_LENGTH=16                  # Claim code length, 8-32 (shorter = easier to guess)
+SHORT_CLAIM_LINKS=false               # true = share links as /<code> (redirects to /api/claim/<code>)
 ```
 
 ### Optional Environment Variables

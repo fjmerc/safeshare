@@ -94,7 +94,7 @@ func UserDashboardDataHandler(repos *repository.Repositories, cfg *config.Config
 				MaxDownloads:        file.MaxDownloads,
 				DownloadCount:       file.DownloadCount,
 				CompletedDownloads:  file.CompletedDownloads,
-				DownloadURL:         buildDownloadURL(r, cfg, file.ClaimCode),
+				DownloadURL:         buildShareURL(r, cfg, file.ClaimCode),
 				IsExpired:           time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",
 			})
@@ -831,7 +831,7 @@ func UserRegenerateClaimCodeByClaimCodeHandler(repos *repository.Repositories, c
 			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(result.FileID)})
 
 		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)
+		downloadURL := buildShareURL(r, cfg, result.NewClaimCode)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -957,7 +957,7 @@ func UserRegenerateClaimCodeHandler(repos *repository.Repositories, cfg *config.
 			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(req.FileID)})
 
 		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, result.NewClaimCode)
+		downloadURL := buildShareURL(r, cfg, result.NewClaimCode)
 
 		// Return success with new claim code and URL
 		w.Header().Set("Content-Type", "application/json")
