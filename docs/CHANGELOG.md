@@ -35,7 +35,16 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+- **Click a claim code to copy it.** On My Dashboard, clicking (or pressing Enter on) a file's claim code copies it to the clipboard and confirms with a toast.
+
+### Changed
+- **Calmer button colours across both dashboards.** The My Dashboard header now has one filled button (Upload File); Admin Dashboard, Download File and Logout are outlined. Logout is outlined in the Admin Dashboard header too. Table row actions (edit, disable, reset password, test, restore, revoke, share) are neutral outlines told apart by their icons, and red is reserved for delete.
+- **New red.** Destructive buttons and error states use a truer, less pink red, especially in dark mode. All colours still meet WCAG AA contrast.
+- **API token rows are easier to scan.** Scope chips are neutral, with only the privileged `admin` scope highlighted, and a token that never expires shows "Never" as plain text instead of a green badge. Expiring-soon and expired warnings are unchanged.
+
 ### Fixed
+- **API token scopes wrapped onto two lines.** Three scopes now fit on one line in both dashboards.
 - **Admin dashboard tab bar showed a vertical scrollbar.** The row of tabs had a small up-and-down scrollbar at every screen width. It's gone; the tabs still scroll sideways when they don't all fit.
 
 ## [1.13.0] - 2026-10-05
