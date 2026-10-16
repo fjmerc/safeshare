@@ -3,27 +3,82 @@
 (function() {
     'use strict';
 
-    // Register service worker for PWA functionality
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/service-worker.js')
-                .then((registration) => {
-                    registration.addEventListener('updatefound', () => {
-                        const newWorker = registration.installing;
-                        if (!newWorker) return;
-
-                        newWorker.addEventListener('statechange', () => {
-                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller && window.showToast) {
-                                window.showToast('A new version is available. Refresh to update.', 'info');
-                            }
-                        });
-                    });
-                })
-                .catch((error) => {
-                    console.log('Service Worker registration failed:', error);
-                });
-        });
+    // Anonymous (Ghost) mode leaves no service worker or cache on the visitor's
+    // device, so nothing is registered until /api/config says otherwise. If
+    // that request fails the answer is unknown and the page stays without a
+    // worker (it works fully without one).
+    // Resolves to true (anonymous mode), false (normal mode) or null (unknown)
+    function loadAnonymousMode() {
+        return fetch('/api/config', { cache: 'no-store' })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((config) => (config && typeof config.anonymous_mode === 'boolean' ? config.anonymous_mode : null))
+            .catch(() => null);
     }
+
+    // Remove any worker and caches left by an earlier visit, from before the
+    // instance switched to anonymous mode. The server also serves a
+    // self-removing worker script at /service-worker.js for browsers that
+    // never run this code.
+    function removeServiceWorkerTraces() {
+        // Unregister first: until then the old worker can still refill its caches
+        const unregistered = 'serviceWorker' in navigator
+            ? navigator.serviceWorker.getRegistrations()
+                .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
+            : Promise.resolve();
+        return unregistered
+            .then(() => (window.caches
+                ? caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+                : null))
+            .catch(() => {});
+    }
+
+    function registerServiceWorker() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then((registration) => {
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    if (!newWorker) return;
+
+                    newWorker.addEventListener('statechange', () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller && window.showToast) {
+                            window.showToast('A new version is available. Refresh to update.', 'info');
+                        }
+                    });
+                });
+            })
+            .catch((error) => {
+                console.log('Service Worker registration failed:', error);
+            });
+    }
+
+    // beforeinstallprompt can fire before /api/config answers, so catch it now
+    // and let the install UI pick it up once the mode is known.
+    let earlyInstallPrompt = null;
+    let onInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        // Only the home page has an install button; elsewhere leave the browser's own prompt alone
+        if (!document.getElementById('installAppBtn')) return;
+        e.preventDefault();
+        earlyInstallPrompt = e;
+        if (onInstallPrompt) onInstallPrompt(e);
+    });
+
+    const modeKnown = loadAnonymousMode();
+
+    modeKnown.then((anonymous) => {
+        if (anonymous === true) {
+            removeServiceWorkerTraces();
+            // No app install in anonymous mode: it would need the worker
+            const manifestLink = document.querySelector('link[rel="manifest"]');
+            if (manifestLink) manifestLink.remove();
+        } else if (anonymous === false && 'serviceWorker' in navigator) {
+            if (document.readyState === 'complete') {
+                registerServiceWorker();
+            } else {
+                window.addEventListener('load', registerServiceWorker);
+            }
+        }
+    });
 
     const IOS_HINT_DISMISSED_KEY = 'safeshare-ios-install-hint-dismissed';
 
@@ -76,11 +131,11 @@
         }
 
         if (installBtn) {
-            window.addEventListener('beforeinstallprompt', (e) => {
-                e.preventDefault();
+            onInstallPrompt = (e) => {
                 deferredPrompt = e;
                 installBtn.hidden = false;
-            });
+            };
+            if (earlyInstallPrompt) onInstallPrompt(earlyInstallPrompt);
 
             // A deferred prompt can only be shown once, so the button goes away
             // whatever the user chooses; Chrome refires beforeinstallprompt later
@@ -112,9 +167,16 @@
         }
     }
 
+    // Install affordances only in normal mode (anonymous mode has no worker)
+    function startInstallUI() {
+        modeKnown.then((anonymous) => {
+            if (anonymous === false) initInstallUI();
+        });
+    }
+
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initInstallUI);
+        document.addEventListener('DOMContentLoaded', startInstallUI);
     } else {
-        initInstallUI();
+        startInstallUI();
     }
 })();

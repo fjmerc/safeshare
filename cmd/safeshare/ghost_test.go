@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -119,5 +121,65 @@ func TestSlogWriter_RedactsShortClaimPathInAnonymousMode(t *testing.T) {
 				t.Errorf("redactShortClaimPaths(%q) = %q, want %q", tt.msg, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestServeServiceWorkerAnonymousModeServesKillSwitch(t *testing.T) {
+	cfg := loadCfg(t, map[string]string{"ANONYMOUS_MODE": "true"})
+	w := httptest.NewRecorder()
+	serveServiceWorker(cfg)(w, httptest.NewRequest(http.MethodGet, "/service-worker.js", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a 404 would leave an old worker installed)", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/javascript" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"skipWaiting", "caches.keys()", "caches.delete", "registration.unregister()"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("kill-switch worker missing %q", want)
+		}
+	}
+	if strings.Contains(body, "fetch") || strings.Contains(body, "respondWith") {
+		t.Error("kill-switch worker must not intercept requests")
+	}
+	if strings.Contains(body, "CACHE_VERSION") {
+		t.Error("anonymous mode must not serve the real worker")
+	}
+}
+
+func TestServeServiceWorkerNormalModeServesRealWorker(t *testing.T) {
+	cfg := loadCfg(t, map[string]string{"ANONYMOUS_MODE": "false"})
+	w := httptest.NewRecorder()
+	serveServiceWorker(cfg)(w, httptest.NewRequest(http.MethodGet, "/service-worker.js", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "CACHE_VERSION") || !strings.Contains(body, "addEventListener('fetch'") {
+		t.Error("normal mode must serve the real service worker")
+	}
+}
+
+func TestManifestHandlerAnonymousMode(t *testing.T) {
+	assets := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	for _, tt := range []struct {
+		anon string
+		want int
+	}{{"true", http.StatusNotFound}, {"false", http.StatusOK}} {
+		cfg := loadCfg(t, map[string]string{"ANONYMOUS_MODE": tt.anon})
+		w := httptest.NewRecorder()
+		manifestHandler(cfg, assets).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/manifest.json", nil))
+		if w.Code != tt.want {
+			t.Errorf("ANONYMOUS_MODE=%s: status %d, want %d", tt.anon, w.Code, tt.want)
+		}
 	}
 }
