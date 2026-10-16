@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -126,4 +127,37 @@ func (w slogWriter) Write(p []byte) (int, error) {
 // newServerErrorLog returns the http.Server.ErrorLog logger.
 func newServerErrorLog(anonymous bool) *log.Logger {
 	return log.New(slogWriter{anonymous: anonymous}, "", 0)
+}
+
+// killSwitchServiceWorker is what /service-worker.js returns in anonymous
+// mode. Visitors who loaded the site before it was switched to anonymous mode
+// still have the real worker installed and controlling their pages; browsers
+// check the worker script on navigation, so this stub replaces it, deletes
+// every cache and unregisters itself. It has no handler for network requests,
+// so it never intercepts anything while it is running.
+const killSwitchServiceWorker = `// SafeShare service worker removal (anonymous mode).
+// Installs at once, deletes all caches and unregisters; never handles requests.
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+    await self.registration.unregister();
+  })());
+});
+`
+
+// manifestHandler serves the web app manifest from assets, except in anonymous
+// mode, where it answers 404 so no browser offers to install the app.
+func manifestHandler(cfg *config.Config, assets http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cfg.IsAnonymousMode() {
+			http.NotFound(w, r)
+			return
+		}
+		http.StripPrefix("/", assets).ServeHTTP(w, r)
+	})
 }

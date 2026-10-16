@@ -187,7 +187,12 @@ func TestServeServiceWorker(t *testing.T) {
 	req := httptest.NewRequest("GET", "/service-worker.js", nil)
 	w := httptest.NewRecorder()
 
-	handler := serveServiceWorker()
+	t.Setenv("ANONYMOUS_MODE", "false")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	handler := serveServiceWorker(cfg)
 	handler(w, req)
 
 	// Check status code

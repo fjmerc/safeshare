@@ -35,6 +35,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+- **Anonymous mode no longer installs a service worker.** With `ANONYMOUS_MODE=true`, the site doesn't register a service worker or store its scripts and icons in the browser, so a visit leaves no cached trace on the visitor's device, and the app is no longer offered for install (the web app manifest isn't served). An app a visitor installed earlier stays installed until they remove it. Visitors who loaded the site before it was switched to anonymous mode get their old service worker and caches removed on their next visit. Upload and download work as before; the only thing lost is the offline fallback page. Other modes are unchanged.
+
 ## [1.15.0] - 2026-10-16
 
 ### Added
