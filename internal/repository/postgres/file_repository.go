@@ -1510,7 +1510,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		ORDER BY f.created_at DESC
+		ORDER BY f.created_at DESC, f.id DESC
 		LIMIT $1 OFFSET $2
 	`
 
@@ -1630,7 +1630,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		   OR f.original_filename ILIKE $1 ESCAPE '\'
 		   OR f.uploader_ip ILIKE $1 ESCAPE '\'
 		   OR u.username ILIKE $1 ESCAPE '\'
-		ORDER BY f.created_at DESC
+		ORDER BY f.created_at DESC, f.id DESC
 		LIMIT $2 OFFSET $3
 	`
 

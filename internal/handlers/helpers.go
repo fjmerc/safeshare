@@ -239,6 +239,40 @@ func storeSHA256(hash string, cfg *config.Config) string {
 	return hash
 }
 
+// storeCreatedAt returns the created_at value to hand to the repository when a
+// file record is inserted. In anonymous mode it is the current time rounded
+// down to the UTC hour, so a seized database cannot be lined up against
+// network logs by exact upload time. Otherwise it is the zero time, which the
+// repositories treat as "let the database stamp the row" (exact time,
+// unchanged behaviour).
+func storeCreatedAt(cfg *config.Config) time.Time {
+	if cfg.IsAnonymousMode() {
+		return privacy.RoundDownToHour(time.Now())
+	}
+	return time.Time{}
+}
+
+// storeExpiry returns the expires_at value to persist for a file record. The
+// caller computes t from the true (unrounded) base time; in anonymous mode it
+// is rounded UP to the UTC hour, so the stored expiry is >= the real expiry
+// and a file is never deleted early (it may live up to 59 minutes longer).
+func storeExpiry(t time.Time, cfg *config.Config) time.Time {
+	if cfg.IsAnonymousMode() {
+		return privacy.RoundUpToHour(t)
+	}
+	return t
+}
+
+// storeScannedAt returns the scanned_at value to persist: rounded down to the
+// UTC hour in anonymous mode (a scan happens within moments of the upload, so
+// an exact value would undo the created_at rounding).
+func storeScannedAt(t time.Time, cfg *config.Config) time.Time {
+	if cfg.IsAnonymousMode() {
+		return privacy.RoundDownToHour(t)
+	}
+	return t
+}
+
 // getUserAgent returns the client User-Agent header
 func getUserAgent(r *http.Request) string {
 	ua := r.Header.Get("User-Agent")

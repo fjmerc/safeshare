@@ -329,8 +329,9 @@ func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id,
+			created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18::timestamptz, CURRENT_TIMESTAMP))
 		RETURNING id, created_at
 	`
 
@@ -350,6 +351,13 @@ func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
 	}
 	if file.ScanResult != "" {
 		scanResult = &file.ScanResult
+	}
+
+	// A zero CreatedAt means "let the database stamp the row" (historical
+	// behaviour); a caller-supplied value (anonymous mode: hour-rounded) wins.
+	var createdAtArg *time.Time
+	if !file.CreatedAt.IsZero() {
+		createdAtArg = &file.CreatedAt
 	}
 
 	err := execer.QueryRow(
@@ -372,6 +380,7 @@ func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
 		scanResult,
 		file.ScannedAt,
 		file.PartialUploadID,
+		createdAtArg,
 	).Scan(&file.ID, &file.CreatedAt)
 
 	if err != nil {

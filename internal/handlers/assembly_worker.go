@@ -492,10 +492,11 @@ func rereadPartialUploadWithRetry(ctx context.Context, repos *repository.Reposit
 // uploader requested (including expires_in_hours=0, "never expire") —
 // avoids quota/storage-inflation from an audit row nobody can ever claim.
 func recordInfectedChunkedUpload(cfg *config.Config, partialUpload *models.PartialUpload, claimCode string, verdict scanVerdict) *models.File {
-	auditExpiresAt := time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours()) * time.Hour)
-	now := time.Now()
+	auditExpiresAt := storeExpiry(time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours())*time.Hour), cfg)
+	now := storeScannedAt(time.Now(), cfg)
 	return &models.File{
 		ClaimCode:        claimCode,
+		CreatedAt:        storeCreatedAt(cfg),
 		OriginalFilename: partialUpload.Filename,
 		// Placeholder to satisfy the NOT NULL column; no file is ever
 		// assembled for an infected upload, and claim.go's scanGate blocks
@@ -908,12 +909,14 @@ func (w *assemblyWorker) run() {
 	} else {
 		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
 	}
+	expiresAt = storeExpiry(expiresAt, cfg)
 
 	// Always set maxDownloads (0 = unlimited, not "unset")
 	maxDownloads := &partialUpload.MaxDownloads
 
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
+		CreatedAt:        storeCreatedAt(cfg),
 		OriginalFilename: partialUpload.Filename,
 		StoredFilename:   storedFilename,
 		FileSize:         totalBytesWritten,
@@ -928,7 +931,7 @@ func (w *assemblyWorker) run() {
 		EncFileID:        encFileID,
 	}
 	if verdict.status != "" {
-		scannedAt := time.Now()
+		scannedAt := storeScannedAt(time.Now(), cfg)
 		fileRecord.ScanStatus = verdict.status
 		fileRecord.ScanResult = verdict.result
 		fileRecord.ScannedAt = &scannedAt

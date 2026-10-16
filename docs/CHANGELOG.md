@@ -35,6 +35,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+- **Anonymous (Ghost) mode now stores times rounded to the hour.** A file's upload and scan times are rounded down to the UTC hour and its expiry is rounded up, so a seized database can't be matched to network logs by exact time. A file never expires earlier than requested; it may stay available up to 59 minutes longer, and the expiry shown after upload is the rounded one. No per-download timestamps are stored. Existing records are not rewritten, other modes are unchanged, and container request logs still carry exact times until they rotate.
+
 ## [1.15.0] - 2026-10-16
 
 ### Added

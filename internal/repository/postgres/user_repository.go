@@ -556,7 +556,7 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 			created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id
 		FROM files WHERE user_id = $1 AND (scan_status IS NULL OR scan_status != 'infected')
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $2 OFFSET $3
 	`
 

@@ -168,6 +168,18 @@ func nullableTimeRFC3339(t *time.Time) interface{} {
 	return t.Format(time.RFC3339)
 }
 
+// nullableCreatedAt maps a zero CreatedAt to SQL NULL (the COALESCE in
+// insertFile then lets SQLite stamp CURRENT_TIMESTAMP, the historical
+// behaviour) and a caller-supplied value to the same "YYYY-MM-DD HH:MM:SS" UTC
+// text CURRENT_TIMESTAMP produces, so mixed rows sort and parse identically.
+// Anonymous mode supplies an hour-rounded value here.
+func nullableCreatedAt(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
 // sqlExecer is satisfied by both *sql.DB and *sql.Tx, letting insertFile be
 // shared by FileRepository.Create/CreateWithQuotaCheck and
 // PartialUploadRepository.PublishAssembly/FailAssembly's audit-row insert
@@ -184,8 +196,9 @@ func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error 
 		INSERT INTO files (
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
-			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id,
+			created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
 	`
 
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
@@ -210,6 +223,7 @@ func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error 
 		nullableString(file.ScanResult),
 		nullableTimeRFC3339(file.ScannedAt),
 		file.PartialUploadID,
+		nullableCreatedAt(file.CreatedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
