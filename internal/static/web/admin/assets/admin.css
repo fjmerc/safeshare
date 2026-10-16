@@ -90,7 +90,8 @@
 [data-theme="dark"] textarea,
 [data-theme="dark"] select {
     color: var(--text-primary);
-    background: var(--bg-light);
+    /* background-color, not the shorthand: the shorthand wipes field icons */
+    background-color: var(--bg-light);
     border-color: var(--border-strong);
 }
 
@@ -101,12 +102,13 @@
 [data-theme="dark"] input[type="url"]:focus,
 [data-theme="dark"] textarea:focus,
 [data-theme="dark"] select:focus {
-    background: var(--bg-white);
+    background-color: var(--bg-white);
     border-color: var(--primary-color);
 }
 
 /* Data-URI icons cannot read custom properties, so the dark chevron is separate */
-[data-theme="dark"] select {
+[data-theme="dark"] select,
+[data-theme="dark"] .form-group select {
     background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
