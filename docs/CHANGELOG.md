@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-10-16
+
 ### Added
 - **Configurable claim code length.** `CLAIM_CODE_LENGTH` sets how long newly generated claim codes are, from 8 to 32 characters (default 16, as before). Shorter codes are easier to type but easier to guess, so 8 is the minimum, and a value outside the range stops SafeShare from starting. Existing files keep their codes. Regenerating a code from the dashboard now uses the configured length (it previously always produced 8 characters), and the import tool honors `CLAIM_CODE_LENGTH` or a new `--claim-code-length` flag.
 - **Short share links.** Set `SHORT_CLAIM_LINKS=true` to share files as `https://example.com/<code>` instead of `https://example.com/api/claim/<code>`. The short link redirects to the normal download URL, so `DOWNLOAD_URL`, rate limits and proxy rules keep working. It's off by default; if your reverse proxy only forwards `/api/*`, see `docs/REVERSE_PROXY.md`. Short-link codes are masked in request logs and hidden entirely in anonymous mode.
