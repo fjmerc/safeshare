@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -42,10 +43,17 @@ func stripPDFMetadata(filePath string) error {
 		return fmt.Errorf("open PDF file: %w", err)
 	}
 
-	conf := model.NewDefaultConfiguration()
+	// Stateless configuration: pdfcpu must not read or create config files
+	// under $HOME/.config. model.NewDefaultConfiguration() does, and since
+	// pdfcpu v0.16 it panics (outside any recover) when it finds a config.yml
+	// written by an older version.
+	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 
-	ctx, err := api.ReadValidateAndOptimize(f, conf)
+	// pdfcpu v0.16 requires a non-nil context; stripping is not cancellable
+	// from the callers, so Background is sufficient. nil ProgressOptions
+	// disables progress reporting.
+	ctx, err := api.ReadValidateAndOptimize(context.Background(), f, conf, nil)
 	f.Close()
 
 	if err != nil {
@@ -97,7 +105,10 @@ func stripPDFMetadata(filePath string) error {
 
 	// --- Write back to file atomically ---
 	tmpPath := filePath + ".strip-tmp"
-	if err := api.WriteContextFile(ctx, tmpPath); err != nil {
+	// Also covers a panic inside pdfcpu's writer (recovered by the callers);
+	// a no-op once the rename below has succeeded.
+	defer os.Remove(tmpPath)
+	if err := api.WriteContextFile(context.Background(), ctx, tmpPath); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("write stripped PDF: %w", err)
 	}
