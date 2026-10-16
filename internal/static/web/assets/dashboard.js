@@ -209,7 +209,7 @@
                             </div>
                         </td>
                         <td data-label="Size"><span class="file-size">${formatFileSize(file.file_size)}</span></td>
-                        <td data-label="Claim code"><span class="claim-code">${safeClaim}</span></td>
+                        <td data-label="Claim code"><button type="button" class="claim-code" data-action="copyClaimCode" data-claim-code="${safeClaim}" aria-label="Copy claim code ${safeClaim}" title="Click to copy">${safeClaim}</button></td>
                         <td data-label="Uploaded"><span class="date-truncate" title="${createdDateFull}">${createdDate}</span></td>
                         <td data-label="Expires">
                             <div class="file-name-expires">
@@ -225,7 +225,7 @@
                         <td data-label="Status">${statusBadge}</td>
                         <td class="actions-col" data-label="Actions">
                             <div class="actions-cell">
-                                <button type="button" class="btn-icon btn-primary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${safeName}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${escapeHtml(file.expires_at)}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${safeClaim}" aria-label="Share ${safeName}" title="Share file">
+                                <button type="button" class="btn-icon btn-secondary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${safeName}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${escapeHtml(file.expires_at)}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${safeClaim}" aria-label="Share ${safeName}" title="Share file">
                                     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
                                         <circle cx="6" cy="12" r="3"></circle>
@@ -3317,6 +3317,9 @@ you may be locked out of your account.
                             download_count: parseInt(btn.getAttribute('data-download-count')),
                             claim_code: btn.getAttribute('data-claim-code')
                         });
+                        break;
+                    case 'copyClaimCode':
+                        copyToClipboard(btn.getAttribute('data-claim-code'), 'Claim code copied');
                         break;
                     case 'deleteFile':
                         deleteFile(parseInt(btn.getAttribute('data-file-id')));

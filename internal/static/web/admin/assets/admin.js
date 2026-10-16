@@ -1950,13 +1950,13 @@ function displayUsers(users) {
             <td data-label="Created">${new Date(user.created_at).toLocaleDateString()}</td>
             <td data-label="Last Login">${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
             <td class="actions" data-label="Actions">
-                <button class="btn-icon btn-primary" data-action="editUser" data-user-id="${user.id}" title="Edit">
+                <button class="btn-icon btn-secondary" data-action="editUser" data-user-id="${user.id}" title="Edit">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                 </button>
-                <button class="btn-icon ${user.is_active ? 'btn-warning' : 'btn-success'}"
+                <button class="btn-icon btn-secondary"
                         data-action="toggleUserStatus" data-user-id="${user.id}" data-is-active="${user.is_active}"
                         title="${user.is_active ? 'Disable' : 'Enable'}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1966,7 +1966,7 @@ function displayUsers(users) {
                         }
                     </svg>
                 </button>
-                <button class="btn-icon btn-info" data-action="resetUserPassword" data-user-id="${user.id}" title="Reset Password">
+                <button class="btn-icon btn-secondary" data-action="resetUserPassword" data-user-id="${user.id}" title="Reset Password">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -2273,13 +2273,13 @@ function updateWebhooksTable(webhooks) {
                 <td data-label="Retries">${webhook.max_retries}</td>
                 <td data-label="Timeout">${webhook.timeout_seconds}s</td>
                 <td class="actions" data-label="Actions">
-                    <button class="btn-icon btn-primary" data-action="editWebhook" data-webhook-id="${webhook.id}" title="Edit webhook">
+                    <button class="btn-icon btn-secondary" data-action="editWebhook" data-webhook-id="${webhook.id}" title="Edit webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-warning" data-action="testWebhook" data-webhook-id="${webhook.id}" title="Test webhook">
+                    <button class="btn-icon btn-secondary" data-action="testWebhook" data-webhook-id="${webhook.id}" title="Test webhook">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
@@ -2577,7 +2577,7 @@ function updateDeliveriesTable(deliveries) {
                 <td data-label="Response Code">${delivery.response_code || '-'}</td>
                 <td data-label="Attempts">${delivery.attempt_count}</td>
                 <td class="actions" data-label="Actions">
-                    <button class="btn-icon btn-info" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
+                    <button class="btn-icon btn-secondary" data-action="viewDeliveryDetails" data-delivery-id="${delivery.id}" title="View details">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                             <circle cx="12" cy="12" r="3"></circle>
@@ -2807,19 +2807,19 @@ function updateBackupsTable(backups) {
                 <td data-label="Version">${escapeHtml(backup.version || 'Unknown')}</td>
                 <td data-label="Status">${statusBadge}</td>
                 <td class="actions" data-label="Actions">
-                    <button class="btn-icon btn-info backup-verify-btn" data-filename="${escapeHtml(backup.filename)}" title="Verify backup">
+                    <button class="btn-icon btn-secondary backup-verify-btn" data-filename="${escapeHtml(backup.filename)}" title="Verify backup">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-success backup-download-btn" data-filename="${escapeHtml(backup.filename)}" title="Download backup">
+                    <button class="btn-icon btn-secondary backup-download-btn" data-filename="${escapeHtml(backup.filename)}" title="Download backup">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-warning backup-restore-btn" data-filename="${escapeHtml(backup.filename)}" title="Restore backup">
+                    <button class="btn-icon btn-secondary backup-restore-btn" data-filename="${escapeHtml(backup.filename)}" title="Restore backup">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="1 4 1 10 7 10"></polyline>
                             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
@@ -3296,7 +3296,7 @@ function displayAdminTokens(tokens) {
 
         // Action buttons - show revoke only for active tokens, delete for all
         const revokeButton = isActive ? `
-            <button class="btn-icon btn-warning" data-action="adminRevokeToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Revoke Token">
+            <button class="btn-icon btn-secondary" data-action="adminRevokeToken" data-token-id="${token.id}" data-token-name="${escapeHtml(token.name)}" title="Revoke Token">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
@@ -3339,12 +3339,12 @@ function displayAdminTokens(tokens) {
 // Format token expiry with warning
 function formatTokenExpiry(expiresAt) {
     if (!expiresAt) {
-        return '<span class="badge badge-success">Never</span>';
+        return '<span>Never</span>';
     }
 
     const expirationDate = new Date(expiresAt);
     if (expirationDate.getFullYear() === 9999) {
-        return '<span class="badge badge-success">Never</span>';
+        return '<span>Never</span>';
     }
 
     const now = new Date();
@@ -4047,13 +4047,13 @@ function updateSSOProvidersTable(providers) {
                 <td data-label="Linked Users">${linkedCount}</td>
                 <td data-label="Created">${formatDate(provider.created_at)}</td>
                 <td class="actions" data-label="Actions">
-                    <button class="btn-icon btn-primary" data-action="editSSOProvider" data-provider-id="${provider.id}" title="Edit provider">
+                    <button class="btn-icon btn-secondary" data-action="editSSOProvider" data-provider-id="${provider.id}" title="Edit provider">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-warning" data-action="testSSOProvider" data-provider-id="${provider.id}" title="Test connection">
+                    <button class="btn-icon btn-secondary" data-action="testSSOProvider" data-provider-id="${provider.id}" title="Test connection">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
