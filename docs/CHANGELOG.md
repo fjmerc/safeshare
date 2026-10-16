@@ -35,6 +35,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+- **Go 1.27.2.** Rebuilt on Go 1.27.2, which fixes several `net/http` issues in the standard library, including unbounded `Range` header parsing (CVE-2026-78667), an HTTP/2 server crash (CVE-2026-97032) and HTTP/1 connection desynchronization after a `CONNECT` response (CVE-2026-94439).
+
 ### Fixed
 - **Admin dashboard tab bar showed a vertical scrollbar.** The row of tabs had a small up-and-down scrollbar at every screen width. It's gone; the tabs still scroll sideways when they don't all fit.
 
