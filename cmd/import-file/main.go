@@ -16,6 +16,7 @@ import (
 	"time"
 
 	// SafeShare internal packages
+	"github.com/fjmerc/safeshare/internal/claimcode"
 	"github.com/fjmerc/safeshare/internal/database"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/utils"
@@ -53,6 +54,16 @@ type ImportOptions struct {
 	EncryptKey string
 	PublicURL  string
 	UploaderIP string
+
+	// ClaimCodeLength is the length of generated claim codes. 0 = use the
+	// CLAIM_CODE_LENGTH environment variable (same 8-32 bounds as the server),
+	// falling back to the default of 16.
+	ClaimCodeLength int
+	// ClaimCodeLengthSet is true when --claim-code-length was given explicitly.
+	ClaimCodeLengthSet bool
+
+	// ShortClaimLinks prints PUBLIC_URL/<code> links (SHORT_CLAIM_LINKS env).
+	ShortClaimLinks bool
 
 	// DB is the single shared connection opened once in run() via
 	// database.OpenForCLI and reused by every function that needs it
@@ -114,6 +125,53 @@ func main() {
 	}
 }
 
+// applyClaimCodeLength sets the claim code length used by this process from
+// the --claim-code-length flag (flagSet reports whether it was given on the
+// command line, so an explicit 0 is an error rather than "unset") or, failing
+// that, the CLAIM_CODE_LENGTH environment value. A set-but-invalid value is an
+// error, matching the server's fail-closed behavior.
+func applyClaimCodeLength(flagValue int, flagSet bool, envValue string) error {
+	n := claimcode.DefaultLength
+	switch {
+	case flagSet:
+		if !claimcode.ValidLength(flagValue) {
+			return fmt.Errorf("invalid --claim-code-length: must be between %d and %d, got %d",
+				claimcode.MinLength, claimcode.MaxLength, flagValue)
+		}
+		n = flagValue
+	case strings.TrimSpace(envValue) != "":
+		parsed, err := claimcode.ParseLength(envValue)
+		if err != nil {
+			return fmt.Errorf("invalid CLAIM_CODE_LENGTH: %w", err)
+		}
+		n = parsed
+	}
+	if err := utils.SetClaimCodeLength(n); err != nil {
+		return fmt.Errorf("invalid claim code length: %w", err)
+	}
+	return nil
+}
+
+// shareLink builds the link printed for an imported file: PUBLIC_URL/<code>
+// when short claim links are enabled, else the /api/claim/<code> form.
+func shareLink(publicURL, claimCode string, short bool) string {
+	publicURL = strings.TrimSuffix(publicURL, "/")
+	if short {
+		return fmt.Sprintf("%s/%s", publicURL, claimCode)
+	}
+	return fmt.Sprintf("%s/api/claim/%s", publicURL, claimCode)
+}
+
+// shortClaimLinksFromEnv reports whether SHORT_CLAIM_LINKS is enabled, using
+// the same accepted spellings as the server's config.
+func shortClaimLinksFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SHORT_CLAIM_LINKS"))) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // run is the main entry point that can be tested (returns error instead of calling os.Exit)
 func run(args []string) error {
 	// Parse command-line flags
@@ -137,6 +195,7 @@ func run(args []string) error {
 	fs.StringVar(&opts.UploadsDir, "uploads", "", "Path to SafeShare uploads directory (required)")
 	fs.StringVar(&opts.EncryptKey, "enckey", "", "Encryption key (64 hex chars, optional - files stored unencrypted if not provided)")
 	fs.StringVar(&opts.PublicURL, "public-url", "https://share.example.com", "Public URL for download links")
+	fs.IntVar(&opts.ClaimCodeLength, "claim-code-length", 0, "Claim code length, 8-32 (default: CLAIM_CODE_LENGTH env var, else 16)")
 	fs.StringVar(&opts.UploaderIP, "ip", "import-tool", "Uploader IP to record")
 
 	// Behavior flags
@@ -152,6 +211,12 @@ func run(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "claim-code-length" {
+			opts.ClaimCodeLengthSet = true
+		}
+	})
+	opts.ShortClaimLinks = shortClaimLinksFromEnv()
 
 	// Show version and return (no exit)
 	if *version {
@@ -170,6 +235,12 @@ func run(args []string) error {
 	// Validate required parameters
 	if err := validateOptions(opts); err != nil {
 		return fmt.Errorf("%v\n\nUse -h for usage information", err)
+	}
+
+	// Claim code length: flag, else CLAIM_CODE_LENGTH, else default. This tool
+	// writes the database directly, so it must produce codes the server accepts.
+	if err := applyClaimCodeLength(opts.ClaimCodeLength, opts.ClaimCodeLengthSet, os.Getenv("CLAIM_CODE_LENGTH")); err != nil {
+		return err
 	}
 
 	// Open the database once, with the same connection setup the live
@@ -752,7 +823,7 @@ func encryptAndRegisterFile(sourcePath, displayName string, originalSize int64, 
 
 	// Build download URL
 	result.ClaimCode = claimCode
-	result.DownloadURL = fmt.Sprintf("%s/api/claim/%s", opts.PublicURL, claimCode)
+	result.DownloadURL = shareLink(opts.PublicURL, claimCode, opts.ShortClaimLinks)
 	result.Success = true
 
 	return result

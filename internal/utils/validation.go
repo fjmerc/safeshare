@@ -4,15 +4,11 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"unicode"
-)
 
-// claimCodePattern matches valid claim codes: 8-32 characters using URL-safe base64 alphabet.
-// The pattern includes alphanumeric characters plus hyphen (-) and underscore (_) which are
-// the additional characters used in base64url encoding (RFC 4648).
-var claimCodePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,32}$`)
+	"github.com/fjmerc/safeshare/internal/claimcode"
+)
 
 // ValidateClaimCode validates that a claim code has a valid format.
 // Claim codes must be 8-32 characters using URL-safe base64 alphabet (a-z, A-Z, 0-9, -, _).
@@ -22,7 +18,7 @@ func ValidateClaimCode(claimCode string) error {
 	if claimCode == "" {
 		return fmt.Errorf("claim code cannot be empty")
 	}
-	if !claimCodePattern.MatchString(claimCode) {
+	if !claimcode.Valid(claimCode) {
 		return fmt.Errorf("claim code must be 8-32 characters (letters, numbers, hyphens, underscores)")
 	}
 	return nil

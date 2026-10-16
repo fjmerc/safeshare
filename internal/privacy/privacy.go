@@ -1,6 +1,10 @@
 package privacy
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/fjmerc/safeshare/internal/claimcode"
+)
 
 // processAnonymous is the process-wide anonymous-mode switch used by log
 // call sites that have no config in scope (utils, middleware, storage).
@@ -97,6 +101,11 @@ func RedactPath(path string, anonymousMode bool) string {
 	}
 	if len(path) == 0 {
 		return path
+	}
+	// A single-segment claim-code-shaped path is an opt-in short claim link
+	// ("/<code>"); the code is a bearer secret, so it must not be logged.
+	if _, ok := claimcode.LooseShortPath(path); ok {
+		return "/[redacted]"
 	}
 	trimmed := path[1:]
 	for i := 0; i < len(trimmed); i++ {

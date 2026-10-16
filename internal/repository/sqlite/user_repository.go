@@ -12,6 +12,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UserRepository implements repository.UserRepository for SQLite.
@@ -1199,7 +1200,7 @@ func generateUniqueClaimCode(ctx context.Context, tx *sql.Tx, fileID int64) (str
 			)
 		}
 
-		code, err := generateClaimCode()
+		code, err := utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err)
 			// Abort after 3 crypto failures (indicates RNG failure)

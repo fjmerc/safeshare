@@ -39,7 +39,7 @@ func IPBlockCheck(repos *repository.Repositories, cfg ProxyConfigProvider) func(
 			if blocked {
 				slog.Warn("blocked IP attempted access",
 					"ip", privacy.RedactIP(clientIP, cfg.IsAnonymousMode()),
-					"path", privacy.RedactPath(redactPathClaimCodes(r.URL.Path), cfg.IsAnonymousMode()),
+					"path", redactPath(r.URL.Path, cfg.IsAnonymousMode()),
 					"method", r.Method,
 					"user_agent", privacy.RedactUserAgent(r.Header.Get("User-Agent"), cfg.IsAnonymousMode()),
 				)

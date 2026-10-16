@@ -787,7 +787,7 @@ func respondProcessing(w http.ResponseWriter, uploadID string) {
 // is "completed" and which has a claim code (the caller must check for nil
 // first — a completed row with no claim code is an internal-error state).
 func respondUploadComplete(w http.ResponseWriter, r *http.Request, cfg *config.Config, partialUpload *models.PartialUpload) {
-	downloadURL := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+	downloadURL := buildShareURL(r, cfg, *partialUpload.ClaimCode)
 
 	var expiresAt time.Time
 	if partialUpload.ExpiresInHours == 0 {
@@ -1215,7 +1215,7 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 		// Build download URL if completed
 		var downloadURL *string
 		if partialUpload.Status == "completed" && partialUpload.ClaimCode != nil {
-			url := buildDownloadURL(r, cfg, *partialUpload.ClaimCode)
+			url := buildShareURL(r, cfg, *partialUpload.ClaimCode)
 			downloadURL = &url
 		}
 

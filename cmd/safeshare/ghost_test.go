@@ -97,3 +97,27 @@ func TestServerErrorLogRedactsRemoteAddrInAnonymousMode(t *testing.T) {
 		t.Errorf("normal mode should keep the address: %s", buf.String())
 	}
 }
+
+func TestSlogWriter_RedactsShortClaimPathInAnonymousMode(t *testing.T) {
+	tests := []struct {
+		name, msg, want string
+	}{
+		{"plain", "http: panic serving: GET /Xy9kLm8pQz4vDwE_ boom", "http: panic serving: GET /[redacted] boom"},
+		{"ends with underscore", "GET /abcdefg_ x", "GET /[redacted] x"},
+		{"ends with hyphen", "GET /abcdefg- x", "GET /[redacted] x"},
+		{"HEAD", "HEAD /abcdefgh x", "HEAD /[redacted] x"},
+		{"with query", "GET /abcdefgh?a=b x", "GET /[redacted]?a=b x"},
+		{"reserved short name untouched", "GET /health x", "GET /health x"},
+		{"reserved long name untouched", "GET /dashboard x", "GET /dashboard x"},
+		{"nested untouched", "GET /abcdefgh/ijklmnop x", "GET /abcdefgh/ijklmnop x"},
+		{"dotted untouched", "GET /service-worker.js x", "GET /service-worker.js x"},
+		{"too short untouched", "GET /abcdefg x", "GET /abcdefg x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redactShortClaimPaths(tt.msg); got != tt.want {
+				t.Errorf("redactShortClaimPaths(%q) = %q, want %q", tt.msg, got, tt.want)
+			}
+		})
+	}
+}

@@ -189,6 +189,16 @@ docker run -d \
 </VirtualHost>
 ```
 
+## Short Claim Links (`SHORT_CLAIM_LINKS`)
+
+With `SHORT_CLAIM_LINKS=true`, share links look like `https://share.example.com/AbC123xyz...` instead of `https://share.example.com/api/claim/AbC123xyz...`. A request to `/<code>` is answered with a `302` redirect to `/api/claim/<code>` (on `DOWNLOAD_URL` when that is set), so:
+
+- Proxy and CDN rules keyed on `/api/claim/` (cache bypass, timeouts, rate limits) keep working, because the actual download still happens on that path.
+- A proxy that forwards **only** `/api/*` to SafeShare must also forward single-segment paths (`/<code>`) for short links to work. If you route by path, forward `/` and `/*` as well, or leave the feature off.
+- The redirect target uses `DOWNLOAD_URL` > `PUBLIC_URL` > request host; the short link itself is built from `PUBLIC_URL` > request host.
+- The `/<code>` redirect itself is not rate limited (it does no lookup and reveals nothing about whether the code exists); the download it redirects to, on `/api/claim/<code>`, is rate limited as usual.
+- Do not cache the redirect at the CDN: the `Location` header contains the claim code. SafeShare sends `Cache-Control: no-store` on it.
+
 ## Testing Your Setup
 
 After configuring your reverse proxy:

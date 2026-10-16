@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fjmerc/safeshare/internal/claimcode"
 	"github.com/fjmerc/safeshare/internal/proxytrust"
 )
 
@@ -114,6 +115,8 @@ type Config struct {
 	CleanupIntervalMinutes      int
 	PublicURL                   string
 	DownloadURL                 string // Optional: Separate URL for downloads (bypasses CDN timeouts)
+	ClaimCodeLength             int    // Length of newly generated claim codes (8-32, default 16)
+	ShortClaimLinks             bool   // Serve and advertise share links as /<code> (redirects to /api/claim/<code>)
 	EncryptionKey               string
 	AdminUsername               string
 	SessionExpiryHours          int
@@ -237,6 +240,15 @@ func Load() (*Config, error) {
 		quotaLimitGB:           getEnvInt64("QUOTA_LIMIT_GB", 0),     // 0 = unlimited (default)
 		adminPassword:          getEnv("ADMIN_PASSWORD", ""),         // Required for admin access
 	}
+
+	// CLAIM_CODE_LENGTH fails closed: a set-but-invalid value aborts startup
+	// instead of silently falling back, since codes are bearer secrets.
+	claimCodeLength, err := loadClaimCodeLength()
+	if err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+	cfg.ClaimCodeLength = claimCodeLength
+	cfg.ShortClaimLinks = getEnvBool("SHORT_CLAIM_LINKS", false)
 
 	// Fail-closed default: client-side encryption is mandatory whenever the
 	// server runs in anonymous (Ghost) mode; an explicit env value overrides.
@@ -561,6 +573,21 @@ func (c *Config) GetMFAConfig() *MFAConfig {
 		RecoveryCodesCount:     c.MFA.RecoveryCodesCount,
 		ChallengeExpiryMinutes: c.MFA.ChallengeExpiryMinutes,
 	}
+}
+
+// loadClaimCodeLength reads CLAIM_CODE_LENGTH. Unset yields the default; a
+// non-integer or out-of-range value is an error. The 8-character floor matches
+// utils.ValidateClaimCode, which every user-dashboard endpoint enforces.
+func loadClaimCodeLength() (int, error) {
+	value := strings.TrimSpace(os.Getenv("CLAIM_CODE_LENGTH"))
+	if value == "" {
+		return claimcode.DefaultLength, nil
+	}
+	n, err := claimcode.ParseLength(value)
+	if err != nil {
+		return 0, fmt.Errorf("CLAIM_CODE_LENGTH %w", err)
+	}
+	return n, nil
 }
 
 // validate ensures configuration values are sensible

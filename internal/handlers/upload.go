@@ -811,7 +811,7 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 // The malware scan already ran synchronously (ADR-015) before this is
 // called; fileRecord.ScanStatus already reflects its outcome.
 func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
-	downloadURL := buildDownloadURL(r, cfg, claimCode)
+	downloadURL := buildShareURL(r, cfg, claimCode)
 
 	response := models.UploadResponse{
 		ClaimCode:          claimCode,
