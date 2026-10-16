@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+- **PDF metadata stripping now has a 60-second time limit.** A crafted PDF could previously keep the stripper busy indefinitely. A PDF that takes longer is rejected in anonymous mode (`METADATA_STRIP_FAILED`: HTTP 422 for direct uploads, a failed upload status for chunked ones) and stored unstripped otherwise, as with other stripping failures.
+- Updated the PDF library (pdfcpu 0.16.1), which fixes several crashes and overflows triggered by malicious PDFs.
+
 ## [1.15.0] - 2026-10-16
 
 ### Added

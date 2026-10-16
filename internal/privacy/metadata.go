@@ -17,6 +17,11 @@ var ErrFileTooLarge = errors.New("file too large for metadata stripping")
 // Like ErrFileTooLarge, fail-closed callers reject the upload.
 var ErrEncryptedDocument = errors.New("encrypted document cannot be stripped")
 
+// ErrStripTimeout is returned (wrapped) by StripFileMetadata when stripping a
+// document took longer than its time limit and therefore was NOT stripped.
+// Like ErrFileTooLarge, fail-closed callers reject the upload.
+var ErrStripTimeout = errors.New("metadata stripping timed out")
+
 // maxStrippableFileSize is the maximum file size we'll attempt to strip metadata from.
 // Files larger than this are skipped (non-fatal) to prevent excessive memory usage,
 // since stripping requires loading the entire file into memory.
