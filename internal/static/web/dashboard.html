@@ -122,6 +122,17 @@
             flex: 0 0 auto;
         }
 
+        /* One filled action (Upload); Logout is outlined, not a red slab */
+        .header-actions .btn-danger {
+            background: transparent;
+            color: var(--danger-text);
+            border-color: var(--danger-text);
+        }
+
+        .header-actions .btn-danger:hover:not(:disabled) {
+            background: var(--danger-tint);
+        }
+
         .header-actions svg {
             width: 15px;
             height: 15px;
@@ -492,6 +503,17 @@
             white-space: nowrap;
         }
 
+        /* Claim code chip doubles as a copy button */
+        button.claim-code {
+            line-height: inherit;
+            cursor: copy;
+            transition: var(--transition);
+        }
+
+        button.claim-code:hover {
+            border-color: var(--primary-text);
+        }
+
         .badge {
             display: inline-block;
             padding: 3px 8px;
@@ -730,7 +752,7 @@
         }
 
         .modal-warning-box.danger {
-            border-color: var(--danger-color);
+            border-color: var(--danger-text);
             background: var(--danger-tint);
             color: var(--danger-text);
         }
@@ -977,15 +999,11 @@
             border-radius: 12px;
             font-size: 12px;
             font-weight: 600;
-            margin-right: 4px;
-            margin-bottom: 2px;
             background: var(--bg-tertiary);
             color: var(--text-primary);
         }
 
-        .scope-badge-upload { background: var(--primary-tint); color: var(--primary-text); }
-        .scope-badge-download { background: var(--success-tint); color: var(--success-text); }
-        .scope-badge-manage { background: var(--warning-tint); color: var(--warning-text); }
+        /* Only the privileged admin scope is coloured */
         .scope-badge-admin { background: var(--danger-tint); color: var(--danger-text); }
 
         .token-name {
@@ -998,9 +1016,9 @@
             font-size: 13px;
         }
 
+        /* No expiry is a plain value, not a success state */
         .token-never {
-            color: var(--success-text);
-            font-weight: 500;
+            color: var(--text-primary);
         }
 
         .scopes-cell {
@@ -1008,7 +1026,6 @@
             flex-wrap: wrap;
             justify-content: center;
             gap: 4px;
-            max-width: 200px;
         }
 
         .form-group .scope-checkbox-container,
@@ -1694,7 +1711,7 @@
 
         .mfa-code-input.error,
         .mfa-code-input[aria-invalid="true"] {
-            border-color: var(--danger-color);
+            border-color: var(--danger-text);
         }
 
         .mfa-code-input.error {
@@ -2362,7 +2379,6 @@
             }
 
             .scopes-cell {
-                max-width: none;
                 justify-content: flex-end;
             }
 
@@ -2398,7 +2414,7 @@
         }
 
         @media (max-width: 600px) {
-            /* Compact 2x2 action grid; Logout is outlined, not a red slab */
+            /* Compact 2x2 action grid */
             .header-actions {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -2420,16 +2436,6 @@
 
             #adminDashboardBtn {
                 grid-column: 1 / -1;
-            }
-
-            .header-actions .btn-danger {
-                background: transparent;
-                color: var(--danger-text);
-                border-color: var(--danger-text);
-            }
-
-            .header-actions .btn-danger:hover {
-                background: var(--danger-tint);
             }
 
             /* Status pill drops below the title instead of squeezing it */
@@ -2534,7 +2540,7 @@
                     </div>
                 </div>
                 <div class="header-actions">
-                    <button type="button" id="adminDashboardBtn" class="btn-primary" style="display: none;">
+                    <button type="button" id="adminDashboardBtn" class="btn-secondary" style="display: none;">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="3" y="3" width="7" height="7"></rect>
                             <rect x="14" y="3" width="7" height="7"></rect>
@@ -2549,13 +2555,13 @@
                         </svg>
                         Change Password
                     </button>
-                    <button type="button" id="uploadFilesBtn" class="btn-success">
+                    <button type="button" id="uploadFilesBtn" class="btn-primary">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                         </svg>
                         Upload File
                     </button>
-                    <button type="button" id="downloadFileBtn" class="btn-primary">
+                    <button type="button" id="downloadFileBtn" class="btn-secondary">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>

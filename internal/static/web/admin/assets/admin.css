@@ -12,8 +12,8 @@
     --primary-text: #1d4ed8;
     --primary-light: #eff6ff;
     --on-accent: #ffffff;
-    --danger-color: #dc2626;
-    --danger-hover: #b91c1c;
+    --danger-color: #c42b2b;      /* fill behind white text: 5.63:1 */
+    --danger-hover: #a32020;
     --danger-text: #b91c1c;
     --danger-light: #fef2f2;
     --success-color: #047857;
@@ -64,7 +64,7 @@
     --border-strong: #8b93a1;
     --focus-ring: #93c5fd;
     --primary-text: #93c5fd;
-    --danger-text: #fca5a5;
+    --danger-text: #ff8a8a;
     --success-text: #6ee7b7;
     --warning-text: #fde68a;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
@@ -72,7 +72,7 @@
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
     --primary-light: #1e3a5f;
-    --danger-light: #7f1d1d;
+    --danger-light: #6e1919;
     --success-light: #064e3b;
     --warning-light: #78350f;
 }
@@ -346,7 +346,7 @@ body {
     border-radius: var(--radius-sm);
     margin-bottom: 24px;
     font-size: var(--text-base);
-    border: 1px solid var(--danger-color);
+    border: 1px solid var(--danger-text);
 }
 
 .password-wrapper {
@@ -544,6 +544,17 @@ button:disabled {
     display: flex;
     gap: 12px;
     align-items: center;
+}
+
+/* Logout is outlined, not a red slab (matches the user dashboard) */
+.header-actions .btn-danger {
+    background: transparent;
+    color: var(--danger-text);
+    border-color: var(--danger-text);
+}
+
+.header-actions .btn-danger:hover:not(:disabled) {
+    background: var(--danger-light);
 }
 
 .admin-header h1 {
@@ -1630,7 +1641,7 @@ code {
 }
 
 .alert-error {
-    border-color: var(--danger-color);
+    border-color: var(--danger-text);
     background: var(--danger-light);
 }
 
@@ -1945,62 +1956,29 @@ code {
     color: var(--warning-text);
 }
 
-/* Scope Badge Styles (API Tokens) */
+/* Scope Badge Styles (API Tokens): neutral chips; only the privileged admin
+   scope is coloured, so colour on this row keeps meaning status */
 .scope-badge {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 12px;
     font-size: 11px;
     font-weight: 600;
-    margin-right: 4px;
-    margin-bottom: 2px;
-}
-
-.scope-badge-upload {
-    background: #dbeafe;
-    color: #1e40af;
-}
-
-.scope-badge-download {
-    background: #dcfce7;
-    color: #166534;
-}
-
-.scope-badge-manage {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--bg-light);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
 }
 
 .scope-badge-admin {
-    background: #fce7f3;
-    color: #9d174d;
+    background: var(--danger-light);
+    color: var(--danger-text);
+    border-color: transparent;
 }
 
 .scopes-cell {
     display: inline-flex;
     flex-wrap: wrap;
     gap: 4px;
-    max-width: 200px;
-}
-
-[data-theme="dark"] .scope-badge-upload {
-    background: #1e3a5f;
-    color: #93c5fd;
-}
-
-[data-theme="dark"] .scope-badge-download {
-    background: #064e3b;
-    color: #6ee7b7;
-}
-
-[data-theme="dark"] .scope-badge-manage {
-    background: #78350f;
-    color: #fde68a;
-}
-
-[data-theme="dark"] .scope-badge-admin {
-    background: #831843;
-    color: #fbcfe8;
 }
 
 /* Webhook modal adjustments */
@@ -2271,7 +2249,7 @@ pre {
 }
 
 .audit-verify-bad {
-    border-color: var(--danger-color);
+    border-color: var(--danger-text);
     background: var(--danger-light);
     font-weight: 600;
 }

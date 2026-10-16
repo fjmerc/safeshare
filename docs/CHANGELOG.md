@@ -39,8 +39,22 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **Configurable claim code length.** `CLAIM_CODE_LENGTH` sets how long newly generated claim codes are, from 8 to 32 characters (default 16, as before). Shorter codes are easier to type but easier to guess, so 8 is the minimum, and a value outside the range stops SafeShare from starting. Existing files keep their codes. Regenerating a code from the dashboard now uses the configured length (it previously always produced 8 characters), and the import tool honors `CLAIM_CODE_LENGTH` or a new `--claim-code-length` flag.
 - **Short share links.** Set `SHORT_CLAIM_LINKS=true` to share files as `https://example.com/<code>` instead of `https://example.com/api/claim/<code>`. The short link redirects to the normal download URL, so `DOWNLOAD_URL`, rate limits and proxy rules keep working. It's off by default; if your reverse proxy only forwards `/api/*`, see `docs/REVERSE_PROXY.md`. Short-link codes are masked in request logs and hidden entirely in anonymous mode.
 
+## [1.14.0] - 2026-10-16
+
+### Added
+- **Click a claim code to copy it.** On My Dashboard, clicking (or pressing Enter on) a file's claim code copies it to the clipboard and confirms with a toast.
+
+### Changed
+- **Calmer button colours across both dashboards.** The My Dashboard header now has one filled button (Upload File); Admin Dashboard, Download File and Logout are outlined. Logout is outlined in the Admin Dashboard header too. Table row actions (edit, disable, reset password, test, restore, revoke, share) are neutral outlines told apart by their icons, and red is reserved for delete.
+- **New red.** Destructive buttons and error states use a truer, less pink red, especially in dark mode. All colours still meet WCAG AA contrast.
+- **API token rows are easier to scan.** Scope chips are neutral, with only the privileged `admin` scope highlighted, and a token that never expires shows "Never" as plain text instead of a green badge. Expiring-soon and expired warnings are unchanged.
+
 ### Fixed
+- **API token scopes wrapped onto two lines.** Three scopes now fit on one line in both dashboards.
 - **Admin dashboard tab bar showed a vertical scrollbar.** The row of tabs had a small up-and-down scrollbar at every screen width. It's gone; the tabs still scroll sideways when they don't all fit.
+
+### Security
+- **Go 1.27.2.** Rebuilt on Go 1.27.2, which fixes several `net/http` issues in the standard library, including unbounded `Range` header parsing (CVE-2026-78667), an HTTP/2 server crash (CVE-2026-97032) and HTTP/1 connection desynchronization after a `CONNECT` response (CVE-2026-94439).
 
 ## [1.13.0] - 2026-10-05
 
