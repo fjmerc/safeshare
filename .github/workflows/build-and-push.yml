@@ -156,7 +156,7 @@ jobs:
           go tool cover -func=coverage-postgres.out | grep -E 'total:|internal/repository/postgres' || true
 
       - name: Upload PostgreSQL coverage artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: postgres-coverage
           path: coverage-postgres.out
@@ -245,7 +245,7 @@ jobs:
 
       - name: Upload MinIO coverage artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: minio-coverage
           path: coverage-minio.out
