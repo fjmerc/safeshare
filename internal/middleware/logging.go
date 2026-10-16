@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/claimcode"
 	"github.com/fjmerc/safeshare/internal/privacy"
 )
 
@@ -69,6 +70,11 @@ var claimCodeRegex = regexp.MustCompile(`(/api/claim/)([^/\s]+)`)
 // redactPathClaimCodes redacts claim codes from URL paths for secure logging
 // Example: /api/claim/Xy9kLm8pQz4vDwE/info -> /api/claim/Xy9...wE/info
 func redactPathClaimCodes(path string) string {
+	// Short claim links ("/<code>", SHORT_CLAIM_LINKS) are redacted whether or
+	// not the feature is enabled; reserved routes like /dashboard are not.
+	if code, ok := claimcode.LooseShortPath(path); ok {
+		return "/" + claimcode.Mask(code)
+	}
 	return claimCodeRegex.ReplaceAllStringFunc(path, func(match string) string {
 		// Extract the claim code part
 		submatches := claimCodeRegex.FindStringSubmatch(match)
@@ -78,16 +84,16 @@ func redactPathClaimCodes(path string) string {
 		prefix := submatches[1]    // "/api/claim/"
 		claimCode := submatches[2] // The actual claim code
 
-		// Redact the claim code (show first 3 and last 2 chars)
-		var redacted string
-		if len(claimCode) > 5 {
-			redacted = claimCode[:3] + "..." + claimCode[len(claimCode)-2:]
-		} else {
-			redacted = "***"
-		}
-
-		return prefix + redacted
+		return prefix + claimcode.Mask(claimCode)
 	})
+}
+
+// redactPath is the single entry point for putting a request path in a log
+// line. Anonymous-mode redaction runs first so that it sees the raw path (a
+// masked short link such as "/Xy9...E_" is no longer claim-code shaped and
+// would escape it); claim-code masking then covers normal mode.
+func redactPath(path string, anonymousMode bool) string {
+	return redactPathClaimCodes(privacy.RedactPath(path, anonymousMode))
 }
 
 // LoggingMiddleware logs HTTP requests with method, path, status, duration, and IP.
@@ -113,7 +119,7 @@ func LoggingMiddleware(anonymousMode bool) func(http.Handler) http.Handler {
 
 			slog.Info("http request",
 				"method", r.Method,
-				"path", privacy.RedactPath(redactPathClaimCodes(r.URL.Path), anonymousMode),
+				"path", redactPath(r.URL.Path, anonymousMode),
 				"status", wrapped.statusCode,
 				"duration", duration,
 				"ip", privacy.RedactIP(ip, anonymousMode),
@@ -126,5 +132,5 @@ func LoggingMiddleware(anonymousMode bool) func(http.Handler) http.Handler {
 // logPath returns a request path for log output: claim codes are masked, and
 // in anonymous mode (process-wide switch) only the route prefix is kept.
 func logPath(path string) string {
-	return privacy.RedactPath(redactPathClaimCodes(path), privacy.AnonymousMode())
+	return redactPath(path, privacy.AnonymousMode())
 }

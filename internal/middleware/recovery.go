@@ -7,7 +7,6 @@ import (
 	"runtime/debug"
 
 	"github.com/fjmerc/safeshare/internal/models"
-	"github.com/fjmerc/safeshare/internal/privacy"
 )
 
 // RecoveryMiddleware recovers from panics and returns a 500 error
@@ -32,7 +31,7 @@ func recoveryHandler(next http.Handler, anonymousMode bool) http.Handler {
 				stack := debug.Stack()
 				slog.Error("panic recovered",
 					"error", err,
-					"path", privacy.RedactPath(r.URL.Path, anonymousMode),
+					"path", redactPath(r.URL.Path, anonymousMode),
 					"method", r.Method,
 					"stack", string(stack),
 				)

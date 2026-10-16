@@ -140,40 +140,6 @@ func TestEscapeLikePattern(t *testing.T) {
 	}
 }
 
-func TestGenerateClaimCode(t *testing.T) {
-	code1, err := generateClaimCode()
-	if err != nil {
-		t.Fatalf("generateClaimCode() error = %v", err)
-	}
-
-	// Check length (8 characters)
-	if len(code1) != 8 {
-		t.Errorf("generateClaimCode() length = %d, want 8", len(code1))
-	}
-
-	// Check that it only contains URL-safe base64 characters
-	for _, c := range code1 {
-		isValid := (c >= 'A' && c <= 'Z') ||
-			(c >= 'a' && c <= 'z') ||
-			(c >= '0' && c <= '9') ||
-			c == '-' ||
-			c == '_'
-		if !isValid {
-			t.Errorf("generateClaimCode() contains invalid character: %c", c)
-		}
-	}
-
-	// Generate another code and verify uniqueness
-	code2, err := generateClaimCode()
-	if err != nil {
-		t.Fatalf("generateClaimCode() error = %v", err)
-	}
-
-	if code1 == code2 {
-		t.Error("generateClaimCode() should generate unique codes")
-	}
-}
-
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -3,12 +3,14 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // setupUserTestDB creates a test database with required schema
@@ -1162,5 +1164,48 @@ func TestUserRepository_InfectedRowsHiddenFromOwner(t *testing.T) {
 	var count int
 	if err := db.QueryRow("SELECT COUNT(*) FROM files WHERE id = ?", fileID).Scan(&count); err != nil || count != 1 {
 		t.Errorf("infected audit row was removed (count=%d, err=%v)", count, err)
+	}
+}
+
+// TestUserRepository_RegenerateClaimCode_UsesConfiguredLength verifies that
+// regeneration honors the process-wide claim code length (it previously
+// produced 8-character codes regardless of CLAIM_CODE_LENGTH).
+func TestUserRepository_RegenerateClaimCode_UsesConfiguredLength(t *testing.T) {
+	for _, length := range []int{8, 16, 24, 32} {
+		t.Run(fmt.Sprintf("length_%d", length), func(t *testing.T) {
+			prev := utils.ClaimCodeLength()
+			if err := utils.SetClaimCodeLength(length); err != nil {
+				t.Fatalf("SetClaimCodeLength: %v", err)
+			}
+			t.Cleanup(func() { _ = utils.SetClaimCodeLength(prev) })
+
+			db := setupUserTestDB(t)
+			defer db.Close()
+			repo := NewUserRepository(db)
+			ctx := context.Background()
+
+			user, err := repo.Create(ctx, "regenuser", "regen@example.com", "hash", "user", false)
+			if err != nil {
+				t.Fatalf("Create failed: %v", err)
+			}
+			expiresAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+			res, err := db.Exec(`INSERT INTO files (claim_code, original_filename, stored_filename, file_size, mime_type, expires_at, user_id, uploader_ip)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "oldcode12345", "f.txt", "s.txt", 1, "text/plain", expiresAt, user.ID, "127.0.0.1")
+			if err != nil {
+				t.Fatalf("insert file: %v", err)
+			}
+			fileID, _ := res.LastInsertId()
+
+			result, err := repo.RegenerateClaimCode(ctx, fileID, user.ID)
+			if err != nil {
+				t.Fatalf("RegenerateClaimCode failed: %v", err)
+			}
+			if len(result.NewClaimCode) != length {
+				t.Errorf("new claim code %q has length %d, want %d", result.NewClaimCode, len(result.NewClaimCode), length)
+			}
+			if err := utils.ValidateClaimCode(result.NewClaimCode); err != nil {
+				t.Errorf("regenerated code is invalid: %v", err)
+			}
+		})
 	}
 }

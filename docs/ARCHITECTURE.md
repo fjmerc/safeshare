@@ -784,6 +784,8 @@ All configuration via environment variables (see `internal/config/config.go`):
 - `CLEANUP_INTERVAL_MINUTES`: How often to run cleanup worker (default: 60)
 - `PUBLIC_URL`: Public-facing URL for download links (e.g., `https://share.example.com`)
 - `DOWNLOAD_URL`: Optional separate URL for download links to bypass CDN timeouts
+- `CLAIM_CODE_LENGTH`: Length of newly generated claim codes, 8-32 (default: 16). Claim codes are bearer secrets, so the floor is 8 (the minimum the user-dashboard endpoints accept) and a shorter code is guessable. A non-integer or out-of-range value stops startup. Existing codes of any valid length keep working; regenerated codes use this length too
+- `SHORT_CLAIM_LINKS`: Set to `true` to share links as `https://example.com/<code>` instead of `https://example.com/api/claim/<code>` (default: false). The short link answers with a 302 to the `/api/claim/<code>` URL (on `DOWNLOAD_URL` if set) without checking whether the code exists, so downloads and rate limiting behave exactly as before
 
 ### Enterprise Security
 - `ENCRYPTION_KEY`: Optional 64-character hex key for AES-256-GCM encryption

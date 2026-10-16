@@ -3,9 +3,7 @@ package postgres
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -141,16 +139,6 @@ func escapeLikePattern(s string) string {
 	s = strings.ReplaceAll(s, "%", "\\%")
 	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
-}
-
-// generateClaimCode generates a cryptographically secure claim code.
-// The code is 8 characters using URL-safe base64 alphabet (6 random bytes = ~36 bits of entropy).
-func generateClaimCode() (string, error) {
-	bytes := make([]byte, 6)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
 // isRetryableError checks if an error is a transient PostgreSQL error worth retrying.

@@ -50,12 +50,12 @@ func TestNewRecoveryMiddleware_AnonymousModeRedactsPath(t *testing.T) {
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d", rr.Code)
 		}
-		logged := strings.Contains(buf.String(), `"path":"/api/claim/`+code)
+		logged := strings.Contains(buf.String(), `"path":"/api/claim/AbC...Op/info"`)
 		if anon && strings.Contains(buf.String(), code) {
 			t.Errorf("anonymous panic log leaks claim code: %s", buf.String())
 		}
-		if !anon && !logged {
-			t.Errorf("normal mode should log the full path: %s", buf.String())
+		if !anon && (!logged || strings.Contains(buf.String(), code)) {
+			t.Errorf("normal mode should log the path with the claim code masked: %s", buf.String())
 		}
 	}
 }

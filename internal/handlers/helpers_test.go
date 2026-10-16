@@ -394,7 +394,7 @@ func TestRedactClaimCode(t *testing.T) {
 		{
 			name: "normal claim code",
 			code: "Xy9kLm8pQz4vDwE",
-			want: "Xy9...wE",
+			want: "Xy...",
 		},
 		{
 			name: "16 character code",
@@ -412,9 +412,29 @@ func TestRedactClaimCode(t *testing.T) {
 			want: "***",
 		},
 		{
-			name: "6 chars (first redaction)",
+			name: "6 chars",
 			code: "abcdef",
-			want: "abc...ef",
+			want: "a...",
+		},
+		{
+			name: "8 chars",
+			code: "abcdefgh",
+			want: "a...",
+		},
+		{
+			name: "12 chars",
+			code: "abcdefghijkl",
+			want: "ab...",
+		},
+		{
+			name: "16 chars",
+			code: "abcdefghijklmnop",
+			want: "abc...op",
+		},
+		{
+			name: "32 chars",
+			code: "abcdefghijklmnopqrstuvwxyz012345",
+			want: "abc...45",
 		},
 		{
 			name: "empty code",
@@ -1004,5 +1024,39 @@ func TestGetClientIPWithConfig(t *testing.T) {
 				t.Errorf("getClientIPWithConfig() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildShareURL(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want string
+	}{
+		{"disabled: API form", &config.Config{PublicURL: "https://example.com"}, "https://example.com/api/claim/abc12345"},
+		{"disabled: DOWNLOAD_URL API form", &config.Config{DownloadURL: "https://dl.example.com", PublicURL: "https://example.com"}, "https://dl.example.com/api/claim/abc12345"},
+		{"enabled: PUBLIC_URL short form", &config.Config{ShortClaimLinks: true, PublicURL: "https://example.com/"}, "https://example.com/abc12345"},
+		{"enabled: DOWNLOAD_URL ignored for short form", &config.Config{ShortClaimLinks: true, DownloadURL: "https://dl.example.com", PublicURL: "https://example.com"}, "https://example.com/abc12345"},
+		{"enabled: auto-detect short form", &config.Config{ShortClaimLinks: true}, "http://localhost:8080/abc12345"},
+		{"disabled: auto-detect API form", &config.Config{}, "http://localhost:8080/api/claim/abc12345"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
+			if got := buildShareURL(req, tt.cfg, "abc12345"); got != tt.want {
+				t.Errorf("buildShareURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// buildDownloadURL is the redirect target and must stay in the API form
+// regardless of SHORT_CLAIM_LINKS.
+func TestBuildDownloadURL_AlwaysAPIForm(t *testing.T) {
+	cfg := &config.Config{ShortClaimLinks: true, PublicURL: "https://example.com"}
+	req := httptest.NewRequest("GET", "http://localhost:8080/", nil)
+	want := "https://example.com/api/claim/abc12345"
+	if got := buildDownloadURL(req, cfg, "abc12345"); got != want {
+		t.Errorf("buildDownloadURL() = %q, want %q", got, want)
 	}
 }

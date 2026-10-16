@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fjmerc/safeshare/internal/claimcode"
 	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
@@ -87,7 +88,10 @@ func extendTransferDeadlineWithExtra(w http.ResponseWriter, cfg *config.Config, 
 	return deadline
 }
 
-// buildDownloadURL constructs the full download URL for a claim code
+// buildDownloadURL constructs the canonical API download URL
+// (<base>/api/claim/<code>) for a claim code. It never returns the short form,
+// so it is the right target for redirects (a short link must never redirect to
+// itself) and for API responses that clients use to fetch the file directly.
 // Priority order: DOWNLOAD_URL > PUBLIC_URL > auto-detect from request headers
 //
 // DOWNLOAD_URL: Optional dedicated domain for downloads (bypasses CDN timeouts)
@@ -110,6 +114,21 @@ func buildDownloadURL(r *http.Request, cfg *config.Config, claimCode string) str
 	scheme := getScheme(r)
 	host := getHost(r)
 	return scheme + "://" + host + "/api/claim/" + claimCode
+}
+
+// buildShareURL constructs the human-facing link for a claim code: the short
+// form <base>/<code> when SHORT_CLAIM_LINKS is enabled, otherwise identical to
+// buildDownloadURL. The base is PUBLIC_URL > auto-detect (not DOWNLOAD_URL):
+// a short link is served by the main app, which then redirects the download
+// itself to the DOWNLOAD_URL host if one is configured.
+func buildShareURL(r *http.Request, cfg *config.Config, claimCode string) string {
+	if !cfg.ShortClaimLinks {
+		return buildDownloadURL(r, cfg, claimCode)
+	}
+	if cfg.PublicURL != "" {
+		return strings.TrimSuffix(cfg.PublicURL, "/") + "/" + claimCode
+	}
+	return getScheme(r) + "://" + getHost(r) + "/" + claimCode
 }
 
 // getScheme returns the scheme (http/https), honoring X-Forwarded-Proto only
@@ -229,17 +248,14 @@ func getUserAgent(r *http.Request) string {
 	return ua
 }
 
-// redactClaimCode redacts claim codes for secure logging
-// Shows first 3 and last 2 characters only (e.g., "Xy9...wE")
-// Claim codes are like passwords and should not be logged in full
+// redactClaimCode redacts claim codes for secure logging. Claim codes are
+// like passwords and should not be logged in full; claimcode.Mask reveals only
+// as much as the code's length can afford (e.g. "Xy9...wE" for 16+ chars).
 func redactClaimCode(code string) string {
 	if privacy.AnonymousMode() {
 		return "[redacted]"
 	}
-	if len(code) <= 5 {
-		return "***"
-	}
-	return code[:3] + "..." + code[len(code)-2:]
+	return claimcode.Mask(code)
 }
 
 // isHTMLRequest checks if the client accepts HTML responses

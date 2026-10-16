@@ -15,6 +15,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/privacy"
 	"github.com/fjmerc/safeshare/internal/repository"
+	"github.com/fjmerc/safeshare/internal/utils"
 )
 
 // UserRepository implements repository.UserRepository for PostgreSQL.
@@ -1041,7 +1042,7 @@ func generateUniqueClaimCodePg(ctx context.Context, tx pgx.Tx, fileID int64) (st
 			)
 		}
 
-		code, err := generateClaimCode()
+		code, err := utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err)
 			if attempt >= 2 {
