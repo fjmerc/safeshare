@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-16
+
 ### Added
 - **Click a claim code to copy it.** On My Dashboard, clicking (or pressing Enter on) a file's claim code copies it to the clipboard and confirms with a toast.
 
