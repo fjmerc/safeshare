@@ -1089,19 +1089,20 @@
         var ints = indexIntObjects(S);
         var re = /(\d+)\s+(\d+)\s+obj\b/g;
         var objects = [];
-        var floor = 0, m;
+        var floor = 0, m, skippedInComment = false;
         while ((m = re.exec(S)) !== null) {
             if (m.index < floor) { re.lastIndex = floor; continue; }
             var prev = S.charCodeAt(m.index - 1);
             // A header starts the file or follows whitespace or a delimiter,
             // and isn't inside a comment.
             if (m.index > 0 && !PDF_WS[prev] && prev !== 62 && prev !== 41 && prev !== 93) continue;
-            if (inComment(S, m.index)) continue;
+            if (inComment(S, m.index)) { skippedInComment = true; continue; }
             var obj = readPdfObject(S, m.index, +m[1], +m[2], m.index + m[0].length, ints);
             objects.push(obj);
             floor = obj.end;
             re.lastIndex = Math.max(re.lastIndex, floor);
         }
+        objects.skippedInComment = skippedInComment;
         return objects;
     }
 
@@ -1150,6 +1151,9 @@
         var out = b.slice();
         var objects = scanPdfObjects(S);
         if (!objects.length) throw pdfError('No objects found in PDF');
+        // The comment check is a cheap look-back, so a skipped header is
+        // reported rather than trusted (real files don't put them in comments).
+        if (objects.skippedInComment) ctx.incomplete.push('object header inside a comment');
         // Length objects shared by several streams can't be rewritten for one.
         var lengthUses = {};
         objects.forEach(function (o) {

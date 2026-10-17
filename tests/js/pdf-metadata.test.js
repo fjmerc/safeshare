@@ -259,7 +259,8 @@ async function edgeCases() {
     const fake = makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R').toString('latin1')
         .replace('3 0 obj', '% 7 0 obj << /Foo 1 >> stream\n3 0 obj');
     const fk = await M.stripMetadata(u8(Buffer.from(fake, 'latin1')));
-    check('fake header in a comment ignored, real Info cleared', !Buffer.from(fk.data).includes('Bob') && fk.incomplete.length === 0,
+    check('fake header in a comment ignored (and reported), real Info cleared', !Buffer.from(fk.data).includes('Bob') &&
+        JSON.stringify(fk.incomplete) === '["object header inside a comment"]',
         JSON.stringify(fk.incomplete));
 
     // XMP behind ASCII85 + Flate is found; filters that can't be decoded are reported
