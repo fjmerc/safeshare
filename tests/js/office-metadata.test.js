@@ -531,6 +531,19 @@ async function hostileCases() {
     await failsClosed('unknown attribute with a local path', variant('sample.docx', {
         'word/document.xml': rep('<w:body>', '<w:body><w:p w14:paraId="1" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:x="C:\\Users\\ZQX7731\\a.docx"/>') }), true);
 
+    // Binary parts that merely start with '<' (obfuscated fonts start with
+    // random bytes) are kept; Word for Mac's XML printer settings are reported
+    const font = Buffer.concat([Buffer.from([0x3C, 0x00, 0x9F, 0x12]), Buffer.alloc(60, 7)]);
+    const fonts = await M.stripMetadata(u8(variant('sample.docx', {}, [['word/fonts/font1.odttf', font], ['word/fonts/font2.fntdata', Buffer.from('<\x01\x02binary')]])));
+    check('font starting with < kept', !fonts.incomplete.some((i) => i.includes('fonts/')), JSON.stringify(fonts.incomplete));
+    const mac = await M.stripMetadata(u8(variant('sample.xlsx', {}, [['xl/printerSettings/printerSettings2.bin',
+        '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "x"><plist><dict/></plist>']])));
+    check('XML printer settings reported', mac.incomplete.includes('xl/printerSettings/printerSettings2.bin (printer settings)'), JSON.stringify(mac.incomplete));
+    // A decoy "Target=" inside another attribute's value
+    await failsClosed('hostile decoy Target inside another value', variant('sample.docx', { [DOCRELS]: rep('</Relationships>',
+        '<Relationship Id=" Target=\'x\'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" ' +
+        'Target="C:\\Users\\ZQX7731\\a.xlsx" TargetMode="External"/></Relationships>') }));
+
     // Many comments before the root used to make a regex backtrack exponentially
     const t0 = Date.now();
     await failsClosed('comments before the root', variant('sample.docx', { 'word/document.xml': (t) => t.replace('<w:document', '<!---->'.repeat(40) + '<w:document') }));
