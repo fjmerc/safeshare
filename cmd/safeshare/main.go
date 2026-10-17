@@ -1129,8 +1129,12 @@ func run() error {
 	// Register static file routes (embedded frontend)
 	mux.Handle("/assets/", http.StripPrefix("/", static.Handler()))
 
+	// Anonymous mode offers no installable app (it needs the service worker it
+	// doesn't install), so the manifest, with its share target, isn't served.
+	mux.Handle("/assets/manifest.json", manifestHandler(cfg, static.Handler()))
+
 	// Service worker route (must be at root scope for PWA)
-	mux.HandleFunc("/service-worker.js", serveServiceWorker())
+	mux.HandleFunc("/service-worker.js", serveServiceWorker(cfg))
 
 	mux.HandleFunc("/", rootHandler(cfg))
 
@@ -1488,9 +1492,18 @@ func serveUserPage(path string) http.HandlerFunc {
 	}
 }
 
-// serveServiceWorker serves the service worker file with proper headers for PWA
-func serveServiceWorker() http.HandlerFunc {
+// serveServiceWorker serves the service worker file with proper headers for PWA.
+// In anonymous mode it serves the kill-switch stub instead (see
+// killSwitchServiceWorker): a 404 would leave a previously installed worker
+// in place, so the route has to answer with a script that removes it.
+func serveServiceWorker(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.IsAnonymousMode() {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, killSwitchServiceWorker)
+			return
+		}
 		fs := static.FileSystem()
 		file, err := fs.Open("service-worker.js")
 		if err != nil {

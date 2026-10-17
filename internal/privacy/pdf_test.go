@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -281,5 +282,67 @@ func TestStripPDFMetadata_EncryptedLeftUntouched(t *testing.T) {
 				t.Error("encrypted PDF was modified")
 			}
 		})
+	}
+}
+
+func TestStripPDFMetadata_TimeoutLeavesFileUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "doc.pdf")
+	original := buildPDFWithMetadata(t)
+	if err := os.WriteFile(path, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := pdfStripTimeout
+	pdfStripTimeout = time.Nanosecond
+	t.Cleanup(func() { pdfStripTimeout = saved })
+
+	err := StripFileMetadata(path, "application/pdf")
+	if !errors.Is(err, ErrStripTimeout) {
+		t.Fatalf("expected ErrStripTimeout, got %v", err)
+	}
+	// Proves the deadline reached pdfcpu itself, not just our own check.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected pdfcpu to report context.DeadlineExceeded, got %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatal("PDF was modified despite the timeout")
+	}
+	if _, err := os.Stat(path + ".strip-tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+}
+
+// The test above trips the read-phase deadline. This one covers the write
+// phase: a context that expires after a successful read must not replace the
+// original or leave a temp file behind.
+func TestWriteStrippedPDF_ExpiredContextLeavesFileUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "doc.pdf")
+	original := buildPDFWithMetadata(t)
+	if err := os.WriteFile(path, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	pdfCtx := readPDFContext(t, path)
+
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := writeStrippedPDF(expired, pdfCtx, path)
+	if !errors.Is(err, ErrStripTimeout) {
+		t.Fatalf("expected ErrStripTimeout, got %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatal("PDF was replaced despite the expired context")
+	}
+	if _, err := os.Stat(path + ".strip-tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind: %v", err)
 	}
 }
