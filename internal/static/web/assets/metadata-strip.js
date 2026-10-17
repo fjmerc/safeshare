@@ -358,138 +358,240 @@
     }
 
     var CONTENT_TYPES = [];
-    for (var ci = 0; ci < '[Content_Types].xml'.length; ci++) CONTENT_TYPES.push('[Content_Types].xml'.charCodeAt(ci));
+    for (var ci = 0; ci < '[content_types].xml'.length; ci++) CONTENT_TYPES.push('[content_types].xml'.charCodeAt(ci));
 
-    // True if the bytes contain the name [Content_Types].xml anywhere (it is
-    // in every Office file's directory, whatever order or zip variant).
+    function lowerByte(c) { return c >= 0x41 && c <= 0x5A ? c + 32 : c; }
+
+    // True if the bytes contain the name [Content_Types].xml (any case)
+    // anywhere: it is in every Office file's directory, whatever the entry
+    // order or zip variant.
     function mentionsContentTypes(b) {
-        var first = CONTENT_TYPES[0], n = CONTENT_TYPES.length;
-        for (var i = b.indexOf(first); i !== -1 && i + n <= b.length; i = b.indexOf(first, i + 1)) {
+        var n = CONTENT_TYPES.length;
+        for (var i = b.indexOf(0x5B); i !== -1 && i + n <= b.length; i = b.indexOf(0x5B, i + 1)) {
             var j = 1;
-            while (j < n && b[i + j] === CONTENT_TYPES[j]) j++;
+            while (j < n && lowerByte(b[i + j]) === CONTENT_TYPES[j]) j++;
             if (j === n) return true;
         }
         return false;
     }
 
+    // Part names are compared lower-cased with forward slashes and no leading
+    // slash: OPC part names are case-insensitive.
+    function partName(name) {
+        return name.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+    }
+
+    // A Word, Excel or PowerPoint package. Other OPC packages (Visio, XPS,
+    // 3MF, ...) aren't handled and are reported as unsupported.
     function isOoxml(entries) {
-        for (var i = 0; i < entries.length; i++) if (entries[i].name === '[Content_Types].xml') return true;
-        return false;
+        var types = false, main = false;
+        for (var i = 0; i < entries.length; i++) {
+            var n = partName(entries[i].name);
+            if (n === '[content_types].xml') types = true;
+            if (/^(?:word|xl|ppt)\//.test(n)) main = true;
+        }
+        return types && main;
     }
 
     var XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
     var VT_NS = ' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"';
-    // Empty but valid replacements for the document property parts.
-    var PROPERTY_TEMPLATES = {
+    // Empty but valid replacements for parts that are all metadata.
+    var TEMPLATES = {
         core: XML_DECL + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
             ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"' +
             ' xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></cp:coreProperties>',
         app: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"' + VT_NS + '></Properties>',
-        custom: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>'
+        custom: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>',
+        // customXml data stores (SharePoint columns, cover-page fields, ...)
+        customItem: XML_DECL + '<root/>',
+        // Microsoft 365 sensitivity labels name the organisation (siteId)
+        labels: XML_DECL + '<clbl:labelList xmlns:clbl="http://schemas.microsoft.com/office/2020/mipLabelMetadata"></clbl:labelList>'
     };
     var DEFAULT_PROPERTY_PARTS = { 'docprops/core.xml': 'core', 'docprops/app.xml': 'app', 'docprops/custom.xml': 'custom' };
-    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-properties$/, 'app'], [/\/custom-properties$/, 'custom']];
+    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom']];
 
-    // Part names below are matched lower-cased: OPC part names are case-insensitive.
-    // customXml data stores (SharePoint columns, cover-page fields, ...) are emptied.
     var CUSTOM_XML_ITEM = /^customxml\/item\d+\.xml$/;
-    var EMPTY_CUSTOM_XML = XML_DECL + '<root/>';
-    // XML parts that can name people, carry edit history or point at the
-    // author's files. Worksheets are left alone: they hold no author data and
-    // can be very large.
-    var SCRUB_PART = new RegExp('^(?:word|ppt)/.+\\.(?:xml|rels)$|^xl/(?:workbook\\.xml|connections\\.xml|comments\\d*\\.xml|' +
-        'comments/.+\\.xml|(?:.+/)?_rels/.+\\.rels|persons/.+\\.xml|threadedcomments/.+\\.xml|revisions/.+\\.xml|' +
-        'pivotcache/.+\\.xml|externallinks/.+\\.xml|querytables/.+\\.xml)$');
-    // VBA projects carry the project name and code; they can't be cleaned here.
-    var VBA_PART = /(?:^|\/)vbaproject\.bin$/;
-    var MEDIA_PART = /^(?:word|ppt|xl)\/media\/|^docprops\/thumbnail\./;
+    var XML_PART = /\.(?:xml|rels|vml)$/;
     var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
     var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
-    // Embedded image formats that can carry EXIF but can't be cleaned here.
-    var UNCLEANABLE_IMAGE = /\.(?:tiff?|heic|heif|avif|webp|jxr|wdp|hdp)$/;
+    // Binary parts that carry no metadata and are copied unchanged. Everything
+    // else that isn't XML or a JPEG/PNG (video, audio, SVG, GIF, TIFF, VBA,
+    // ActiveX, OLE objects, data models, ...) is reported as not cleaned.
+    var SAFE_BINARY = /\.(?:emf|wmf|bmp|odttf|fntdata|ttf|otf)$/;
     // How deep embedded Office files (e.g. a chart's workbook) are cleaned.
     var MAX_EMBED_DEPTH = 2;
+    var DROP = {};
 
     var EPOCH = '1970-01-01T00:00:00Z';
-    var WHO = '(?:author|initials|userId|providerId|userName|displayName|refreshedBy)';
+    var P = '(?:[A-Za-z_][\\w.-]*:)?'; // optional namespace prefix (an NCName)
     var VAL = '\\s*=\\s*(?:"[^"]*"|\'[^\']*\')';
-    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created)';
-    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1 };
-    // One tag, with quoted attribute values that may contain '>'. The
-    // alternatives start with different characters, so matching is linear.
-    var TAG = /<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+    var FULL = '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'; // a non-empty value
+    var WHO = '(?:author|initials|userId|providerId|userName|displayName|refreshedBy)';
+    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created|refreshedDateIso|timeString)';
+    // Elements whose name attribute is a person
+    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1 };
 
-    var RE_WHO = new RegExp('(\\s(?:[A-Za-z0-9]+:)?' + WHO + ')' + VAL, 'g');
-    var RE_NAME = new RegExp('(\\sname)' + VAL, 'g');
-    var RE_DATE = new RegExp('(\\s(?:[A-Za-z0-9]+:)?' + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
+    var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
+    var RE_NAME = new RegExp('(\\s' + P + 'name)' + VAL, 'g');
+    var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
+    var RE_ID = new RegExp('(\\sid)' + VAL, 'g');
+    var RE_DATE = new RegExp('(\\s' + P + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
     var RE_REFRESHED = new RegExp('(\\srefreshedDate)' + VAL, 'g');
-    var RE_RSID = new RegExp('\\s[A-Za-z0-9]+:rsid[A-Za-z]*' + VAL, 'g');
+    var RE_RSID = new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*' + VAL, 'g');
+    var RE_SECURITY = new RegExp('\\s' + P + 'securityDescriptor' + VAL, 'g');
     var RE_URL = new RegExp('(\\surl)' + VAL);
     // Excel data connections: the .odc/source file path, and the connection
     // string (which can hold a user name or password).
     var RE_SOURCE_FILE = new RegExp('(\\s(?:odcFile|sourceFile))' + VAL, 'g');
     var RE_CONNECTION = new RegExp('(\\sconnection)' + VAL, 'g');
     var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
-    // file: URLs, drive paths and network paths (\\server\share)
-    var RE_FILE_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
+    var RE_EXTERNAL = /\sTargetMode\s*=\s*["']External["']/;
+    var RE_HYPERLINK_TYPE = /\sType\s*=\s*["'][^"']*\/hyperlink["']/;
+    var RE_TEMPLATE_TYPE = /\sType\s*=\s*["'][^"']*\/attachedTemplate["']/;
+    // Local and relative paths (file:, C:\, \\server, /Users/..., ../..)
+    var RE_LOCAL_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
+    // Paths that are never package parts, whatever the target mode
+    var RE_ABSOLUTE_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
 
     function tagName(tag) {
-        var m = /^<\/?(?:([A-Za-z0-9]+):)?([A-Za-z0-9_.-]+)/.exec(tag);
+        var m = /^<\/?(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
         return m ? { prefix: m[1] || '', local: m[2] } : null;
     }
 
-    function scrubTag(tag) {
-        if (tag[1] === '!' || tag[1] === '?' || tag[1] === '/') return tag;
-        var n = tagName(tag);
-        if (!n) return tag;
-        // Word document IDs and Excel's revision pointer go entirely.
-        if ((n.local === 'docId' && /^w\d*$/.test(n.prefix)) || (n.local === 'revisionPtr' && n.prefix === 'xr')) return '';
+    // Elements removed whole (with their content).
+    function isRemovedElement(n) {
+        return (n.prefix === 'w' && (n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge')) ||
+            (n.local === 'docId' && /^w\d*$/.test(n.prefix)) ||
+            (n.local === 'revisionPtr' && /^xr\d*$/.test(n.prefix));
+    }
+
+    function scrubTag(tag, n) {
         tag = tag
             .replace(RE_WHO, '$1=""')
             .replace(RE_DATE, '$1="' + EPOCH + '"')
             .replace(RE_REFRESHED, '$1="0"')
-            .replace(RE_RSID, '');
+            .replace(RE_RSID, '')
+            .replace(RE_SECURITY, '')
+            .replace(RE_SOURCE_FILE, '$1=""');
         if (NAME_ATTR_TAGS[n.local]) tag = tag.replace(RE_NAME, '$1=""');
+        if (n.local === 'permStart') tag = tag.replace(RE_ED, '$1=""');
+        if (n.local === 'client') tag = tag.replace(RE_ID, '$1=""'); // PowerPoint revisionInfo
         if (n.local === 'absPath') tag = tag.replace(RE_URL, '$1=""');
-        tag = tag.replace(RE_SOURCE_FILE, '$1=""');
         if (n.local === 'dbPr') tag = tag.replace(RE_CONNECTION, '$1=""');
-        // Template paths and links to the author's own files
-        // (file:///C:/Users/<name>/...).
-        if (n.local === 'Relationship' && (/attachedTemplate["']/.test(tag) || RE_FILE_TARGET.test(tag))) {
-            tag = tag.replace(RE_TARGET, '$1=""');
+        if (n.local === 'Relationship') {
+            // External targets other than web hyperlinks point at the
+            // author's files (templates, linked workbooks and objects, mail
+            // merge sources); hyperlinks lose only local and relative paths.
+            var external = RE_EXTERNAL.test(tag);
+            var hyperlink = RE_HYPERLINK_TYPE.test(tag);
+            if (RE_TEMPLATE_TYPE.test(tag) || (external && !hyperlink) || (external && RE_LOCAL_TARGET.test(tag)) ||
+                RE_ABSOLUTE_TARGET.test(tag)) {
+                tag = tag.replace(RE_TARGET, '$1=""');
+            }
         }
         return tag;
     }
 
+    function malformed(msg) { return stripError('MALFORMED', msg); }
+
     /**
      * Remove people, dates, edit-session identifiers and local file paths
-     * from an Office XML part. Attributes are edited only inside tags, so
-     * document text is never touched.
+     * from an Office XML part. A single linear pass over the markup:
+     * attributes are edited only inside tags (document text is never
+     * touched), some elements are removed whole, and the content of author
+     * elements is dropped. Malformed markup throws.
      */
     function scrubOfficeXml(xml) {
-        return xml
-            .replace(/<w:rsids\b[^>]*\/>|<w:rsids\b[^>]*>[\s\S]*?<\/w:rsids>/g, '')
-            // Word document variables (any add-in data) and mail-merge
-            // sources (paths and connection strings).
-            .replace(/<w:docVars\b[^>]*\/>|<w:docVars\b[^>]*>[\s\S]*?<\/w:docVars>/g, '')
-            .replace(/<w:mailMerge\b[^>]*\/>|<w:mailMerge\b[^>]*>[\s\S]*?<\/w:mailMerge>/g, '')
-            .replace(/<author>(?:[^<]|<!\[CDATA\[[\s\S]*?\]\]>)*<\/author>/g, '<author></author>')
-            .replace(TAG, scrubTag);
+        var out = [];
+        var n = xml.length;
+        var i = 0;
+        var mode = null; // { remove: bool, name: qualified name, depth }
+        while (i < n) {
+            var lt = xml.indexOf('<', i);
+            if (lt === -1) {
+                if (!mode) out.push(xml.slice(i));
+                break;
+            }
+            if (!mode || !mode.remove) {
+                if (!mode) out.push(xml.slice(i, lt)); // text (dropped inside an emptied element)
+            }
+            var end, token;
+            if (xml.startsWith('<!--', lt)) {
+                end = xml.indexOf('-->', lt + 4);
+                if (end < 0) throw malformed('Unterminated XML comment');
+                end += 3;
+                if (!mode) out.push(xml.slice(lt, end));
+            } else if (xml.startsWith('<![CDATA[', lt)) {
+                end = xml.indexOf(']]>', lt + 9);
+                if (end < 0) throw malformed('Unterminated CDATA section');
+                end += 3;
+                if (!mode) out.push(xml.slice(lt, end));
+            } else if (xml.startsWith('<?', lt)) {
+                end = xml.indexOf('?>', lt + 2);
+                if (end < 0) throw malformed('Unterminated processing instruction');
+                end += 2;
+                if (!mode) out.push(xml.slice(lt, end));
+            } else if (xml[lt + 1] === '!') {
+                throw malformed('Unexpected markup declaration'); // Office never writes a DOCTYPE
+            } else {
+                var j = lt + 1, quote = 0;
+                for (; j < n; j++) {
+                    var c = xml.charCodeAt(j);
+                    if (quote) {
+                        if (c === quote) quote = 0;
+                    } else if (c === 34 || c === 39) {
+                        quote = c;
+                    } else if (c === 62) {
+                        break;
+                    } else if (c === 60) {
+                        throw malformed('Unexpected < inside a tag');
+                    }
+                }
+                if (j >= n) throw malformed('Unterminated tag');
+                end = j + 1;
+                token = xml.slice(lt, end);
+                var name = tagName(token);
+                if (!name) throw malformed('Bad tag');
+                var qname = (name.prefix ? name.prefix + ':' : '') + name.local;
+                var closing = token[1] === '/';
+                var selfClosing = !closing && token[token.length - 2] === '/';
+                if (mode) {
+                    if (qname === mode.name && !selfClosing) mode.depth += closing ? -1 : 1;
+                    if (mode.depth === 0) {
+                        if (!mode.remove) out.push(token); // keep the emptied element's end tag
+                        mode = null;
+                    }
+                } else if (closing) {
+                    out.push(token);
+                } else if (isRemovedElement(name)) {
+                    if (!selfClosing) mode = { remove: true, name: qname, depth: 1 };
+                } else {
+                    out.push(scrubTag(token, name));
+                    if (name.local === 'author' && !selfClosing) mode = { remove: false, name: qname, depth: 1 };
+                }
+            }
+            i = end;
+        }
+        if (mode) throw malformed('Unclosed <' + mode.name + '> element');
+        return out.join('');
     }
 
     // Checks run over the whole scrubbed part, text included, so anything the
-    // tag scrubber missed (odd quoting, a CDATA section) fails closed.
+    // scrubber missed fails closed. (A name typed into body text that looks
+    // like one of these attributes also fails closed.)
     var LEFTOVERS = [
-        new RegExp('\\s(?:[A-Za-z0-9]+:)?' + WHO + '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'),
-        new RegExp('<(?:[A-Za-z0-9]+:)?(?:cmAuthor|author|userInfo)\\b[^>]*\\sname\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'),
-        /\s[A-Za-z0-9]+:rsid[A-Za-z]*\s*=/,
-        /<w:rsids\b|<w:docVars\b|<w:mailMerge\b|<w\d*:docId\b|<xr:revisionPtr\b/,
-        /<author>(?!<\/author>)/,
-        /<x15ac:absPath\b[^>]*\surl\s*=\s*(?:"[^"]+"|'[^']+')/,
-        /\s(?:odcFile|sourceFile)\s*=\s*(?:"[^"]+"|'[^']+')/,
-        /<dbPr\b[^>]*\sconnection\s*=\s*(?:"[^"]+"|'[^']+')/
+        new RegExp('\\s' + P + WHO + FULL),
+        new RegExp('<' + P + '(?:cmAuthor|author|userInfo|chgData)\\b[^>]*\\s' + P + 'name' + FULL),
+        new RegExp('<' + P + 'permStart\\b[^>]*\\s' + P + 'ed' + FULL),
+        new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*\\s*='),
+        new RegExp('\\s' + P + 'securityDescriptor\\s*='),
+        new RegExp('<' + P + 'author(?:\\s[^>]*)?>(?:[^<]|<!\\[CDATA)'),
+        /<w:rsids\b|<w:docVars\b|<w:mailMerge\b|<w\d*:docId\b|<xr\d*:revisionPtr\b/,
+        new RegExp('<' + P + 'absPath\\b[^>]*\\surl' + FULL),
+        new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
+        new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
     ];
-    var RE_DATE_VALUE = new RegExp('\\s(?:[A-Za-z0-9]+:)?' + DATE_ATTR + '\\s*=\\s*["\'](\\d{4}-[^"\']*)', 'g');
+    var RE_DATE_VALUE = new RegExp('\\s' + P + DATE_ATTR + '\\s*=\\s*["\'](\\d{4}-[^"\']*)', 'g');
 
     function officeLeftover(xml) {
         for (var i = 0; i < LEFTOVERS.length; i++) if (LEFTOVERS[i].test(xml)) return true;
@@ -528,12 +630,12 @@
         }
     }
 
-    // Lower-cased names of the core, extended and custom property parts:
-    // the usual docProps/ paths plus wherever _rels/.rels points.
+    // Names of the core, extended and custom property parts: the usual
+    // docProps/ paths plus wherever _rels/.rels points.
     async function propertyParts(entries, budget) {
         var parts = Object.assign({}, DEFAULT_PROPERTY_PARTS);
         for (var i = 0; i < entries.length; i++) {
-            if (entries[i].name.toLowerCase() !== '_rels/.rels') continue;
+            if (partName(entries[i].name) !== '_rels/.rels') continue;
             var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
             var tags = rels.match(/<Relationship\b(?:[^>"']|"[^"]*"|'[^']*')*>/g) || [];
             for (var t = 0; t < tags.length; t++) {
@@ -541,60 +643,41 @@
                 var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
                 if (!type || !target) continue;
                 for (var k = 0; k < PROPERTY_REL_TYPES.length; k++) {
-                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[target[1].replace(/^\//, '').toLowerCase()] = PROPERTY_REL_TYPES[k][1];
+                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[partName(target[1])] = PROPERTY_REL_TYPES[k][1];
                 }
             }
         }
         return parts;
     }
 
-    // New bytes for an entry, or null to copy it unchanged. Parts that may
-    // hold metadata but can't be cleaned are listed in ctx.incomplete.
+    function cleanImage(data, type) {
+        var clean = type === 'jpeg' ? stripJpeg(data) : stripPng(data);
+        return sameBytes(clean, data) ? null : clean;
+    }
+
+    // New bytes for an entry, null to copy it unchanged, or DROP to leave it
+    // out. Parts that may hold metadata but can't be cleaned are copied and
+    // listed in ctx.incomplete.
     async function processEntry(entry, ctx, props) {
         var name = entry.name;
-        var lname = name.toLowerCase();
-        if (props[lname]) return new TextEncoder().encode(PROPERTY_TEMPLATES[props[lname]]);
-        if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(EMPTY_CUSTOM_XML);
+        var lname = partName(name);
+        if (lname === '' || lname[lname.length - 1] === '/' || entry.size === 0) return null; // directories, empty parts
+        if (/^\[trash\]\//.test(lname)) return DROP; // stale data from earlier saves, unreferenced
+        if (props[lname]) return new TextEncoder().encode(TEMPLATES[props[lname]]);
+        if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(TEMPLATES.customItem);
+        if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
+        if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname)) {
+            // Digital signatures embed the signer's certificate; unknown
+            // property parts are all metadata.
+            ctx.incomplete.push(name);
+            return null;
+        }
 
-        if (SCRUB_PART.test(lname)) {
+        if (XML_PART.test(lname)) {
             var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
             var scrubbed = scrubOfficeXml(xml);
             if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
             return scrubbed === xml ? null : new TextEncoder().encode(scrubbed);
-        }
-        if (MEDIA_PART.test(lname) || EMBEDDED_PART.test(lname)) {
-            var data = await readEntry(entry, ctx.budget);
-            var type = detectType(data);
-            if (type) {
-                var clean = type === 'jpeg' ? stripJpeg(data) : stripPng(data);
-                return sameBytes(clean, data) ? null : clean;
-            }
-            if (EMBEDDED_PART.test(lname)) {
-                // An embedded Office file (a chart's workbook, a pasted
-                // document) has its own metadata: clean it the same way.
-                var inner = null;
-                if (isZip(data) && ctx.depth < MAX_EMBED_DEPTH) {
-                    try { inner = readZip(data); } catch (e) { inner = null; }
-                }
-                if (inner && isOoxml(inner)) {
-                    var child = { budget: ctx.budget, depth: ctx.depth + 1, incomplete: [] };
-                    var cleaned = await stripOoxml(inner, child);
-                    for (var i = 0; i < child.incomplete.length; i++) ctx.incomplete.push(name + '/' + child.incomplete[i]);
-                    return cleaned;
-                }
-                ctx.incomplete.push(name); // OLE objects and other embedded files
-            } else if (UNCLEANABLE_IMAGE.test(lname)) {
-                ctx.incomplete.push(name);
-            }
-            return null;
-        }
-        if (VBA_PART.test(lname)) {
-            ctx.incomplete.push(name);
-            return null;
-        }
-        if (/^docprops\//.test(lname)) {
-            ctx.incomplete.push(name); // an unknown property part
-            return null;
         }
         if (PRINTER_SETTINGS.test(lname)) {
             // A Windows DEVMODE starts with the printer name (32 UTF-16
@@ -610,6 +693,24 @@
             }
             return copy;
         }
+        if (SAFE_BINARY.test(lname) && !EMBEDDED_PART.test(lname)) return null;
+
+        var data = await readEntry(entry, ctx.budget);
+        var type = detectType(data);
+        if (type) return cleanImage(data, type);
+        if (EMBEDDED_PART.test(lname) && isZip(data) && ctx.depth < MAX_EMBED_DEPTH) {
+            // An embedded Office file (a chart's workbook, a pasted document)
+            // has its own metadata: clean it the same way.
+            var inner = null;
+            try { inner = readZip(data); } catch (e) { inner = null; }
+            if (inner && isOoxml(inner)) {
+                var child = { budget: ctx.budget, depth: ctx.depth + 1, incomplete: [] };
+                var cleaned = await stripOoxml(inner, child);
+                for (var i = 0; i < child.incomplete.length; i++) ctx.incomplete.push(name + '/' + child.incomplete[i]);
+                return cleaned;
+            }
+        }
+        ctx.incomplete.push(name);
         return null;
     }
 
@@ -628,6 +729,7 @@
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i];
             var plain = await processEntry(e, ctx, props);
+            if (plain === DROP) continue;
             if (plain === null) {
                 out.push({ e: e, method: e.method, crc: e.crc, size: e.size, data: e.data });
             } else {

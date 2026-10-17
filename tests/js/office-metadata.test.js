@@ -197,7 +197,7 @@ async function edgeCases() {
     // Over 100 MB: refused if it's an Office file, passed through otherwise.
     const pad = Buffer.alloc(100 * 1024 * 1024);
     await expectReject('Office file over 100 MB rejected',
-        M.stripMetadata(u8(storedZip([ct, ['pad.bin', pad]]))), 'TOO_LARGE');
+        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'], ['pad.bin', pad]]))), 'TOO_LARGE');
     const bigPlain = await M.stripMetadata(u8(storedZip([['pad.bin', pad]])));
     check('plain zip over 100 MB passes through unsupported', bigPlain.supported === false);
 
@@ -234,23 +234,74 @@ async function edgeCases() {
     await expectReject('unreadable Office zip rejected wherever [Content_Types].xml is',
         M.stripMetadata(u8(late)), 'MALFORMED');
 
-    // Leftovers the tag scrubber can't reach fail closed instead of slipping through
+    // Quotes inside comments and CDATA don't hide the tags after them
+    const hidden = M.scrubOfficeXml('<w:document><!-- don\'t --><![CDATA[ " ]]><w:ins w:author="Bob"/><!-- it\'s --></w:document>');
+    check('comments and CDATA with quotes are skipped, later tags scrubbed', !hidden.includes('Bob'), hidden);
+
+    // What the scrubber can't handle fails closed instead of slipping through
     for (const [label, xml] of [
-        ['CDATA hiding a tag', '<w:document><![CDATA[ " ]]><w:ins w:author="Bob"/>" </w:document>'],
         ['author lookalike in body text', '<w:document><w:t>he wrote author="Bob"</w:t></w:document>'],
+        ['unterminated tag', '<w:document><w:ins w:author="Bob"'],
+        ['unclosed author element', '<comments><authors><author>Bob'],
+        ['DOCTYPE', '<!DOCTYPE x><w:document/>'],
     ]) {
         await expectReject(label + ' fails closed',
             M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]]))), 'MALFORMED');
     }
 
+    // Pathological markup is rejected quickly rather than hanging the tab
+    for (const [label, xml] of [['40k < with no >', '<'.repeat(40000)], ['unclosed quote', '<a b="' + '<x '.repeat(40000)],
+        ['40k unclosed rsids', '<w:rsids>'.repeat(40000)]]) {
+        const t0 = Date.now();
+        let threw = false;
+        try { M.scrubOfficeXml(xml); } catch (e) { threw = e.code === 'MALFORMED'; }
+        check(label + ' rejected in linear time', threw && Date.now() - t0 < 500, (Date.now() - t0) + ' ms');
+    }
+
+    // Parts that can't be cleaned are reported; stale [trash] entries dropped
+    const mixed = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation/>'],
+        ['ppt/media/media1.mp4', 'ftypisom GPS'], ['ppt/media/image2.svg', '<svg/>'], ['ppt/media/image3.gif', 'GIF89a'],
+        ['ppt/media/image4.emf', 'EMF'], ['xl/activeX/activeX1.bin', 'x'], ['[trash]/0001.dat', 'old bytes']])));
+    check('video, SVG, GIF and ActiveX reported; EMF kept; [trash] dropped',
+        JSON.stringify(mixed.incomplete) === '["ppt/media/media1.mp4","ppt/media/image2.svg","ppt/media/image3.gif","xl/activeX/activeX1.bin"]' &&
+        !Buffer.from(mixed.data).includes('old bytes'), JSON.stringify(mixed.incomplete));
+
+    const visio = await M.stripMetadata(u8(storedZip([ct, ['visio/document.xml', '<Creator>Bob</Creator>']])));
+    check('Visio and other non-Office packages are unsupported, not "cleaned"', visio.supported === false);
+    const lower = await M.stripMetadata(u8(storedZip([['[content_types].xml', '<Types/>'], ['word/document.xml', '<w:document/>']])));
+    check('lower-case [content_types].xml still detected', lower.type === 'office');
+
+    const label = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
+        ['docMetadata/LabelInfo.xml', '<clbl:labelList xmlns:clbl="x"><clbl:label id="{1}" siteId="{TENANT}"/></clbl:labelList>']])));
+    check('sensitivity label (tenant siteId) emptied', !Buffer.from(label.data).includes('TENANT') && label.incomplete.length === 0);
+
     const quoted = M.scrubOfficeXml("<w:ins w:author = 'Bob' w:date='2031-02-03T04:05:06Z' w:rsidR='00AA'/>");
     check('single-quoted and spaced attributes scrubbed',
         quoted === '<w:ins w:author="" w:date="1970-01-01T00:00:00Z"/>', quoted);
-    const paths = M.scrubOfficeXml('<Relationship Target="\\\\srv\\x" TargetMode="External"/><Relationship Target="C:/Users/x"/>' +
-        '<Relationship Target="https://example.org/" TargetMode="External"/>');
-    check('network and drive paths blanked, web links kept',
-        paths === '<Relationship Target="" TargetMode="External"/><Relationship Target=""/>' +
-        '<Relationship Target="https://example.org/" TargetMode="External"/>', paths);
+
+    const H = ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"';
+    const L = ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath"';
+    const rels = [
+        ['<Relationship' + H + ' Target="\\\\srv\\x" TargetMode="External"/>', ''],
+        ['<Relationship' + H + ' Target="/Users/bob/notes.docx" TargetMode="External"/>', ''],
+        ['<Relationship' + H + ' Target="../bob/notes.docx" TargetMode="External"/>', ''],
+        ['<Relationship' + L + ' Target="https://corp-my.sharepoint.com/personal/bob_corp_com/b.xlsx" TargetMode="External"/>', ''],
+        ['<Relationship Target="C:/Users/x"/>', ''],
+        ['<Relationship' + H + ' Target="https://example.org/" TargetMode="External"/>', 'https://example.org/'],
+        ['<Relationship Target="../media/image1.png"/>', '../media/image1.png'],
+    ];
+    for (const [tag, want] of rels) {
+        const got = /Target="([^"]*)"/.exec(M.scrubOfficeXml(tag))[1];
+        const target = /Target="([^"]*)"/.exec(tag)[1];
+        check('link target ' + target + ' -> "' + want + '"', got === want, got);
+    }
+
+    const more = M.scrubOfficeXml('<x:comments xmlns:x="m"><x:authors><x:author>Bob</x:author><author xml:space="preserve">Bob</author>' +
+        '</x:authors></x:comments><pc:chgData name="Bob" userId="S::b@x::1"/><w:permStart w:ed="CORP\\bob"/>' +
+        '<w15:docId w15:val="{1}"></w15:docId><p1510:client id="{CLIENT}" v="1"/><w_1:x w_1:author="Bob"/>' +
+        '<ink timeString="2031-02-03T00:00:00Z"/><protectedRange securityDescriptor="O:S-1-5-21-1"/>');
+    check('prefixed authors, chgData, permStart, docId, client id, NCName prefixes, ink and SIDs scrubbed',
+        !/Bob|bob|CLIENT|S-1-5|2031|docId/.test(more), more);
 
     const scrubbed = M.scrubOfficeXml('<a w:author="x" w:authorId="7" name="Sheet1"><p:cmAuthor id="0" name="n"/></a>');
     check('scrub leaves authorId and unrelated name attributes alone',
