@@ -197,7 +197,7 @@ function verifyOutputs(files) {
 }
 
 async function edgeCases() {
-    const ct = ['[Content_Types].xml', '<Types/>'];
+    const ct = ['[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'];
 
     const plainZip = storedZip([['readme.txt', 'hello']]);
     const r = await M.stripMetadata(u8(plainZip));
@@ -206,8 +206,8 @@ async function edgeCases() {
 
     await expectReject('encrypted zip entry rejected', M.stripMetadata(u8(storedZip([ct], 0x01))), 'ENCRYPTED');
 
-    const corrupt = storedZip([ct, ['word/document.xml', '<w:document w:rsidR="00AA"/>']]);
-    corrupt[corrupt.indexOf('<w:document') + 5] ^= 0x01; // still valid UTF-8, but no longer matches its CRC
+    const corrupt = storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:rsidR="00AA"/>']]);
+    corrupt[corrupt.indexOf('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"') + 5] ^= 0x01; // still valid UTF-8, but no longer matches its CRC
     await expectReject('corrupt Office part rejected', M.stripMetadata(u8(corrupt)), 'MALFORMED');
 
     const zip64 = storedZip([ct]);
@@ -218,7 +218,7 @@ async function edgeCases() {
     // Over 100 MB: refused if it's an Office file, passed through otherwise.
     const pad = Buffer.alloc(100 * 1024 * 1024);
     await expectReject('Office file over 100 MB rejected',
-        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'], ['pad.bin', pad]]))), 'TOO_LARGE');
+        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'], ['pad.bin', pad]]))), 'TOO_LARGE');
     const bigPlain = await M.stripMetadata(u8(storedZip([['pad.bin', pad]])));
     check('plain zip over 100 MB passes through unsupported', bigPlain.supported === false);
 
@@ -243,7 +243,7 @@ async function edgeCases() {
     check('PNG still stripped through the async API', p.type === 'png' && p.supported === true);
 
     // Fake end-of-directory signature inside the archive comment
-    const withComment = storedZip([ct, ['word/document.xml', '<w:document/>']]);
+    const withComment = storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>']]);
     const comment = Buffer.from('note PK\x05\x06 not the real record');
     withComment.writeUInt16LE(comment.length, withComment.length - 2);
     const commented = await M.stripMetadata(u8(Buffer.concat([withComment, comment])));
@@ -256,13 +256,13 @@ async function edgeCases() {
         M.stripMetadata(u8(late)), 'MALFORMED');
 
     // Quotes inside comments and CDATA don't hide the tags after them
-    const hidden = M.scrubOfficeXml('<w:document><!-- don\'t --><![CDATA[ " ]]><w:ins w:author="Bob"/><!-- it\'s --></w:document>');
+    const hidden = M.scrubOfficeXml('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><!-- don\'t --><![CDATA[ " ]]><w:ins w:author="Bob"/><!-- it\'s --></w:document>');
     check('comments and CDATA with quotes are skipped, later tags scrubbed', !hidden.includes('Bob'), hidden);
 
     // What the scrubber can't handle fails closed instead of slipping through
     for (const [label, xml] of [
-        ['author lookalike in body text', '<w:document><w:t>he wrote author="Bob"</w:t></w:document>'],
-        ['unterminated tag', '<w:document><w:ins w:author="Bob"'],
+        ['author lookalike in body text', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:t>he wrote author="Bob"</w:t></w:document>'],
+        ['unterminated tag', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:author="Bob"'],
         ['unclosed author element', '<comments><authors><author>Bob'],
         ['DOCTYPE', '<!DOCTYPE x><w:document/>'],
     ]) {
@@ -280,7 +280,7 @@ async function edgeCases() {
     }
 
     // Parts that can't be cleaned are reported; stale [trash] entries dropped
-    const mixed = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation/>'],
+    const mixed = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>'],
         ['ppt/media/media1.mp4', 'ftypisom GPS'], ['ppt/media/image2.svg', '<svg/>'], ['ppt/media/image3.gif', 'GIF89a'],
         ['ppt/media/image4.emf', 'EMF'], ['xl/activeX/activeX1.bin', 'x'], ['[trash]/0001.dat', 'old bytes']])));
     check('video, GIF and ActiveX reported; EMF kept; [trash] dropped',
@@ -288,7 +288,7 @@ async function edgeCases() {
         !zipText(mixed.data).includes('old bytes'), JSON.stringify(mixed.incomplete));
 
     // Excel XML maps (embedded schemas, bound file) and PowerPoint add-in tags
-    const addins = await M.stripMetadata(u8(storedZip([ct, ['xl/workbook.xml', '<workbook/>'],
+    const addins = await M.stripMetadata(u8(storedZip([ct, ['xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>'],
         ['xl/xmlMaps.xml', '<MapInfo><Schema ID="Schema1"/></MapInfo>'], ['ppt/tags/tag1.xml', '<p:tagLst/>']])));
     check('XML maps and add-in tags reported',
         JSON.stringify(addins.incomplete) === '["xl/xmlMaps.xml","ppt/tags/tag1.xml"]', JSON.stringify(addins.incomplete));
@@ -298,7 +298,7 @@ async function edgeCases() {
         '<svg xmlns:inkscape="i" xmlns:sodipodi="s" sodipodi:docname="C:\\Users\\Bob\\icon.svg" inkscape:export-filename="/home/bob/x.png">' +
         '<!-- by Bob --><metadata><rdf:RDF><cc:Work><dc:creator>Bob</dc:creator></cc:Work></rdf:RDF></metadata>' +
         '<sodipodi:namedview inkscape:current-layer="Bob"/><path d="M0 0"/></svg>';
-    const svgs = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'], ['word/media/image1.svg', svgIn],
+    const svgs = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'], ['word/media/image1.svg', svgIn],
         ['word/media/image2.svg', '<svg><image href="data:image/jpeg;base64,AAAA"/></svg>'],
         ['word/media/image3.svg', '<svg xmlns:xlink="x"><rdf:RDF><dc:creator>Bob</dc:creator></rdf:RDF><i:pgf>Bob</i:pgf>' +
             '<image xlink:href="/home/bob/p.jpg"/><a href="#top"/><a href="https://example.org/"/></svg>'],
@@ -313,33 +313,33 @@ async function edgeCases() {
 
     // Word fields that link to files keep the path in the field code
     for (const [label, xml] of [
-        ['LINK field', '<w:document><w:r><w:instrText xml:space="preserve"> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\Book1.xlsx" "Sheet1!R1C1" \\a </w:instrText></w:r></w:document>'],
-        ['INCLUDEPICTURE in fldSimple', '<w:document><w:fldSimple w:instr=" INCLUDEPICTURE &quot;x.png&quot; \\d "/></w:document>'],
-        ['HYPERLINK field to a network path', '<w:document><w:instrText> HYPERLINK "\\\\\\\\srv\\\\bob\\\\a.docx" </w:instrText></w:document>'],
+        ['LINK field', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:instrText xml:space="preserve"> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\Book1.xlsx" "Sheet1!R1C1" \\a </w:instrText></w:r></w:document>'],
+        ['INCLUDEPICTURE in fldSimple', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:fldSimple w:instr=" INCLUDEPICTURE &quot;x.png&quot; \\d "/></w:document>'],
+        ['HYPERLINK field to a network path', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:instrText> HYPERLINK "\\\\\\\\srv\\\\bob\\\\a.docx" </w:instrText></w:document>'],
     ]) {
         const r = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]])));
         check(label + ' reported as not cleaned', r.incomplete.length === 1 && r.incomplete[0].startsWith('word/document.xml'),
             JSON.stringify(r.incomplete));
     }
     for (const [label, xml] of [
-        ['deleted LINK field', '<w:document><w:del><w:r><w:delInstrText> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\B.xlsx"</w:delInstrText></w:r></w:del></w:document>'],
-        ['old INCLUDE field with a Unix path', '<w:document><w:instrText> INCLUDE "/Users/bob/x.docx" </w:instrText></w:document>'],
-        ['HYPERLINK to a Unix path', '<w:document><w:instrText> HYPERLINK "/Users/bob/x.docx" </w:instrText></w:document>'],
-        ['lower-case link in fldSimple', '<w:document><w:fldSimple w:instr=" link Excel.Sheet.12 &quot;x.xlsx&quot;"/></w:document>'],
+        ['deleted LINK field', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:del><w:r><w:delInstrText> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\B.xlsx"</w:delInstrText></w:r></w:del></w:document>'],
+        ['old INCLUDE field with a Unix path', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:instrText> INCLUDE "/Users/bob/x.docx" </w:instrText></w:document>'],
+        ['HYPERLINK to a Unix path', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:instrText> HYPERLINK "/Users/bob/x.docx" </w:instrText></w:document>'],
+        ['lower-case link in fldSimple', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:fldSimple w:instr=" link Excel.Sheet.12 &quot;x.xlsx&quot;"/></w:document>'],
     ]) {
         const r = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]])));
         check(label + ' reported as not cleaned', r.incomplete.length === 1, JSON.stringify(r.incomplete));
     }
     const webField = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml',
-        '<w:document><w:instrText> HYPERLINK "https://example.org/link/page" </w:instrText><w:instrText> PAGE </w:instrText></w:document>']])));
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:instrText> HYPERLINK "https://example.org/link/page" </w:instrText><w:instrText> PAGE </w:instrText></w:document>']])));
     check('web HYPERLINK and PAGE fields are fine', webField.incomplete.length === 0, JSON.stringify(webField.incomplete));
 
-    const webext = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
+    const webext = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'],
         ['word/webextensions/webextension1.xml', '<we:webextension><we:property name="u" value="bob@corp.com"/></we:webextension>']])));
     check('add-in (web extension) state reported', JSON.stringify(webext.incomplete) === '["word/webextensions/webextension1.xml"]',
         JSON.stringify(webext.incomplete));
 
-    const pretty = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation/>'],
+    const pretty = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>'],
         ['ppt/authors.xml', '<p188:authorLst>\n  <p188:author id="{1}" name="Bob" initials="B" userId="b@x" providerId="AD"/>\n</p188:authorLst>']])));
     check('pretty-printed authors.xml is cleaned, not refused', !zipText(pretty.data).includes('Bob'));
 
@@ -349,7 +349,7 @@ async function edgeCases() {
     const ns0 = M.scrubOfficeXml('<ns0:settings><ns0:mailMerge><ns0:query ns0:val="C:\\Bob"/></ns0:mailMerge><ns0:docVars><ns0:docVar/></ns0:docVars></ns0:settings>');
     check('mail merge and docVars removed under any prefix', ns0 === '<ns0:settings></ns0:settings>', ns0);
     await expectReject('unquoted attribute value fails closed',
-        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document><w:ins w:author=Bob/></w:document>']]))), 'MALFORMED');
+        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:author=Bob/></w:document>']]))), 'MALFORMED');
     const video = M.scrubOfficeXml('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/video" ' +
         'Target="https://www.youtube.com/embed/x" TargetMode="External"/>');
     check('online video link kept', video.includes('Target="https://www.youtube.com/embed/x"'), video);
@@ -362,10 +362,10 @@ async function edgeCases() {
 
     const visio = await M.stripMetadata(u8(storedZip([ct, ['visio/document.xml', '<Creator>Bob</Creator>']])));
     check('Visio and other non-Office packages are unsupported, not "cleaned"', visio.supported === false);
-    const lower = await M.stripMetadata(u8(storedZip([['[content_types].xml', '<Types/>'], ['word/document.xml', '<w:document/>']])));
+    const lower = await M.stripMetadata(u8(storedZip([['[content_types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'], ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>']])));
     check('lower-case [content_types].xml still detected', lower.type === 'office');
 
-    const label = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
+    const label = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'],
         ['docMetadata/LabelInfo.xml', '<clbl:labelList xmlns:clbl="x"><clbl:label id="{1}" siteId="{TENANT}"/></clbl:labelList>']])));
     check('sensitivity label (tenant siteId) emptied', !zipText(label.data).includes('TENANT') && label.incomplete.length === 0);
 
@@ -402,8 +402,119 @@ async function edgeCases() {
         scrubbed === '<a w:author="" w:authorId="7" name="Sheet1"><p:cmAuthor id="0" name=""/></a>', scrubbed);
 }
 
+// The parts of a zip as [name, Buffer], decompressed with Node's zlib.
+function unzip(buf) {
+    const zlib = require('zlib');
+    const b = Buffer.from(buf);
+    const eocd = b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    let pos = b.readUInt32LE(eocd + 16);
+    const out = [];
+    for (let i = 0; i < b.readUInt16LE(eocd + 10); i++) {
+        const method = b.readUInt16LE(pos + 10), comp = b.readUInt32LE(pos + 20);
+        const nameLen = b.readUInt16LE(pos + 28), extra = b.readUInt16LE(pos + 30), comment = b.readUInt16LE(pos + 32);
+        const local = b.readUInt32LE(pos + 42);
+        const start = local + 30 + b.readUInt16LE(local + 26) + b.readUInt16LE(local + 28);
+        const data = b.subarray(start, start + comp);
+        out.push([b.toString('utf8', pos + 46, pos + 46 + nameLen), method === 8 ? zlib.inflateRawSync(data) : Buffer.from(data)]);
+        pos += 46 + nameLen + extra + comment;
+    }
+    return out;
+}
+
+// A fixture with its parts edited: edits maps a part name to a function of
+// its text (returning a string, or [newName, string] to rename it, or null
+// to remove it); extra adds parts.
+function variant(fixture, edits, extra) {
+    const parts = [];
+    for (const [name, data] of unzip(fs.readFileSync(path.join(fixtures, fixture)))) {
+        if (!edits[name]) { parts.push([name, data]); continue; }
+        const r = edits[name](data.toString('utf8'));
+        if (r === null) continue;
+        parts.push(Array.isArray(r) ? r : [name, r]);
+    }
+    return storedZip(parts.concat(extra || []));
+}
+
+// Hostile packages built from the fixtures (data stores, maps and tags moved
+// or disguised so a naive reader misses them). Each must fail closed: be
+// rejected, report a part as not cleaned, or come out without the sentinel.
+async function hostileCases() {
+    const DOCRELS = 'word/_rels/document.xml.rels', STORE_RELS = 'word/storage/_rels/data1.xml.rels';
+    const OLD = 'Target="../word/storage/./data1.xml"';
+    const rep = (a, b) => (t) => t.split(a).join(b);
+    const both = (f, g) => ({ [DOCRELS]: f, [STORE_RELS]: g });
+    const cases = [
+        ['entity in Target', both(rep(OLD, 'Target="../word/storage/d&#97;ta1.xml"'), rep('props1.xml', 'pr&#111;ps1.xml'))],
+        ['entity in Type', both(rep('relationships/customXml"', 'relationships/custom&#88;ml"'), rep('customXmlProps"', 'customXml&#80;rops"'))],
+        ['apostrophe in part name', {
+            [DOCRELS]: rep(OLD, "Target=\"storage/o'data1.xml\""),
+            'word/storage/data1.xml': (t) => ["word/storage/o'data1.xml", t],
+            [STORE_RELS]: (t) => ["word/storage/_rels/o'data1.xml.rels", t.split('/word/storage/props1.xml').join("o'props1.xml")],
+            'word/storage/props1.xml': (t) => ["word/storage/o'props1.xml", t],
+        }],
+        ['prefixed Relationship elements', both(
+            rep('<Relationship Id="rId7"', '<pr:Relationship xmlns:pr="http://schemas.openxmlformats.org/package/2006/relationships" Id="rId7"'),
+            rep('<Relationship ', '<pr:Relationship xmlns:pr="http://schemas.openxmlformats.org/package/2006/relationships" '))],
+        ['percent-encoded Target', both(rep(OLD, 'Target="storage/d%61ta1.xml"'), rep('props1.xml', 'pr%6Fps1.xml'))],
+        ['IRI Target, percent-encoded zip name', {
+            [DOCRELS]: rep(OLD, 'Target="storage/däta1.xml"'),
+            'word/storage/data1.xml': (t) => ['word/storage/d%C3%A4ta1.xml', t],
+            [STORE_RELS]: (t) => ['word/storage/_rels/d%C3%A4ta1.xml.rels', t],
+        }],
+    ];
+    // Properties part disguised while its relationship doesn't resolve
+    const propsEvade = (f) => ({ [STORE_RELS]: rep('props1.xml', 'pr&#111;ps1.xml'), 'word/storage/props1.xml': f });
+    cases.push(['props namespace with an entity', propsEvade(rep('2006/customXml"', '2006/custom&#88;ml"'))]);
+    cases.push(['props with > in an attribute', propsEvade(rep('<ds:datastoreItem ', '<ds:datastoreItem ds:x="a>b" '))]);
+    cases.push(['props after a second PI', propsEvade(rep('<!-- props -->', '<?foo bar?>'))]);
+    cases.push(['props relationship broken only', propsEvade((t) => t)]);
+    cases.push(['props disguised, relationship intact', { 'word/storage/props1.xml': rep('<!-- props -->', '<?a b?><?c d?><!-- x -->') }]);
+    cases.push(['main document declared a data store', { '_rels/.rels': rep('</Relationships>',
+        '<Relationship Id="rIdX" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="word/document.xml"/></Relationships>') }]);
+    cases.push(['smart tag properties', { 'word/document.xml': rep('<w:sectPr', '<w:p><w:smartTag w:uri="urn:schemas-microsoft-com:office:smarttags" w:element="PersonName">' +
+        '<w:smartTagPr><w:attr w:uri="urn:ZQX7731" w:name="ProductID" w:val="ZQX7731 Contact"/></w:smartTagPr><w:r><w:t>x</w:t></w:r></w:smartTag></w:p><w:sectPr') }]);
+    for (const [label, edits] of cases) await failsClosed('hostile ' + label, variant('sample.docx', edits));
+
+    const MAP = '<MapInfo xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" SelectionNamespaces="">' +
+        '<Schema ID="Schema1"><xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" targetNamespace="https://zqx7731.sharepoint.com/sites/ZQX7731"/></Schema>' +
+        '<Map ID="1" Name="ZQX7731_Map" RootElement="root" SchemaID="Schema1"><DataBinding FileBinding="true" FileBindingName="C:\\Users\\ZQX7731\\data.xml"/></Map></MapInfo>';
+    for (const at of ['xl/xmlMaps.xml', 'xl/maps1.xml']) {
+        await failsClosed('hostile XML map at ' + at, variant('sample.xlsx', { 'xl/_rels/workbook.xml.rels': rep('</Relationships>',
+            '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/xmlMaps" Target="' + at.slice(3) + '"/></Relationships>') },
+            [[at, MAP]]), true);
+    }
+    const TAG = '<p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="OWNER" val="ZQX7731@example.com"/></p:tagLst>';
+    for (const at of ['ppt/tags/tag1.xml', 'ppt/tagz/tag1.xml', 'ppt/unlinked.xml']) {
+        await failsClosed('hostile tags at ' + at, variant('sample.pptx', at === 'ppt/unlinked.xml' ? {} : {
+            'ppt/slides/_rels/slide1.xml.rels': rep('</Relationships>', '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags" Target="../' + at.slice(4) + '"/></Relationships>'),
+        }, [[at, TAG]]), true);
+    }
+
+    // Many comments before the root used to make a regex backtrack exponentially
+    const t0 = Date.now();
+    await failsClosed('comments before the root', variant('sample.docx', { 'word/document.xml': (t) => t.replace('<w:document', '<!---->'.repeat(40) + '<w:document') }));
+    check('comments before the root are fast', Date.now() - t0 < 5000, (Date.now() - t0) + ' ms');
+}
+
+// Rejected, or a part reported as not cleaned, or no sentinel in the output.
+// mustReport: the sentinel's part must be reported (it can't be cleaned).
+async function failsClosed(label, buf, mustReport) {
+    let r;
+    try {
+        r = await M.stripMetadata(u8(buf));
+    } catch (e) {
+        check(label + ': rejected', e.code === 'MALFORMED', e.code + ' ' + e.message);
+        return;
+    }
+    const leaked = zipText(r.data).includes('ZQX7731');
+    check(label + (r.incomplete.length ? ': reported ' + JSON.stringify(r.incomplete) : ': cleaned'),
+        mustReport ? r.incomplete.length > 0 : (r.incomplete.length > 0 || !leaked),
+        'incomplete=' + JSON.stringify(r.incomplete) + ' leaked=' + leaked);
+}
+
 (async () => {
     await edgeCases();
+    await hostileCases();
     const files = (await nodeRuns()).concat(await browserRuns());
     verifyOutputs(files);
     console.log('\nStripped files in ' + outDir);

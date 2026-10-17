@@ -375,10 +375,19 @@
         return false;
     }
 
-    // Part names are compared lower-cased with forward slashes and no leading
-    // slash: OPC part names are case-insensitive.
+    // Part names are compared percent-decoded (zip entry names and
+    // relationship targets are IRIs), lower-cased, with forward slashes and
+    // no leading slash: OPC part names are case-insensitive.
     function partName(name) {
-        return name.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+        var n = name.replace(/\\/g, '/');
+        if (n.indexOf('%') !== -1) {
+            try {
+                n = decodeURIComponent(n);
+            } catch (e) {
+                throw stripError('MALFORMED', 'Bad Office part name ' + name);
+            }
+        }
+        return n.replace(/^\/+/, '').toLowerCase();
     }
 
     // A Word, Excel or PowerPoint package. Other OPC packages (Visio, XPS,
@@ -412,13 +421,76 @@
         labels: XML_DECL + '<clbl:labelList xmlns:clbl="http://schemas.microsoft.com/office/2020/mipLabelMetadata"></clbl:labelList>'
     };
     var DEFAULT_PROPERTY_PARTS = { 'docprops/core.xml': 'core', 'docprops/app.xml': 'app', 'docprops/custom.xml': 'custom' };
+    // Relationship types whose target is replaced (property parts, custom
+    // XML data stores and their properties) or can't be cleaned (Excel XML
+    // maps, PowerPoint tags). Their target must exist: a target that doesn't
+    // resolve to a part here could still resolve to one in Office.
     var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom'],
-        [/\/customXml$/i, 'customItem'], [/\/customXmlProps$/i, 'customItemProps']];
+        [/\/customXml$/i, 'customItem'], [/\/customXmlProps$/i, 'customItemProps'],
+        [/\/xmlMaps$/i, 'incomplete'], [/\/tags$/i, 'incomplete']];
 
     // Anything in customXml/ is a data store or its properties, whatever its name
     var CUSTOM_XML_PART = /^customxml\/(?!_rels\/).*\.xml$/;
-    // A data store properties part (found by its content when misnamed)
-    var RE_DATASTORE_ROOT = /^\s*(?:<\?[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<(?:[\w.-]+:)?datastoreItem\b[^>]*officeDocument\/2006\/customXml/;
+    var CUSTOM_XML_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/customXml';
+
+    // Root elements (by namespace) of the XML parts the scrubber cleans: the
+    // part types of the Open XML SDK 3.3 plus package parts, VML and
+    // PowerPoint's revision and change logs. Parts with any other root (Excel
+    // XML maps and macro sheets, PowerPoint tags, add-in data, document tasks,
+    // mail-merge recipients, VBA data, unknown or newer parts) are reported
+    // as not cleaned.
+    var SCRUBBED_ROOTS = {
+        'http://schemas.microsoft.com/office/2006/01/customui': 'customUI',
+        'http://schemas.microsoft.com/office/2009/07/customui': 'customUI',
+        'http://schemas.microsoft.com/office/drawing/2008/diagram': 'drawing',
+        'http://schemas.microsoft.com/office/drawing/2012/chartStyle': 'chartStyle colorStyle',
+        'http://schemas.microsoft.com/office/drawing/2014/chartex': 'chartSpace',
+        'http://schemas.microsoft.com/office/excel/2006/main': 'worksheetSortMap',
+        'http://schemas.microsoft.com/office/powerpoint/2018/8/main': 'authorLst cmLst',
+        'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main': 'formControlPr slicerCacheDefinition slicers',
+        'http://schemas.microsoft.com/office/spreadsheetml/2010/11/main': 'timelineCacheDefinition timelines',
+        'http://schemas.microsoft.com/office/spreadsheetml/2017/richdata': 'rvData rvStructures',
+        'http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2': 'arrayData richStyleSheet rvTypesInfo spbStructures supportingPropertyBags',
+        'http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments': 'ThreadedComments personList',
+        'http://schemas.microsoft.com/office/spreadsheetml/2019/namedsheetviews': 'namedSheetViews',
+        'http://schemas.microsoft.com/office/spreadsheetml/2020/richdatawebimage': 'webImagesSrd',
+        'http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag': 'FeaturePropertyBags',
+        'http://schemas.microsoft.com/office/word/2012/wordml': 'commentsEx people',
+        'http://schemas.microsoft.com/office/word/2016/wordml/cid': 'commentsIds',
+        'http://schemas.microsoft.com/office/word/2018/wordml/cex': 'commentsExtensible',
+        'http://schemas.openxmlformats.org/drawingml/2006/chart': 'chartSpace userShapes',
+        'http://schemas.openxmlformats.org/drawingml/2006/diagram': 'colorsDef dataModel layoutDef styleDef',
+        'http://schemas.openxmlformats.org/drawingml/2006/main': 'tblStyleLst theme themeOverride',
+        'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing': 'wsDr',
+        'http://schemas.openxmlformats.org/officeDocument/2006/bibliography': 'Sources',
+        'http://schemas.openxmlformats.org/officeDocument/2006/characteristics': 'additionalCharacteristics',
+        'http://schemas.openxmlformats.org/presentationml/2006/main': 'cmAuthorLst cmLst handoutMaster notes notesMaster presentation presentationPr sld sldLayout sldMaster sldSyncPr viewPr',
+        'http://schemas.openxmlformats.org/spreadsheetml/2006/main': 'calcChain chartsheet comments connections externalLink headers metadata pivotCacheDefinition pivotCacheRecords pivotTableDefinition queryTable revisions sst styleSheet table users volTypes workbook worksheet',
+        'http://schemas.openxmlformats.org/wordprocessingml/2006/main': 'comments document endnotes fonts footnotes ftr glossaryDocument hdr numbering settings styles webSettings',
+        'http://www.w3.org/2003/InkML': 'ink',
+        'http://schemas.openxmlformats.org/package/2006/content-types': 'Types',
+        'http://schemas.openxmlformats.org/package/2006/relationships': 'Relationships',
+        '': 'xml',
+        'http://schemas.microsoft.com/office/powerpoint/2015/10/main': 'revInfo',
+        'http://schemas.microsoft.com/office/powerpoint/2013/main/command': 'chgInfo'
+    };
+    var ROOT_TEMPLATES = {};
+    ROOT_TEMPLATES[CUSTOM_XML_NS + ' datastoreItem'] = 'customItemProps';
+    ROOT_TEMPLATES['http://schemas.openxmlformats.org/package/2006/metadata/core-properties coreProperties'] = 'core';
+    ROOT_TEMPLATES['http://schemas.openxmlformats.org/officeDocument/2006/extended-properties Properties'] = 'app';
+    ROOT_TEMPLATES['http://schemas.openxmlformats.org/officeDocument/2006/custom-properties Properties'] = 'custom';
+    ROOT_TEMPLATES['http://schemas.microsoft.com/office/2020/mipLabelMetadata labelList'] = 'labels';
+
+    // What to do with an XML part, from its root element: a template name,
+    // 'scrub' or 'incomplete'.
+    function rootAction(root) {
+        if (!root) return 'incomplete';
+        if (root.ns === null) return 'incomplete';
+        var key = root.ns + ' ' + root.local;
+        if (Object.prototype.hasOwnProperty.call(ROOT_TEMPLATES, key)) return ROOT_TEMPLATES[key];
+        var locals = Object.prototype.hasOwnProperty.call(SCRUBBED_ROOTS, root.ns) ? SCRUBBED_ROOTS[root.ns].split(' ') : [];
+        return locals.indexOf(root.local) !== -1 ? 'scrub' : 'incomplete';
+    }
     var XML_PART = /\.(?:xml|rels|vml)$/;
     var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
     var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
@@ -442,6 +514,7 @@
     var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
     var RE_USER_NAME = new RegExp('\\s' + P + 'userName' + VAL, 'g');
     var RE_URI = new RegExp('\\s' + P + 'uri' + VAL, 'g');
+    var RE_VAL = new RegExp('(\\s' + P + 'val)' + VAL, 'g');
     var RE_NAME = new RegExp('(\\s' + P + 'name)' + VAL, 'g');
     var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
     var RE_DISPLAY_NAME = new RegExp('(\\s' + P + 'displayName)' + VAL, 'g'); // Excel persons (tables use it too)
@@ -475,6 +548,51 @@
         return m ? { prefix: m[1] || '', local: m[2] } : null;
     }
 
+    var NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+    function xmlUnescape(s) {
+        return s.replace(/&(?:#x([0-9A-Fa-f]{1,6})|#([0-9]{1,7})|(amp|lt|gt|quot|apos));/g, function (m, hex, dec, named) {
+            if (named) return NAMED_ENTITIES[named];
+            var cp = hex ? parseInt(hex, 16) : parseInt(dec, 10);
+            if (cp > 0x10FFFF) throw stripError('MALFORMED', 'Bad character reference in Office part');
+            return String.fromCodePoint(cp);
+        });
+    }
+
+    // A start tag's attributes by qualified name, values unescaped. (walkXml
+    // has already checked the quoting.)
+    function tagAttrs(tag) {
+        var out = Object.create(null);
+        var re = /\s([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+        var m;
+        while ((m = re.exec(tag)) !== null) {
+            if (m[1] in out) throw stripError('MALFORMED', 'Repeated attribute in Office part');
+            out[m[1]] = xmlUnescape(m[2] !== undefined ? m[2] : m[3]);
+        }
+        return out;
+    }
+
+    var STOP_WALK = {};
+    // The root element's local name and namespace URI; null if there's none.
+    function rootElement(xml) {
+        var root = null;
+        try {
+            walkXml(xml, function (kind, token) {
+                if (kind === 'tag') {
+                    root = token;
+                    throw STOP_WALK;
+                }
+            });
+        } catch (e) {
+            if (e !== STOP_WALK) throw e;
+        }
+        if (root === null) return null;
+        var n = tagName(root);
+        if (!n || root[1] === '/') throw stripError('MALFORMED', 'Bad root element in Office part');
+        var a = tagAttrs(root);
+        var ns = n.prefix ? a['xmlns:' + n.prefix] : (a.xmlns || '');
+        return { local: n.local, ns: ns === undefined ? null : ns.trim() }; // null: undeclared prefix
+    }
+
     // Elements removed whole (with their content), matched by local name
     // whatever the prefix. A content control's data binding names the custom
     // XML store and its (SharePoint) namespaces, as do Word's schema library
@@ -490,6 +608,9 @@
     function scrubTag(tag, n) {
         if (n.local === 'fileSharing') tag = tag.replace(RE_USER_NAME, '');
         if (n.local === 'customXml' || n.local === 'smartTag') tag = tag.replace(RE_URI, '');
+        // a smart tag's or custom XML element's properties (a PersonName
+        // smart tag holds contact details)
+        if (n.local === 'attr') tag = tag.replace(RE_URI, '').replace(RE_VAL, '$1=""');
         tag = tag
             .replace(RE_WHO, '$1=""')
             .replace(RE_DATE, '$1="' + EPOCH + '"')
@@ -755,28 +876,36 @@
         return partName(out.join('/'));
     }
 
-    // Names of the property parts (core, extended, custom) and custom XML
-    // data stores with their properties: the usual paths plus wherever any
-    // relationship points.
+    // How each part named by a relationship of one of PROPERTY_REL_TYPES is
+    // handled (template name or 'incomplete'), plus the usual docProps/ paths.
     async function propertyParts(entries, budget) {
-        var parts = Object.assign({}, DEFAULT_PROPERTY_PARTS);
-        for (var i = 0; i < entries.length; i++) {
+        var names = Object.create(null);
+        for (var i = 0; i < entries.length; i++) names[partName(entries[i].name)] = true;
+        var parts = Object.create(null);
+        for (var d in DEFAULT_PROPERTY_PARTS) parts[d] = DEFAULT_PROPERTY_PARTS[d];
+        for (i = 0; i < entries.length; i++) {
             var relsName = partName(entries[i].name);
             if (!/(?:^|\/)_rels\/[^/]*\.rels$/.test(relsName)) continue;
             var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
             var tags = [];
             walkXml(rels, function (kind, token) {
-                if (kind === 'tag' && /^<Relationship\b/.test(token)) tags.push(token);
+                if (kind !== 'tag' || token[1] === '/') return;
+                var n = tagName(token);
+                if (n && n.local === 'Relationship') tags.push(token); // any prefix
             });
             for (var t = 0; t < tags.length; t++) {
-                var type = /\sType\s*=\s*["']([^"']*)/.exec(tags[t]);
-                var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
-                if (!type || !target) continue;
-                var resolved = relTarget(relsName, target[1]);
-                if (resolved === null) continue;
+                var a = tagAttrs(tags[t]);
+                if (a.Type === undefined || a.Target === undefined) continue;
+                var kind = null;
                 for (var k = 0; k < PROPERTY_REL_TYPES.length; k++) {
-                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[resolved] = PROPERTY_REL_TYPES[k][1];
+                    if (PROPERTY_REL_TYPES[k][0].test(a.Type.trim())) kind = PROPERTY_REL_TYPES[k][1];
                 }
+                if (kind === null || (a.TargetMode || '').trim() === 'External') continue;
+                var resolved = relTarget(relsName, a.Target.trim().split(/[?#]/)[0]);
+                if (resolved === null || !names[resolved]) {
+                    throw stripError('MALFORMED', 'Office relationship in ' + entries[i].name + ' points to a missing part');
+                }
+                parts[resolved] = kind;
             }
         }
         return parts;
@@ -806,10 +935,14 @@
         var lname = partName(name);
         if (lname === '' || lname[lname.length - 1] === '/' || entry.size === 0) return null; // directories, empty parts
         if (/^\[trash\]\//.test(lname)) return DROP; // stale data from earlier saves, unreferenced
+        if (props[lname] === 'incomplete') {
+            ctx.incomplete.push(name);
+            return null;
+        }
         if (props[lname]) return template(props[lname], ctx);
         if (CUSTOM_XML_PART.test(lname)) {
-            var store = decodeUtf8(await readEntry(entry, ctx.budget), name);
-            return template(RE_DATASTORE_ROOT.test(store) ? 'customItemProps' : 'customItem', ctx);
+            var store = rootElement(decodeUtf8(await readEntry(entry, ctx.budget), name));
+            return template(store && store.ns === CUSTOM_XML_NS && store.local === 'datastoreItem' ? 'customItemProps' : 'customItem', ctx);
         }
         if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
         if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname) || /(?:^|\/)webextensions\//.test(lname)) {
@@ -820,16 +953,15 @@
             return null;
         }
 
-        if (/^xl\/xmlmaps\.xml$/.test(lname) || /^ppt\/tags\//.test(lname)) {
-            // Excel XML maps embed the imported schemas (a SharePoint list's
-            // names the site) and the bound file; PowerPoint tags hold add-in
-            // data, which can be anything.
-            ctx.incomplete.push(name);
-            return null;
-        }
         if (XML_PART.test(lname)) {
             var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
-            if (RE_DATASTORE_ROOT.test(xml)) return template('customItemProps', ctx);
+            var action = rootAction(rootElement(xml));
+            if (action !== 'scrub' && action !== 'incomplete') return template(action, ctx);
+            // Excel XML maps embed the imported schemas (a SharePoint list's
+            // names the site) and the bound file; PowerPoint tags and add-in
+            // data can hold anything. Parts like these are still scrubbed for
+            // the modes that upload them anyway.
+            if (action === 'incomplete') ctx.incomplete.push(name);
             var scrubbed = scrubOfficeXml(xml);
             if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
             if (RE_LINKED_FIELD.test(scrubbed)) ctx.incomplete.push(name + ' (a field linking to a file)');
