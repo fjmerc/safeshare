@@ -39,7 +39,7 @@ E2EE does **not** protect against:
 
 - An attacker who obtains the full share URL (which contains the key in the fragment).
 - Malicious JavaScript served by a compromised server — if the server is compromised at the application level, it could serve modified JavaScript that exfiltrates keys before encryption.
-- Metadata leakage: the server still knows the file size (of the ciphertext), the upload time, the claim code, and the uploader's IP address.
+- Metadata leakage: the server still knows the size bucket of the ciphertext (see [Size Padding](#size-padding-anonymous-mode)), the upload time, the claim code, and the uploader's IP address.
 
 ## Limitations
 
@@ -48,6 +48,7 @@ E2EE does **not** protect against:
 The entire file must fit in browser memory twice — once as the original content and once as the encrypted output. For large files this can cause the browser tab to run out of memory or become unresponsive.
 
 - A warning is shown in the UI for files larger than **500 MB**.
+- In anonymous mode the padded copy is up to about 12% larger than the file, so peak memory grows by the same amount. On download, unwrapping copies the file once more.
 - For files that do not fit in memory, use server-side encryption at rest (`ENCRYPTION_KEY`) instead.
 
 ### URL Fragment Handling
@@ -101,6 +102,40 @@ In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upl
 
 ## Technical Details
 
+### Payload Format and Versions
+
+The bytes that go into AES-GCM are one of three layouts. The browser tells them apart by the first four bytes, and **decryption always understands all three, whatever mode the server is in**, so old share links keep working.
+
+| Version | Magic | Layout | Written when |
+|---------|-------|--------|--------------|
+| v1 | none | `[file]` | E2EE with the filename visible, in non-anonymous mode (and every file from before filename hiding) |
+| v2 (`SF01`) | `SF01` | `[SF01][u32 LE name length][name UTF-8][file]` | **Hide filename** on, non-anonymous mode |
+| v3 (`SF02`) | `SF02` | `[SF02][u32 LE name length][u64 LE file length][name UTF-8][file][zero padding]` | Anonymous mode, always |
+
+The magic is `SF` plus a two-digit format number, so the next format uses `SF03`. For `SF02`, a name length of 0 means the filename stays visible to the server (Hide filename off) and is not in the payload. The download page unwraps files the server stored as `encrypted.bin` (these are always framed) and any file whose decrypted data begins with `SF02` and has a valid header (for a file stored under its real name, the server-visible name wins over any embedded one); a plain legacy file that merely starts with `SF01` is not touched.
+
+An `SF02` payload is rejected (the download shows an error and nothing is saved) if the file length plus header does not fit in the decrypted size, the name length is over 1024 bytes, or any padding byte is not zero. Because the length is inside the authenticated plaintext, only the key holder can write a bad one. The exception is a file stored under its real name (not `encrypted.bin`): if its data starts with `SF02` but the header is invalid, it is saved as is, because a legacy plain file could begin with those bytes.
+
+### Size Padding (Anonymous Mode)
+
+The server stores ciphertext, so the stored size would otherwise be the file size plus 28 bytes. When `GET /api/config` reports `anonymous_mode: true`, the browser pads the framed payload to a bucket **before encryption**, so the padding is authenticated by GCM and indistinguishable from the rest of the ciphertext. Other modes are unchanged: no padding, same formats as before.
+
+- **Scheme: PADME** (Nikitin et al., "Reducing Metadata Leakage from Encrypted Files and Communication with PURBs", PETS 2019). The padded length keeps only the top bits of the length significant. Overhead is at most about 12% and shrinks as files grow, and the bucket leaks O(log log n) bits about the length. Power-of-two buckets would add up to 100% (a 300 MB file would become 512 MB in browser memory).
+- **Floor:** payloads smaller than 4096 bytes are padded to 4096, so notes and keys are not in fine-grained buckets of their own.
+- **Padding bytes are zeros.** They sit inside the AES-GCM plaintext, so the ciphertext is indistinguishable from random, and zeros are free to generate for hundreds of MB. The decryptor requires them to be zero, which keeps the format canonical and gives a malicious writer no covert channel.
+- **Examples** (file size, stored size): 10 KiB, 10.5 KiB; 1 MiB, 1.03 MiB; 100 MiB, 102 MiB; 500 MiB, 504 MiB.
+- **What is still visible:** the bucket, hence the size to within about 12%. Files of similar size share a bucket. The upload and expiry times, the claim code and the download count are unaffected.
+
+#### Size limits and quota
+
+The server cannot see inside the ciphertext, so `MAX_FILE_SIZE`, the quota and the disk check apply to the **stored (padded) size**, as with any upload. To avoid refusing files that would have fit, the browser caps the bucket 4 KB below `MAX_FILE_SIZE` (the server applies the limit to the whole upload request, form fields included). A file that would fit unpadded is never rejected because of padding: files that PADME would round past the cap land in that top bucket, and a file in the last 4 KB below the limit is simply left unpadded. A file that exceeds the limit even unpadded (the 28 bytes of IV and tag, plus a header of 16 bytes and the filename if hidden) is refused in the browser before upload with "This file is too large to upload encrypted...". Padding does count toward the quota, so a quota that is nearly full can refuse an upload the unpadded file would have fit.
+
+The pickup page and the download page show the stored (padded) size, since the real size is only known after decrypting. The upload result page shows the real size.
+
+#### Chunked uploads
+
+The file is padded and encrypted before chunking, so chunked uploads (`CHUNKED_UPLOAD_THRESHOLD`) work on the padded size and the server sees the padded total, as for any other upload. The threshold decision uses the padded size.
+
 ### Encryption Algorithm
 
 | Property | Value |
@@ -116,6 +151,8 @@ In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upl
 ```
 [ 12 bytes: random IV ][ N bytes: AES-256-GCM ciphertext ][ 16 bytes: GCM auth tag ]
 ```
+
+The plaintext inside is one of the payload layouts above.
 
 The IV is prepended to the ciphertext so the download path can extract it without any additional metadata stored on the server.
 
@@ -139,7 +176,7 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 |---------|--------------|-------|
 | Password protection | Compatible | Password is verified by the server before the encrypted blob is served. The browser then decrypts the blob client-side. The password prompt appears first. |
 | QR codes | Compatible | The QR code encodes the full share URL including the key fragment. The recipient must scan the full URL. |
-| Chunked uploads | Compatible | Each chunk is part of the encrypted payload. The entire file is encrypted before chunking begins. |
+| Chunked uploads | Compatible | Each chunk is part of the encrypted payload. The entire file is padded (anonymous mode) and encrypted before chunking begins. |
 | Server-side encryption at rest (`ENCRYPTION_KEY`) | Compatible | The two encryption layers are independent. The server encrypts the E2EE ciphertext blob with its own key. Provides defense in depth. |
 | Download limits | Compatible | The server enforces download limits on the encrypted blob as normal. |
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
@@ -154,7 +191,7 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 - **Authenticated encryption**: AES-256-GCM provides both confidentiality and integrity. A tampered ciphertext will fail to decrypt.
 - **Unique IV per file**: Each upload uses a freshly generated random IV, preventing IV reuse attacks.
 - **No additional endpoints**: E2EE is implemented entirely in the browser. It requires no new API endpoints and no new database fields.
-- **What the server still sees**: the ciphertext size, upload and expiry times, download counts, and the filename unless **Hide filename** is checked. In anonymous mode the server does not record a hash of the upload.
+- **What the server still sees**: the ciphertext size bucket (exact size in non-anonymous mode), upload and expiry times, download counts, and the filename unless **Hide filename** is checked. In anonymous mode the server does not record a hash of the upload.
 
 ## Setup
 
