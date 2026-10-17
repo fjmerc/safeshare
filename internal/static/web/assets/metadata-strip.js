@@ -911,9 +911,12 @@
     // space: the new data must fit, /Length is rewritten in the same width,
     // and the space left over becomes whitespace between objects.
 
+    // A PDF header anywhere in the first megabyte (readers tolerate junk
+    // before it), or a PDF trailer at the end.
     function isPdf(b) {
-        var head = String.fromCharCode.apply(null, b.subarray(0, Math.min(b.length, 1024)));
-        return head.indexOf('%PDF-') !== -1;
+        var head = pdfLatin1(b.subarray(0, Math.min(b.length, 1024 * 1024)));
+        var tail = pdfLatin1(b.subarray(Math.max(0, b.length - 2048)));
+        return head.indexOf('%PDF-') !== -1 || (tail.indexOf('startxref') !== -1 && tail.indexOf('%%EOF') !== -1);
     }
 
     var PDF_WS = { 0: 1, 9: 1, 10: 1, 12: 1, 13: 1, 32: 1 };
@@ -1022,22 +1025,53 @@
         return [null];
     }
 
-    // Every top-level "N G obj <int> endobj" (stream lengths stored as
-    // separate objects), indexed once by "n g": [{ v, s, e }].
+    // An unsigned integer token of at most maxDigits digits at S[i], or null.
+    // Bounded, so a long run of digits costs nothing extra.
+    function readUint(S, i, maxDigits) {
+        var j = i;
+        while (j < S.length && j - i <= maxDigits) {
+            var c = S.charCodeAt(j);
+            if (c < 48 || c > 57) break;
+            j++;
+        }
+        if (j === i || j - i > maxDigits || isRegular(S[j])) return null;
+        return { v: +S.slice(i, j), e: j };
+    }
+
+    // An object header "N G obj" at S[i] (any PDF whitespace or comments
+    // between the parts): { n, g, body } or null.
+    function parseHeader(S, i) {
+        var n = readUint(S, i, 10);
+        if (!n) return null;
+        var j = skipPdfWs(S, n.e);
+        if (j === n.e) return null;
+        var g = readUint(S, j, 5);
+        if (!g) return null;
+        var k = skipPdfWs(S, g.e);
+        if (k === g.e || !S.startsWith('obj', k) || isRegular(S[k + 3])) return null;
+        return { n: n.v, g: g.v, body: k + 3 };
+    }
+
+    // Every "N G obj <int> endobj" (stream lengths stored as separate
+    // objects), indexed by "n g": [{ v, s, e }]. The quantifiers are bounded,
+    // so the scan stays linear even over long runs of digits.
     function indexIntObjects(S) {
-        var re = /(\d+)\s+(\d+)\s+obj\s*(\d+)\s*endobj/g;
+        var re = /(\d{1,10})[\0\t\n\f\r ]+(\d{1,5})[\0\t\n\f\r ]+obj[\0\t\n\f\r ]*(\d{1,12})[\0\t\n\f\r ]*endobj/g;
         var index = {}, m;
         while ((m = re.exec(S)) !== null) {
+            var prev = S.charCodeAt(m.index - 1);
+            if (prev >= 48 && prev <= 57) continue; // the middle of a longer number
             var numStart = m.index + m[0].lastIndexOf(m[3], m[0].length - 6);
-            var key = m[1] + ' ' + m[2];
+            var key = (+m[1]) + ' ' + (+m[2]);
             (index[key] = index[key] || []).push({ v: +m[3], s: numStart, e: numStart + m[3].length });
         }
         return index;
     }
 
     /**
-     * Read the object whose header ("N G obj") starts at off. For a stream,
-     * finds its data from /Length, checked against the endstream keyword.
+     * Read the object whose header starts at off (body is where its value
+     * starts). For a stream, finds its data from /Length, checked against
+     * the endstream keyword.
      */
     function readPdfObject(S, off, num, gen, bodyStart, ints) {
         var value = parsePdfValue(S, bodyStart, 0);
@@ -1056,7 +1090,7 @@
             var de = -1, lengthAt = null;
             for (var k = 0; k < candidates.length && de < 0; k++) {
                 var q = ds + candidates[k].v;
-                if (/^\s*endstream/.test(S.slice(q, q + 12))) { de = q; lengthAt = candidates[k]; }
+                if (S.startsWith('endstream', skipPdfWs(S, q))) { de = q; lengthAt = candidates[k]; }
             }
             if (de < 0) {
                 // /Length is missing or wrong: use the endstream keyword.
@@ -1082,49 +1116,170 @@
         return obj;
     }
 
-    // Every top-level object, in file order, including ones left over from
-    // older revisions. A match inside the previous object (in its stream
-    // data, e.g. an attached PDF) is skipped.
-    function scanPdfObjects(S) {
-        var ints = indexIntObjects(S);
-        var re = /(\d+)\s+(\d+)\s+obj\b/g;
-        var objects = [];
-        var floor = 0, m, skippedInComment = false;
-        while ((m = re.exec(S)) !== null) {
-            if (m.index < floor) { re.lastIndex = floor; continue; }
-            var prev = S.charCodeAt(m.index - 1);
-            // A header starts the file or follows whitespace or a delimiter,
-            // and isn't inside a comment.
-            if (m.index > 0 && !PDF_WS[prev] && prev !== 62 && prev !== 41 && prev !== 93) continue;
-            if (inComment(S, m.index)) { skippedInComment = true; continue; }
-            var obj = readPdfObject(S, m.index, +m[1], +m[2], m.index + m[0].length, ints);
-            objects.push(obj);
-            floor = obj.end;
-            re.lastIndex = Math.max(re.lastIndex, floor);
+    /**
+     * Walk the file token by token at the top level, as a reader rebuilding
+     * a damaged file would: objects (including ones left over from older
+     * revisions) and trailer dictionaries. Comments and NULs count as
+     * whitespace, junk is stepped over, and each object's contents (its
+     * stream data included) are skipped as a whole.
+     */
+    function scanTopLevel(S, ints) {
+        var objects = [], trailers = [];
+        var n = S.length, i = 0;
+        while (i < n) {
+            i = skipPdfWs(S, i);
+            if (i >= n) break;
+            var c = S.charCodeAt(i);
+            if (c >= 48 && c <= 57) {
+                var h = parseHeader(S, i);
+                if (h) {
+                    var obj = readPdfObject(S, i, h.n, h.g, h.body, ints);
+                    objects.push(obj);
+                    i = Math.max(obj.end, h.body);
+                    continue;
+                }
+            } else if (S.startsWith('trailer', i) && !isRegular(S[i + 7])) {
+                var t = null;
+                try { t = parsePdfValue(S, i + 7, 0); } catch (e) { t = null; }
+                if (t && t.t === 'dict') { trailers.push(t); i = t.e; continue; }
+            }
+            // Anything else: step over one token.
+            if (isRegular(S[i])) { while (i < n && isRegular(S[i])) i++; } else i++;
         }
-        objects.skippedInComment = skippedInComment;
-        return objects;
+        return { objects: objects, trailers: trailers };
     }
 
-    // True if a '%' comes earlier on the same line (looking back at most 4 KB).
-    function inComment(S, i) {
-        for (var j = i - 1, stop = Math.max(0, i - 4096); j >= stop; j--) {
-            var c = S.charCodeAt(j);
-            if (c === 10 || c === 13) return false;
-            if (c === 37) return true;
-        }
-        return false;
-    }
-
-    // Trailer dictionaries ("trailer << ... >>") outside any object.
-    function scanTrailers(S, objects) {
-        var spans = objects.map(function (o) { return [o.off, o.end]; });
-        var re = /trailer\s*<</g, out = [], m;
-        while ((m = re.exec(S)) !== null) {
-            var inside = spans.some(function (sp) { return m.index >= sp[0] && m.index < sp[1]; });
-            if (!inside) out.push(parsePdfValue(S, m.index + m[0].length - 2, 0));
+    // Undo PNG predictors (as used by cross-reference streams): rows of
+    // `columns` bytes, each preceded by its filter type.
+    function unpredictPng(data, columns) {
+        var row = columns + 1, rows = Math.floor(data.length / row);
+        var out = new Uint8Array(rows * columns), prevRow = new Uint8Array(columns);
+        for (var r = 0; r < rows; r++) {
+            var type = data[r * row], base = r * row + 1, cur = new Uint8Array(columns);
+            for (var x = 0; x < columns; x++) {
+                var raw = data[base + x], left = x > 0 ? cur[x - 1] : 0, up = prevRow[x], ul = x > 0 ? prevRow[x - 1] : 0;
+                var v;
+                if (type === 0) v = raw;
+                else if (type === 1) v = raw + left;
+                else if (type === 2) v = raw + up;
+                else if (type === 3) v = raw + ((left + up) >> 1);
+                else if (type === 4) {
+                    var pa = Math.abs(up - ul), pb = Math.abs(left - ul), pc = Math.abs(left + up - 2 * ul);
+                    v = raw + (pa <= pb && pa <= pc ? left : pb <= pc ? up : ul);
+                } else throw pdfError('Bad cross-reference predictor');
+                cur[x] = v & 255;
+            }
+            out.set(cur, r * columns);
+            prevRow = cur;
         }
         return out;
+    }
+
+    function readXrefTable(S, p, entries) {
+        for (;;) {
+            p = skipPdfWs(S, p);
+            if (S.startsWith('trailer', p)) {
+                var t = parsePdfValue(S, p + 7, 0);
+                if (t.t !== 'dict') throw pdfError('Bad trailer');
+                return t;
+            }
+            var start = readUint(S, p, 10);
+            if (!start) throw pdfError('Bad cross-reference table');
+            var count = readUint(S, skipPdfWs(S, start.e), 10);
+            if (!count || count.v > 10000000) throw pdfError('Bad cross-reference table');
+            p = count.e;
+            for (var k = 0; k < count.v; k++) {
+                var off = readUint(S, skipPdfWs(S, p), 10);
+                if (!off) throw pdfError('Bad cross-reference entry');
+                var gen = readUint(S, skipPdfWs(S, off.e), 5);
+                if (!gen) throw pdfError('Bad cross-reference entry');
+                p = skipPdfWs(S, gen.e);
+                if (S[p] === 'n') entries.push({ n: start.v + k, g: gen.v, type: 1, off: off.v });
+                else if (S[p] !== 'f') throw pdfError('Bad cross-reference entry');
+                p++;
+            }
+        }
+    }
+
+    async function readXrefStream(S, b, p, ints, entries, ctx) {
+        var h = parseHeader(S, p);
+        if (!h) return null;
+        var obj = readPdfObject(S, p, h.n, h.g, h.body, ints);
+        var d = obj.value;
+        if (!obj.stream || nameOf(d.map.Type) !== 'XRef') return null;
+        var filters = filtersOf(d);
+        var data = b.subarray(obj.stream.ds, obj.stream.de);
+        if (filters.length === 1 && filters[0] === 'FlateDecode') {
+            data = await inflatePdf(data, ctx.budget.left);
+            ctx.budget.left -= data.length;
+        } else if (filters.length) {
+            return null;
+        }
+        var w = d.map.W && d.map.W.t === 'arr' ? d.map.W.items.map(function (x) { return x.v; }) : null;
+        if (!w || w.length !== 3 || w.some(function (x) { return !(x >= 0 && x <= 8); })) return null;
+        var parms = d.map.DecodeParms && d.map.DecodeParms.t === 'dict' ? d.map.DecodeParms.map : {};
+        var predictor = parms.Predictor ? parms.Predictor.v : 1;
+        if (predictor >= 10) data = unpredictPng(data, parms.Columns ? parms.Columns.v : 1);
+        else if (predictor !== 1) return null;
+        var size = d.map.Size ? d.map.Size.v : 0;
+        var index = d.map.Index && d.map.Index.t === 'arr' ? d.map.Index.items.map(function (x) { return x.v; }) : [0, size];
+        var rowLen = w[0] + w[1] + w[2], pos = 0;
+        function field(width, dflt) {
+            if (!width) return dflt;
+            var v = 0;
+            for (var i = 0; i < width; i++) v = v * 256 + data[pos++];
+            return v;
+        }
+        for (var s = 0; s + 1 < index.length; s += 2) {
+            for (var k = 0; k < index[s + 1]; k++) {
+                if (pos + rowLen > data.length) return d;
+                var type = field(w[0], 1), f2 = field(w[1], 0), f3 = field(w[2], 0);
+                if (type === 1) entries.push({ n: index[s] + k, g: f3, type: 1, off: f2 });
+                else if (type === 2) entries.push({ n: index[s] + k, g: 0, type: 2, stm: f2, idx: f3 });
+            }
+        }
+        return d;
+    }
+
+    /**
+     * Follow the cross-reference chain from startxref (tables and streams,
+     * /Prev and /XRefStm) as a reader does. Returns { entries, trailers,
+     * shift } (shift: offsets are relative to a %PDF- header that isn't at
+     * the start), or broken: true when the chain can't be followed.
+     */
+    async function readXrefChain(S, b, ints, ctx) {
+        var res = { entries: [], trailers: [], shift: 0, broken: false };
+        var sx = S.lastIndexOf('startxref');
+        var first = sx >= 0 ? readUint(S, skipPdfWs(S, sx + 9), 12) : null;
+        if (!first) { res.broken = true; return res; }
+        var header = S.indexOf('%PDF-');
+        var queue = [first.v], seen = {};
+        while (queue.length && res.trailers.length < 10000) {
+            var off = queue.shift();
+            if (seen[off]) continue;
+            seen[off] = true;
+            var trailer = null;
+            for (var attempt = 0; attempt < 2 && !trailer; attempt++) {
+                var shift = attempt ? header : res.shift;
+                if (attempt && header <= 0) break;
+                var p = skipPdfWs(S, off + shift);
+                if (!(off + shift >= 0 && off + shift < S.length)) continue;
+                try {
+                    trailer = S.startsWith('xref', p) ? readXrefTable(S, p + 4, res.entries) : await readXrefStream(S, b, p, ints, res.entries, ctx);
+                } catch (e) {
+                    if (e.code === 'TOO_LARGE') throw e;
+                    trailer = null;
+                }
+                if (trailer) res.shift = shift;
+            }
+            if (!trailer) { res.broken = true; continue; }
+            res.trailers.push(trailer);
+            ['Prev', 'XRefStm'].forEach(function (k) {
+                var v = trailer.map[k];
+                if (v && v.t === 'num') queue.push(v.v);
+            });
+        }
+        return res;
     }
 
     // Bytes as a string with exactly one char per byte (TextDecoder's
@@ -1149,11 +1304,43 @@
     async function stripPdf(b, ctx) {
         var S = pdfLatin1(b);
         var out = b.slice();
-        var objects = scanPdfObjects(S);
+        var ints = indexIntObjects(S);
+        var scan = scanTopLevel(S, ints);
+        var objects = scan.objects;
         if (!objects.length) throw pdfError('No objects found in PDF');
-        // The comment check is a cheap look-back, so a skipped header is
-        // reported rather than trusted (real files don't put them in comments).
-        if (objects.skippedInComment) ctx.incomplete.push('object header inside a comment');
+
+        // Cross-check against the cross-reference data readers use: every
+        // object it lists must be one we process (anything it points at that
+        // the scan missed is read from there), and its trailers count too.
+        var chain = await readXrefChain(S, b, ints, ctx);
+        var trailers = scan.trailers.slice();
+        var trailerAt = {};
+        trailers.forEach(function (t) { trailerAt[t.s] = true; });
+        chain.trailers.forEach(function (t) { if (!trailerAt[t.s]) { trailers.push(t); trailerAt[t.s] = true; } });
+        objects.forEach(function (o) {
+            if (o.value.t === 'dict' && nameOf(o.value.map.Type) === 'XRef' && !trailerAt[o.value.s]) trailers.push(o.value);
+        });
+        if (!trailers.length) throw pdfError('No PDF trailer found');
+        var byNum = {};
+        objects.forEach(function (o) { (byNum[o.n + ' ' + o.g] = byNum[o.n + ' ' + o.g] || []).push(o); });
+        chain.entries.forEach(function (e) {
+            if (e.type !== 1) return;
+            var at = skipPdfWs(S, e.off + chain.shift);
+            // Slightly-off offsets are common; accept the object nearby.
+            var known = (byNum[e.n + ' ' + e.g] || []).some(function (o) { return Math.abs(o.off - at) <= 64; });
+            if (known) return;
+            var h = parseHeader(S, at);
+            if (h && h.n === e.n && h.g === e.g) {
+                try {
+                    var x = readPdfObject(S, at, h.n, h.g, h.body, ints);
+                    objects.push(x);
+                    (byNum[x.n + ' ' + x.g] = byNum[x.n + ' ' + x.g] || []).push(x);
+                    return;
+                } catch (err) { /* reported below */ }
+            }
+            ctx.incomplete.push('object listed in the cross-reference data but not found (object ' + e.n + ')');
+        });
+
         // Length objects shared by several streams can't be rewritten for one.
         var lengthUses = {};
         objects.forEach(function (o) {
@@ -1161,11 +1348,6 @@
             if (l && l.ref) lengthUses[l.ref] = (lengthUses[l.ref] || 0) + 1;
         });
         ctx.lengthUses = lengthUses;
-        var trailers = scanTrailers(S, objects);
-        objects.forEach(function (o) {
-            if (o.value.t === 'dict' && nameOf(o.value.map.Type) === 'XRef') trailers.push(o.value);
-        });
-        if (!trailers.length) throw pdfError('No PDF trailer found');
 
         var infoRefs = {};
         trailers.forEach(function (t) {
@@ -1203,16 +1385,30 @@
             objStms.push({ obj: o, text: text, bytes: plain.slice(), members: members, changed: false });
         }
 
+        // Compressed objects the cross-reference data lists must be members
+        // of an object stream we read.
+        var members = {};
+        objStms.forEach(function (st) { st.members.forEach(function (m) { members[st.obj.n + ':' + m.n] = true; }); });
+        chain.entries.forEach(function (e) {
+            if (e.type === 2 && !members[e.stm + ':' + e.n]) {
+                ctx.incomplete.push('compressed object not found (object ' + e.n + ')');
+            }
+        });
+
         // Pass 1: what to clear. Strings referenced from an Info dictionary
         // or a comment annotation (e.g. /Producer 11 0 R), and streams
         // named by a /Metadata entry even when they lack /Type /Metadata.
-        var stringRefs = {}, blobRefs = {}, metadataRefs = {}, pieceRefs = {}, matched = {};
+        var stringRefs = {}, blobRefs = {}, metadataRefs = {}, pieceRefs = {}, embeddedRefs = {}, matched = {};
         function noteRef(v, into) { if (v && v.t === 'ref') into[v.n + ' ' + v.g] = true; }
         function collect(key, value) {
-            if (infoRefs[key] && value.t === 'dict') Object.keys(value.map).forEach(function (k) { noteRef(value.map[k], stringRefs); });
+            if (infoRefs[key] && value.t === 'dict') collectRefs(value, stringRefs);
             walkDicts(value, function (d) {
                 noteRef(d.map.Metadata, metadataRefs);
                 if (d.map.PieceInfo) collectRefs(d.map.PieceInfo, pieceRefs);
+                // Attached files, whatever their /Type: through a file
+                // specification's /EF or /RF
+                if (d.map.EF) collectRefs(d.map.EF, embeddedRefs);
+                if (d.map.RF) collectRefs(d.map.RF, embeddedRefs);
                 if (MARKUP_ANNOTS[nameOf(d.map.Subtype)]) ANNOT_KEYS.forEach(function (k) { noteRef(d.map[k], stringRefs); });
                 if (isSignature(d)) {
                     SIG_STRINGS.forEach(function (k) { noteRef(d.map[k], stringRefs); });
@@ -1223,20 +1419,33 @@
         objects.forEach(function (o) { collect(o.n + ' ' + o.g, o.value); });
         objStms.forEach(function (st) { st.members.forEach(function (m) { collect(m.n + ' 0', m.value); }); });
         // Everything application-private data reaches (Illustrator's
-        // private data streams and the like), except shared page content.
-        var all = objects.map(function (o) { return { key: o.n + ' ' + o.g, value: o.value }; });
-        objStms.forEach(function (st) { st.members.forEach(function (m) { all.push({ key: m.n + ' 0', value: m.value }); }); });
-        for (var grew = true, round = 0; grew && round < all.length; round++) {
-            grew = false;
-            all.forEach(function (x) {
-                if (!pieceRefs[x.key] || x.seen) return;
-                x.seen = true;
-                if (isShared(x.value)) { delete pieceRefs[x.key]; return; }
-                var before = Object.keys(pieceRefs).length;
-                collectRefs(x.value, pieceRefs);
-                if (Object.keys(pieceRefs).length > before) grew = true;
-            });
+        // private data streams and the like) that the document itself
+        // doesn't use: anything reachable from the trailer without going
+        // through /PieceInfo is kept.
+        var values = {};
+        function addValue(k, v) { (values[k] = values[k] || []).push(v); }
+        objects.forEach(function (o) { addValue(o.n + ' ' + o.g, o.value); });
+        objStms.forEach(function (st) { st.members.forEach(function (m) { addValue(m.n + ' 0', m.value); }); });
+        function reach(startRefs, skipPieceInfo) {
+            var seen = {}, queue = Object.keys(startRefs);
+            while (queue.length) {
+                var k = queue.pop();
+                if (seen[k]) continue;
+                seen[k] = true;
+                (values[k] || []).forEach(function (v) {
+                    var next = {};
+                    collectRefs(v, next, skipPieceInfo);
+                    Object.keys(next).forEach(function (r) { if (!seen[r]) queue.push(r); });
+                });
+            }
+            return seen;
         }
+        var docRefs = {};
+        trailers.forEach(function (t) { collectRefs(t, docRefs, true); });
+        var used = reach(docRefs, true);
+        var privateReach = reach(pieceRefs, false);
+        pieceRefs = {};
+        Object.keys(privateReach).forEach(function (k) { if (!used[k]) pieceRefs[k] = true; });
 
         // Pass 2: top-level objects
         for (i = 0; i < objects.length; i++) {
@@ -1255,7 +1464,8 @@
             var filters = filtersOf(v);
             if (type === 'Metadata' || subtype === 'XML' || metadataRefs[key]) {
                 await replaceXmp(out, S, o, filters, ctx);
-            } else if (type === 'EmbeddedFile') {
+                matched[key] = true;
+            } else if (type === 'EmbeddedFile' || embeddedRefs[key]) {
                 ctx.incomplete.push('attached file (object ' + o.n + ')');
             } else if (subtype === 'Image' && filters.indexOf('DCTDecode') !== -1) {
                 if (filters.length !== 1) {
@@ -1273,6 +1483,9 @@
                 // Any other encoded stream might hide an XMP packet.
                 var found = await encodedXmp(out.subarray(o.stream.ds, o.stream.de), v, ctx);
                 if (found) ctx.incomplete.push(found + ' (object ' + o.n + ')');
+            } else if (!filters.length && type !== 'XRef' && subtype !== 'Image' && !isFontFile(v) && !pieceRefs[key]) {
+                var reason = inspectDecoded(S.slice(o.stream.ds, o.stream.de));
+                if (reason) ctx.incomplete.push(reason + ' (object ' + o.n + ')');
             }
         }
 
@@ -1305,6 +1518,9 @@
         Object.keys(infoRefs).concat(Object.keys(stringRefs), Object.keys(blobRefs)).forEach(function (r) {
             if (!matched[r]) ctx.incomplete.push('document information not found (object ' + r.split(' ')[0] + ')');
         });
+        Object.keys(metadataRefs).forEach(function (r) {
+            if (!matched[r]) ctx.incomplete.push('metadata not found (object ' + r.split(' ')[0] + ')');
+        });
 
         // Uncompressed XMP that wasn't in a metadata stream we could clear
         if (XMP_MARKER.test(S)) {
@@ -1315,6 +1531,7 @@
     }
 
     var XMP_MARKER = /<\?xpacket\s+begin|<x:xmpmeta/;
+    var MAX_CHECKED_STREAM = 64 * 1024 * 1024;
     var ANNOT_KEYS = ['T', 'M', 'CreationDate'];
 
     // Call fn on every dictionary in a parsed value, nested ones included.
@@ -1329,18 +1546,12 @@
 
     function isSignature(d) { return nameOf(d.map.Type) === 'Sig' || !!d.map.ByteRange; }
 
-    // Objects that private data may point at but that are shared with the
-    // document itself (pages, fonts, images, forms...): never cleared.
-    var SHARED_TYPES = { Catalog: 1, Pages: 1, Page: 1, Font: 1, FontDescriptor: 1, XObject: 1, ExtGState: 1, Pattern: 1,
-        Shading: 1, Annot: 1, Action: 1, OCG: 1, OCMD: 1, Outlines: 1, StructTreeRoot: 1, StructElem: 1 };
-    function isShared(v) {
-        return v.t === 'dict' && (SHARED_TYPES[nameOf(v.map.Type)] || nameOf(v.map.Subtype) === 'Image' || nameOf(v.map.Subtype) === 'Form');
-    }
-
-    function collectRefs(v, into) {
+    // Every indirect reference inside a value (optionally not following
+    // /PieceInfo entries).
+    function collectRefs(v, into, skipPieceInfo) {
         if (v.t === 'ref') into[v.n + ' ' + v.g] = true;
-        else if (v.t === 'dict') Object.keys(v.map).forEach(function (k) { collectRefs(v.map[k], into); });
-        else if (v.t === 'arr') v.items.forEach(function (it) { collectRefs(it, into); });
+        else if (v.t === 'dict') Object.keys(v.map).forEach(function (k) { if (!(skipPieceInfo && k === 'PieceInfo')) collectRefs(v.map[k], into, skipPieceInfo); });
+        else if (v.t === 'arr') v.items.forEach(function (it) { collectRefs(it, into, skipPieceInfo); });
     }
 
     function isFontFile(v) {
@@ -1370,83 +1581,118 @@
 
     function uncheckable() { var e = new Error('uncheckable'); e.code = 'UNCHECKABLE'; return e; }
 
-    function decodeHex(b) {
-        var digits = [];
+    // A growable byte buffer that stops at the inflate budget.
+    function ByteSink(limit) { this.buf = new Uint8Array(4096); this.len = 0; this.limit = limit; }
+    ByteSink.prototype.push = function (byte) {
+        if (this.len >= this.buf.length) {
+            if (this.len >= this.limit) throw stripError('TOO_LARGE', 'Decoded data too large');
+            var bigger = new Uint8Array(Math.min(this.buf.length * 2, this.limit + 1));
+            bigger.set(this.buf);
+            this.buf = bigger;
+        }
+        this.buf[this.len++] = byte;
+    };
+    ByteSink.prototype.bytes = function () { return this.buf.subarray(0, this.len); };
+
+    function decodeHex(b, limit) {
+        var out = new ByteSink(limit), hi = -1;
         for (var i = 0; i < b.length && b[i] !== 0x3E; i++) {
             var c = b[i];
             if (PDF_WS[c]) continue;
             var d = parseInt(String.fromCharCode(c), 16);
             if (isNaN(d)) throw uncheckable();
-            digits.push(d);
+            if (hi < 0) hi = d; else { out.push(hi * 16 + d); hi = -1; }
         }
-        if (digits.length % 2) digits.push(0);
-        var out = new Uint8Array(digits.length / 2);
-        for (var j = 0; j < out.length; j++) out[j] = digits[2 * j] * 16 + digits[2 * j + 1];
-        return out;
+        if (hi >= 0) out.push(hi * 16);
+        return out.bytes();
     }
 
-    function decode85(b) {
-        var out = [], group = [], i = 0;
+    function decode85(b, limit) {
+        var out = new ByteSink(limit), group = [], i = 0;
         if (b[0] === 0x3C && b[1] === 0x7E) i = 2; // optional <~
+        function emit(g, count) {
+            var n = (((g[0] * 85 + g[1]) * 85 + g[2]) * 85 + g[3]) * 85 + g[4];
+            var bytes = [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+            for (var k = 0; k < count; k++) out.push(bytes[k]);
+        }
         for (; i < b.length; i++) {
             var c = b[i];
             if (PDF_WS[c]) continue;
             if (c === 0x7E) break; // ~> ends the data
-            if (c === 0x7A && group.length === 0) { out.push(0, 0, 0, 0); continue; } // z
+            if (c === 0x7A && group.length === 0) { emit([0, 0, 0, 0, 0], 4); continue; } // z
             if (c < 0x21 || c > 0x75) throw uncheckable();
             group.push(c - 33);
-            if (group.length === 5) {
-                var n = (((group[0] * 85 + group[1]) * 85 + group[2]) * 85 + group[3]) * 85 + group[4];
-                out.push((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
-                group = [];
-            }
+            if (group.length === 5) { emit(group, 4); group = []; }
         }
         if (group.length) {
             var len = group.length;
             while (group.length < 5) group.push(84);
-            var m = (((group[0] * 85 + group[1]) * 85 + group[2]) * 85 + group[3]) * 85 + group[4];
-            var bytes = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255];
-            for (var k = 0; k < len - 1; k++) out.push(bytes[k]);
+            emit(group, len - 1);
         }
-        return new Uint8Array(out);
+        return out.bytes();
     }
 
+    // LZW with the 4096-entry table PDF uses (entries stored as prefix code
+    // plus one byte, so nothing is copied).
     function decodeLzw(b, earlyChange, limit) {
-        var out = [], dict = [], width = 9, prev = null, bits = 0, acc = 0;
-        function reset() { dict = []; for (var i = 0; i < 256; i++) dict.push([i]); dict.push(null, null); width = 9; prev = null; }
-        reset();
+        var out = new ByteSink(limit);
+        var prefix = new Int32Array(4096), suffix = new Uint8Array(4096), first = new Uint8Array(4096), stack = new Uint8Array(4096);
+        for (var c0 = 0; c0 < 256; c0++) { suffix[c0] = c0; first[c0] = c0; prefix[c0] = -1; }
+        var next = 258, width = 9, prev = -1, acc = 0, bits = 0;
+        function emit(code) {
+            var sp = 0;
+            for (var c = code; c >= 0; c = prefix[c]) stack[sp++] = suffix[c];
+            while (sp) out.push(stack[--sp]);
+        }
         for (var i = 0; i < b.length; i++) {
-            acc = (acc << 8) | b[i];
+            acc = ((acc << 8) | b[i]) & 0xFFFFFF;
             bits += 8;
             while (bits >= width) {
                 bits -= width;
                 var code = (acc >>> bits) & ((1 << width) - 1);
-                acc &= (1 << bits) - 1;
-                if (code === 256) { reset(); continue; }
-                if (code === 257) return new Uint8Array(out);
-                var entry;
-                if (code < dict.length && dict[code]) entry = dict[code];
-                else if (code === dict.length && prev) entry = prev.concat([prev[0]]);
+                if (code === 256) { next = 258; width = 9; prev = -1; continue; }
+                if (code === 257) return out.bytes();
+                if (prev < 0) {
+                    if (code > 255) throw uncheckable();
+                    emit(code);
+                    prev = code;
+                    continue;
+                }
+                var head;
+                if (code < next) head = first[code];
+                else if (code === next) head = first[prev];
                 else throw uncheckable();
-                for (var j = 0; j < entry.length; j++) out.push(entry[j]);
-                if (out.length > limit) throw stripError('TOO_LARGE', 'too large');
-                if (prev) dict.push(prev.concat([entry[0]]));
-                prev = entry;
-                if (dict.length + earlyChange >= (1 << width) && width < 12) width++;
+                if (next < 4096) {
+                    prefix[next] = prev; suffix[next] = head; first[next] = first[prev];
+                    next++;
+                }
+                emit(code);
+                prev = code;
+                if (next + earlyChange >= (1 << width) && width < 12) width++;
             }
         }
-        return new Uint8Array(out);
+        return out.bytes();
     }
 
-    function decodeRunLength(b) {
-        var out = [];
+    function decodeRunLength(b, limit) {
+        var out = new ByteSink(limit);
         for (var i = 0; i < b.length;) {
             var n = b[i++];
             if (n === 128) break;
             if (n < 128) { for (var j = 0; j <= n && i < b.length; j++) out.push(b[i++]); }
             else { var c = b[i++]; for (var k = 0; k < 257 - n; k++) out.push(c); }
         }
-        return new Uint8Array(out);
+        return out.bytes();
+    }
+
+    // Inline JPEG images (BI ... /F /DCT ... ID) carry their own EXIF.
+    var RE_INLINE_DCT = /\/(?:F|Filter)\s*(?:\/DCT|\[[^\]]{0,200}\/DCT)/;
+
+    // A reason string if decoded stream data holds XMP or an inline JPEG.
+    function inspectDecoded(text) {
+        if (XMP_MARKER.test(text)) return 'XMP metadata';
+        if (/(?:^|[\s\]>])BI(?=[\s\/])/.test(text) && RE_INLINE_DCT.test(text)) return 'inline JPEG image';
+        return null;
     }
 
     /**
@@ -1459,16 +1705,18 @@
         var parms = dict.map.DecodeParms;
         var parmList = parms ? (parms.t === 'arr' ? parms.items : [parms]) : [];
         var plain = data;
+        // One stream is checked up to 64 MB decoded; bigger is reported.
+        var limit = Math.min(ctx.budget.left, MAX_CHECKED_STREAM);
         try {
             for (var i = 0; i < filters.length; i++) {
                 var dp = parmList[i] && parmList[i].t === 'dict' ? parmList[i].map : {};
                 if (dp.Predictor && dp.Predictor.v > 1) throw uncheckable();
                 var f = filters[i];
-                if (f === 'FlateDecode' || f === 'Fl') plain = await inflatePdf(plain, ctx.budget.left);
-                else if (f === 'LZWDecode' || f === 'LZW') plain = decodeLzw(plain, dp.EarlyChange ? dp.EarlyChange.v : 1, ctx.budget.left);
-                else if (f === 'ASCIIHexDecode' || f === 'AHx') plain = decodeHex(plain);
-                else if (f === 'ASCII85Decode' || f === 'A85') plain = decode85(plain);
-                else if (f === 'RunLengthDecode' || f === 'RL') plain = decodeRunLength(plain);
+                if (f === 'FlateDecode' || f === 'Fl') plain = await inflatePdf(plain, limit);
+                else if (f === 'LZWDecode' || f === 'LZW') plain = decodeLzw(plain, dp.EarlyChange ? dp.EarlyChange.v : 1, limit);
+                else if (f === 'ASCIIHexDecode' || f === 'AHx') plain = decodeHex(plain, limit);
+                else if (f === 'ASCII85Decode' || f === 'A85') plain = decode85(plain, limit);
+                else if (f === 'RunLengthDecode' || f === 'RL') plain = decodeRunLength(plain, limit);
                 else throw uncheckable();
             }
         } catch (e) {
@@ -1476,7 +1724,7 @@
             return 'encoded data that could not be checked';
         }
         ctx.budget.left -= plain.length;
-        return XMP_MARKER.test(pdfLatin1(plain)) ? 'XMP metadata' : null;
+        return inspectDecoded(pdfLatin1(plain));
     }
 
     function blankRange(out, s, e) { if (e > s) out.fill(0x20, s, e); }

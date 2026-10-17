@@ -259,8 +259,8 @@ async function edgeCases() {
     const fake = makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R').toString('latin1')
         .replace('3 0 obj', '% 7 0 obj << /Foo 1 >> stream\n3 0 obj');
     const fk = await M.stripMetadata(u8(Buffer.from(fake, 'latin1')));
-    check('fake header in a comment ignored (and reported), real Info cleared', !Buffer.from(fk.data).includes('Bob') &&
-        JSON.stringify(fk.incomplete) === '["object header inside a comment"]',
+    check('fake header in a comment ignored, real Info cleared', !Buffer.from(fk.data).includes('Bob') &&
+        fk.incomplete.length === 0,
         JSON.stringify(fk.incomplete));
 
     // XMP behind ASCII85 + Flate is found; filters that can't be decoded are reported
@@ -285,7 +285,7 @@ async function edgeCases() {
         JSON.stringify(enc.incomplete));
 
     // Data that /PieceInfo points at is cleared too; a page it mentions is left alone
-    const priv = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+    const priv = await M.stripMetadata(u8(makePdf([CATALOG, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
         '<< /Type /Page /Contents 6 0 R /PieceInfo << /Illustrator << /Private 4 0 R >> >> >>',
         '<< /AIPrivateData1 5 0 R /RoundTrip (bob-machine) /Page 3 0 R >>',
         '<< /Length 22 >>\nstream\nC:/Users/bob/design.ai\nendstream',
@@ -299,6 +299,61 @@ async function edgeCases() {
         '<< /Type /Sig /Name 4 0 R /Contents 5 0 R /ByteRange [0 1 2 3] >>', '(Bob Signer)', '<0A0B0C0D>'])));
     check('indirect signature name and contents cleared', !/Bob|0A0B0C0D/.test(Buffer.from(sigRef.data).toString('latin1')) &&
         sigRef.incomplete.length === 0, JSON.stringify(sigRef.incomplete));
+
+    // Headers with NUL or a comment as whitespace, and headers glued to endobj
+    for (const [label, head] of [['NUL whitespace', '3\x000\x00obj'], ['comment in header', '3 0 %c\nobj'], ['glued to endobj', null]]) {
+        let pdf = makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R').toString('latin1');
+        pdf = head ? pdf.replace('3 0 obj', head) : pdf.replace('endobj\n3 0 obj', 'endobj3 0 obj');
+        const r = await M.stripMetadata(u8(Buffer.from(pdf, 'latin1')));
+        check('header with ' + label + ': Info cleared', !Buffer.from(r.data).includes('Bob'), JSON.stringify(r.incomplete));
+    }
+
+    // An object the cross-reference table lists inside another object's
+    // over-long stream is still processed
+    {
+        const objs = [CATALOG, PAGES, null, '<< /Type /Annot /Subtype /Text /T (Bob) >>'];
+        let out = '%PDF-1.7\n';
+        const off = {};
+        off[1] = out.length; out += '1 0 obj\n' + objs[0] + '\nendobj\n';
+        off[2] = out.length; out += '2 0 obj\n' + objs[1] + '\nendobj\n';
+        const before = out.length;
+        const inner = 'x\nendstream\nendobj\n';
+        off[4] = before + ('3 0 obj\n<< /Length LEN >>\nstream\n').length + inner.length;
+        const tail = '4 0 obj\n' + objs[3] + '\nendobj\n5 0 obj\n<< /Length 1 >>\nstream\ny';
+        const body = inner + tail;
+        out += '3 0 obj\n<< /Length ' + String(body.length).padStart(3, '0') + ' >>\nstream\n' + body + '\nendstream\nendobj\n';
+        off[4] = out.indexOf('4 0 obj');
+        off[3] = before;
+        const xref = out.length;
+        out += 'xref\n0 5\n0000000000 65535 f \n' + [1, 2, 3, 4].map((n) => String(off[n]).padStart(10, '0') + ' 00000 n \n').join('');
+        out += 'trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+        const r = await M.stripMetadata(u8(Buffer.from(out, 'latin1')));
+        check('object hidden inside an over-long stream found through the xref', !Buffer.from(r.data).includes('(Bob)'),
+            JSON.stringify(r.incomplete));
+    }
+
+    // Attachments without /Type /EmbeddedFile are recognised through /EF
+    const untypedAttach = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Type /Filespec /F (a.txt) /EF << /F 4 0 R >> >>', '<< /Length 8 >>\nstream\nsecret!!\nendstream'])));
+    check('attachment without /Type reported', JSON.stringify(untypedAttach.incomplete) === '["attached file (object 4)"]',
+        JSON.stringify(untypedAttach.incomplete));
+
+    // Junk before %PDF- doesn't make it "unsupported"
+    const junk = Buffer.concat([Buffer.alloc(2000, 0x20), makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R')]);
+    const jr = await M.stripMetadata(u8(junk));
+    check('PDF after 2000 bytes of junk still cleaned', jr.type === 'pdf' && !Buffer.from(jr.data).includes('Bob'));
+
+    // Inline JPEG images in page content are reported
+    const inline = 'q BI /W 1 /H 1 /CS /RGB /BPC 8 /F /DCT ID \xff\xd8\xff\xe1 EI Q';
+    const ij = await M.stripMetadata(u8(makePdf([CATALOG, PAGES, '<< /Length ' + inline.length + ' >>\nstream\n' + inline + '\nendstream'])));
+    check('inline JPEG image reported', JSON.stringify(ij.incomplete) === '["inline JPEG image (object 3)"]', JSON.stringify(ij.incomplete));
+
+    // Long runs of digits (a grey ASCIIHex image) don't make the scan quadratic
+    const hex = '80'.repeat(200000);
+    const t1 = Date.now();
+    await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Subtype /Image /Filter /ASCIIHexDecode /Length ' + (hex.length + 1) + ' >>\nstream\n' + hex + '>\nendstream'])));
+    check('400 KB run of digits processed quickly', Date.now() - t1 < 1500, (Date.now() - t1) + ' ms');
 
     const deep = await M.stripMetadata(u8(makePdf([CATALOG, PAGES, '['.repeat(100) + ']'.repeat(100)]))).then(() => 'ok', (e) => e.code);
     check('deeply nested arrays rejected, not a stack overflow', deep === 'MALFORMED', deep);
