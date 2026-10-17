@@ -73,6 +73,12 @@ CUSTOM = DECL + ('<Properties xmlns="http://schemas.openxmlformats.org/officeDoc
                  '<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Owner">'
                  '<vt:lpwstr>%s@example.org</vt:lpwstr></property></Properties>') % S
 CUSTOM_ITEM = DECL + '<p:properties xmlns:p="urn:x"><Owner><DisplayName>%s</DisplayName></Owner></p:properties>' % S
+# SharePoint names its own list/field namespaces by GUID; they identify the site.
+CUSTOM_ITEM_PROPS = DECL.replace('yes', 'no') + (
+    '<ds:datastoreItem ds:itemID="{%s-0000-0000-0000-000000000001}" '
+    'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs>'
+    '<ds:schemaRef ds:uri="http://schemas.microsoft.com/office/2006/metadata/properties"/>'
+    '<ds:schemaRef ds:uri="%s-6b5d-4628-b7e0-5b86efa98958"/></ds:schemaRefs></ds:datastoreItem>') % (S, S)
 
 
 def png_with_text():
@@ -84,9 +90,13 @@ def png_with_text():
 
 
 def printer_settings():
-    # DEVMODEW: dmDeviceName is the first 32 UTF-16 characters
+    # DEVMODEW: dmDeviceName is the first 32 UTF-16 characters; dmSize (220)
+    # and dmDriverExtra at offset 68 give the public part's and the driver's
+    # private data's lengths, which add up to the whole part
     name = ('Printer ' + S).encode('utf-16-le').ljust(64, b'\x00')
-    return name + b'\x01\x04' + b'\x00' * 154
+    extra = ('Driver user ' + S).encode('utf-16-le').ljust(64, b'\x00')
+    public = name + struct.pack('<HHHH', 0x0401, 0, 220, len(extra))
+    return public.ljust(220, b'\x00') + extra
 
 
 class Unseekable:
@@ -102,7 +112,41 @@ class Unseekable:
         self.f.flush()
 
 
+# Content types the hand-built parts need so strict readers (the Open XML SDK,
+# Office) load them as what they are rather than as plain XML.
+SML = 'application/vnd.openxmlformats-officedocument.spreadsheetml.'
+PART_TYPES = {
+    'ppt/authors.xml': 'application/vnd.ms-powerpoint.authors+xml',
+    'customXml/spProps.xml': 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml',
+    'word/storage/props1.xml': 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml',
+    'xl/comments/comment1.xml': SML + 'comments+xml',
+    'xl/connections.xml': SML + 'connections+xml',
+    'xl/externalLinks/externalLink1.xml': SML + 'externalLink+xml',
+    'xl/persons/person.xml': 'application/vnd.ms-excel.person+xml',
+    'xl/pivotCache/pivotCacheDefinition1.xml': SML + 'pivotCacheDefinition+xml',
+    'xl/queryTables/queryTable1.xml': SML + 'queryTable+xml',
+    'xl/revisions/userNames.xml': SML + 'userNames+xml',
+    'xl/threadedComments/threadedComment1.xml': 'application/vnd.ms-excel.threadedcomments+xml',
+}
+EXT_TYPES = {'xlsx': SML + 'sheet', 'jpeg': 'image/jpeg', 'jpg': 'image/jpeg'}
+
+
+def add_content_types(parts):
+    names = [n for n, _ in parts]
+    out = []
+    for name, data in parts:
+        if name == '[Content_Types].xml':
+            extra = ''.join(OV % (n, PART_TYPES[n]) for n in names if n in PART_TYPES and '/' + n + '"' not in data)
+            exts = {n.rsplit('.', 1)[-1] for n in names if '.' in n}
+            extra += ''.join('<Default Extension="%s" ContentType="%s"/>' % (e, EXT_TYPES[e]) for e in sorted(exts)
+                             if e in EXT_TYPES and 'Extension="%s"' % e not in data)
+            data = data.replace('</Types>', extra + '</Types>')
+        out.append((name, data))
+    return out
+
+
 def write(path, parts, streaming=False):
+    parts = add_content_types(parts)
     f = open(path, 'wb')
     with zipfile.ZipFile(Unseekable(f) if streaming else f, 'w', zipfile.ZIP_DEFLATED) as z:
         z.comment = ('archive comment ' + S).encode()
@@ -125,9 +169,16 @@ def common(ct_main):
         ('docProps/app.xml', APP),
         ('docProps/custom.xml', CUSTOM),
         ('customXml/item1.xml', CUSTOM_ITEM),
+        ('customXml/itemProps1.xml', CUSTOM_ITEM_PROPS),
+        ('customXml/_rels/item1.xml.rels', rels([('rId1', R + '/customXmlProps', 'itemProps1.xml', '')])),
+        # any name is legal: Office finds data stores through relationships
+        ('customXml/spItem.xml', CUSTOM_ITEM),
+        ('customXml/spProps.xml', CUSTOM_ITEM_PROPS),
+        ('customXml/_rels/spItem.xml.rels', rels([('rId1', R + '/customXmlProps', 'spProps.xml', '')])),
         ('docProps/thumbnail.png', png_with_text()),
     ], (OV % ('docProps/core.xml', CORE_CT) + OV % ('docProps/app.xml', APP_CT) +
-        OV % ('docProps/custom.xml', CUSTOM_CT) + ct_main)
+        OV % ('docProps/custom.xml', CUSTOM_CT) +
+        OV % ('customXml/itemProps1.xml', 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml') + ct_main)
 
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -143,20 +194,33 @@ def docx():
         '<w:ins w:id="1" w:author="Inserter %s" w:date="%s"><w:r><w:t>Inserted.</w:t></w:r></w:ins>'
         '<w:commentRangeStart w:id="0"/><w:r><w:t>Commented.</w:t></w:r><w:commentRangeEnd w:id="0"/>'
         '<w:r><w:commentReference w:id="0"/></w:r></w:p>'
-        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE)
+        '<w:sdt><w:sdtPr><w:dataBinding w:prefixMappings="xmlns:ns0=\'%s-6b5d-4628-b7e0-5b86efa98958\'" '
+        'w:xpath="/root[1]/ns0:Owner[1]" w:storeItemID="{%s-0000-0000-0000-000000000001}"/></w:sdtPr>'
+        '<w:sdtContent><w:p><w:r><w:t>Bound field.</w:t></w:r></w:p></w:sdtContent></w:sdt>'
+        '<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'style="width:10pt;height:10pt"><v:imagedata r:id="rId4" '
+        'o:href="file:///C:\\Users\\%s\\AppData\\Local\\Temp\\msohtmlclip1\\01\\clip_image001.png"/></v:shape></w:pict></w:r></w:p>'
+        '<w:sdt><w:sdtPr><ns0:dataBinding xmlns:ns0="%s" ns0:storeItemID="{%s-1111-2222-3333-444444444444}"/></w:sdtPr>'
+        '<w:sdtContent><w:p><w:customXml w:uri="%s-6b5d-4628-b7e0-5b86efa98958" w:element="Owner">'
+        '<w:r><w:t>Tagged.</w:t></w:r></w:customXml></w:p></w:sdtContent></w:sdt>'
+        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE, S, S, S, W, S, S)
     comments = DECL + ('<w:comments xmlns:w="%s"><w:comment w:id="0" w:author="Commenter %s" w:date="%s" w:initials="%s">'
                        '<w:p><w:r><w:t>Comment text</w:t></w:r></w:p></w:comment></w:comments>') % (W, S, DATE, S)
     people = DECL + ('<w15:people xmlns:w15="%s"><w15:person w15:author="Person %s">'
                      '<w15:presenceInfo w15:providerId="AD" w15:userId="S-1-5-21-%s"/></w15:person></w15:people>') % (W15, S, S)
     settings = DECL + ('<w:settings xmlns:w="%s" xmlns:w14="%s" xmlns:w15="%s" xmlns:r="%s">'
                        '<w:attachedTemplate r:id="rId1"/>'
+                       '<w:attachedSchema w:val="%s-6b5d-4628-b7e0-5b86efa98958"/>'
                        '<w:rsids><w:rsidRoot w:val="00A1B2C3"/><w:rsid w:val="00A1B2C3"/></w:rsids>'
                        '<w:mailMerge><w:mainDocumentType w:val="formLetters"/>'
                        '<w:connectString w:val="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=C:\\Users\\%s\\list.xlsx"/>'
                        '</w:mailMerge>'
                        '<w:docVars><w:docVar w:name="Owner" w:val="%s"/></w:docVars>'
                        '<w14:docId w14:val="1A2B3C4D"/><w15:docId w15:val="{A1B2C3D4-0000-0000-0000-000000000000}"/>'
-                       '</w:settings>') % (W, W14, W15, R, S, S)
+                       '<sl:schemaLibrary xmlns:sl="http://schemas.openxmlformats.org/schemaLibrary/2006/main">'
+                       '<sl:schema sl:uri="%s-6b5d-4628-b7e0-5b86efa98958" sl:schemaLocation="C:\\Users\\%s\\s.xsd"/>'
+                       '</sl:schemaLibrary>'
+                       '</w:settings>') % (W, W14, W15, R, S, S, S, S, S)
     settings_rels = rels([('rId1', R + '/attachedTemplate',
                            'file:///C:/Users/%s/AppData/Roaming/Microsoft/Templates/Normal.dotm' % S,
                            ' TargetMode="External"')])
@@ -167,6 +231,7 @@ def docx():
         ('rId4', R + '/image', 'media/image1.png', ''),
         ('rId5', R + '/hyperlink', '\\\\fileserver\\home\\%s\\notes.docx' % S, ' TargetMode="External"'),
         ('rId6', R + '/package', 'embeddings/Microsoft_Excel_Worksheet.xlsx', ''),
+        ('rId7', R + '/customXml', '../word/storage/./data1.xml', ''),
     ])
     WML = 'application/vnd.openxmlformats-officedocument.wordprocessingml.'
     parts, ct = common(OV % ('word/document.xml', WML + 'document.main+xml') +
@@ -176,6 +241,14 @@ def docx():
     return [('[Content_Types].xml', CT_HEAD + ct + '</Types>'),
             ('_rels/.rels', root_rels('officeDocument', 'word/document.xml'))] + parts + [
         ('word/document.xml', doc), ('word/_rels/document.xml.rels', doc_rels),
+        ('word/intelligence2.xml', DECL + ('<int2:intelligence xmlns:int2="http://schemas.microsoft.com/office/intelligence/2020/intelligence">'
+                                           '<int2:observations><int2:textHash int2:hashCode="AbCdEf" int2:id="x1">'
+                                           '<int2:state int2:value="Rejected" int2:type="AugLoop_Text_Critique"/></int2:textHash>'
+                                           '</int2:observations></int2:intelligence>')),
+        # a data store outside customXml/, found only through relationships
+        ('word/storage/data1.xml', CUSTOM_ITEM),
+        ('word/storage/props1.xml', CUSTOM_ITEM_PROPS.replace('<ds:datastoreItem', '<!-- props --><ds:datastoreItem')),
+        ('word/storage/_rels/data1.xml.rels', rels([('rId1', R + '/customXmlProps', '/word/storage/props1.xml', '')])),
         ('word/comments.xml', comments), ('word/people.xml', people),
         ('word/settings.xml', settings), ('word/_rels/settings.xml.rels', settings_rels),
         ('word/media/image1.png', png_with_text()),
@@ -194,7 +267,9 @@ def xlsx():
         '<fileSharing userName="Sharer %s"/>'
         '<mc:AlternateContent><mc:Choice Requires="x15ac"><x15ac:absPath url="C:\\Users\\%s\\Documents\\"/></mc:Choice></mc:AlternateContent>'
         '<xr:revisionPtr revIDLastSave="0" documentId="13_ncr:1_{%s}"/>'
-        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>') % (X, R, S, S, S)
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>'
+        '<customWorkbookViews><customWorkbookView name="%s - Personal View" guid="{00000000-0000-0000-0000-000000000005}" '
+        'windowWidth="800" windowHeight="600" activeSheetId="1"/></customWorkbookViews></workbook>') % (X, R, S, S, S, S)
     sheet = DECL + ('<worksheet xmlns="%s"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Visible cell</t></is></c>'
                     '</row></sheetData><pageSetup paperSize="9" r:id="rId2" xmlns:r="%s"/></worksheet>') % (X, R)
     comments = DECL + ('<comments xmlns="%s"><authors><author>Author %s</author></authors><commentList>'
@@ -225,7 +300,11 @@ def xlsx():
         ('xl/pivotCache/pivotCacheDefinition1.xml', DECL + (
             '<pivotCacheDefinition xmlns="%s" refreshedBy="Refresher %s" refreshedDate="46000.5" recordCount="0">'
             '<cacheSource type="worksheet"/><cacheFields count="0"/></pivotCacheDefinition>') % (X, S)),
-        ('xl/externalLinks/externalLink1.xml', DECL + '<externalLink xmlns="%s"><externalBook r:id="rId1" xmlns:r="%s"/></externalLink>' % (X, R)),
+        ('xl/externalLinks/externalLink1.xml', DECL + (
+            '<externalLink xmlns="%s" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="xxl21" '
+            'xmlns:xxl21="http://schemas.microsoft.com/office/spreadsheetml/2021/extlinks2021">'
+            '<externalBook r:id="rId1" xmlns:r="%s"><xxl21:alternateUrls driveId="b!%s" itemId="01%s"/></externalBook>'
+            '</externalLink>') % (X, R, S, S)),
         ('xl/externalLinks/_rels/externalLink1.xml.rels', rels([
             ('rId1', R + '/externalLinkPath', 'file:///C:/Users/%s/Desktop/budget.xlsx' % S, ' TargetMode="External"')])),
         ('xl/comments/comment1.xml', DECL + ('<comments xmlns="%s"><authors><author>Openpyxl %s</author></authors>'
@@ -233,8 +312,12 @@ def xlsx():
         ('xl/queryTables/queryTable1.xml', DECL + '<queryTable xmlns="%s" name="Q" connectionId="1"/>' % X),
         ('xl/connections.xml', DECL + ('<connections xmlns="%s"><connection id="1" name="C" type="1" refreshedVersion="6" '
                                        'odcFile="C:\\Users\\%s\\Documents\\My Data Sources\\q.odc">'
-                                       '<dbPr connection="Provider=SQLOLEDB;User ID=%s;Data Source=db" command="SELECT 1"/>'
-                                       '</connection></connections>') % (X, S, S)),
+                                       '<dbPr connection="Provider=SQLOLEDB;User ID=%s;Data Source=db" '
+                                       'command="SELECT * FROM `C:\\Users\\%s\\Book1.xlsx`.`Sheet1$`"/>'
+                                       '</connection><connection id="2" name="W" type="4" refreshedVersion="6">'
+                                       '<webPr url="file:///C:/Users/%s/page.htm"/></connection></connections>') % (X, S, S, S, S)),
+        ('xl/richData/richValueRel.xml', DECL + ('<richValueRels xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel" '
+                                                 'xmlns:r="%s"/>') % R),
     ]
 
 
@@ -289,7 +372,8 @@ def pptx():
                        OV % ('ppt/slideMasters/slideMaster1.xml', PML + 'slideMaster+xml') +
                        OV % ('ppt/theme/theme1.xml', 'application/vnd.openxmlformats-officedocument.theme+xml') +
                        OV % ('ppt/commentAuthors.xml', PML + 'commentAuthors+xml') +
-                       OV % ('ppt/comments/comment1.xml', PML + 'comments+xml'))
+                       OV % ('ppt/comments/comment1.xml', PML + 'comments+xml') +
+                       OV % ('ppt/slideUpdateInfo/slideUpdateInfo1.xml', PML + 'slideUpdateInfo+xml'))
     return [('[Content_Types].xml', CT_HEAD + ct + '</Types>'),
             ('_rels/.rels', root_rels('officeDocument', 'ppt/presentation.xml'))] + parts + [
         ('ppt/presentation.xml', pres),
@@ -302,7 +386,10 @@ def pptx():
         ('ppt/slides/slide1.xml', slide),
         ('ppt/slides/_rels/slide1.xml.rels', rels([
             ('rId1', R + '/slideLayout', '../slideLayouts/slideLayout1.xml', ''),
-            ('rId2', R + '/comments', '../comments/comment1.xml', '')])),
+            ('rId2', R + '/comments', '../comments/comment1.xml', ''),
+            ('rId3', R + '/slideUpdateInfo', '../slideUpdateInfo/slideUpdateInfo1.xml', '')])),
+        ('ppt/slideUpdateInfo/slideUpdateInfo1.xml', DECL + (
+            '<p:sldSyncPr xmlns:p="%s" serverSldId="1" serverSldModifiedTime="%s" clientInsertedTime="%s"/>') % (P, DATE, DATE)),
         ('ppt/slideLayouts/slideLayout1.xml', layout),
         ('ppt/slideLayouts/_rels/slideLayout1.xml.rels', rels([('rId1', R + '/slideMaster', '../slideMasters/slideMaster1.xml', '')])),
         ('ppt/slideMasters/slideMaster1.xml', master),
@@ -317,6 +404,7 @@ def pptx():
 
 def zip_bytes(parts):
     import io
+    parts = add_content_types(parts)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
         for name, data in parts:
