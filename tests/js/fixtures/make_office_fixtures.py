@@ -90,9 +90,13 @@ def png_with_text():
 
 
 def printer_settings():
-    # DEVMODEW: dmDeviceName is the first 32 UTF-16 characters
+    # DEVMODEW: dmDeviceName is the first 32 UTF-16 characters; dmSize (220)
+    # and dmDriverExtra at offset 68 give the public part's and the driver's
+    # private data's lengths, which add up to the whole part
     name = ('Printer ' + S).encode('utf-16-le').ljust(64, b'\x00')
-    return name + b'\x01\x04' + b'\x00' * 154
+    extra = ('Driver user ' + S).encode('utf-16-le').ljust(64, b'\x00')
+    public = name + struct.pack('<HHHH', 0x0401, 0, 220, len(extra))
+    return public.ljust(220, b'\x00') + extra
 
 
 class Unseekable:

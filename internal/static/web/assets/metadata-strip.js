@@ -977,15 +977,20 @@
     // Obfuscated and embedded fonts start with effectively random bytes, so
     // a lone '<' isn't enough: it must start a declaration or a name, and no
     // control bytes may follow.
+    function isXmlStart(c) { // '?', '!', '_' or an ASCII letter after '<'
+        return c === 0x3F || c === 0x21 || c === 0x5F || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+    }
     function looksLikeXml(data) {
         var i = 0;
         if (data[0] === 0xEF && data[1] === 0xBB && data[2] === 0xBF) i = 3;
         else if (data[0] === 0xFF && data[1] === 0xFE) return data[2] === 0x3C && data[3] === 0x00;
         else if (data[0] === 0xFE && data[1] === 0xFF) return data[2] === 0x00 && data[3] === 0x3C;
+        // UTF-16 without a byte order mark, which XML parsers also detect
+        else if (data[0] === 0x3C && data[1] === 0x00 && isXmlStart(data[2]) && data[3] === 0x00) return true;
+        else if (data[0] === 0x00 && data[1] === 0x3C && data[2] === 0x00 && isXmlStart(data[3])) return true;
         while (i < data.length && (data[i] === 0x20 || data[i] === 0x09 || data[i] === 0x0A || data[i] === 0x0D)) i++;
         if (data[i] !== 0x3C) return false;
-        var c = data[i + 1];
-        if (!(c === 0x3F || c === 0x21 || c === 0x5F || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A))) return false;
+        if (!isXmlStart(data[i + 1])) return false;
         for (var k = i; k < Math.min(data.length, i + 16); k++) {
             if (data[k] < 0x20 && data[k] !== 0x09 && data[k] !== 0x0A && data[k] !== 0x0D) return false;
         }
@@ -1086,19 +1091,16 @@
             // A Windows DEVMODE starts with the printer name (32 UTF-16
             // chars); the driver's private data (which can name users or
             // accounts) follows the dmSize-byte public part.
+            // Anything else (Word for Mac writes a property list) is reported.
             var dev = await readEntry(entry, ctx.budget);
-            if (looksLikeXml(dev)) {
-                // Word for Mac writes printer settings as a property list
+            var pub = dev.length >= 72 ? u16le(dev, 68) : 0;
+            if (pub < 72 || pub + u16le(dev, 70) !== dev.length) {
                 ctx.incomplete.push(name + ' (printer settings)');
                 return null;
             }
-            if (dev.length < 64) return null;
             var copy = dev.slice();
             copy.fill(0, 0, 64);
-            if (copy.length >= 72) {
-                var pub = u16le(copy, 68);
-                if (pub >= 72 && pub < copy.length) copy.fill(0, pub);
-            }
+            copy.fill(0, pub);
             return copy;
         }
         if (SAFE_BINARY.test(lname) && !EMBEDDED_PART.test(lname)) {

@@ -539,6 +539,14 @@ async function hostileCases() {
     const mac = await M.stripMetadata(u8(variant('sample.xlsx', {}, [['xl/printerSettings/printerSettings2.bin',
         '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "x"><plist><dict/></plist>']])));
     check('XML printer settings reported', mac.incomplete.includes('xl/printerSettings/printerSettings2.bin (printer settings)'), JSON.stringify(mac.incomplete));
+    // UTF-16 XML without a byte order mark under a font name
+    const utf16 = Buffer.from('<?xml version="1.0"?><w:comments xmlns:w="x"/>', 'utf16le');
+    const u16 = await M.stripMetadata(u8(variant('sample.docx', {}, [['word/fonts/font3.odttf', utf16]])));
+    check('BOM-less UTF-16 XML under a font name reported', u16.incomplete.includes('word/fonts/font3.odttf'), JSON.stringify(u16.incomplete));
+    // Printer settings whose sizes don't add up aren't a DEVMODE
+    const junk = await M.stripMetadata(u8(variant('sample.xlsx', {}, [['xl/printerSettings/printerSettings3.bin', Buffer.alloc(100, 0x41)]])));
+    check('printer settings that aren\'t a DEVMODE reported', junk.incomplete.includes('xl/printerSettings/printerSettings3.bin (printer settings)'), JSON.stringify(junk.incomplete));
+
     // A decoy "Target=" inside another attribute's value
     await failsClosed('hostile decoy Target inside another value', variant('sample.docx', { [DOCRELS]: rep('</Relationships>',
         '<Relationship Id=" Target=\'x\'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" ' +
