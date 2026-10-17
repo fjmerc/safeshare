@@ -289,6 +289,8 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 ### Supported File Types
 
+This table is the server-side stripper, used for uploads that aren't end-to-end encrypted. For encrypted uploads (always the case in anonymous mode) the browser strips JPEG, PNG, Office and PDF files before encrypting, and covers more; see `docs/E2E_ENCRYPTION.md`.
+
 | File Type | What's Stripped | Method |
 |-----------|----------------|--------|
 | JPEG | APP1-APP15 (EXIF, XMP, IPTC, ICC), COM — GPS, camera info, author, timestamps | Byte-level segment removal |

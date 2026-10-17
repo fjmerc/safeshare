@@ -185,6 +185,76 @@ async function edgeCases() {
     Buffer.from('%PDF-1.7\n').copy(big);
     await expectReject('PDF over 100 MB rejected', M.stripMetadata(u8(big)), 'TOO_LARGE');
 
+    // XMP named by a /Metadata entry but without /Type /Metadata is still cleared
+    const xmp = '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/">Bob</x:xmpmeta><?xpacket end="w"?>';
+    const untyped = await M.stripMetadata(u8(makePdf(['<< /Type /Catalog /Pages 2 0 R /Metadata 3 0 R >>', PAGES,
+        '<< /Length ' + xmp.length + ' >>\nstream\n' + xmp + '\nendstream'])));
+    check('XMP stream without /Type found through /Metadata', !Buffer.from(untyped.data).includes('Bob') &&
+        untyped.incomplete.length === 0, JSON.stringify(untyped.incomplete));
+
+    // XMP hidden in some other compressed stream is reported
+    const packed = require('zlib').deflateSync(Buffer.from(xmp)).toString('latin1');
+    const hidden = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Filter /FlateDecode /Length ' + packed.length + ' >>\nstream\n' + packed + '\nendstream'])));
+    check('XMP inside an unrelated compressed stream reported', JSON.stringify(hidden.incomplete) === '["XMP metadata (object 3)"]',
+        JSON.stringify(hidden.incomplete));
+
+    // Annotation authors stored indirectly, and annotations nested directly in /Annots
+    const nested = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Type /Page /Annots [<< /Subtype /Highlight /T (Nested Bob) /Rect [0 0 1 1] >> << /Subtype /Text /T 4 0 R >>] >>',
+        '(Indirect Bob)'])));
+    const nt = Buffer.from(nested.data).toString('latin1');
+    check('nested and indirect annotation authors cleared', !nt.includes('Bob') && nested.incomplete.length === 0,
+        nt.slice(nt.indexOf('3 0 obj'), nt.indexOf('xref')));
+
+    // Document information that can't be found is reported, not ignored
+    const missing = await M.stripMetadata(u8(makePdf([CATALOG, PAGES], '/Info 9 0 R')));
+    check('missing Info object reported', JSON.stringify(missing.incomplete) === '["document information not found (object 9)"]',
+        JSON.stringify(missing.incomplete));
+
+    // Signature fields: signer details and certificate cleared, even nested in /V
+    const signed = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /FT /Sig /T (Signature1) /V << /Type /Sig /Filter /Adobe.PPKLite /Name (Bob Signer) /Location (Bobtown) ' +
+        '/Reason (I am Bob) /ContactInfo (bob@corp.com) /M (D:20310203) /ByteRange [0 1 2 3] /Contents <0A0B0C0D> >> >>'])));
+    const sg = Buffer.from(signed.data).toString('latin1');
+    check('signature signer details and certificate cleared', !/Bob|bob|D:2031|0A0B0C0D/.test(sg) && sg.includes('(Signature1)'),
+        sg.slice(sg.indexOf('3 0 obj'), sg.indexOf('endobj', sg.indexOf('3 0 obj'))));
+
+    // Application-private data (/PieceInfo), inline and indirect
+    const piece = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Type /Page /PieceInfo << /Illustrator << /LastModified (D:2031) /Private (C:/Users/bob/a.ai) >> >> >>',
+        '<< /Type /Page /PieceInfo 5 0 R >>', '<< /InDesign << /Private (bob) >> >>'])));
+    check('/PieceInfo emptied, inline and indirect', !/bob|D:2031/.test(Buffer.from(piece.data).toString('latin1')));
+
+    // A missing endobj doesn't hide the Info dictionary after it
+    const noEnd = makePdf([CATALOG, PAGES, '<< /Foo 1 >>', '<< /Author (Bob) >>'], '/Info 4 0 R').toString('latin1')
+        .replace('<< /Foo 1 >>\nendobj', '<< /Foo 1 >>');
+    const ne = await M.stripMetadata(u8(Buffer.from(noEnd, 'latin1')));
+    check('missing endobj does not swallow the next object', !Buffer.from(ne.data).includes('Bob') && ne.incomplete.length === 0,
+        JSON.stringify(ne.incomplete));
+
+    // A JPEG whose /Length object is shared by two streams can't be rewritten: reported
+    const jpg = fs.readFileSync(path.join(fixtures, 'image.jpg'));
+    const exif = Buffer.concat([jpg.subarray(0, 2), Buffer.from([0xff, 0xe1, 0x00, 0x08]), Buffer.from('Exif\0\0'), jpg.subarray(2)]);
+    const shared = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Subtype /Image /Filter /DCTDecode /Length 5 0 R >>\nstream\n' + exif.toString('latin1') + '\nendstream',
+        '<< /Length 5 0 R >>\nstream\n' + 'x'.repeat(exif.length) + '\nendstream', String(exif.length)])));
+    check('shared /Length object: image reported, not rewritten', JSON.stringify(shared.incomplete) === '["image (object 3)"]',
+        JSON.stringify(shared.incomplete));
+
+    // #xx escapes in names can't hide /Encrypt
+    await expectReject('escaped /Encr#79pt name still detected',
+        M.stripMetadata(u8(makePdf([CATALOG, PAGES, '<< /Filter /Standard >>'], '/Encr#79pt 3 0 R'))), 'ENCRYPTED');
+
+    // Thousands of indirect /Length objects are indexed once, not searched per stream
+    const many = [CATALOG, PAGES];
+    for (let n = 0; n < 4000; n++) {
+        many.push('<< /Length ' + (many.length + 2) + ' 0 R >>\nstream\n' + 'y'.repeat(200) + '\nendstream', '200');
+    }
+    const t0 = Date.now();
+    await M.stripMetadata(u8(makePdf(many)));
+    check('4000 indirect /Length streams processed quickly', Date.now() - t0 < 3000, (Date.now() - t0) + ' ms');
+
     const deep = await M.stripMetadata(u8(makePdf([CATALOG, PAGES, '['.repeat(100) + ']'.repeat(100)]))).then(() => 'ok', (e) => e.code);
     check('deeply nested arrays rejected, not a stack overflow', deep === 'MALFORMED', deep);
 }
