@@ -1124,11 +1124,11 @@
     function metadataFailureReason(err) {
         switch (err && err.code) {
             case 'UNSUPPORTED_BROWSER':
-                return 'This browser can\'t remove metadata from Office files. Use an up-to-date browser (Tor Browser, Firefox, Chrome or Safari)';
+                return 'This browser can\'t remove metadata from Office files and PDFs. Use an up-to-date browser (Tor Browser, Firefox, Chrome or Safari)';
             case 'TOO_LARGE':
                 return 'This file is too large (over 100 MB) to remove its metadata in the browser';
             case 'ENCRYPTED':
-                return 'This file is password-protected or encrypted, so its metadata can\'t be removed';
+                return 'This file is password-protected or encrypted, which keeps its metadata from being removed';
             default:
                 return 'Could not remove metadata from this file';
         }
@@ -1152,7 +1152,7 @@
             return arrayBuffer;
         }
         if (result.incomplete && result.incomplete.length) {
-            const parts = 'This file contains parts whose metadata can\'t be removed, such as macros or embedded objects (' + result.incomplete.slice(0, 3).join(', ') +
+            const parts = 'Metadata can\'t be removed from part of this file (' + result.incomplete.slice(0, 3).join(', ') +
                 (result.incomplete.length > 3 ? ', ...' : '') + ')';
             if (serverConfig.anonymous_mode) {
                 const abort = new Error(parts + ', so the upload was stopped. Remove it or scrub the file first (for example with mat2) and try again.');
@@ -1163,7 +1163,7 @@
         }
         if (!result.supported && !metadataNoticeShown) {
             metadataNoticeShown = true;
-            showToast('Metadata in this file type (PDF, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
+            showToast('Metadata in this file type (OpenDocument, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
         }
         if (result.orientation && result.orientation !== 1 && !orientationNoticeShown) {
             orientationNoticeShown = true;
