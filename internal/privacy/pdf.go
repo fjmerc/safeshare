@@ -1,9 +1,11 @@
 package privacy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -24,6 +26,17 @@ var pdfInfoKeys = []string{
 	"Title",
 }
 
+// pdfStripTimeout limits how long pdfcpu may spend parsing, optimizing and
+// rewriting one PDF, so a crafted file can't keep an upload (and a CPU) busy
+// indefinitely. The limit is best-effort: pdfcpu only observes the deadline at
+// its checkpoints, so one long uninterrupted step can overrun it (an overrun is
+// still rejected). For direct uploads it fits well inside the per-request
+// deadline set in handlers/upload.go (at least 120s), so the client gets a
+// clean 422 rather than a dropped connection.
+//
+// A var so tests can shorten it; tests that change it must not use t.Parallel.
+var pdfStripTimeout = 60 * time.Second
+
 // stripPDFMetadata removes identifying metadata from a PDF file in-place.
 //
 // It clears the Info dictionary entries (Author, Creator, Producer,
@@ -42,12 +55,29 @@ func stripPDFMetadata(filePath string) error {
 		return fmt.Errorf("open PDF file: %w", err)
 	}
 
-	conf := model.NewDefaultConfiguration()
+	// Stateless configuration: pdfcpu must not read or create config files
+	// under $HOME/.config. model.NewDefaultConfiguration() does, and since
+	// pdfcpu v0.16 it panics (outside any recover) when it finds a config.yml
+	// written by an older version.
+	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 
-	ctx, err := api.ReadValidateAndOptimize(f, conf)
+	// One deadline covers read, validate, optimize and write; pdfcpu checks
+	// the context throughout. nil ProgressOptions disables progress reporting.
+	stripCtx, cancel := context.WithTimeout(context.Background(), pdfStripTimeout)
+	defer cancel()
+
+	ctx, err := api.ReadValidateAndOptimize(stripCtx, f, conf, nil)
 	f.Close()
 
+	// Check the deadline ourselves rather than relying on how pdfcpu wraps
+	// the context error.
+	if stripCtx.Err() != nil {
+		if err != nil {
+			return fmt.Errorf("%w: read PDF: %w", ErrStripTimeout, err)
+		}
+		return fmt.Errorf("%w: read PDF", ErrStripTimeout)
+	}
 	if err != nil {
 		// pdfcpu returns ErrWrongPassword when the document requires a password
 		// for reading (open password) or when it is encrypted but we have no key.
@@ -95,10 +125,24 @@ func stripPDFMetadata(filePath string) error {
 	// used to correlate different versions of the same file.
 	ctx.XRefTable.ID = nil
 
-	// --- Write back to file atomically ---
+	return writeStrippedPDF(stripCtx, ctx, filePath)
+}
+
+// writeStrippedPDF writes ctx to a temp file next to filePath and atomically
+// replaces filePath with it. The original is left untouched on any failure,
+// including the deadline expiring.
+func writeStrippedPDF(stripCtx context.Context, ctx *model.Context, filePath string) error {
 	tmpPath := filePath + ".strip-tmp"
-	if err := api.WriteContextFile(ctx, tmpPath); err != nil {
+	// Also covers a panic inside pdfcpu's writer (recovered by the callers);
+	// a no-op once the rename below has succeeded.
+	defer os.Remove(tmpPath)
+	// Check the deadline even when the write reports success: a write that
+	// overran its deadline is discarded (fail closed) rather than trusted.
+	if err := api.WriteContextFile(stripCtx, ctx, tmpPath); err != nil || stripCtx.Err() != nil {
 		os.Remove(tmpPath)
+		if stripCtx.Err() != nil {
+			return fmt.Errorf("%w: write PDF", ErrStripTimeout)
+		}
 		return fmt.Errorf("write stripped PDF: %w", err)
 	}
 

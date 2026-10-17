@@ -156,7 +156,7 @@ jobs:
           go tool cover -func=coverage-postgres.out | grep -E 'total:|internal/repository/postgres' || true
 
       - name: Upload PostgreSQL coverage artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: postgres-coverage
           path: coverage-postgres.out
@@ -245,7 +245,7 @@ jobs:
 
       - name: Upload MinIO coverage artifact
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: minio-coverage
           path: coverage-minio.out
@@ -288,7 +288,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload govulncheck SARIF
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v3
         with:
           sarif_file: govulncheck-results.sarif
           category: govulncheck
@@ -312,7 +312,7 @@ jobs:
 
       # --- TypeScript SDK ---
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -363,8 +363,58 @@ jobs:
         working-directory: sdk/go
         run: go test -v ./...
 
+  # Browser-side code (metadata stripping, upload padding) is tested with Node
+  # plus real Chromium and Firefox via Playwright. REQUIRE_BROWSERS=1 makes the
+  # tests fail instead of skipping the browser runs if Playwright is missing.
+  js-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PLAYWRIGHT_VERSION: '1.62.0'
+      REQUIRE_BROWSERS: '1'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Install Playwright with Chromium and Firefox
+        run: |
+          npm install -g "playwright@${PLAYWRIGHT_VERSION}"
+          playwright install --with-deps chromium firefox
+          sudo apt-get install -y --no-install-recommends qpdf
+
+      - name: Run browser JS tests
+        run: |
+          for t in tests/js/*.test.js; do
+            echo "::group::$t"
+            OUT_DIR="$RUNNER_TEMP/out" node "$t"
+            echo "::endgroup::"
+          done
+
+      # Stripped PDFs must still be structurally valid (exit 0: no warnings).
+      - name: Validate stripped PDFs with qpdf
+        run: |
+          set -- "$RUNNER_TEMP"/out/*.pdf
+          [ -e "$1" ] || { echo "::error::no stripped PDFs found"; exit 1; }
+          for f in "$@"; do qpdf --check "$f" > /dev/null || { echo "::error::qpdf --check failed: $f"; exit 1; }; done
+          echo "qpdf --check passed for $# files"
+
+      # Stripped Office files must still pass Microsoft's Open XML SDK
+      # validator (the runner image ships the .NET SDK).
+      - name: Validate stripped Office files with the Open XML SDK
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/out/*.docx "$RUNNER_TEMP"/out/*.xlsx "$RUNNER_TEMP"/out/*.pptx)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no stripped Office files found"; exit 1; }
+          dotnet run --project tests/js/validate-ooxml -- "${files[@]}"
+
   build-and-push:
-    needs: [test, race, test-postgres, test-minio, security-scan]
+    needs: [test, race, test-postgres, test-minio, security-scan, js-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -485,7 +535,7 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v3
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'trivy-container'

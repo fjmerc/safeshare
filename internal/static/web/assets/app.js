@@ -85,6 +85,8 @@
 
     // True when this server enforces E2E but the browser cannot do it
     let uploadBlocked = false;
+    // False until /api/config has loaded; padding fails closed while unknown
+    let serverConfigLoaded = false;
     // One-time notices about metadata stripping
     let metadataNoticeShown = false;
     let orientationNoticeShown = false;
@@ -168,6 +170,7 @@
             const response = await fetch('/api/config');
             if (response.ok) {
                 serverConfig = await response.json();
+                serverConfigLoaded = true;
                 console.log('Server config loaded:', serverConfig);
 
                 // Display version in footer
@@ -1051,7 +1054,7 @@
                 // The server can't strip metadata from ciphertext, so do it here first
                 if (serverConfig.strip_metadata && window.SafeShareMetadata) {
                     progressText.textContent = 'Removing metadata...';
-                    arrayBuffer = stripMetadataForUpload(arrayBuffer);
+                    arrayBuffer = await stripMetadataForUpload(arrayBuffer);
                 } else if (serverConfig.strip_metadata) {
                     // Stripper failed to load. Ghost mode is blocked at init; here, warn and continue.
                     showToast('Metadata removal is unavailable (script failed to load); uploading without it.', 'warning', 6000);
@@ -1063,11 +1066,20 @@
                 const cryptoKey = await SafeShareCrypto.generateEncryptionKey();
                 e2eExportedKey = await SafeShareCrypto.exportKey(cryptoKey);
 
-                // When hiding filename, wrap [SF01 magic + filename + data] before encryption.
-                // When filename stays visible, encrypt raw bytes only.
-                const payload = hideFilename
-                    ? SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer)
-                    : arrayBuffer;
+                // Ghost mode: pad to a PADME size bucket inside the encryption so the stored
+                // size doesn't reveal the file size. The framed payload (SF02) also carries the
+                // real length, and the filename only if Hide filename is on.
+                // Otherwise: hiding the filename wraps [SF01 magic + filename + data]; with the
+                // filename visible, the raw bytes are encrypted.
+                // If the config never loaded the mode is unknown: pad anyway (fail closed).
+                // Decryption handles padded payloads in every mode; the cost is ≤12% size.
+                const padUpload = !serverConfigLoaded || !!serverConfig.anonymous_mode;
+                const payload = padUpload
+                    ? SafeShareCrypto.wrapPayloadPadded(hideFilename ? selectedFile.name : '', arrayBuffer, maxFileSizeBytes)
+                    : (hideFilename
+                        ? SafeShareCrypto.wrapPayload(selectedFile.name, arrayBuffer)
+                        : arrayBuffer);
+                arrayBuffer = null; // let the plaintext copy be collected while encrypting
                 const encryptedBuffer = await SafeShareCrypto.encryptFile(cryptoKey, payload);
 
                 progressText.textContent = 'Uploading...';
@@ -1081,9 +1093,14 @@
                 // Reset progress for the actual upload tracking
                 uploadProgress.classList.add('hidden');
             } catch (error) {
-                const message = error && error.metadataAbort
-                    ? error.message
-                    : 'Encryption failed: ' + error.message;
+                let message;
+                if (error && error.code === 'PAYLOAD_TOO_LARGE') {
+                    message = `This file is too large to upload encrypted. Encryption adds a small header, so the largest file is a little under ${formatFileSize(maxFileSizeBytes)}.`;
+                } else if (error && error.metadataAbort) {
+                    message = error.message;
+                } else {
+                    message = 'Encryption failed: ' + error.message;
+                }
                 showToast(message, 'error', 6000);
                 resetProgress();
                 return;
@@ -1103,25 +1120,50 @@
         }
     }
 
-    // Strip JPEG/PNG metadata in the browser. Ghost mode fails closed; otherwise
-    // falls back to the original bytes with a warning. Other types pass through
-    // with a one-time notice.
-    function stripMetadataForUpload(arrayBuffer) {
+    // Why metadata couldn't be removed, by SafeShareMetadata error code
+    function metadataFailureReason(err) {
+        switch (err && err.code) {
+            case 'UNSUPPORTED_BROWSER':
+                return 'This browser can\'t remove metadata from Office files and PDFs. Use an up-to-date browser (Tor Browser, Firefox, Chrome or Safari)';
+            case 'TOO_LARGE':
+                return 'This file is too large (over 100 MB) to remove its metadata in the browser';
+            case 'ENCRYPTED':
+                return 'This file is password-protected or encrypted, which keeps its metadata from being removed';
+            default:
+                return 'Could not remove metadata from this file';
+        }
+    }
+
+    // Strip metadata in the browser (JPEG, PNG and Office files). Ghost mode
+    // fails closed; otherwise falls back to the original bytes with a warning.
+    // Other types pass through with a one-time notice.
+    async function stripMetadataForUpload(arrayBuffer) {
         let result;
         try {
-            result = SafeShareMetadata.stripMetadata(arrayBuffer);
+            result = await SafeShareMetadata.stripMetadata(arrayBuffer);
         } catch (err) {
+            const reason = metadataFailureReason(err);
             if (serverConfig.anonymous_mode) {
-                const abort = new Error('Could not remove metadata from this image, so the upload was stopped. Re-save or scrub the file (for example with mat2) and try again.');
+                const abort = new Error(reason + ', so the upload was stopped. Scrub the file first (for example with mat2) and try again.');
                 abort.metadataAbort = true;
                 throw abort;
             }
-            showToast('Could not remove metadata from this image; uploading it unchanged.', 'warning', 6000);
+            showToast(reason + '; uploading it unchanged.', 'warning', 6000);
             return arrayBuffer;
+        }
+        if (result.incomplete && result.incomplete.length) {
+            const parts = 'Metadata can\'t be removed from part of this file (' + result.incomplete.slice(0, 3).join(', ') +
+                (result.incomplete.length > 3 ? ', ...' : '') + ')';
+            if (serverConfig.anonymous_mode) {
+                const abort = new Error(parts + ', so the upload was stopped. Remove it or scrub the file first (for example with mat2) and try again.');
+                abort.metadataAbort = true;
+                throw abort;
+            }
+            showToast(parts + '; the rest was cleaned.', 'warning', 8000);
         }
         if (!result.supported && !metadataNoticeShown) {
             metadataNoticeShown = true;
-            showToast('Metadata in this file type (PDF, Office, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
+            showToast('Metadata in this file type (OpenDocument, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
         }
         if (result.orientation && result.orientation !== 1 && !orientationNoticeShown) {
             orientationNoticeShown = true;
@@ -1428,6 +1470,7 @@
                 currentShareData.download_url = displayUrl;
                 if (selectedFile) {
                     currentShareData.original_filename = selectedFile.name;
+                    currentShareData.file_size = selectedFile.size; // real size, not the padded stored size
                 }
             }
 
@@ -1449,7 +1492,8 @@
             const displayFilename = isE2E && selectedFile ? selectedFile.name : data.original_filename;
             fileNameElement.textContent = displayFilename;
             fileNameElement.title = displayFilename; // Show full name on hover
-            document.getElementById('fileSize').textContent = formatFileSize(data.file_size);
+            // For E2E uploads show the real size; data.file_size is the stored (possibly padded) size
+            document.getElementById('fileSize').textContent = formatFileSize(isE2E && selectedFile ? selectedFile.size : data.file_size);
             document.getElementById('expiresAt').textContent = formatDate(data.expires_at);
             // Display downloads in "X / Y" format to match Pickup/Dashboard pages
             const downloadsText = data.max_downloads
@@ -2674,14 +2718,23 @@
                 const cryptoKey = await SafeShareCrypto.importKey(fragment.encryptionKey);
                 const decryptedData = await SafeShareCrypto.decryptFile(cryptoKey, encryptedData);
 
-                // Only unwrap (look for the SF01 filename header) when the upload was
-                // actually wrapped — i.e. the server stored 'encrypted.bin'. Otherwise
-                // a plaintext file that happens to start with the SF01 magic bytes would
-                // be silently truncated, see crypto.js:unwrapPayload.
+                // Uploads stored as 'encrypted.bin' were framed (SF01 or SF02), so unwrap them.
+                // A padded (SF02) upload with a visible filename is stored under its real name:
+                // unwrap it only if the SF02 header is valid. A legacy plaintext file that merely
+                // starts with the SF01 magic must not be truncated, see crypto.js:unwrapPayload.
                 const wasWrapped = fileInfo.original_filename === E2E_ENCRYPTED_FILENAME;
-                const unwrapped = wasWrapped
-                    ? SafeShareCrypto.unwrapPayload(decryptedData)
-                    : { filename: null, data: decryptedData };
+                let unwrapped = { filename: null, data: decryptedData };
+                if (wasWrapped) {
+                    unwrapped = SafeShareCrypto.unwrapPayload(decryptedData);
+                } else if (SafeShareCrypto.hasPaddedPayloadMagic(decryptedData)) {
+                    try {
+                        // The server-visible name is authoritative here; ignore any embedded name
+                        const inner = SafeShareCrypto.unwrapPayload(decryptedData);
+                        unwrapped = { filename: null, data: inner.data };
+                    } catch (e) {
+                        unwrapped = { filename: null, data: decryptedData };
+                    }
+                }
                 const downloadFilename = unwrapped.filename || fileInfo.original_filename;
                 const downloadData = unwrapped.data;
 

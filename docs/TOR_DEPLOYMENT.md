@@ -123,7 +123,7 @@ These environment variables are recommended for Tor deployments:
 |----------|-------|-----|
 | `ANONYMOUS_MODE` | `true` | Keeps IPs and user agents out of the database and logs, filenames and claim codes out of logs, and stores no hash of uploads. Turns on secure deletion in the database, keeps the audit log off, blocks webhooks and SSO, and stops serving `/metrics` |
 | `REQUIRE_CLIENT_ENCRYPTION` | `true` (the default when `ANONYMOUS_MODE=true`) | Refuses uploads that weren't encrypted in the browser, so the server only ever stores ciphertext |
-| `STRIP_METADATA` | `true` | The browser strips JPEG and PNG metadata before encrypting. Other formats keep theirs (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#metadata-stripping-and-e2ee)) |
+| `STRIP_METADATA` | `true` | The browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. Other formats keep theirs (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#metadata-stripping-and-e2ee)) |
 | `TRUST_PROXY_HEADERS` | `false` | Tor connections are direct, not proxied |
 | `PUBLIC_URL` | `http://<onion>.onion` | Ensures correct download URLs |
 | `ENCRYPTION_KEY` | 64-char hex | Second layer of encryption at rest, around the browser-encrypted file |
@@ -145,7 +145,7 @@ This limitation is inherent to not being able to distinguish visitors behind a s
 
 ### Upload and download rate limits
 
-`RATE_LIMIT_UPLOAD` (default 10/hour) and `RATE_LIMIT_DOWNLOAD` (default 50/hour) are counted per apparent client IP. Chunked uploads are allowed 10× the upload limit in chunk and completion requests, and status polling 600×. Behind Tor all of these are one budget for every visitor combined. A single 1 GB upload in 10 MB chunks uses 100 chunk requests, so with the defaults it would use the whole service's chunk budget for an hour. Set these as service-wide ceilings, for example `RATE_LIMIT_UPLOAD=100` and `RATE_LIMIT_DOWNLOAD=500`, and use `QUOTA_LIMIT_GB` to cap disk use.
+`RATE_LIMIT_UPLOAD` (default 10/hour) and `RATE_LIMIT_DOWNLOAD` (default 50/hour) are counted per apparent client IP. Chunked uploads are allowed 10× the upload limit in chunk and completion requests, and status polling 600×. Claim-code lookups (`/api/claim/{code}/info`, which the download page makes before each download) are allowed 2× the download limit. Behind Tor all of these are one budget for every visitor combined. A single 1 GB upload in 10 MB chunks uses 100 chunk requests, so with the defaults it would use the whole service's chunk budget for an hour. Set these as service-wide ceilings, for example `RATE_LIMIT_UPLOAD=100` and `RATE_LIMIT_DOWNLOAD=500`, and use `QUOTA_LIMIT_GB` to cap disk use.
 
 ### Login lockout and hidden services
 
@@ -164,7 +164,7 @@ The MFA step is the exception: wrong two-factor codes (TOTP or recovery) are lim
 - [ ] **Enable `ANONYMOUS_MODE=true`**: no IPs, user agents or upload hashes stored; filenames and claim codes kept out of logs
 - [ ] **Leave `REQUIRE_CLIENT_ENCRYPTION` on** (the default in anonymous mode): the server only accepts browser-encrypted files
 - [ ] **Start on a fresh database**: switching an existing server to anonymous mode doesn't erase IPs, user agents, hashes or audit entries already recorded
-- [ ] **Enable `STRIP_METADATA=true`**: the browser strips JPEG and PNG metadata before encrypting. Tell sources to scrub other formats (PDF, Office, video) first, for example with mat2
+- [ ] **Enable `STRIP_METADATA=true`**: the browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. Tell sources to scrub other formats (video, OpenDocument) first, for example with mat2
 - [ ] **Set a strong `ENCRYPTION_KEY`** — 64 hex chars, generated with `openssl rand -hex 32`
 - [ ] **Do NOT expose port 8080**: SafeShare should only be reachable through Tor. Keep it on an `internal: true` network so it also has no route out
 - [ ] **Do NOT use a reverse proxy that logs IPs** — defeats the purpose of Tor
@@ -303,7 +303,7 @@ environment:
 | Server operator identifies uploaders | Yes | Tor hides IPs from the server; `ANONYMOUS_MODE` keeps IPs and user agents out of storage and logs |
 | Server operator reads uploaded files | Yes (with `REQUIRE_CLIENT_ENCRYPTION`, default in anonymous mode) | Files are encrypted in the browser and the key never reaches the server. The server can't verify the client's claim, so it only protects uploaders who use the web page as intended |
 | Operator compelled to confirm a known document was shared | Yes (with `ANONYMOUS_MODE`) | No content hash is stored, and deleted rows are overwritten |
-| File metadata reveals identity | Partial (with `STRIP_METADATA`) | JPEG and PNG metadata stripped in the browser. Other formats keep theirs; scrub before uploading |
+| File metadata reveals identity | Partial (with `STRIP_METADATA`) | JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata stripped in the browser. Other formats keep theirs; scrub before uploading |
 | Server compromise reveals file contents | Yes for files already uploaded (with required client-side encryption) | An attacker who controls the server could serve modified JavaScript to future visitors |
 | Correlation attacks (timing) | Partial | Tor provides some protection; high-traffic services are harder to correlate |
 

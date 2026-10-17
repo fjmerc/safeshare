@@ -43,6 +43,18 @@ func TestRateLimitRepository_IncrementAndCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("ClaimInfoLimitTypeAccepted", func(t *testing.T) {
+		// The middleware's claim_info bucket must pass the allow-list;
+		// a rejected type makes DBRateLimiter fail open.
+		allowed, count, err := repo.IncrementAndCheck(ctx, "192.168.1.9", "claim_info", 10, time.Hour)
+		if err != nil {
+			t.Fatalf("IncrementAndCheck(claim_info) failed: %v", err)
+		}
+		if !allowed || count != 1 {
+			t.Errorf("got allowed=%v count=%d, want true 1", allowed, count)
+		}
+	})
+
 	t.Run("MultipleRequestsIncrementCount", func(t *testing.T) {
 		ip := "192.168.1.2"
 		for i := 1; i <= 5; i++ {

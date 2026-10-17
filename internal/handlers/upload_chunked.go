@@ -795,6 +795,7 @@ func respondUploadComplete(w http.ResponseWriter, r *http.Request, cfg *config.C
 	} else {
 		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
 	}
+	expiresAt = storeExpiry(expiresAt, cfg)
 
 	response := models.UploadCompleteResponse{
 		ClaimCode:          *partialUpload.ClaimCode,

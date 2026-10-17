@@ -95,6 +95,12 @@ func (rl *DBRateLimiter) checkLimit(ctx context.Context, ip string, limitType st
 	return allowed
 }
 
+// maxDBRateLimit mirrors the repositories' maxRateLimit. They reject a higher
+// limit with an error and checkLimit fails open on errors, so a derived limit
+// (a multiple of a configured one) is clamped to it rather than disabling the
+// bucket.
+const maxDBRateLimit = 10000
+
 // DBRateLimitMiddleware creates a middleware that enforces rate limits using database storage.
 func DBRateLimitMiddleware(rl *DBRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -111,9 +117,14 @@ func DBRateLimitMiddleware(rl *DBRateLimiter) func(http.Handler) http.Handler {
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/chunk/") {
 				// Rate limit chunk uploads (more lenient: 10x upload limit)
-				limit = rl.config.GetRateLimitUpload() * 10
+				limit = min(rl.config.GetRateLimitUpload()*10, maxDBRateLimit)
 				limitType = "chunk"
-			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
+			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && strings.HasSuffix(r.URL.Path, "/info") {
+				// Claim-code existence check: limited like the in-memory
+				// limiter (see RateLimitMiddleware).
+				limit = min(rl.config.GetRateLimitDownload()*claimInfoLimitMultiplier, maxDBRateLimit)
+				limitType = "claim_info"
+			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
 			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {

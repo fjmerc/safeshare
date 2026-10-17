@@ -200,10 +200,11 @@ docker run -e ANONYMOUS_MODE=true ...
 
 **Contents**
 - **Client-side encryption required**: `REQUIRE_CLIENT_ENCRYPTION` defaults to on. Uploads not marked as encrypted in the browser are refused with `400 CLIENT_ENCRYPTION_REQUIRED`. See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) for what that does and doesn't guarantee
-- **Metadata stripping**: `STRIP_METADATA` defaults to on. The browser strips JPEG and PNG metadata before encrypting. When the server strips (only possible with `REQUIRE_CLIENT_ENCRYPTION=false`), a file it can't strip is rejected with `422 METADATA_STRIP_FAILED` instead of being stored with its metadata. That includes files over 100 MB and encrypted PDFs
+- **Metadata stripping**: `STRIP_METADATA` defaults to on. The browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. When the server strips (only possible with `REQUIRE_CLIENT_ENCRYPTION=false`), a file it can't strip is rejected with `422 METADATA_STRIP_FAILED` instead of being stored with its metadata. That includes files over 100 MB and encrypted PDFs
 
 **Records**
 - **No content hash**: the SHA-256 of uploads isn't stored or returned by `/api/claim/{code}/info`, so the server can't be used to confirm that a known document was shared
+- **Rounded times**: a file's upload time and scan time are stored rounded down to the hour (UTC), and its expiry is rounded up to the next hour, so a seized database can't be lined up against network logs by exact time. Rounding never shortens a file's life: a file may stay available up to 59 minutes longer than requested (and the expiry shown to the uploader is the rounded one). SafeShare stores no per-download timestamp on file records. Rows already in the database are not rewritten
 - **Secure deletion**: SQLite overwrites deleted rows (`secure_delete`), and the write-ahead log is truncated after deletions, so expired files' records can't be recovered from the database files
 - **Audit log**: off by default. With `AUDIT_LOG=true`, entries record what happened but nothing about who: no IP address, account, username, user agent or filename
 
@@ -218,7 +219,10 @@ docker run -e ANONYMOUS_MODE=true ...
 
 - **Rate limiting still uses the raw client IP**, held in memory only and never stored. Behind Tor every visitor shares one address, so each limit is a single budget for the whole service (see [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md#upload-and-download-rate-limits))
 - **It doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before anonymous mode was turned on stay until those files expire or are deleted. Start anonymous deployments on a fresh database
-- **The server still knows each file's** size, upload and expiry times, download count and claim code, and its filename unless the uploader hides it. These are deleted with the file
+- **The server still knows each file's** size bucket, upload and expiry times (rounded to the hour), download count and claim code, and its filename unless the uploader hides it. Browser-encrypted uploads are padded to a PADME bucket, so the exact size is not visible, but the bucket narrows it to within about 12%. These are deleted with the file
+- **Only file records are rounded.** Chunked-upload session rows, login sessions, rate-limit and lockout rows, and download-session rows keep exact times while they exist (they are short-lived and cleaned up automatically). The `import-file` CLI tool doesn't know about anonymous mode and writes exact times; don't use it on a Ghost deployment
+- **Stored file blobs keep their filesystem times.** The encrypted file in the uploads directory (or the S3 object) has an exact modification and creation time set by the operating system, which SafeShare doesn't alter. Someone holding the disk can read upload times from there. Put uploads on storage that doesn't keep timestamps, or accept this limit
+- **Container request logs still carry exact times.** Rounding applies to the database only. Docker's and your reverse proxy's logs timestamp every request to the second until they rotate, while the database persists, so an adversary who gets both can still correlate. Rotate or disable those logs
 - **Docker's own logs** still contain whatever SafeShare logs. Use `logging: driver: none` for full deniability
 
 ### Behavior
@@ -229,7 +233,7 @@ docker run -e ANONYMOUS_MODE=true ...
 
 ### What it doesn't hide on the visitor's device
 
-In anonymous mode the page itself keeps no recent-uploads list, resume state or filenames on the visitor's device (see above), but the browser still keeps some things of its own. Like any installable web app, SafeShare registers a service worker and stores its own scripts, styles and icons in the browser so it can be installed and open offline. Nothing in that storage identifies the visitor, and none of it is sent to the server, but it does show that the browser has visited the site. Clearing the normal browser cache doesn't remove it; **Clear site data** (or the browser's per-site storage settings) does. Tor Browser turns service workers off by default, so visitors using it over a hidden service don't get this trace.
+In anonymous mode the page itself keeps no recent-uploads list, resume state or filenames on the visitor's device (see above). It also installs no service worker, so the app's scripts, styles and icons aren't stored for offline use, and the web app manifest isn't served, so the browser has nothing to offer for installing (an app installed before the switch stays installed until the visitor removes it). If a visitor's browser still holds a service worker from before the instance was switched to anonymous mode, the page unregisters it and clears its caches on the next visit, and the server answers requests for `/service-worker.js` with a stub that does the same (so a browser that checks the old worker's script removes it even before the page's own code runs). The browser still keeps things of its own, such as history, the DNS cache and the normal HTTP cache, which can show the site was visited; clearing site data and history removes them.
 
 ---
 
@@ -285,6 +289,8 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 ### Supported File Types
 
+This table is the server-side stripper, used for uploads that aren't end-to-end encrypted. For encrypted uploads (always the case in anonymous mode) the browser strips JPEG, PNG, Office and PDF files before encrypting, and covers more; see `docs/E2E_ENCRYPTION.md`.
+
 | File Type | What's Stripped | Method |
 |-----------|----------------|--------|
 | JPEG | APP1-APP15 (EXIF, XMP, IPTC, ICC), COM — GPS, camera info, author, timestamps | Byte-level segment removal |
@@ -308,7 +314,7 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 - HEIC/HEIF, FLAC, WAV, OGG, and WebM files are not currently supported
 - Legacy Office formats (.doc, .xls, .ppt) are not supported — only modern Open XML formats
-- Office document comments and tracked changes (which may contain author names) are not stripped — only file-level metadata in docProps/
+- Server-side Office stripping removes only file-level metadata in docProps/ and customXml/; comment and tracked-change authors are not stripped. (The browser-side stripper used for end-to-end encrypted uploads does clear them; see `docs/E2E_ENCRYPTION.md`.)
 - Already-uploaded files are not retroactively stripped
 - Metadata stripping is irreversible — the original metadata cannot be recovered
 

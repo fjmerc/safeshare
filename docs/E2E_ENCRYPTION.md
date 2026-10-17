@@ -39,7 +39,7 @@ E2EE does **not** protect against:
 
 - An attacker who obtains the full share URL (which contains the key in the fragment).
 - Malicious JavaScript served by a compromised server — if the server is compromised at the application level, it could serve modified JavaScript that exfiltrates keys before encryption.
-- Metadata leakage: the server still knows the file size (of the ciphertext), the upload time, the claim code, and the uploader's IP address.
+- Metadata leakage: the server still knows the size bucket of the ciphertext (see [Size Padding](#size-padding-anonymous-mode)), the upload time, the claim code, and the uploader's IP address.
 
 ## Limitations
 
@@ -48,6 +48,7 @@ E2EE does **not** protect against:
 The entire file must fit in browser memory twice — once as the original content and once as the encrypted output. For large files this can cause the browser tab to run out of memory or become unresponsive.
 
 - A warning is shown in the UI for files larger than **500 MB**.
+- In anonymous mode the padded copy is up to about 12% larger than the file, so peak memory grows by the same amount. On download, unwrapping copies the file once more.
 - For files that do not fit in memory, use server-side encryption at rest (`ENCRYPTION_KEY`) instead.
 
 ### URL Fragment Handling
@@ -95,11 +96,58 @@ The server can't strip metadata from ciphertext. When `STRIP_METADATA=true`, the
 
 - **JPEG**: APP1–APP15 segments (EXIF, GPS, XMP, IPTC, maker notes, ICC profiles) and comments are removed, including any between progressive scans. The JFIF header keeps no embedded thumbnail, and anything after the end-of-image marker (secondary images, vendor trailers) is dropped. The Adobe APP14 colour-transform marker is kept so CMYK images still decode. Removing EXIF also removes the orientation flag, so the page warns when a photo may display rotated.
 - **PNG**: only image-rendering chunks are kept (`IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `cHRM`, `gAMA`, `iCCP`, `sBIT`, `sRGB`, `bKGD`, `pHYs` and the APNG animation chunks). Text, EXIF, timestamps, private chunks and anything after `IEND` are removed.
-- **Anything else** (PDF, Office documents, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
+- **Office documents** (Word, Excel and PowerPoint: `.docx`, `.xlsx`, `.pptx` and their macro-enabled versions). Cleared:
+  - The document properties (author, last editor, company, manager, title, template, timestamps, custom properties) and the custom XML data stores, including their schema lists (SharePoint names its own schemas by IDs that identify the site). Word bibliography sources and content-control bindings live in those stores and are lost too; bound content controls keep their current text.
+  - Comment and tracked-change authors, initials and dates; the people and persons lists; PowerPoint co-authoring change records; shared-workbook user names; pivot-table "refreshed by" names; editing-permission editors; worksheet-protection account IDs; ink timestamps; and the account IDs and e-mail addresses Office stores with them.
+  - Word revision-session IDs (`rsid`), document IDs, document variables and mail-merge sources; Excel's save path, revision ID, data-connection paths, connection strings and query sources, shared-workbook personal view names and OneDrive IDs of linked workbooks; PowerPoint's client ID and slide-library sync times; Microsoft 365 sensitivity labels (which name the organisation); and leftover data from earlier saves (`[trash]` entries).
+  - Links that point at the author's files: the attached template, external workbook links, linked objects and mail-merge sources, whatever their address (including OneDrive and SharePoint URLs), and hyperlinks to local, network or relative paths, and the source path Word keeps for pictures pasted from a web page. Web hyperlinks and online video and audio (except from personal OneDrive or SharePoint storage) are kept; linked pictures are not.
+  - Printer names and printer-driver data, metadata in embedded JPEG and PNG images and in the document thumbnail, metadata, comments and editor data (Inkscape paths) in embedded SVG images, and every zip entry's timestamp, comment and extra fields, plus the archive comment.
+  - Embedded Office files (a chart's workbook, a pasted document) are cleaned the same way.
+  - Each part is handled by its content type and root element, not its file name, and a part where a local file path is left in an attribute is reported as not cleaned.
 
-In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upload is stopped instead of sending the original.
+  **Limits.** Office cleaning removes a known list of fields and keeps the rest. It's built and tested for files saved by Microsoft Office and LibreOffice, and checked with Microsoft's Open XML SDK so cleaned files still open; it has been tested with real Word, Excel and PowerPoint files, but not opened in Office itself. It isn't a guarantee against a document crafted to defeat it: someone who sends you a document could hide tracking data in a place this cleaner doesn't know about. If that's part of your threat model, don't upload the original: convert it to PDF or plain text, or use a dedicated tool such as [mat2](https://0xacab.org/jvoisin/mat2), and check the result.
+
+  Kept: the text, formatting, comments and tracked changes themselves (a name typed into the text, or shown by an Author field, stays), web hyperlinks, embedded fonts and EMF, WMF and BMP images. Only parts known to be safe are copied unchanged; anything else is reported as not cleaned. That includes VBA macro projects, ActiveX controls, embedded OLE objects, data models, digital signatures, add-in data (including PowerPoint tags), Excel XML maps and macro sheets, document tasks, mail-merge recipient lists, parts of types it doesn't know (including newer ones and files saved in the "Strict Open XML" format), Word fields that link to files (Paste Link, linked pictures, `INCLUDETEXT`, fields naming a local path), SVG images that embed raster images, and media other than JPEG, PNG and SVG (video, audio, GIF, TIFF, HEIC, WebP). In anonymous mode a file containing them is refused; in other modes it's uploaded with the rest cleaned and a warning. Visio, XPS and other Office-style packages aren't supported. This needs the browser's built-in compression streams (any current browser, including Tor Browser).
+- **PDF**: the document information (author, creator, producer, title, subject, keywords, dates and any custom entries) is cleared in every revision of the file, including earlier revisions left behind by incremental saves and entries stored in compressed object streams. All XMP metadata streams (for the document, pages and images) are replaced with an empty packet, the file identifier (`/ID`) is zeroed, comment annotations lose their author and dates, digital signatures lose the signer's name, location, reason, contact details, time and certificate (editing a signed PDF breaks the signature anyway), application-private data (`/PieceInfo`, left by Illustrator, InDesign or Acrobat) is emptied, and EXIF and other APP segments are removed from embedded JPEG images. Metadata is overwritten in place, so the file keeps its size and structure (including linearization). Kept: the text, images, comments' text, form fields and bookmarks. Reported as not cleaned: attached files, JPEG 2000 images, inline JPEG images in page content, XMP found in other streams, streams whose encoding can't be decoded to check them, unreadable trailers, objects the cross-reference data lists that can't be found, signs of hidden objects in a file whose cross-reference data is damaged, and anything that can't be rewritten in place, such as a compressed object stream holding the document information that no longer fits once the browser recompresses it (in testing, object streams written at maximum compression still fit). Encrypted or password-protected PDFs can't be cleaned.
+- **Anything else** (OpenDocument, older `.doc`/`.xls`/`.ppt` files, password-protected Office files, Visio, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
+
+In anonymous mode the upload is stopped instead of sending the original when a JPEG, PNG, Office file or PDF can't be stripped: it can't be parsed, it's encrypted (PDF), an Office file or PDF is over 100 MB or contains parts that can't be cleaned, or the browser lacks compression streams.
 
 ## Technical Details
+
+### Payload Format and Versions
+
+The bytes that go into AES-GCM are one of three layouts. The browser tells them apart by the first four bytes, and **decryption always understands all three, whatever mode the server is in**, so old share links keep working.
+
+| Version | Magic | Layout | Written when |
+|---------|-------|--------|--------------|
+| v1 | none | `[file]` | E2EE with the filename visible, in non-anonymous mode (and every file from before filename hiding) |
+| v2 (`SF01`) | `SF01` | `[SF01][u32 LE name length][name UTF-8][file]` | **Hide filename** on, non-anonymous mode |
+| v3 (`SF02`) | `SF02` | `[SF02][u32 LE name length][u64 LE file length][name UTF-8][file][zero padding]` | Anonymous mode, always |
+
+The magic is `SF` plus a two-digit format number, so the next format uses `SF03`. For `SF02`, a name length of 0 means the filename stays visible to the server (Hide filename off) and is not in the payload. The download page unwraps files the server stored as `encrypted.bin` (these are always framed) and any file whose decrypted data begins with `SF02` and has a valid header (for a file stored under its real name, the server-visible name wins over any embedded one); a plain legacy file that merely starts with `SF01` is not touched.
+
+An `SF02` payload is rejected (the download shows an error and nothing is saved) if the file length plus header does not fit in the decrypted size, the name length is over 1024 bytes, or any padding byte is not zero. Because the length is inside the authenticated plaintext, only the key holder can write a bad one. The exception is a file stored under its real name (not `encrypted.bin`): if its data starts with `SF02` but the header is invalid, it is saved as is, because a legacy plain file could begin with those bytes.
+
+### Size Padding (Anonymous Mode)
+
+The server stores ciphertext, so the stored size would otherwise be the file size plus 28 bytes. When `GET /api/config` reports `anonymous_mode: true`, the browser pads the framed payload to a bucket **before encryption**, so the padding is authenticated by GCM and indistinguishable from the rest of the ciphertext. Other modes are unchanged: no padding, same formats as before. If the browser can't load `/api/config`, it pads anyway, because the mode is unknown and padding is the safe default.
+
+- **Scheme: PADME** (Nikitin et al., "Reducing Metadata Leakage from Encrypted Files and Communication with PURBs", PETS 2019). The padded length keeps only the top bits of the length significant. Overhead is at most about 12% and shrinks as files grow, and the bucket leaks O(log log n) bits about the length. Power-of-two buckets would add up to 100% (a 300 MB file would become 512 MB in browser memory).
+- **Floor:** payloads smaller than 4096 bytes are padded to 4096, so notes and keys are not in fine-grained buckets of their own.
+- **Padding bytes are zeros.** They sit inside the AES-GCM plaintext, so the ciphertext is indistinguishable from random, and zeros are free to generate for hundreds of MB. The decryptor requires them to be zero, which keeps the format canonical and gives a malicious writer no covert channel.
+- **Examples** (file size, stored size): 10 KiB, 10.5 KiB; 1 MiB, 1.03 MiB; 100 MiB, 102 MiB; 500 MiB, 504 MiB.
+- **What is still visible:** the bucket, hence the size to within about 12%. Files of similar size share a bucket. The upload and expiry times, the claim code and the download count are unaffected.
+
+#### Size limits and quota
+
+The server cannot see inside the ciphertext, so `MAX_FILE_SIZE`, the quota and the disk check apply to the **stored (padded) size**, as with any upload. To avoid refusing files that would have fit, the browser caps the bucket 4 KB below `MAX_FILE_SIZE` (the server applies the limit to the whole upload request, form fields included). A file that would fit unpadded is never rejected because of padding: files that PADME would round past the cap land in that top bucket, and a file in the last 4 KB below the limit is simply left unpadded. A file that exceeds the limit even unpadded (the 28 bytes of IV and tag, plus a header of 16 bytes and the filename if hidden) is refused in the browser before upload with "This file is too large to upload encrypted...". Padding does count toward the quota, so a quota that is nearly full can refuse an upload the unpadded file would have fit.
+
+The pickup page and the download page show the stored (padded) size, since the real size is only known after decrypting. The upload result page shows the real size.
+
+#### Chunked uploads
+
+The file is padded and encrypted before chunking, so chunked uploads (`CHUNKED_UPLOAD_THRESHOLD`) work on the padded size and the server sees the padded total, as for any other upload. The threshold decision uses the padded size.
 
 ### Encryption Algorithm
 
@@ -116,6 +164,8 @@ In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upl
 ```
 [ 12 bytes: random IV ][ N bytes: AES-256-GCM ciphertext ][ 16 bytes: GCM auth tag ]
 ```
+
+The plaintext inside is one of the payload layouts above.
 
 The IV is prepended to the ciphertext so the download path can extract it without any additional metadata stored on the server.
 
@@ -139,13 +189,13 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 |---------|--------------|-------|
 | Password protection | Compatible | Password is verified by the server before the encrypted blob is served. The browser then decrypts the blob client-side. The password prompt appears first. |
 | QR codes | Compatible | The QR code encodes the full share URL including the key fragment. The recipient must scan the full URL. |
-| Chunked uploads | Compatible | Each chunk is part of the encrypted payload. The entire file is encrypted before chunking begins. |
+| Chunked uploads | Compatible | Each chunk is part of the encrypted payload. The entire file is padded (anonymous mode) and encrypted before chunking begins. |
 | Server-side encryption at rest (`ENCRYPTION_KEY`) | Compatible | The two encryption layers are independent. The server encrypts the E2EE ciphertext blob with its own key. Provides defense in depth. |
 | Download limits | Compatible | The server enforces download limits on the encrypted blob as normal. |
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
 | Admin file inspection | Not applicable | Admins can see file metadata (size, upload time, claim code) but cannot read E2EE file contents. |
 | Import tool (`cmd/import-file`) | Not supported | The CLI import tool does not perform client-side encryption. Use standard server-side encryption at rest for imported files. |
-| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG and PNG metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
+| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
 | Malware scanning | Not compatible | Ciphertext can't be scanned. With `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, E2EE uploads are rejected and the toggle is hidden. |
 
 ## Security Properties
@@ -154,7 +204,7 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 - **Authenticated encryption**: AES-256-GCM provides both confidentiality and integrity. A tampered ciphertext will fail to decrypt.
 - **Unique IV per file**: Each upload uses a freshly generated random IV, preventing IV reuse attacks.
 - **No additional endpoints**: E2EE is implemented entirely in the browser. It requires no new API endpoints and no new database fields.
-- **What the server still sees**: the ciphertext size, upload and expiry times, download counts, and the filename unless **Hide filename** is checked. In anonymous mode the server does not record a hash of the upload.
+- **What the server still sees**: the ciphertext size bucket (exact size in non-anonymous mode), upload and expiry times, download counts, and the filename unless **Hide filename** is checked. In anonymous mode the server does not record a hash of the upload.
 
 ## Setup
 

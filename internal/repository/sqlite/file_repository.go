@@ -1699,7 +1699,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
+		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
 
 	rows, err := r.db.QueryContext(ctx, query, limit, offset)
 	if err != nil {
@@ -1821,7 +1821,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
-		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
+		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
 
 	rows, err := r.db.QueryContext(ctx, query, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset)
 	if err != nil {

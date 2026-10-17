@@ -417,6 +417,9 @@ func UserEditExpirationHandler(repos *repository.Repositories, cfg *config.Confi
 			}
 		}
 
+		// Anonymous mode: store (and report) the expiry rounded up to the hour
+		newExpiration = storeExpiry(newExpiration, cfg)
+
 		// Update expiration in repository
 		err = repos.Users.UpdateFileExpiration(ctx, req.FileID, user.ID, newExpiration)
 		if err != nil {
@@ -721,6 +724,9 @@ func UserEditExpirationByClaimCodeHandler(repos *repository.Repositories, cfg *c
 				return
 			}
 		}
+
+		// Anonymous mode: store (and report) the expiry rounded up to the hour
+		newExpiration = storeExpiry(newExpiration, cfg)
 
 		// Update expiration in repository
 		err := repos.Users.UpdateFileExpirationByClaimCode(ctx, claimCode, user.ID, newExpiration)

@@ -794,7 +794,7 @@ All configuration via environment variables (see `internal/config/config.go`):
 ### Production Security (P0)
 - `MAX_EXPIRATION_HOURS`: Maximum allowed expiration time (default: 168 / 7 days)
 - `RATE_LIMIT_UPLOAD`: Upload requests per hour per IP (default: 10)
-- `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 100)
+- `RATE_LIMIT_DOWNLOAD`: Download requests per hour per IP (default: 50); claim-code lookups (`/api/claim/{code}/info`) get twice this
 - `RATE_LIMIT_IPV6_PREFIX`: Width (bits) of the IPv6 prefix per-client rate limiters and concurrency caps (upload/download limits, login attempt limits, in-flight download/decrypt caps) group by, instead of the full address (default: 64; valid range 48-128; 128 = per-address). Does not affect what's logged/stored as the client IP — only limiter bucket keys (T43).
 - `QUOTA_LIMIT_GB`: Maximum total storage quota in GB (default: 0 / unlimited)
 
@@ -930,7 +930,8 @@ Dark/light mode with localStorage persistence (reduced size: 2rem, opacity: 0.7 
 
 ### Installable App and Service Worker (v1.12.0+)
 - `assets/manifest.json` makes SafeShare installable, with **Upload** and **My files** shortcuts and a share target.
-- `assets/pwa.js` registers `service-worker.js` on every page and shows the **Install app** link or the iOS **Add to Home Screen** hint.
+- `assets/pwa.js` registers `service-worker.js` on every page and shows the **Install app** link or the iOS **Add to Home Screen** hint. It first reads `anonymous_mode` from `/api/config` and registers nothing until that says `false`.
+- In anonymous mode (`ANONYMOUS_MODE=true`) there is no worker: `pwa.js` registers nothing, removes the manifest link (the server also returns 404 for `/assets/manifest.json`), unregisters existing registrations and deletes all caches, and `/service-worker.js` returns a kill-switch stub (`Cache-Control: no-store`, no request handler) that calls `skipWaiting`, deletes every cache and unregisters itself, so browsers that still hold an old worker drop it when they check its script. A 404 would leave the old worker in place.
 - The service worker caches only `/assets/*` (cache-first, versioned by `CACHE_VERSION`). Page navigations go to the network first and are never cached, so session-dependent pages (`/login`, `/dashboard`) always reflect the current session. Offline, `/` falls back to its precached copy and other pages get `assets/offline.html`. API, admin, health and metrics requests bypass it.
 
 ---
