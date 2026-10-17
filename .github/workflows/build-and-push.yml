@@ -363,8 +363,49 @@ jobs:
         working-directory: sdk/go
         run: go test -v ./...
 
+  # Browser-side code (metadata stripping, upload padding) is tested with Node
+  # plus real Chromium and Firefox via Playwright. REQUIRE_BROWSERS=1 makes the
+  # tests fail instead of skipping the browser runs if Playwright is missing.
+  js-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PLAYWRIGHT_VERSION: '1.62.0'
+      REQUIRE_BROWSERS: '1'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Install Playwright with Chromium and Firefox
+        run: |
+          npm install -g "playwright@${PLAYWRIGHT_VERSION}"
+          playwright install --with-deps chromium firefox
+          sudo apt-get install -y --no-install-recommends qpdf
+
+      - name: Run browser JS tests
+        run: |
+          for t in tests/js/*.test.js; do
+            echo "::group::$t"
+            OUT_DIR="$RUNNER_TEMP/out" node "$t"
+            echo "::endgroup::"
+          done
+
+      # Stripped PDFs must still be structurally valid (exit 0: no warnings).
+      - name: Validate stripped PDFs with qpdf
+        run: |
+          set -- "$RUNNER_TEMP"/out/*.pdf
+          [ -e "$1" ] || { echo "::error::no stripped PDFs found"; exit 1; }
+          for f in "$@"; do qpdf --check "$f" > /dev/null || { echo "::error::qpdf --check failed: $f"; exit 1; }; done
+          echo "qpdf --check passed for $# files"
+
   build-and-push:
-    needs: [test, race, test-postgres, test-minio, security-scan]
+    needs: [test, race, test-postgres, test-minio, security-scan, js-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
