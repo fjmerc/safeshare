@@ -87,6 +87,27 @@ function storedZip(entries, flags) {
     return Buffer.concat([...parts, cdBuf, eocd]);
 }
 
+// All parts of a zip as text, decompressed with Node's own zlib (not the
+// stripper's code), joined so tests can search the whole package.
+function zipText(buf) {
+    const zlib = require('zlib');
+    const b = Buffer.from(buf);
+    const eocd = b.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    let pos = b.readUInt32LE(eocd + 16);
+    const parts = [];
+    for (let i = 0; i < b.readUInt16LE(eocd + 10); i++) {
+        const method = b.readUInt16LE(pos + 10), comp = b.readUInt32LE(pos + 20);
+        const nameLen = b.readUInt16LE(pos + 28), extra = b.readUInt16LE(pos + 30), comment = b.readUInt16LE(pos + 32);
+        const local = b.readUInt32LE(pos + 42);
+        const start = local + 30 + b.readUInt16LE(local + 26) + b.readUInt16LE(local + 28);
+        const data = b.subarray(start, start + comp);
+        parts.push(b.toString('utf8', pos + 46, pos + 46 + nameLen) + '\n' +
+            (method === 8 ? zlib.inflateRawSync(data) : data).toString('latin1'));
+        pos += 46 + nameLen + extra + comment;
+    }
+    return parts.join('\n');
+}
+
 function zlibCrc(buf) {
     return require('zlib').crc32(buf); // Node 22.2+
 }
@@ -262,9 +283,55 @@ async function edgeCases() {
     const mixed = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation/>'],
         ['ppt/media/media1.mp4', 'ftypisom GPS'], ['ppt/media/image2.svg', '<svg/>'], ['ppt/media/image3.gif', 'GIF89a'],
         ['ppt/media/image4.emf', 'EMF'], ['xl/activeX/activeX1.bin', 'x'], ['[trash]/0001.dat', 'old bytes']])));
-    check('video, SVG, GIF and ActiveX reported; EMF kept; [trash] dropped',
-        JSON.stringify(mixed.incomplete) === '["ppt/media/media1.mp4","ppt/media/image2.svg","ppt/media/image3.gif","xl/activeX/activeX1.bin"]' &&
-        !Buffer.from(mixed.data).includes('old bytes'), JSON.stringify(mixed.incomplete));
+    check('video, GIF and ActiveX reported; EMF kept; [trash] dropped',
+        JSON.stringify(mixed.incomplete) === '["ppt/media/media1.mp4","ppt/media/image3.gif","xl/activeX/activeX1.bin"]' &&
+        !zipText(mixed.data).includes('old bytes'), JSON.stringify(mixed.incomplete));
+
+    // SVG: metadata, comments and editor data removed; embedded rasters reported
+    const svgIn = '<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">' +
+        '<svg xmlns:inkscape="i" xmlns:sodipodi="s" sodipodi:docname="C:\\Users\\Bob\\icon.svg" inkscape:export-filename="/home/bob/x.png">' +
+        '<!-- by Bob --><metadata><rdf:RDF><cc:Work><dc:creator>Bob</dc:creator></cc:Work></rdf:RDF></metadata>' +
+        '<sodipodi:namedview inkscape:current-layer="Bob"/><path d="M0 0"/></svg>';
+    const svgs = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'], ['word/media/image1.svg', svgIn],
+        ['word/media/image2.svg', '<svg><image href="data:image/jpeg;base64,AAAA"/></svg>']])));
+    const svgOut = zipText(svgs.data);
+    check('SVG cleaned (metadata, comments, Inkscape data), data-URI SVG reported',
+        !/Bob|bob/.test(svgOut) && svgOut.includes('<path d="M0 0"/>') && JSON.stringify(svgs.incomplete) === '["word/media/image2.svg"]',
+        JSON.stringify(svgs.incomplete));
+
+    // Word fields that link to files keep the path in the field code
+    for (const [label, xml] of [
+        ['LINK field', '<w:document><w:r><w:instrText xml:space="preserve"> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\Book1.xlsx" "Sheet1!R1C1" \\a </w:instrText></w:r></w:document>'],
+        ['INCLUDEPICTURE in fldSimple', '<w:document><w:fldSimple w:instr=" INCLUDEPICTURE &quot;x.png&quot; \\d "/></w:document>'],
+        ['HYPERLINK field to a network path', '<w:document><w:instrText> HYPERLINK "\\\\\\\\srv\\\\bob\\\\a.docx" </w:instrText></w:document>'],
+    ]) {
+        const r = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]])));
+        check(label + ' reported as not cleaned', r.incomplete.length === 1 && r.incomplete[0].startsWith('word/document.xml'),
+            JSON.stringify(r.incomplete));
+    }
+    const webField = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml',
+        '<w:document><w:instrText> HYPERLINK "https://example.org/" </w:instrText><w:instrText> PAGE </w:instrText></w:document>']])));
+    check('web HYPERLINK and PAGE fields are fine', webField.incomplete.length === 0, JSON.stringify(webField.incomplete));
+
+    const webext = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
+        ['word/webextensions/webextension1.xml', '<we:webextension><we:property name="u" value="bob@corp.com"/></we:webextension>']])));
+    check('add-in (web extension) state reported', JSON.stringify(webext.incomplete) === '["word/webextensions/webextension1.xml"]',
+        JSON.stringify(webext.incomplete));
+
+    const pretty = await M.stripMetadata(u8(storedZip([ct, ['ppt/presentation.xml', '<p:presentation/>'],
+        ['ppt/authors.xml', '<p188:authorLst>\n  <p188:author id="{1}" name="Bob" initials="B" userId="b@x" providerId="AD"/>\n</p188:authorLst>']])));
+    check('pretty-printed authors.xml is cleaned, not refused', !zipText(pretty.data).includes('Bob'));
+
+    const table = M.scrubOfficeXml('<table id="1" name="Table1" displayName="Table1" ref="A1:B2"/><person displayName="Bob" id="{1}"/>');
+    check('Excel table names kept, person display names cleared',
+        table === '<table id="1" name="Table1" displayName="Table1" ref="A1:B2"/><person displayName="" id="{1}"/>', table);
+    const ns0 = M.scrubOfficeXml('<ns0:settings><ns0:mailMerge><ns0:query ns0:val="C:\\Bob"/></ns0:mailMerge><ns0:docVars><ns0:docVar/></ns0:docVars></ns0:settings>');
+    check('mail merge and docVars removed under any prefix', ns0 === '<ns0:settings></ns0:settings>', ns0);
+    await expectReject('unquoted attribute value fails closed',
+        M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document><w:ins w:author=Bob/></w:document>']]))), 'MALFORMED');
+    const video = M.scrubOfficeXml('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/video" ' +
+        'Target="https://www.youtube.com/embed/x" TargetMode="External"/>');
+    check('online video link kept', video.includes('Target="https://www.youtube.com/embed/x"'), video);
 
     const visio = await M.stripMetadata(u8(storedZip([ct, ['visio/document.xml', '<Creator>Bob</Creator>']])));
     check('Visio and other non-Office packages are unsupported, not "cleaned"', visio.supported === false);
@@ -273,7 +340,7 @@ async function edgeCases() {
 
     const label = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
         ['docMetadata/LabelInfo.xml', '<clbl:labelList xmlns:clbl="x"><clbl:label id="{1}" siteId="{TENANT}"/></clbl:labelList>']])));
-    check('sensitivity label (tenant siteId) emptied', !Buffer.from(label.data).includes('TENANT') && label.incomplete.length === 0);
+    check('sensitivity label (tenant siteId) emptied', !zipText(label.data).includes('TENANT') && label.incomplete.length === 0);
 
     const quoted = M.scrubOfficeXml("<w:ins w:author = 'Bob' w:date='2031-02-03T04:05:06Z' w:rsidR='00AA'/>");
     check('single-quoted and spaced attributes scrubbed',

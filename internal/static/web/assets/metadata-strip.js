@@ -426,7 +426,7 @@
     var P = '(?:[A-Za-z_][\\w.-]*:)?'; // optional namespace prefix (an NCName)
     var VAL = '\\s*=\\s*(?:"[^"]*"|\'[^\']*\')';
     var FULL = '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'; // a non-empty value
-    var WHO = '(?:author|initials|userId|providerId|userName|displayName|refreshedBy)';
+    var WHO = '(?:author|initials|userId|providerId|userName|refreshedBy)';
     var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created|refreshedDateIso|timeString)';
     // Elements whose name attribute is a person
     var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1 };
@@ -434,6 +434,7 @@
     var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
     var RE_NAME = new RegExp('(\\s' + P + 'name)' + VAL, 'g');
     var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
+    var RE_DISPLAY_NAME = new RegExp('(\\s' + P + 'displayName)' + VAL, 'g'); // Excel persons (tables use it too)
     var RE_ID = new RegExp('(\\sid)' + VAL, 'g');
     var RE_DATE = new RegExp('(\\s' + P + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
     var RE_REFRESHED = new RegExp('(\\srefreshedDate)' + VAL, 'g');
@@ -447,6 +448,9 @@
     var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
     var RE_EXTERNAL = /\sTargetMode\s*=\s*["']External["']/;
     var RE_HYPERLINK_TYPE = /\sType\s*=\s*["'][^"']*\/hyperlink["']/;
+    // Online video, audio and pictures (e.g. a YouTube video on a slide)
+    var RE_WEB_MEDIA = /\sType\s*=\s*["'][^"']*\/(?:video|audio|image|media)["'][\s\S]*$/;
+    var RE_WEB_TARGET = /\sTarget\s*=\s*["']\s*https?:/i;
     var RE_TEMPLATE_TYPE = /\sType\s*=\s*["'][^"']*\/attachedTemplate["']/;
     // Local and relative paths (file:, C:\, \\server, /Users/..., ../..)
     var RE_LOCAL_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
@@ -460,7 +464,7 @@
 
     // Elements removed whole (with their content).
     function isRemovedElement(n) {
-        return (n.prefix === 'w' && (n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge')) ||
+        return n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge' ||
             (n.local === 'docId' && /^w\d*$/.test(n.prefix)) ||
             (n.local === 'revisionPtr' && /^xr\d*$/.test(n.prefix));
     }
@@ -475,16 +479,18 @@
             .replace(RE_SOURCE_FILE, '$1=""');
         if (NAME_ATTR_TAGS[n.local]) tag = tag.replace(RE_NAME, '$1=""');
         if (n.local === 'permStart') tag = tag.replace(RE_ED, '$1=""');
+        if (n.local === 'person') tag = tag.replace(RE_DISPLAY_NAME, '$1=""');
         if (n.local === 'client') tag = tag.replace(RE_ID, '$1=""'); // PowerPoint revisionInfo
         if (n.local === 'absPath') tag = tag.replace(RE_URL, '$1=""');
         if (n.local === 'dbPr') tag = tag.replace(RE_CONNECTION, '$1=""');
         if (n.local === 'Relationship') {
-            // External targets other than web hyperlinks point at the
-            // author's files (templates, linked workbooks and objects, mail
-            // merge sources); hyperlinks lose only local and relative paths.
+            // External targets other than web hyperlinks and online media
+            // point at the author's files (templates, linked workbooks and
+            // objects, mail merge sources); hyperlinks lose only local and
+            // relative paths.
             var external = RE_EXTERNAL.test(tag);
-            var hyperlink = RE_HYPERLINK_TYPE.test(tag);
-            if (RE_TEMPLATE_TYPE.test(tag) || (external && !hyperlink) || (external && RE_LOCAL_TARGET.test(tag)) ||
+            var web = RE_HYPERLINK_TYPE.test(tag) || (RE_WEB_MEDIA.test(tag) && RE_WEB_TARGET.test(tag));
+            if (RE_TEMPLATE_TYPE.test(tag) || (external && !web) || (external && RE_LOCAL_TARGET.test(tag)) ||
                 RE_ABSOLUTE_TARGET.test(tag)) {
                 tag = tag.replace(RE_TARGET, '$1=""');
             }
@@ -495,44 +501,46 @@
     function malformed(msg) { return stripError('MALFORMED', msg); }
 
     /**
-     * Remove people, dates, edit-session identifiers and local file paths
-     * from an Office XML part. A single linear pass over the markup:
-     * attributes are edited only inside tags (document text is never
-     * touched), some elements are removed whole, and the content of author
-     * elements is dropped. Malformed markup throws.
+     * Walk XML markup in one linear pass, calling visit(kind, token) with
+     * kind 'text', 'tag' (start, end or empty-element tag) or 'other'
+     * (comment, CDATA, processing instruction, DOCTYPE). Throws on malformed
+     * markup: unterminated constructs, '<' inside a tag, unquoted attribute
+     * values, and a DOCTYPE unless allowDoctype (never one with an internal
+     * subset, which could declare entities).
      */
-    function scrubOfficeXml(xml) {
-        var out = [];
+    function walkXml(xml, visit, allowDoctype) {
         var n = xml.length;
         var i = 0;
-        var mode = null; // { remove: bool, name: qualified name, depth }
         while (i < n) {
             var lt = xml.indexOf('<', i);
             if (lt === -1) {
-                if (!mode) out.push(xml.slice(i));
-                break;
+                visit('text', xml.slice(i));
+                return;
             }
-            if (!mode || !mode.remove) {
-                if (!mode) out.push(xml.slice(i, lt)); // text (dropped inside an emptied element)
-            }
-            var end, token;
+            if (lt > i) visit('text', xml.slice(i, lt));
+            var end;
             if (xml.startsWith('<!--', lt)) {
                 end = xml.indexOf('-->', lt + 4);
                 if (end < 0) throw malformed('Unterminated XML comment');
                 end += 3;
-                if (!mode) out.push(xml.slice(lt, end));
+                visit('other', xml.slice(lt, end));
             } else if (xml.startsWith('<![CDATA[', lt)) {
                 end = xml.indexOf(']]>', lt + 9);
                 if (end < 0) throw malformed('Unterminated CDATA section');
                 end += 3;
-                if (!mode) out.push(xml.slice(lt, end));
+                visit('other', xml.slice(lt, end));
             } else if (xml.startsWith('<?', lt)) {
                 end = xml.indexOf('?>', lt + 2);
                 if (end < 0) throw malformed('Unterminated processing instruction');
                 end += 2;
-                if (!mode) out.push(xml.slice(lt, end));
+                visit('other', xml.slice(lt, end));
             } else if (xml[lt + 1] === '!') {
-                throw malformed('Unexpected markup declaration'); // Office never writes a DOCTYPE
+                end = xml.indexOf('>', lt);
+                if (!allowDoctype || !xml.startsWith('<!DOCTYPE', lt) || end < 0 || xml.slice(lt, end).indexOf('[') !== -1) {
+                    throw malformed('Unexpected markup declaration'); // Office never writes a DOCTYPE
+                }
+                end += 1;
+                visit('other', xml.slice(lt, end));
             } else {
                 var j = lt + 1, quote = 0;
                 for (; j < n; j++) {
@@ -545,36 +553,103 @@
                         break;
                     } else if (c === 60) {
                         throw malformed('Unexpected < inside a tag');
+                    } else if (c === 61) {
+                        // '=' must be followed by a quoted value
+                        var k = j + 1;
+                        while (k < n && /\s/.test(xml[k])) k++;
+                        if (xml[k] !== '"' && xml[k] !== "'") throw malformed('Unquoted attribute value');
                     }
                 }
                 if (j >= n) throw malformed('Unterminated tag');
                 end = j + 1;
-                token = xml.slice(lt, end);
-                var name = tagName(token);
-                if (!name) throw malformed('Bad tag');
-                var qname = (name.prefix ? name.prefix + ':' : '') + name.local;
-                var closing = token[1] === '/';
-                var selfClosing = !closing && token[token.length - 2] === '/';
-                if (mode) {
-                    if (qname === mode.name && !selfClosing) mode.depth += closing ? -1 : 1;
-                    if (mode.depth === 0) {
-                        if (!mode.remove) out.push(token); // keep the emptied element's end tag
-                        mode = null;
-                    }
-                } else if (closing) {
-                    out.push(token);
-                } else if (isRemovedElement(name)) {
-                    if (!selfClosing) mode = { remove: true, name: qname, depth: 1 };
-                } else {
-                    out.push(scrubTag(token, name));
-                    if (name.local === 'author' && !selfClosing) mode = { remove: false, name: qname, depth: 1 };
-                }
+                visit('tag', xml.slice(lt, end));
             }
             i = end;
         }
+    }
+
+    /**
+     * Shared rewrite loop: each tag goes through onTag(token, name), which
+     * returns the replacement token, and may drop an element whole
+     * (dropElement) or keep it but drop its content (emptyElement).
+     * Comments are dropped when dropComments is set.
+     */
+    function rewriteXml(xml, rules) {
+        var out = [];
+        var mode = null; // { remove: bool, name: qualified name, depth }
+        walkXml(xml, function (kind, token) {
+            if (kind !== 'tag') {
+                if (!mode && !(rules.dropComments && token.startsWith('<!--'))) out.push(token);
+                return;
+            }
+            var name = tagName(token);
+            if (!name) throw malformed('Bad tag');
+            var qname = (name.prefix ? name.prefix + ':' : '') + name.local;
+            var closing = token[1] === '/';
+            var selfClosing = !closing && token[token.length - 2] === '/';
+            if (mode) {
+                if (qname === mode.name && !selfClosing) mode.depth += closing ? -1 : 1;
+                if (mode.depth === 0) {
+                    if (!mode.remove) out.push(token); // keep the emptied element's end tag
+                    mode = null;
+                }
+            } else if (closing) {
+                out.push(token);
+            } else if (rules.dropElement(name)) {
+                if (!selfClosing) mode = { remove: true, name: qname, depth: 1 };
+            } else {
+                out.push(rules.onTag(token, name));
+                if (rules.emptyElement(name) && !selfClosing) mode = { remove: false, name: qname, depth: 1 };
+            }
+        }, rules.allowDoctype);
         if (mode) throw malformed('Unclosed <' + mode.name + '> element');
         return out.join('');
     }
+
+    var OFFICE_RULES = {
+        onTag: scrubTag,
+        dropElement: isRemovedElement,
+        emptyElement: function (n) { return n.local === 'author'; }
+    };
+
+    /**
+     * Remove people, dates, edit-session identifiers and local file paths
+     * from an Office XML part: attributes are edited only inside tags (so
+     * document text is never touched), some elements are removed whole, and
+     * the content of author elements is dropped. Malformed markup throws.
+     */
+    function scrubOfficeXml(xml) {
+        return rewriteXml(xml, OFFICE_RULES);
+    }
+
+    var RE_SVG_EDITOR_ATTR = new RegExp('\\s(?:sodipodi|inkscape):[\\w.-]+' + VAL, 'g');
+    var SVG_RULES = {
+        onTag: function (tag) { return tag.replace(RE_SVG_EDITOR_ATTR, ''); },
+        // <metadata> (RDF author, licence, ...) and editor-private elements
+        dropElement: function (n) { return n.local === 'metadata' || n.prefix === 'sodipodi' || n.prefix === 'inkscape'; },
+        emptyElement: function () { return false; },
+        dropComments: true,
+        allowDoctype: true
+    };
+
+    /**
+     * Clean an SVG image: drop <metadata>, comments and Inkscape/Sodipodi
+     * data (which hold file paths). Returns null when it embeds raster images
+     * (data: URIs), whose own metadata can't be cleaned here.
+     */
+    function scrubSvg(svg) {
+        if (/data:image\//i.test(svg)) return null;
+        var out = rewriteXml(svg, SVG_RULES);
+        if (/<(?:[\w.-]+:)?metadata\b|\s(?:sodipodi|inkscape):[\w.-]+\s*=|<!--/.test(out)) throw malformed('Could not clean SVG image');
+        return out;
+    }
+
+    // Word fields that link to files keep the path in the (hidden) field
+    // code: LINK and INCLUDEPICTURE/INCLUDETEXT fields, DDE links, and any
+    // field naming a local or network path.
+    var FIELD_LINK = '(?:\\b(?:LINK|INCLUDEPICTURE|INCLUDETEXT|DDE|DDEAUTO)\\b|[A-Za-z]:\\\\|\\\\\\\\|file:)';
+    var RE_LINKED_FIELD = new RegExp('<' + P + 'instrText\\b[^>]*>[^<]*' + FIELD_LINK +
+        '|\\s' + P + 'instr\\s*=\\s*(?:"[^"]*' + FIELD_LINK + '|\'[^\']*' + FIELD_LINK + ')', 'i');
 
     // Checks run over the whole scrubbed part, text included, so anything the
     // scrubber missed fails closed. (A name typed into body text that looks
@@ -585,8 +660,11 @@
         new RegExp('<' + P + 'permStart\\b[^>]*\\s' + P + 'ed' + FULL),
         new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*\\s*='),
         new RegExp('\\s' + P + 'securityDescriptor\\s*='),
-        new RegExp('<' + P + 'author(?:\\s[^>]*)?>(?:[^<]|<!\\[CDATA)'),
-        /<w:rsids\b|<w:docVars\b|<w:mailMerge\b|<w\d*:docId\b|<xr\d*:revisionPtr\b/,
+        // a non-empty author element (an empty-element tag doesn't count)
+        new RegExp('<' + P + 'author(?:\\s[^>]*)?(?<!/)>\\s*(?:[^<\\s]|<!\\[CDATA)'),
+        new RegExp('<' + P + 'person\\b[^>]*\\s' + P + 'displayName' + FULL),
+        new RegExp('<' + P + '(?:rsids|docVars|mailMerge)\\b'),
+        /<w\d*:docId\b|<xr\d*:revisionPtr\b/,
         new RegExp('<' + P + 'absPath\\b[^>]*\\surl' + FULL),
         new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
         new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
@@ -637,7 +715,10 @@
         for (var i = 0; i < entries.length; i++) {
             if (partName(entries[i].name) !== '_rels/.rels') continue;
             var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
-            var tags = rels.match(/<Relationship\b(?:[^>"']|"[^"]*"|'[^']*')*>/g) || [];
+            var tags = [];
+            walkXml(rels, function (kind, token) {
+                if (kind === 'tag' && /^<Relationship\b/.test(token)) tags.push(token);
+            });
             for (var t = 0; t < tags.length; t++) {
                 var type = /\sType\s*=\s*["']([^"']*)/.exec(tags[t]);
                 var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
@@ -666,9 +747,10 @@
         if (props[lname]) return new TextEncoder().encode(TEMPLATES[props[lname]]);
         if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(TEMPLATES.customItem);
         if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
-        if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname)) {
+        if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname) || /(?:^|\/)webextensions\//.test(lname)) {
             // Digital signatures embed the signer's certificate; unknown
-            // property parts are all metadata.
+            // property parts are all metadata; add-in (web extension) state
+            // can hold anything, including e-mail addresses and tokens.
             ctx.incomplete.push(name);
             return null;
         }
@@ -677,7 +759,17 @@
             var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
             var scrubbed = scrubOfficeXml(xml);
             if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
+            if (RE_LINKED_FIELD.test(scrubbed)) ctx.incomplete.push(name + ' (a field linking to a file)');
             return scrubbed === xml ? null : new TextEncoder().encode(scrubbed);
+        }
+        if (/\.svg$/.test(lname) && !EMBEDDED_PART.test(lname)) {
+            var svg = decodeUtf8(await readEntry(entry, ctx.budget), name);
+            var cleanSvg = scrubSvg(svg);
+            if (cleanSvg === null) {
+                ctx.incomplete.push(name);
+                return null;
+            }
+            return cleanSvg === svg ? null : new TextEncoder().encode(cleanSvg);
         }
         if (PRINTER_SETTINGS.test(lname)) {
             // A Windows DEVMODE starts with the printer name (32 UTF-16
