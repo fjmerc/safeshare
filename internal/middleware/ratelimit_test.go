@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -252,7 +253,6 @@ func TestRateLimiter_NoRateLimitForOtherPaths(t *testing.T) {
 	// Paths that should NOT be rate limited
 	paths := []string{
 		"/health",
-		"/api/claim/test123/info",
 		"/",
 		"/static/style.css",
 	}
@@ -851,6 +851,64 @@ func TestRateLimiter_UploadStatusLimit(t *testing.T) {
 	// Separate bucket: the upload budget is untouched.
 	if code := send("/api/upload"); code != http.StatusOK {
 		t.Fatalf("upload after exhausting status budget: got %d, want 200", code)
+	}
+}
+
+// TestRateLimiter_ClaimInfoLimit checks the claim info endpoint is limited.
+// It reveals whether a claim code exists, so leaving it unlimited allowed
+// unbounded claim-code guessing. It has its own bucket at
+// claimInfoLimitMultiplier times the download limit.
+func TestRateLimiter_ClaimInfoLimit(t *testing.T) {
+	cfg := &mockConfigProvider{uploadLimit: 1, downloadLimit: 3}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.78:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	infoLimit := 3 * claimInfoLimitMultiplier
+	// Different codes each time: the limit is per IP, not per code.
+	for i := 1; i <= infoLimit; i++ {
+		if code := send(fmt.Sprintf("/api/claim/guess%04d/info", i)); code != http.StatusOK {
+			t.Fatalf("info request %d: got %d, want 200", i, code)
+		}
+	}
+	if code := send("/api/claim/guess9999/info"); code != http.StatusTooManyRequests {
+		t.Fatalf("info request %d: got %d, want 429", infoLimit+1, code)
+	}
+
+	// Separate bucket: the download budget is untouched.
+	if code := send("/api/claim/AbCd1234"); code != http.StatusOK {
+		t.Fatalf("download after exhausting info budget: got %d, want 200", code)
+	}
+
+	// And the other way, from a fresh IP: exhausting downloads leaves
+	// lookups alone.
+	sendFrom := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.80:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for i := 1; i <= 3; i++ {
+		if code := sendFrom("/api/claim/AbCd1234"); code != http.StatusOK {
+			t.Fatalf("download %d: got %d, want 200", i, code)
+		}
+	}
+	if code := sendFrom("/api/claim/AbCd1234"); code != http.StatusTooManyRequests {
+		t.Fatalf("download 4: got %d, want 429", code)
+	}
+	if code := sendFrom("/api/claim/AbCd1234/info"); code != http.StatusOK {
+		t.Fatalf("info after exhausting download budget: got %d, want 200", code)
 	}
 }
 

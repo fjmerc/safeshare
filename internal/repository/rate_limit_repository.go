@@ -9,7 +9,7 @@ import (
 type RateLimitEntry struct {
 	ID        int64
 	IPAddress string
-	LimitType string    // "upload", "download", "chunk", "regeneration", "admin_login", "user_login"
+	LimitType string    // "upload", "download", "claim_info", "chunk", "regeneration", "admin_login", "user_login"
 	Count     int       // Number of requests in the current window
 	WindowEnd time.Time // When the current window expires
 	CreatedAt time.Time

@@ -374,6 +374,7 @@ The OpenAPI specification is updated with each release:
 |---------------|---------------|--------------|
 | Upload | 10/hour/IP | `RATE_LIMIT_UPLOAD` |
 | Download | 50/hour/IP | `RATE_LIMIT_DOWNLOAD` |
+| Claim info (`/api/claim/{code}/info`) | 2 × download limit (100/hour/IP) | via `RATE_LIMIT_DOWNLOAD` |
 | Admin Login | 5/15min/IP | Fixed |
 | User Login | 5/15min/IP | Fixed |
 

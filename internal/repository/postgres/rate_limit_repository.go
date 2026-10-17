@@ -31,6 +31,7 @@ const maxRateLimit = 10000
 var validLimitTypes = map[string]bool{
 	"upload":       true,
 	"download":     true,
+	"claim_info":   true,
 	"chunk":        true,
 	"regeneration": true,
 	"admin_login":  true,
