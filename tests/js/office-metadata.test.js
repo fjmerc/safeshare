@@ -287,6 +287,12 @@ async function edgeCases() {
         JSON.stringify(mixed.incomplete) === '["ppt/media/media1.mp4","ppt/media/image3.gif","xl/activeX/activeX1.bin"]' &&
         !zipText(mixed.data).includes('old bytes'), JSON.stringify(mixed.incomplete));
 
+    // Excel XML maps (embedded schemas, bound file) and PowerPoint add-in tags
+    const addins = await M.stripMetadata(u8(storedZip([ct, ['xl/workbook.xml', '<workbook/>'],
+        ['xl/xmlMaps.xml', '<MapInfo><Schema ID="Schema1"/></MapInfo>'], ['ppt/tags/tag1.xml', '<p:tagLst/>']])));
+    check('XML maps and add-in tags reported',
+        JSON.stringify(addins.incomplete) === '["xl/xmlMaps.xml","ppt/tags/tag1.xml"]', JSON.stringify(addins.incomplete));
+
     // SVG: metadata, comments and editor data removed; embedded rasters reported
     const svgIn = '<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">' +
         '<svg xmlns:inkscape="i" xmlns:sodipodi="s" sodipodi:docname="C:\\Users\\Bob\\icon.svg" inkscape:export-filename="/home/bob/x.png">' +

@@ -404,6 +404,15 @@ jobs:
           for f in "$@"; do qpdf --check "$f" > /dev/null || { echo "::error::qpdf --check failed: $f"; exit 1; }; done
           echo "qpdf --check passed for $# files"
 
+      # Stripped Office files must still pass Microsoft's Open XML SDK
+      # validator (the runner image ships the .NET SDK).
+      - name: Validate stripped Office files with the Open XML SDK
+        run: |
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/out/*.docx "$RUNNER_TEMP"/out/*.xlsx "$RUNNER_TEMP"/out/*.pptx)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no stripped Office files found"; exit 1; }
+          dotnet run --project tests/js/validate-ooxml -- "${files[@]}"
+
   build-and-push:
     needs: [test, race, test-postgres, test-minio, security-scan, js-test]
     runs-on: ubuntu-latest

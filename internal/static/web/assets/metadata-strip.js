@@ -412,10 +412,13 @@
         labels: XML_DECL + '<clbl:labelList xmlns:clbl="http://schemas.microsoft.com/office/2020/mipLabelMetadata"></clbl:labelList>'
     };
     var DEFAULT_PROPERTY_PARTS = { 'docprops/core.xml': 'core', 'docprops/app.xml': 'app', 'docprops/custom.xml': 'custom' };
-    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom']];
+    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom'],
+        [/\/customXml$/i, 'customItem'], [/\/customXmlProps$/i, 'customItemProps']];
 
-    var CUSTOM_XML_ITEM = /^customxml\/item\d+\.xml$/;
-    var CUSTOM_XML_PROPS = /^customxml\/itemprops\d+\.xml$/;
+    // Anything in customXml/ is a data store or its properties, whatever its name
+    var CUSTOM_XML_PART = /^customxml\/(?!_rels\/).*\.xml$/;
+    // A data store properties part (found by its content when misnamed)
+    var RE_DATASTORE_ROOT = /^\s*(?:<\?[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<(?:[\w.-]+:)?datastoreItem\b[^>]*officeDocument\/2006\/customXml/;
     var XML_PART = /\.(?:xml|rels|vml)$/;
     var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
     var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
@@ -437,6 +440,8 @@
     var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1 };
 
     var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
+    var RE_USER_NAME = new RegExp('\\s' + P + 'userName' + VAL, 'g');
+    var RE_URI = new RegExp('\\s' + P + 'uri' + VAL, 'g');
     var RE_NAME = new RegExp('(\\s' + P + 'name)' + VAL, 'g');
     var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
     var RE_DISPLAY_NAME = new RegExp('(\\s' + P + 'displayName)' + VAL, 'g'); // Excel persons (tables use it too)
@@ -470,16 +475,21 @@
         return m ? { prefix: m[1] || '', local: m[2] } : null;
     }
 
-    // Elements removed whole (with their content). A content control's data
-    // binding names the custom XML store and its (SharePoint) namespaces;
-    // without it the control keeps its current text.
+    // Elements removed whole (with their content), matched by local name
+    // whatever the prefix. A content control's data binding names the custom
+    // XML store and its (SharePoint) namespaces, as do Word's schema library
+    // and attached schemas; without the binding the control keeps its
+    // current text. A person's presence info holds their account IDs.
+    var REMOVED_ELEMENTS = { rsids: 1, docVars: 1, mailMerge: 1, docId: 1, dataBinding: 1, presenceInfo: 1,
+        schemaLibrary: 1, attachedSchema: 1 };
     function isRemovedElement(n) {
-        return n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge' ||
-            ((n.local === 'docId' || n.local === 'dataBinding') && /^w\d*$/.test(n.prefix)) ||
+        return REMOVED_ELEMENTS.hasOwnProperty(n.local) ||
             (n.local === 'revisionPtr' && /^xr\d*$/.test(n.prefix));
     }
 
     function scrubTag(tag, n) {
+        if (n.local === 'fileSharing') tag = tag.replace(RE_USER_NAME, '');
+        if (n.local === 'customXml' || n.local === 'smartTag') tag = tag.replace(RE_URI, '');
         tag = tag
             .replace(RE_WHO, '$1=""')
             .replace(RE_DATE, '$1="' + EPOCH + '"')
@@ -685,8 +695,8 @@
         // a non-empty author element (an empty-element tag doesn't count)
         new RegExp('<' + P + 'author(?:\\s[^>]*[^/>]|\\s)?>\\s*(?:[^<\\s]|<!\\[CDATA)'),
         new RegExp('<' + P + 'person\\b[^>]*\\s' + P + 'displayName' + FULL),
-        new RegExp('<' + P + '(?:rsids|docVars|mailMerge)\\b'),
-        /<w\d*:(?:docId|dataBinding)\b|<xr\d*:revisionPtr\b/,
+        new RegExp('<' + P + '(?:rsids|docVars|mailMerge|docId|dataBinding|presenceInfo|schemaLibrary|attachedSchema)\\b'),
+        /<xr\d*:revisionPtr\b/,
         new RegExp('<' + P + 'absPath\\b[^>]*\\surl' + FULL),
         new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
         new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
@@ -730,12 +740,29 @@
         }
     }
 
-    // Names of the core, extended and custom property parts: the usual
-    // docProps/ paths plus wherever _rels/.rels points.
+    // Resolve a relationship target against the directory of its source part
+    // ("word/_rels/document.xml.rels" -> "word/"); null for external targets.
+    function relTarget(relsName, target) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(target) || /^\\\\/.test(target)) return null;
+        var base = relsName.replace(/(?:^|\/)_rels\/[^/]*$/, '');
+        var path = target.replace(/\\/g, '/');
+        var segs = (path[0] === '/' ? [] : (base ? base.split('/') : [])).concat(path.split('/'));
+        var out = [];
+        for (var i = 0; i < segs.length; i++) {
+            if (segs[i] === '..') out.pop();
+            else if (segs[i] !== '.' && segs[i] !== '') out.push(segs[i]);
+        }
+        return partName(out.join('/'));
+    }
+
+    // Names of the property parts (core, extended, custom) and custom XML
+    // data stores with their properties: the usual paths plus wherever any
+    // relationship points.
     async function propertyParts(entries, budget) {
         var parts = Object.assign({}, DEFAULT_PROPERTY_PARTS);
         for (var i = 0; i < entries.length; i++) {
-            if (partName(entries[i].name) !== '_rels/.rels') continue;
+            var relsName = partName(entries[i].name);
+            if (!/(?:^|\/)_rels\/[^/]*\.rels$/.test(relsName)) continue;
             var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
             var tags = [];
             walkXml(rels, function (kind, token) {
@@ -745,12 +772,25 @@
                 var type = /\sType\s*=\s*["']([^"']*)/.exec(tags[t]);
                 var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
                 if (!type || !target) continue;
+                var resolved = relTarget(relsName, target[1]);
+                if (resolved === null) continue;
                 for (var k = 0; k < PROPERTY_REL_TYPES.length; k++) {
-                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[partName(target[1])] = PROPERTY_REL_TYPES[k][1];
+                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[resolved] = PROPERTY_REL_TYPES[k][1];
                 }
             }
         }
         return parts;
+    }
+
+    // A replacement part. Data store properties get a neutral item ID that is
+    // still unique within the package.
+    function template(kind, ctx) {
+        var text = TEMPLATES[kind];
+        if (kind === 'customItemProps') {
+            ctx.storeItems = (ctx.storeItems || 0) + 1;
+            text = text.replace('ITEM', ('00000000000' + ctx.storeItems.toString(16)).slice(-12));
+        }
+        return new TextEncoder().encode(text);
     }
 
     function cleanImage(data, type) {
@@ -766,11 +806,10 @@
         var lname = partName(name);
         if (lname === '' || lname[lname.length - 1] === '/' || entry.size === 0) return null; // directories, empty parts
         if (/^\[trash\]\//.test(lname)) return DROP; // stale data from earlier saves, unreferenced
-        if (props[lname]) return new TextEncoder().encode(TEMPLATES[props[lname]]);
-        if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(TEMPLATES.customItem);
-        if (CUSTOM_XML_PROPS.test(lname)) {
-            var item = ('00000000000' + (ctx.storeItems = (ctx.storeItems || 0) + 1).toString(16)).slice(-12);
-            return new TextEncoder().encode(TEMPLATES.customItemProps.replace('ITEM', item));
+        if (props[lname]) return template(props[lname], ctx);
+        if (CUSTOM_XML_PART.test(lname)) {
+            var store = decodeUtf8(await readEntry(entry, ctx.budget), name);
+            return template(RE_DATASTORE_ROOT.test(store) ? 'customItemProps' : 'customItem', ctx);
         }
         if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
         if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname) || /(?:^|\/)webextensions\//.test(lname)) {
@@ -781,8 +820,16 @@
             return null;
         }
 
+        if (/^xl\/xmlmaps\.xml$/.test(lname) || /^ppt\/tags\//.test(lname)) {
+            // Excel XML maps embed the imported schemas (a SharePoint list's
+            // names the site) and the bound file; PowerPoint tags hold add-in
+            // data, which can be anything.
+            ctx.incomplete.push(name);
+            return null;
+        }
         if (XML_PART.test(lname)) {
             var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
+            if (RE_DATASTORE_ROOT.test(xml)) return template('customItemProps', ctx);
             var scrubbed = scrubOfficeXml(xml);
             if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
             if (RE_LINKED_FIELD.test(scrubbed)) ctx.incomplete.push(name + ' (a field linking to a file)');

@@ -108,7 +108,41 @@ class Unseekable:
         self.f.flush()
 
 
+# Content types the hand-built parts need so strict readers (the Open XML SDK,
+# Office) load them as what they are rather than as plain XML.
+SML = 'application/vnd.openxmlformats-officedocument.spreadsheetml.'
+PART_TYPES = {
+    'ppt/authors.xml': 'application/vnd.ms-powerpoint.authors+xml',
+    'customXml/spProps.xml': 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml',
+    'word/storage/props1.xml': 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml',
+    'xl/comments/comment1.xml': SML + 'comments+xml',
+    'xl/connections.xml': SML + 'connections+xml',
+    'xl/externalLinks/externalLink1.xml': SML + 'externalLink+xml',
+    'xl/persons/person.xml': 'application/vnd.ms-excel.person+xml',
+    'xl/pivotCache/pivotCacheDefinition1.xml': SML + 'pivotCacheDefinition+xml',
+    'xl/queryTables/queryTable1.xml': SML + 'queryTable+xml',
+    'xl/revisions/userNames.xml': SML + 'userNames+xml',
+    'xl/threadedComments/threadedComment1.xml': 'application/vnd.ms-excel.threadedcomments+xml',
+}
+EXT_TYPES = {'xlsx': SML + 'sheet', 'jpeg': 'image/jpeg', 'jpg': 'image/jpeg'}
+
+
+def add_content_types(parts):
+    names = [n for n, _ in parts]
+    out = []
+    for name, data in parts:
+        if name == '[Content_Types].xml':
+            extra = ''.join(OV % (n, PART_TYPES[n]) for n in names if n in PART_TYPES and '/' + n + '"' not in data)
+            exts = {n.rsplit('.', 1)[-1] for n in names if '.' in n}
+            extra += ''.join('<Default Extension="%s" ContentType="%s"/>' % (e, EXT_TYPES[e]) for e in sorted(exts)
+                             if e in EXT_TYPES and 'Extension="%s"' % e not in data)
+            data = data.replace('</Types>', extra + '</Types>')
+        out.append((name, data))
+    return out
+
+
 def write(path, parts, streaming=False):
+    parts = add_content_types(parts)
     f = open(path, 'wb')
     with zipfile.ZipFile(Unseekable(f) if streaming else f, 'w', zipfile.ZIP_DEFLATED) as z:
         z.comment = ('archive comment ' + S).encode()
@@ -133,6 +167,10 @@ def common(ct_main):
         ('customXml/item1.xml', CUSTOM_ITEM),
         ('customXml/itemProps1.xml', CUSTOM_ITEM_PROPS),
         ('customXml/_rels/item1.xml.rels', rels([('rId1', R + '/customXmlProps', 'itemProps1.xml', '')])),
+        # any name is legal: Office finds data stores through relationships
+        ('customXml/spItem.xml', CUSTOM_ITEM),
+        ('customXml/spProps.xml', CUSTOM_ITEM_PROPS),
+        ('customXml/_rels/spItem.xml.rels', rels([('rId1', R + '/customXmlProps', 'spProps.xml', '')])),
         ('docProps/thumbnail.png', png_with_text()),
     ], (OV % ('docProps/core.xml', CORE_CT) + OV % ('docProps/app.xml', APP_CT) +
         OV % ('docProps/custom.xml', CUSTOM_CT) +
@@ -155,20 +193,27 @@ def docx():
         '<w:sdt><w:sdtPr><w:dataBinding w:prefixMappings="xmlns:ns0=\'%s-6b5d-4628-b7e0-5b86efa98958\'" '
         'w:xpath="/root[1]/ns0:Owner[1]" w:storeItemID="{%s-0000-0000-0000-000000000001}"/></w:sdtPr>'
         '<w:sdtContent><w:p><w:r><w:t>Bound field.</w:t></w:r></w:p></w:sdtContent></w:sdt>'
-        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE, S, S)
+        '<w:sdt><w:sdtPr><ns0:dataBinding xmlns:ns0="%s" ns0:storeItemID="{%s-1111-2222-3333-444444444444}"/></w:sdtPr>'
+        '<w:sdtContent><w:p><w:customXml w:uri="%s-6b5d-4628-b7e0-5b86efa98958" w:element="Owner">'
+        '<w:r><w:t>Tagged.</w:t></w:r></w:customXml></w:p></w:sdtContent></w:sdt>'
+        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE, S, S, W, S, S)
     comments = DECL + ('<w:comments xmlns:w="%s"><w:comment w:id="0" w:author="Commenter %s" w:date="%s" w:initials="%s">'
                        '<w:p><w:r><w:t>Comment text</w:t></w:r></w:p></w:comment></w:comments>') % (W, S, DATE, S)
     people = DECL + ('<w15:people xmlns:w15="%s"><w15:person w15:author="Person %s">'
                      '<w15:presenceInfo w15:providerId="AD" w15:userId="S-1-5-21-%s"/></w15:person></w15:people>') % (W15, S, S)
     settings = DECL + ('<w:settings xmlns:w="%s" xmlns:w14="%s" xmlns:w15="%s" xmlns:r="%s">'
                        '<w:attachedTemplate r:id="rId1"/>'
+                       '<w:attachedSchema w:val="%s-6b5d-4628-b7e0-5b86efa98958"/>'
                        '<w:rsids><w:rsidRoot w:val="00A1B2C3"/><w:rsid w:val="00A1B2C3"/></w:rsids>'
                        '<w:mailMerge><w:mainDocumentType w:val="formLetters"/>'
                        '<w:connectString w:val="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=C:\\Users\\%s\\list.xlsx"/>'
                        '</w:mailMerge>'
                        '<w:docVars><w:docVar w:name="Owner" w:val="%s"/></w:docVars>'
                        '<w14:docId w14:val="1A2B3C4D"/><w15:docId w15:val="{A1B2C3D4-0000-0000-0000-000000000000}"/>'
-                       '</w:settings>') % (W, W14, W15, R, S, S)
+                       '<sl:schemaLibrary xmlns:sl="http://schemas.openxmlformats.org/schemaLibrary/2006/main">'
+                       '<sl:schema sl:uri="%s-6b5d-4628-b7e0-5b86efa98958" sl:schemaLocation="C:\\Users\\%s\\s.xsd"/>'
+                       '</sl:schemaLibrary>'
+                       '</w:settings>') % (W, W14, W15, R, S, S, S, S, S)
     settings_rels = rels([('rId1', R + '/attachedTemplate',
                            'file:///C:/Users/%s/AppData/Roaming/Microsoft/Templates/Normal.dotm' % S,
                            ' TargetMode="External"')])
@@ -179,6 +224,7 @@ def docx():
         ('rId4', R + '/image', 'media/image1.png', ''),
         ('rId5', R + '/hyperlink', '\\\\fileserver\\home\\%s\\notes.docx' % S, ' TargetMode="External"'),
         ('rId6', R + '/package', 'embeddings/Microsoft_Excel_Worksheet.xlsx', ''),
+        ('rId7', R + '/customXml', '../word/storage/./data1.xml', ''),
     ])
     WML = 'application/vnd.openxmlformats-officedocument.wordprocessingml.'
     parts, ct = common(OV % ('word/document.xml', WML + 'document.main+xml') +
@@ -188,6 +234,10 @@ def docx():
     return [('[Content_Types].xml', CT_HEAD + ct + '</Types>'),
             ('_rels/.rels', root_rels('officeDocument', 'word/document.xml'))] + parts + [
         ('word/document.xml', doc), ('word/_rels/document.xml.rels', doc_rels),
+        # a data store outside customXml/, found only through relationships
+        ('word/storage/data1.xml', CUSTOM_ITEM),
+        ('word/storage/props1.xml', CUSTOM_ITEM_PROPS.replace('<ds:datastoreItem', '<!-- props --><ds:datastoreItem')),
+        ('word/storage/_rels/data1.xml.rels', rels([('rId1', R + '/customXmlProps', '/word/storage/props1.xml', '')])),
         ('word/comments.xml', comments), ('word/people.xml', people),
         ('word/settings.xml', settings), ('word/_rels/settings.xml.rels', settings_rels),
         ('word/media/image1.png', png_with_text()),
@@ -329,6 +379,7 @@ def pptx():
 
 def zip_bytes(parts):
     import io
+    parts = add_content_types(parts)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
         for name, data in parts:
