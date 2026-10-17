@@ -255,6 +255,50 @@ async function edgeCases() {
     await M.stripMetadata(u8(makePdf(many)));
     check('4000 indirect /Length streams processed quickly', Date.now() - t0 < 3000, (Date.now() - t0) + ' ms');
 
+    // A fake object header in a comment must not swallow the real Info after it
+    const fake = makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R').toString('latin1')
+        .replace('3 0 obj', '% 7 0 obj << /Foo 1 >> stream\n3 0 obj');
+    const fk = await M.stripMetadata(u8(Buffer.from(fake, 'latin1')));
+    check('fake header in a comment ignored, real Info cleared', !Buffer.from(fk.data).includes('Bob') && fk.incomplete.length === 0,
+        JSON.stringify(fk.incomplete));
+
+    // XMP behind ASCII85 + Flate is found; filters that can't be decoded are reported
+    const a85 = (buf) => {
+        let o = '';
+        for (let i = 0; i < buf.length; i += 4) {
+            const chunk = Buffer.alloc(4);
+            buf.copy(chunk, 0, i, Math.min(i + 4, buf.length));
+            let n = chunk.readUInt32BE(0);
+            const g = [];
+            for (let k = 0; k < 5; k++) { g.unshift(String.fromCharCode(33 + (n % 85))); n = Math.floor(n / 85); }
+            o += g.join('').slice(0, Math.min(5, buf.length - i + 1));
+        }
+        return o + '~>';
+    };
+    const chained = a85(require('zlib').deflateSync(Buffer.from(xmp)));
+    const enc = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Filter [/ASCII85Decode /FlateDecode] /Length ' + chained.length + ' >>\nstream\n' + chained + '\nendstream',
+        '<< /Filter /Crypt /Length 4 >>\nstream\nabcd\nendstream'])));
+    check('XMP behind ASCII85+Flate found, undecodable filter reported',
+        JSON.stringify(enc.incomplete) === '["XMP metadata (object 3)","encoded data that could not be checked (object 4)"]',
+        JSON.stringify(enc.incomplete));
+
+    // Data that /PieceInfo points at is cleared too; a page it mentions is left alone
+    const priv = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Type /Page /Contents 6 0 R /PieceInfo << /Illustrator << /Private 4 0 R >> >> >>',
+        '<< /AIPrivateData1 5 0 R /RoundTrip (bob-machine) /Page 3 0 R >>',
+        '<< /Length 22 >>\nstream\nC:/Users/bob/design.ai\nendstream',
+        '<< /Length 21 >>\nstream\nBT (Visible) Tj ET   \nendstream'])));
+    const pv = Buffer.from(priv.data).toString('latin1');
+    check('private data reached through /PieceInfo cleared, page content kept',
+        !/bob/.test(pv) && pv.includes('BT (Visible) Tj ET') && pv.includes('/Contents 6 0 R'), JSON.stringify(priv.incomplete));
+
+    // Signature strings stored as separate objects are cleared as well
+    const sigRef = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
+        '<< /Type /Sig /Name 4 0 R /Contents 5 0 R /ByteRange [0 1 2 3] >>', '(Bob Signer)', '<0A0B0C0D>'])));
+    check('indirect signature name and contents cleared', !/Bob|0A0B0C0D/.test(Buffer.from(sigRef.data).toString('latin1')) &&
+        sigRef.incomplete.length === 0, JSON.stringify(sigRef.incomplete));
+
     const deep = await M.stripMetadata(u8(makePdf([CATALOG, PAGES, '['.repeat(100) + ']'.repeat(100)]))).then(() => 'ok', (e) => e.code);
     check('deeply nested arrays rejected, not a stack overflow', deep === 'MALFORMED', deep);
 }

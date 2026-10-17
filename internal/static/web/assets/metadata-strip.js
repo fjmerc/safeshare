@@ -1070,16 +1070,14 @@
             obj.stream = { ds: ds, de: de, length: lengthAt, endstream: endstream };
             p = endstream + 9;
         }
-        var eo = S.indexOf('endobj', p);
-        // A missing endobj mustn't swallow the objects after it.
-        var nextHead = /\d+\s+\d+\s+obj\b/g;
-        nextHead.lastIndex = p;
-        var nh = nextHead.exec(S);
-        if (eo < 0 || (nh && nh.index < eo)) {
-            obj.end = nh ? nh.index : S.length;
-            obj.noEndobj = true;
+        // The object ends at its endobj, which must come next; without one it
+        // ends right after its value, so it can't swallow what follows.
+        p = skipPdfWs(S, p);
+        if (S.startsWith('endobj', p)) {
+            obj.end = p + 6;
         } else {
-            obj.end = eo + 6;
+            obj.end = p;
+            obj.noEndobj = true;
         }
         return obj;
     }
@@ -1095,13 +1093,26 @@
         while ((m = re.exec(S)) !== null) {
             if (m.index < floor) { re.lastIndex = floor; continue; }
             var prev = S.charCodeAt(m.index - 1);
-            if (m.index > 0 && /[A-Za-z0-9.]/.test(String.fromCharCode(prev))) continue; // part of a longer token
+            // A header starts the file or follows whitespace or a delimiter,
+            // and isn't inside a comment.
+            if (m.index > 0 && !PDF_WS[prev] && prev !== 62 && prev !== 41 && prev !== 93) continue;
+            if (inComment(S, m.index)) continue;
             var obj = readPdfObject(S, m.index, +m[1], +m[2], m.index + m[0].length, ints);
             objects.push(obj);
             floor = obj.end;
             re.lastIndex = Math.max(re.lastIndex, floor);
         }
         return objects;
+    }
+
+    // True if a '%' comes earlier on the same line (looking back at most 4 KB).
+    function inComment(S, i) {
+        for (var j = i - 1, stop = Math.max(0, i - 4096); j >= stop; j--) {
+            var c = S.charCodeAt(j);
+            if (c === 10 || c === 13) return false;
+            if (c === 37) return true;
+        }
+        return false;
     }
 
     // Trailer dictionaries ("trailer << ... >>") outside any object.
@@ -1191,18 +1202,37 @@
         // Pass 1: what to clear. Strings referenced from an Info dictionary
         // or a comment annotation (e.g. /Producer 11 0 R), and streams
         // named by a /Metadata entry even when they lack /Type /Metadata.
-        var stringRefs = {}, metadataRefs = {}, pieceRefs = {}, matched = {};
+        var stringRefs = {}, blobRefs = {}, metadataRefs = {}, pieceRefs = {}, matched = {};
         function noteRef(v, into) { if (v && v.t === 'ref') into[v.n + ' ' + v.g] = true; }
         function collect(key, value) {
             if (infoRefs[key] && value.t === 'dict') Object.keys(value.map).forEach(function (k) { noteRef(value.map[k], stringRefs); });
             walkDicts(value, function (d) {
                 noteRef(d.map.Metadata, metadataRefs);
-                noteRef(d.map.PieceInfo, pieceRefs);
+                if (d.map.PieceInfo) collectRefs(d.map.PieceInfo, pieceRefs);
                 if (MARKUP_ANNOTS[nameOf(d.map.Subtype)]) ANNOT_KEYS.forEach(function (k) { noteRef(d.map[k], stringRefs); });
+                if (isSignature(d)) {
+                    SIG_STRINGS.forEach(function (k) { noteRef(d.map[k], stringRefs); });
+                    SIG_BLOBS.forEach(function (k) { noteRef(d.map[k], blobRefs); });
+                }
             });
         }
         objects.forEach(function (o) { collect(o.n + ' ' + o.g, o.value); });
         objStms.forEach(function (st) { st.members.forEach(function (m) { collect(m.n + ' 0', m.value); }); });
+        // Everything application-private data reaches (Illustrator's
+        // private data streams and the like), except shared page content.
+        var all = objects.map(function (o) { return { key: o.n + ' ' + o.g, value: o.value }; });
+        objStms.forEach(function (st) { st.members.forEach(function (m) { all.push({ key: m.n + ' 0', value: m.value }); }); });
+        for (var grew = true, round = 0; grew && round < all.length; round++) {
+            grew = false;
+            all.forEach(function (x) {
+                if (!pieceRefs[x.key] || x.seen) return;
+                x.seen = true;
+                if (isShared(x.value)) { delete pieceRefs[x.key]; return; }
+                var before = Object.keys(pieceRefs).length;
+                collectRefs(x.value, pieceRefs);
+                if (Object.keys(pieceRefs).length > before) grew = true;
+            });
+        }
 
         // Pass 2: top-level objects
         for (i = 0; i < objects.length; i++) {
@@ -1212,7 +1242,8 @@
             // An Info dictionary never has /Type: a reused object number
             // that now holds something else is left alone.
             if (infoRefs[key] && v.t === 'dict' && !v.map.Type) { blankRange(out, v.s + 2, v.e - 2); matched[key] = true; }
-            if (pieceRefs[key] && v.t === 'dict') blankRange(out, v.s + 2, v.e - 2);
+            if (blobRefs[key] && (v.t === 'str' || v.t === 'hex')) { zeroString(out, S, v); matched[key] = true; }
+            if (pieceRefs[key]) await clearPrivate(out, S, o, ctx);
             if (stringRefs[key] && (v.t === 'str' || v.t === 'hex')) { blankString(out, v); matched[key] = true; }
             walkDicts(v, function (d) { cleanDict(out, S, d); });
             if (!o.stream) continue;
@@ -1234,9 +1265,9 @@
                 }
             } else if (subtype === 'Image' && filters.indexOf('JPXDecode') !== -1) {
                 ctx.incomplete.push('JPEG 2000 image (object ' + o.n + ')');
-            } else if (filters[0] === 'FlateDecode' && type !== 'ObjStm' && type !== 'XRef') {
-                // Any other compressed stream might hide an XMP packet.
-                var found = await compressedXmp(out.subarray(o.stream.ds, o.stream.de), ctx);
+            } else if (filters.length && type !== 'ObjStm' && type !== 'XRef' && subtype !== 'Image' && !isFontFile(v) && !pieceRefs[key]) {
+                // Any other encoded stream might hide an XMP packet.
+                var found = await encodedXmp(out.subarray(o.stream.ds, o.stream.de), v, ctx);
                 if (found) ctx.incomplete.push(found + ' (object ' + o.n + ')');
             }
         }
@@ -1248,7 +1279,9 @@
                 var mem = st.members[k];
                 var mk = mem.n + ' 0';
                 if (infoRefs[mk] && mem.value.t === 'dict' && !mem.value.map.Type) { blankRange(st.bytes, mem.value.s + 2, mem.value.e - 2); st.changed = matched[mk] = true; }
+                if (blobRefs[mk] && (mem.value.t === 'str' || mem.value.t === 'hex')) { zeroString(st.bytes, st.text, mem.value); st.changed = matched[mk] = true; }
                 if (pieceRefs[mk] && mem.value.t === 'dict') { blankRange(st.bytes, mem.value.s + 2, mem.value.e - 2); st.changed = true; }
+                if (pieceRefs[mk] && (mem.value.t === 'str' || mem.value.t === 'hex')) { blankString(st.bytes, mem.value); st.changed = true; }
                 if (stringRefs[mk] && (mem.value.t === 'str' || mem.value.t === 'hex')) { blankString(st.bytes, mem.value); st.changed = matched[mk] = true; }
                 walkDicts(mem.value, function (d) { if (cleanDict(st.bytes, st.text, d)) st.changed = true; });
             }
@@ -1265,7 +1298,7 @@
 
         // Fail closed if any document information or string it names wasn't
         // found and cleared.
-        Object.keys(infoRefs).concat(Object.keys(stringRefs)).forEach(function (r) {
+        Object.keys(infoRefs).concat(Object.keys(stringRefs), Object.keys(blobRefs)).forEach(function (r) {
             if (!matched[r]) ctx.incomplete.push('document information not found (object ' + r.split(' ')[0] + ')');
         });
 
@@ -1290,13 +1323,153 @@
         }
     }
 
-    // A reason string if a Flate stream holds XMP or can't be checked.
-    async function compressedXmp(data, ctx) {
-        var plain;
+    function isSignature(d) { return nameOf(d.map.Type) === 'Sig' || !!d.map.ByteRange; }
+
+    // Objects that private data may point at but that are shared with the
+    // document itself (pages, fonts, images, forms...): never cleared.
+    var SHARED_TYPES = { Catalog: 1, Pages: 1, Page: 1, Font: 1, FontDescriptor: 1, XObject: 1, ExtGState: 1, Pattern: 1,
+        Shading: 1, Annot: 1, Action: 1, OCG: 1, OCMD: 1, Outlines: 1, StructTreeRoot: 1, StructElem: 1 };
+    function isShared(v) {
+        return v.t === 'dict' && (SHARED_TYPES[nameOf(v.map.Type)] || nameOf(v.map.Subtype) === 'Image' || nameOf(v.map.Subtype) === 'Form');
+    }
+
+    function collectRefs(v, into) {
+        if (v.t === 'ref') into[v.n + ' ' + v.g] = true;
+        else if (v.t === 'dict') Object.keys(v.map).forEach(function (k) { collectRefs(v.map[k], into); });
+        else if (v.t === 'arr') v.items.forEach(function (it) { collectRefs(it, into); });
+    }
+
+    function isFontFile(v) {
+        var sub = nameOf(v.map.Subtype);
+        return !!(v.map.Length1 || v.map.Length2 || v.map.Length3) || sub === 'Type1C' || sub === 'CIDFontType0C' || sub === 'OpenType';
+    }
+
+    // Clear an object that application-private data points at: a dict is
+    // emptied, a string blanked, a stream's data replaced with nothing.
+    async function clearPrivate(out, S, o, ctx) {
+        var v = o.value;
+        if (!o.stream) {
+            if (v.t === 'dict') blankRange(out, v.s + 2, v.e - 2);
+            else if (v.t === 'str' || v.t === 'hex') blankString(out, v);
+            return;
+        }
+        var filters = filtersOf(v);
+        if (!filters.length) {
+            blankRange(out, o.stream.ds, o.stream.de);
+        } else if (filters.length === 1 && filters[0] === 'FlateDecode') {
+            var empty = await pipeBytes(new CompressionStream('deflate'), new Uint8Array(0), 1024);
+            if (!tryRewrite(out, S, o, empty, ctx)) ctx.incomplete.push('application data (object ' + o.n + ')');
+        } else {
+            ctx.incomplete.push('application data (object ' + o.n + ')');
+        }
+    }
+
+    function uncheckable() { var e = new Error('uncheckable'); e.code = 'UNCHECKABLE'; return e; }
+
+    function decodeHex(b) {
+        var digits = [];
+        for (var i = 0; i < b.length && b[i] !== 0x3E; i++) {
+            var c = b[i];
+            if (PDF_WS[c]) continue;
+            var d = parseInt(String.fromCharCode(c), 16);
+            if (isNaN(d)) throw uncheckable();
+            digits.push(d);
+        }
+        if (digits.length % 2) digits.push(0);
+        var out = new Uint8Array(digits.length / 2);
+        for (var j = 0; j < out.length; j++) out[j] = digits[2 * j] * 16 + digits[2 * j + 1];
+        return out;
+    }
+
+    function decode85(b) {
+        var out = [], group = [], i = 0;
+        if (b[0] === 0x3C && b[1] === 0x7E) i = 2; // optional <~
+        for (; i < b.length; i++) {
+            var c = b[i];
+            if (PDF_WS[c]) continue;
+            if (c === 0x7E) break; // ~> ends the data
+            if (c === 0x7A && group.length === 0) { out.push(0, 0, 0, 0); continue; } // z
+            if (c < 0x21 || c > 0x75) throw uncheckable();
+            group.push(c - 33);
+            if (group.length === 5) {
+                var n = (((group[0] * 85 + group[1]) * 85 + group[2]) * 85 + group[3]) * 85 + group[4];
+                out.push((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+                group = [];
+            }
+        }
+        if (group.length) {
+            var len = group.length;
+            while (group.length < 5) group.push(84);
+            var m = (((group[0] * 85 + group[1]) * 85 + group[2]) * 85 + group[3]) * 85 + group[4];
+            var bytes = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255];
+            for (var k = 0; k < len - 1; k++) out.push(bytes[k]);
+        }
+        return new Uint8Array(out);
+    }
+
+    function decodeLzw(b, earlyChange, limit) {
+        var out = [], dict = [], width = 9, prev = null, bits = 0, acc = 0;
+        function reset() { dict = []; for (var i = 0; i < 256; i++) dict.push([i]); dict.push(null, null); width = 9; prev = null; }
+        reset();
+        for (var i = 0; i < b.length; i++) {
+            acc = (acc << 8) | b[i];
+            bits += 8;
+            while (bits >= width) {
+                bits -= width;
+                var code = (acc >>> bits) & ((1 << width) - 1);
+                acc &= (1 << bits) - 1;
+                if (code === 256) { reset(); continue; }
+                if (code === 257) return new Uint8Array(out);
+                var entry;
+                if (code < dict.length && dict[code]) entry = dict[code];
+                else if (code === dict.length && prev) entry = prev.concat([prev[0]]);
+                else throw uncheckable();
+                for (var j = 0; j < entry.length; j++) out.push(entry[j]);
+                if (out.length > limit) throw stripError('TOO_LARGE', 'too large');
+                if (prev) dict.push(prev.concat([entry[0]]));
+                prev = entry;
+                if (dict.length + earlyChange >= (1 << width) && width < 12) width++;
+            }
+        }
+        return new Uint8Array(out);
+    }
+
+    function decodeRunLength(b) {
+        var out = [];
+        for (var i = 0; i < b.length;) {
+            var n = b[i++];
+            if (n === 128) break;
+            if (n < 128) { for (var j = 0; j <= n && i < b.length; j++) out.push(b[i++]); }
+            else { var c = b[i++]; for (var k = 0; k < 257 - n; k++) out.push(c); }
+        }
+        return new Uint8Array(out);
+    }
+
+    /**
+     * A reason string if an encoded stream holds XMP or can't be checked:
+     * Flate, LZW, ASCIIHex, ASCII85 and RunLength chains are decoded (no
+     * predictors); anything else is reported as uncheckable.
+     */
+    async function encodedXmp(data, dict, ctx) {
+        var filters = filtersOf(dict);
+        var parms = dict.map.DecodeParms;
+        var parmList = parms ? (parms.t === 'arr' ? parms.items : [parms]) : [];
+        var plain = data;
         try {
-            plain = await inflatePdf(data, ctx.budget.left);
+            for (var i = 0; i < filters.length; i++) {
+                var dp = parmList[i] && parmList[i].t === 'dict' ? parmList[i].map : {};
+                if (dp.Predictor && dp.Predictor.v > 1) throw uncheckable();
+                var f = filters[i];
+                if (f === 'FlateDecode' || f === 'Fl') plain = await inflatePdf(plain, ctx.budget.left);
+                else if (f === 'LZWDecode' || f === 'LZW') plain = decodeLzw(plain, dp.EarlyChange ? dp.EarlyChange.v : 1, ctx.budget.left);
+                else if (f === 'ASCIIHexDecode' || f === 'AHx') plain = decodeHex(plain);
+                else if (f === 'ASCII85Decode' || f === 'A85') plain = decode85(plain);
+                else if (f === 'RunLengthDecode' || f === 'RL') plain = decodeRunLength(plain);
+                else throw uncheckable();
+            }
         } catch (e) {
-            return e.code === 'TOO_LARGE' ? 'compressed data too large to check' : 'unreadable compressed data';
+            if (e.code === 'TOO_LARGE') return 'encoded data too large to check';
+            return 'encoded data that could not be checked';
         }
         ctx.budget.left -= plain.length;
         return XMP_MARKER.test(pdfLatin1(plain)) ? 'XMP metadata' : null;
@@ -1331,7 +1504,7 @@
      */
     function cleanDict(out, src, d) {
         var changed = blankAnnotation(out, d);
-        if (nameOf(d.map.Type) === 'Sig' || d.map.ByteRange) {
+        if (isSignature(d)) {
             SIG_STRINGS.forEach(function (k) {
                 var v = d.map[k];
                 if (v && (v.t === 'str' || v.t === 'hex')) { blankString(out, v); changed = true; }
