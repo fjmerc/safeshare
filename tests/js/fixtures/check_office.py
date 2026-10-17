@@ -9,6 +9,7 @@ leftover rsid attributes and whether the visible text survived.
 
     python3 check_office.py FILE...
 """
+import io
 import json
 import re
 import sys
@@ -37,6 +38,12 @@ def check(path):
             res['entries'].append(info.filename)
             res['entry_sentinel'] += count(data, S)
             res['entry_date'] += count(data, DATE)
+            if data[:4] == b'PK\x03\x04':  # an embedded Office file: count inside it too
+                with zipfile.ZipFile(io.BytesIO(data)) as inner:
+                    for n in inner.namelist():
+                        d = inner.read(n)
+                        res['entry_sentinel'] += count(d, S)
+                        res['entry_date'] += count(d, DATE)
             res['zip_times'] += info.date_time != (1980, 1, 1, 0, 0, 0)
             res['zip_extra'] += len(info.extra) > 0
             res['zip_comments'] += len(info.comment) > 0

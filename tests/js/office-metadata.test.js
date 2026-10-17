@@ -10,9 +10,11 @@
 //
 //   node tests/js/office-metadata.test.js
 //
-// Needs python3, and for the browser runs the globally installed playwright
-// package with chromium and firefox (npm i -g playwright). OUT_DIR keeps the
-// stripped files, e.g. to open them in LibreOffice. Exits non-zero on failure.
+// Needs Node 22.2+, python3, and for the browser runs the globally installed
+// playwright package with chromium and firefox (npm i -g playwright); set
+// REQUIRE_BROWSERS=1 to fail instead of skipping when they're missing. OUT_DIR
+// keeps the stripped files, e.g. to open them in LibreOffice. Exits non-zero on
+// failure.
 
 const fs = require('fs');
 const os = require('os');
@@ -27,7 +29,10 @@ const M = require(stripperPath);
 const outDir = process.env.OUT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'office-strip-'));
 fs.mkdirSync(outDir, { recursive: true });
 
-const KINDS = ['docx', 'xlsx', 'pptx'];
+// Fixtures that must come out fully clean, and sample.docm, whose VBA project
+// can't be cleaned and must be reported instead.
+const CLEAN = ['sample.docx', 'sample.xlsx', 'sample.pptx', 'sample-dd.docx'];
+const REQUIRE_BROWSERS = process.env.REQUIRE_BROWSERS === '1';
 let failures = 0;
 function check(name, ok, detail) {
     if (ok) {
@@ -88,14 +93,18 @@ function zlibCrc(buf) {
 
 async function nodeRuns() {
     const files = [];
-    for (const kind of KINDS) {
-        const input = fs.readFileSync(path.join(fixtures, 'sample.' + kind));
+    for (const name of CLEAN) {
+        const input = fs.readFileSync(path.join(fixtures, name));
         const r = await M.stripMetadata(u8(input));
-        check('node ' + kind + ': detected as office', r.type === 'office' && r.supported === true, JSON.stringify(r.type));
-        const file = path.join(outDir, 'node.' + kind);
+        check('node ' + name + ': detected as office, nothing left uncleaned',
+            r.type === 'office' && r.supported === true && r.incomplete.length === 0, JSON.stringify([r.type, r.incomplete]));
+        const file = path.join(outDir, 'node.' + name);
         fs.writeFileSync(file, Buffer.from(r.data));
         files.push(file);
     }
+    const docm = await M.stripMetadata(u8(fs.readFileSync(path.join(fixtures, 'sample.docm'))));
+    check('docm: VBA project reported as not cleaned', JSON.stringify(docm.incomplete) === '["word/vbaProject.bin"]',
+        JSON.stringify(docm.incomplete));
     return files;
 }
 
@@ -105,7 +114,8 @@ async function browserRuns() {
         const root = execFileSync('npm', ['root', '-g']).toString().trim();
         playwright = require(path.join(root, 'playwright'));
     } catch (e) {
-        console.log('SKIP browser runs: playwright not installed');
+        check('browser runs: playwright installed', !REQUIRE_BROWSERS, 'REQUIRE_BROWSERS=1');
+        if (!REQUIRE_BROWSERS) console.log('SKIP browser runs: playwright not installed');
         return [];
     }
     const files = [];
@@ -115,21 +125,23 @@ async function browserRuns() {
         try {
             browser = await playwright[engine].launch(engine === 'chromium' ? { chromiumSandbox: false } : {});
         } catch (e) {
-            console.log('SKIP ' + engine + ': ' + e.message.split('\n')[0]);
+            check(engine + ': launches', !REQUIRE_BROWSERS, e.message.split('\n')[0]);
+            if (!REQUIRE_BROWSERS) console.log('SKIP ' + engine + ': ' + e.message.split('\n')[0]);
             continue;
         }
         const page = await browser.newPage();
         await page.setContent('<html><body></body></html>');
         await page.addScriptTag({ content: script });
         check(engine + ': compression streams available', await page.evaluate(() => SafeShareMetadata.compressionSupported()));
-        for (const kind of KINDS) {
-            const input = Array.from(fs.readFileSync(path.join(fixtures, 'sample.' + kind)));
+        for (const name of CLEAN) {
+            const input = Array.from(fs.readFileSync(path.join(fixtures, name)));
             const out = await page.evaluate(async (bytes) => {
                 const r = await SafeShareMetadata.stripMetadata(new Uint8Array(bytes));
-                return { type: r.type, data: Array.from(new Uint8Array(r.data)) };
+                return { type: r.type, incomplete: r.incomplete, data: Array.from(new Uint8Array(r.data)) };
             }, input);
-            check(engine + ' ' + kind + ': detected as office', out.type === 'office');
-            const file = path.join(outDir, engine + '.' + kind);
+            check(engine + ' ' + name + ': detected as office, nothing left uncleaned',
+                out.type === 'office' && out.incomplete.length === 0);
+            const file = path.join(outDir, engine + '.' + name);
             fs.writeFileSync(file, Buffer.from(out.data));
             files.push(file);
         }
@@ -139,14 +151,14 @@ async function browserRuns() {
 }
 
 function verifyOutputs(files) {
-    const inputs = inspect(KINDS.map((k) => path.join(fixtures, 'sample.' + k)));
+    const inputs = inspect(CLEAN.map((n) => path.join(fixtures, n)));
     for (const r of inputs) {
         // Gate: a clean output only means something if the input had it all.
         check('input ' + path.basename(r.file) + ' carries the sentinel and dates',
             r.entry_sentinel > 0 && r.raw_sentinel > r.entry_sentinel && r.entry_date > 0 &&
             r.zip_times > 0 && r.zip_extra > 0 && r.zip_comments > 0 && r.unix_creator > 0, JSON.stringify(r));
     }
-    const byKind = Object.fromEntries(inputs.map((r) => [path.extname(r.file), r.entries]));
+    const byName = Object.fromEntries(inputs.map((r) => [path.basename(r.file), r.entries]));
     for (const r of inspect(files)) {
         const name = path.basename(r.file);
         check(name + ': no sentinel anywhere', r.raw_sentinel === 0 && r.entry_sentinel === 0,
@@ -159,7 +171,7 @@ function verifyOutputs(files) {
         check(name + ': CRCs valid', r.bad_crc === null, String(r.bad_crc));
         check(name + ': visible text kept', r.visible === true);
         check(name + ': same parts in the same order',
-            JSON.stringify(r.entries) === JSON.stringify(byKind[path.extname(r.file)]));
+            JSON.stringify(r.entries) === JSON.stringify(byName[name.slice(name.indexOf('.') + 1)]));
     }
 }
 
@@ -208,6 +220,37 @@ async function edgeCases() {
     const png = fs.readFileSync(path.join(repoRoot, 'internal/static/web/assets/favicon-16x16.png'));
     const p = await M.stripMetadata(u8(png));
     check('PNG still stripped through the async API', p.type === 'png' && p.supported === true);
+
+    // Fake end-of-directory signature inside the archive comment
+    const withComment = storedZip([ct, ['word/document.xml', '<w:document/>']]);
+    const comment = Buffer.from('note PK\x05\x06 not the real record');
+    withComment.writeUInt16LE(comment.length, withComment.length - 2);
+    const commented = await M.stripMetadata(u8(Buffer.concat([withComment, comment])));
+    check('fake end-of-directory signature in the comment is skipped', commented.type === 'office');
+
+    // An unreadable Office zip fails closed even when [Content_Types].xml isn't first
+    const late = storedZip([['_rels/.rels', '<Relationships/>'], ct]);
+    late.writeUInt16LE(0xFFFF, late.length - 22 + 10);
+    await expectReject('unreadable Office zip rejected wherever [Content_Types].xml is',
+        M.stripMetadata(u8(late)), 'MALFORMED');
+
+    // Leftovers the tag scrubber can't reach fail closed instead of slipping through
+    for (const [label, xml] of [
+        ['CDATA hiding a tag', '<w:document><![CDATA[ " ]]><w:ins w:author="Bob"/>" </w:document>'],
+        ['author lookalike in body text', '<w:document><w:t>he wrote author="Bob"</w:t></w:document>'],
+    ]) {
+        await expectReject(label + ' fails closed',
+            M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]]))), 'MALFORMED');
+    }
+
+    const quoted = M.scrubOfficeXml("<w:ins w:author = 'Bob' w:date='2031-02-03T04:05:06Z' w:rsidR='00AA'/>");
+    check('single-quoted and spaced attributes scrubbed',
+        quoted === '<w:ins w:author="" w:date="1970-01-01T00:00:00Z"/>', quoted);
+    const paths = M.scrubOfficeXml('<Relationship Target="\\\\srv\\x" TargetMode="External"/><Relationship Target="C:/Users/x"/>' +
+        '<Relationship Target="https://example.org/" TargetMode="External"/>');
+    check('network and drive paths blanked, web links kept',
+        paths === '<Relationship Target="" TargetMode="External"/><Relationship Target=""/>' +
+        '<Relationship Target="https://example.org/" TargetMode="External"/>', paths);
 
     const scrubbed = M.scrubOfficeXml('<a w:author="x" w:authorId="7" name="Sheet1"><p:cmAuthor id="0" name="n"/></a>');
     check('scrub leaves authorId and unrelated name attributes alone',

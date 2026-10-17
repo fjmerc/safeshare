@@ -5,8 +5,14 @@ Each file plants the sentinel ZQX7731 in every metadata location the browser
 stripper is meant to clear: document properties, custom XML, comment and
 tracked-change authors, people/persons lists, the Excel save path and
 shared-workbook users, a template path, printer names, an embedded image's
-text chunk, and the zip's own entry/archive comments and extra fields. Dates
-use 2031-02-03 so their removal can be checked too.
+text chunk, a thumbnail, an embedded workbook, Word document variables and
+mail-merge sources, Excel pivot caches, external links and query tables, links
+to local paths, and the zip's own entry/archive comments and extra fields.
+Dates use 2031-02-03 so their removal can be checked too.
+
+sample-dd.docx is the same document written the way streaming zip writers do
+it (data descriptors, [Content_Types].xml not first). sample.docm adds a VBA project, which can't
+be cleaned and must be reported.
 
 Hand-built because no Office suite is available here; the stripped and
 unstripped files are also opened with LibreOffice (see the test file).
@@ -48,6 +54,7 @@ def root_rels(main_type, main_target):
         ('rId2', PKG_R + '/metadata/core-properties', 'docProps/core.xml', ''),
         ('rId3', R + '/extended-properties', 'docProps/app.xml', ''),
         ('rId4', R + '/custom-properties', 'docProps/custom.xml', ''),
+        ('rId5', PKG_R + '/metadata/thumbnail', 'docProps/thumbnail.png', ''),
     ])
 
 
@@ -82,8 +89,22 @@ def printer_settings():
     return name + b'\x01\x04' + b'\x00' * 154
 
 
-def write(path, parts):
-    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+class Unseekable:
+    """File wrapper without seek, so zipfile writes data descriptors."""
+
+    def __init__(self, f):
+        self.f = f
+
+    def write(self, b):
+        return self.f.write(b)
+
+    def flush(self):
+        self.f.flush()
+
+
+def write(path, parts, streaming=False):
+    f = open(path, 'wb')
+    with zipfile.ZipFile(Unseekable(f) if streaming else f, 'w', zipfile.ZIP_DEFLATED) as z:
         z.comment = ('archive comment ' + S).encode()
         for name, data in parts:
             info = zipfile.ZipInfo(name, date_time=(2031, 2, 3, 4, 5, 6))
@@ -95,6 +116,7 @@ def write(path, parts):
             info.create_system = 3  # Unix
             info.external_attr = 0o100644 << 16
             z.writestr(info, data.encode() if isinstance(data, str) else data)
+    f.close()
 
 
 def common(ct_main):
@@ -103,6 +125,7 @@ def common(ct_main):
         ('docProps/app.xml', APP),
         ('docProps/custom.xml', CUSTOM),
         ('customXml/item1.xml', CUSTOM_ITEM),
+        ('docProps/thumbnail.png', png_with_text()),
     ], (OV % ('docProps/core.xml', CORE_CT) + OV % ('docProps/app.xml', APP_CT) +
         OV % ('docProps/custom.xml', CUSTOM_CT) + ct_main)
 
@@ -128,8 +151,12 @@ def docx():
     settings = DECL + ('<w:settings xmlns:w="%s" xmlns:w14="%s" xmlns:w15="%s" xmlns:r="%s">'
                        '<w:attachedTemplate r:id="rId1"/>'
                        '<w:rsids><w:rsidRoot w:val="00A1B2C3"/><w:rsid w:val="00A1B2C3"/></w:rsids>'
+                       '<w:mailMerge><w:mainDocumentType w:val="formLetters"/>'
+                       '<w:connectString w:val="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=C:\\Users\\%s\\list.xlsx"/>'
+                       '</w:mailMerge>'
+                       '<w:docVars><w:docVar w:name="Owner" w:val="%s"/></w:docVars>'
                        '<w14:docId w14:val="1A2B3C4D"/><w15:docId w15:val="{A1B2C3D4-0000-0000-0000-000000000000}"/>'
-                       '</w:settings>') % (W, W14, W15, R)
+                       '</w:settings>') % (W, W14, W15, R, S, S)
     settings_rels = rels([('rId1', R + '/attachedTemplate',
                            'file:///C:/Users/%s/AppData/Roaming/Microsoft/Templates/Normal.dotm' % S,
                            ' TargetMode="External"')])
@@ -138,6 +165,8 @@ def docx():
         ('rId2', R + '/settings', 'settings.xml', ''),
         ('rId3', 'http://schemas.microsoft.com/office/2011/relationships/people', 'people.xml', ''),
         ('rId4', R + '/image', 'media/image1.png', ''),
+        ('rId5', R + '/hyperlink', '\\\\fileserver\\home\\%s\\notes.docx' % S, ' TargetMode="External"'),
+        ('rId6', R + '/package', 'embeddings/Microsoft_Excel_Worksheet.xlsx', ''),
     ])
     WML = 'application/vnd.openxmlformats-officedocument.wordprocessingml.'
     parts, ct = common(OV % ('word/document.xml', WML + 'document.main+xml') +
@@ -150,6 +179,7 @@ def docx():
         ('word/comments.xml', comments), ('word/people.xml', people),
         ('word/settings.xml', settings), ('word/_rels/settings.xml.rels', settings_rels),
         ('word/media/image1.png', png_with_text()),
+        ('word/embeddings/Microsoft_Excel_Worksheet.xlsx', zip_bytes(xlsx())),
     ]
 
 
@@ -192,6 +222,19 @@ def xlsx():
         ('xl/threadedComments/threadedComment1.xml', threaded),
         ('xl/revisions/userNames.xml', usernames),
         ('xl/printerSettings/printerSettings1.bin', printer_settings()),
+        ('xl/pivotCache/pivotCacheDefinition1.xml', DECL + (
+            '<pivotCacheDefinition xmlns="%s" refreshedBy="Refresher %s" refreshedDate="46000.5" recordCount="0">'
+            '<cacheSource type="worksheet"/><cacheFields count="0"/></pivotCacheDefinition>') % (X, S)),
+        ('xl/externalLinks/externalLink1.xml', DECL + '<externalLink xmlns="%s"><externalBook r:id="rId1" xmlns:r="%s"/></externalLink>' % (X, R)),
+        ('xl/externalLinks/_rels/externalLink1.xml.rels', rels([
+            ('rId1', R + '/externalLinkPath', 'file:///C:/Users/%s/Desktop/budget.xlsx' % S, ' TargetMode="External"')])),
+        ('xl/comments/comment1.xml', DECL + ('<comments xmlns="%s"><authors><author>Openpyxl %s</author></authors>'
+                                             '<commentList/></comments>') % (X, S)),
+        ('xl/queryTables/queryTable1.xml', DECL + '<queryTable xmlns="%s" name="Q" connectionId="1"/>' % X),
+        ('xl/connections.xml', DECL + ('<connections xmlns="%s"><connection id="1" name="C" type="1" refreshedVersion="6" '
+                                       'odcFile="C:\\Users\\%s\\Documents\\My Data Sources\\q.odc">'
+                                       '<dbPr connection="Provider=SQLOLEDB;User ID=%s;Data Source=db" command="SELECT 1"/>'
+                                       '</connection></connections>') % (X, S, S)),
     ]
 
 
@@ -272,7 +315,28 @@ def pptx():
     ]
 
 
+def zip_bytes(parts):
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts:
+            z.writestr(zipfile.ZipInfo(name, date_time=(2031, 2, 3, 4, 5, 6)),
+                       data.encode() if isinstance(data, str) else data, zipfile.ZIP_DEFLATED)
+    return buf.getvalue()
+
+
+def docx_streaming():
+    parts = docx()
+    return parts[1:2] + parts[:1] + parts[2:]  # _rels/.rels before [Content_Types].xml
+
+
+def docm():
+    return docx() + [('word/vbaProject.bin', b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + ('Project ' + S).encode())]
+
+
 if __name__ == '__main__':
-    for name, build in (('sample.docx', docx), ('sample.xlsx', xlsx), ('sample.pptx', pptx)):
-        write(os.path.join(HERE, name), build())
+    for name, build, streaming in (('sample.docx', docx, False), ('sample.xlsx', xlsx, False),
+                                   ('sample.pptx', pptx, False), ('sample-dd.docx', docx_streaming, True),
+                                   ('sample.docm', docm, False)):
+        write(os.path.join(HERE, name), build(), streaming)
         print('wrote', name)

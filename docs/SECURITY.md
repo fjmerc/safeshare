@@ -312,7 +312,7 @@ When enabled, SafeShare automatically strips metadata from supported file types 
 
 - HEIC/HEIF, FLAC, WAV, OGG, and WebM files are not currently supported
 - Legacy Office formats (.doc, .xls, .ppt) are not supported — only modern Open XML formats
-- Office document comments and tracked changes (which may contain author names) are not stripped — only file-level metadata in docProps/
+- Server-side Office stripping removes only file-level metadata in docProps/ and customXml/; comment and tracked-change authors are not stripped. (The browser-side stripper used for end-to-end encrypted uploads does clear them; see `docs/E2E_ENCRYPTION.md`.)
 - Already-uploaded files are not retroactively stripped
 - Metadata stripping is irreversible — the original metadata cannot be recovered
 

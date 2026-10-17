@@ -309,7 +309,10 @@
         var min = Math.max(0, b.length - 65557); // EOCD is 22 bytes plus at most a 64 KB comment
         var eocd = -1;
         for (var p = b.length - 22; p >= min; p--) {
-            if (b[p] === 0x50 && b[p + 1] === 0x4B && b[p + 2] === 0x05 && b[p + 3] === 0x06) { eocd = p; break; }
+            // The real record's comment runs exactly to the end of the file,
+            // which skips a fake signature inside the comment itself.
+            if (b[p] === 0x50 && b[p + 1] === 0x4B && b[p + 2] === 0x05 && b[p + 3] === 0x06 &&
+                p + 22 + u16le(b, p + 20) === b.length) { eocd = p; break; }
         }
         if (eocd < 0) throw stripError('MALFORMED', 'Not a zip file (no end of central directory)');
         if (eocd >= 20 && u32le(b, eocd - 20) === 0x07064B50) throw stripError('MALFORMED', 'Zip64 files are not supported');
@@ -354,12 +357,19 @@
         return entries;
     }
 
-    // True if the first local header names [Content_Types].xml.
-    function startsLikeOoxml(b) {
-        var name = '[Content_Types].xml';
-        if (b.length < 30 + name.length || u16le(b, 26) !== name.length) return false;
-        for (var i = 0; i < name.length; i++) if (b[30 + i] !== name.charCodeAt(i)) return false;
-        return true;
+    var CONTENT_TYPES = [];
+    for (var ci = 0; ci < '[Content_Types].xml'.length; ci++) CONTENT_TYPES.push('[Content_Types].xml'.charCodeAt(ci));
+
+    // True if the bytes contain the name [Content_Types].xml anywhere (it is
+    // in every Office file's directory, whatever order or zip variant).
+    function mentionsContentTypes(b) {
+        var first = CONTENT_TYPES[0], n = CONTENT_TYPES.length;
+        for (var i = b.indexOf(first); i !== -1 && i + n <= b.length; i = b.indexOf(first, i + 1)) {
+            var j = 1;
+            while (j < n && b[i + j] === CONTENT_TYPES[j]) j++;
+            if (j === n) return true;
+        }
+        return false;
     }
 
     function isOoxml(entries) {
@@ -370,52 +380,123 @@
     var XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
     var VT_NS = ' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"';
     // Empty but valid replacements for the document property parts.
-    var REPLACED_PARTS = {
-        'docProps/core.xml': XML_DECL + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
+    var PROPERTY_TEMPLATES = {
+        core: XML_DECL + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
             ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"' +
             ' xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></cp:coreProperties>',
-        'docProps/app.xml': XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"' + VT_NS + '></Properties>',
-        'docProps/custom.xml': XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>'
+        app: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"' + VT_NS + '></Properties>',
+        custom: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>'
     };
-    // customXml data stores (SharePoint columns, cover-page fields, ...) are emptied.
-    var CUSTOM_XML_ITEM = /^customXml\/item\d+\.xml$/;
-    var EMPTY_CUSTOM_XML = XML_DECL + '<root/>';
+    var DEFAULT_PROPERTY_PARTS = { 'docprops/core.xml': 'core', 'docprops/app.xml': 'app', 'docprops/custom.xml': 'custom' };
+    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-properties$/, 'app'], [/\/custom-properties$/, 'custom']];
 
-    // XML parts that can name people or carry edit history. Worksheets are
-    // left alone: they hold no author data and can be very large.
-    var SCRUB_PART = /^(?:word|ppt)\/.+\.(?:xml|rels)$|^xl\/(?:workbook\.xml|_rels\/workbook\.xml\.rels|comments\d*\.xml|persons\/.+\.xml|threadedComments\/.+\.xml|revisions\/.+\.xml)$/;
-    var MEDIA_PART = /^(?:word|ppt|xl)\/media\//;
-    var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printerSettings\/.+\.bin$/;
+    // Part names below are matched lower-cased: OPC part names are case-insensitive.
+    // customXml data stores (SharePoint columns, cover-page fields, ...) are emptied.
+    var CUSTOM_XML_ITEM = /^customxml\/item\d+\.xml$/;
+    var EMPTY_CUSTOM_XML = XML_DECL + '<root/>';
+    // XML parts that can name people, carry edit history or point at the
+    // author's files. Worksheets are left alone: they hold no author data and
+    // can be very large.
+    var SCRUB_PART = new RegExp('^(?:word|ppt)/.+\\.(?:xml|rels)$|^xl/(?:workbook\\.xml|connections\\.xml|comments\\d*\\.xml|' +
+        'comments/.+\\.xml|(?:.+/)?_rels/.+\\.rels|persons/.+\\.xml|threadedcomments/.+\\.xml|revisions/.+\\.xml|' +
+        'pivotcache/.+\\.xml|externallinks/.+\\.xml|querytables/.+\\.xml)$');
+    // VBA projects carry the project name and code; they can't be cleaned here.
+    var VBA_PART = /(?:^|\/)vbaproject\.bin$/;
+    var MEDIA_PART = /^(?:word|ppt|xl)\/media\/|^docprops\/thumbnail\./;
+    var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
+    var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
+    // Embedded image formats that can carry EXIF but can't be cleaned here.
+    var UNCLEANABLE_IMAGE = /\.(?:tiff?|heic|heif|avif|webp|jxr|wdp|hdp)$/;
+    // How deep embedded Office files (e.g. a chart's workbook) are cleaned.
+    var MAX_EMBED_DEPTH = 2;
 
     var EPOCH = '1970-01-01T00:00:00Z';
+    var WHO = '(?:author|initials|userId|providerId|userName|displayName|refreshedBy)';
+    var VAL = '\\s*=\\s*(?:"[^"]*"|\'[^\']*\')';
+    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created)';
+    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1 };
+    // One tag, with quoted attribute values that may contain '>'. The
+    // alternatives start with different characters, so matching is linear.
+    var TAG = /<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+
+    var RE_WHO = new RegExp('(\\s(?:[A-Za-z0-9]+:)?' + WHO + ')' + VAL, 'g');
+    var RE_NAME = new RegExp('(\\sname)' + VAL, 'g');
+    var RE_DATE = new RegExp('(\\s(?:[A-Za-z0-9]+:)?' + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
+    var RE_REFRESHED = new RegExp('(\\srefreshedDate)' + VAL, 'g');
+    var RE_RSID = new RegExp('\\s[A-Za-z0-9]+:rsid[A-Za-z]*' + VAL, 'g');
+    var RE_URL = new RegExp('(\\surl)' + VAL);
+    // Excel data connections: the .odc/source file path, and the connection
+    // string (which can hold a user name or password).
+    var RE_SOURCE_FILE = new RegExp('(\\s(?:odcFile|sourceFile))' + VAL, 'g');
+    var RE_CONNECTION = new RegExp('(\\sconnection)' + VAL, 'g');
+    var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
+    // file: URLs, drive paths and network paths (\\server\share)
+    var RE_FILE_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
+
+    function tagName(tag) {
+        var m = /^<\/?(?:([A-Za-z0-9]+):)?([A-Za-z0-9_.-]+)/.exec(tag);
+        return m ? { prefix: m[1] || '', local: m[2] } : null;
+    }
+
+    function scrubTag(tag) {
+        if (tag[1] === '!' || tag[1] === '?' || tag[1] === '/') return tag;
+        var n = tagName(tag);
+        if (!n) return tag;
+        // Word document IDs and Excel's revision pointer go entirely.
+        if ((n.local === 'docId' && /^w\d*$/.test(n.prefix)) || (n.local === 'revisionPtr' && n.prefix === 'xr')) return '';
+        tag = tag
+            .replace(RE_WHO, '$1=""')
+            .replace(RE_DATE, '$1="' + EPOCH + '"')
+            .replace(RE_REFRESHED, '$1="0"')
+            .replace(RE_RSID, '');
+        if (NAME_ATTR_TAGS[n.local]) tag = tag.replace(RE_NAME, '$1=""');
+        if (n.local === 'absPath') tag = tag.replace(RE_URL, '$1=""');
+        tag = tag.replace(RE_SOURCE_FILE, '$1=""');
+        if (n.local === 'dbPr') tag = tag.replace(RE_CONNECTION, '$1=""');
+        // Template paths and links to the author's own files
+        // (file:///C:/Users/<name>/...).
+        if (n.local === 'Relationship' && (/attachedTemplate["']/.test(tag) || RE_FILE_TARGET.test(tag))) {
+            tag = tag.replace(RE_TARGET, '$1=""');
+        }
+        return tag;
+    }
 
     /**
-     * Remove people, dates and edit-session identifiers from an Office XML
-     * part. Every pattern is linear: negated classes bounded by a quote or
-     * angle bracket, and lazy matches with a fixed terminator.
+     * Remove people, dates, edit-session identifiers and local file paths
+     * from an Office XML part. Attributes are edited only inside tags, so
+     * document text is never touched.
      */
     function scrubOfficeXml(xml) {
         return xml
-            // Who: comment and tracked-change authors, people/persons lists,
-            // shared-workbook users.
-            .replace(/(\s(?:[A-Za-z0-9]+:)?(?:author|initials|userId|providerId|userName|displayName))="[^"]*"/g, '$1=""')
-            .replace(/<((?:[A-Za-z0-9]+:)?(?:cmAuthor|author|userInfo))\b([^>]*)>/g, function (m, tag, attrs) {
-                return '<' + tag + attrs.replace(/(\sname)="[^"]*"/g, '$1=""') + '>';
-            })
-            .replace(/<author>[^<]*<\/author>/g, '<author></author>')
-            // When: comment, revision and tracked-change timestamps.
-            .replace(/(\s(?:[A-Za-z0-9]+:)?(?:date|dateUtc|dateTime|dt|dT|created))="\d{4}-[^"]*"/g, '$1="' + EPOCH + '"')
-            // Edit sessions and document identity: Word rsids and docIds,
-            // Excel's save path and revision pointer.
-            .replace(/\s[A-Za-z0-9]+:rsid[A-Za-z]*="[^"]*"/g, '')
-            .replace(/<w:rsids>[\s\S]*?<\/w:rsids>|<w:rsids\/>/g, '')
-            .replace(/<w\d*:docId\b[^>]*\/>/g, '')
-            .replace(/(<x15ac:absPath\b[^>]*\surl=)"[^"]*"/g, '$1""')
-            .replace(/<xr:revisionPtr\b[^>]*\/>/g, '')
-            // Template path (e.g. C:\Users\<name>\...\Normal.dotm).
-            .replace(/<Relationship\b[^>]*\/attachedTemplate"[^>]*>/g, function (tag) {
-                return tag.replace(/(\sTarget=)"[^"]*"/, '$1""');
-            });
+            .replace(/<w:rsids\b[^>]*\/>|<w:rsids\b[^>]*>[\s\S]*?<\/w:rsids>/g, '')
+            // Word document variables (any add-in data) and mail-merge
+            // sources (paths and connection strings).
+            .replace(/<w:docVars\b[^>]*\/>|<w:docVars\b[^>]*>[\s\S]*?<\/w:docVars>/g, '')
+            .replace(/<w:mailMerge\b[^>]*\/>|<w:mailMerge\b[^>]*>[\s\S]*?<\/w:mailMerge>/g, '')
+            .replace(/<author>(?:[^<]|<!\[CDATA\[[\s\S]*?\]\]>)*<\/author>/g, '<author></author>')
+            .replace(TAG, scrubTag);
+    }
+
+    // Checks run over the whole scrubbed part, text included, so anything the
+    // tag scrubber missed (odd quoting, a CDATA section) fails closed.
+    var LEFTOVERS = [
+        new RegExp('\\s(?:[A-Za-z0-9]+:)?' + WHO + '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'),
+        new RegExp('<(?:[A-Za-z0-9]+:)?(?:cmAuthor|author|userInfo)\\b[^>]*\\sname\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'),
+        /\s[A-Za-z0-9]+:rsid[A-Za-z]*\s*=/,
+        /<w:rsids\b|<w:docVars\b|<w:mailMerge\b|<w\d*:docId\b|<xr:revisionPtr\b/,
+        /<author>(?!<\/author>)/,
+        /<x15ac:absPath\b[^>]*\surl\s*=\s*(?:"[^"]+"|'[^']+')/,
+        /\s(?:odcFile|sourceFile)\s*=\s*(?:"[^"]+"|'[^']+')/,
+        /<dbPr\b[^>]*\sconnection\s*=\s*(?:"[^"]+"|'[^']+')/
+    ];
+    var RE_DATE_VALUE = new RegExp('\\s(?:[A-Za-z0-9]+:)?' + DATE_ATTR + '\\s*=\\s*["\'](\\d{4}-[^"\']*)', 'g');
+
+    function officeLeftover(xml) {
+        for (var i = 0; i < LEFTOVERS.length; i++) if (LEFTOVERS[i].test(xml)) return true;
+        var m;
+        RE_DATE_VALUE.lastIndex = 0;
+        while ((m = RE_DATE_VALUE.exec(xml)) !== null) if (m[1] !== EPOCH) return true;
+        return false;
     }
 
     function sameBytes(a, b) {
@@ -429,6 +510,7 @@
         if (entry.method === 0) {
             out = entry.data;
         } else if (entry.method === 8) {
+            if (entry.size > budget.left) throw stripError('TOO_LARGE', 'Office file expands to more than the stripping limit');
             out = await pipeBytes(new DecompressionStream('deflate-raw'), entry.data, budget.left);
             budget.left -= out.length;
         } else {
@@ -438,36 +520,94 @@
         return out;
     }
 
-    // New bytes for an entry, or null to copy it unchanged.
-    async function processEntry(entry, budget) {
-        var name = entry.name;
-        if (REPLACED_PARTS[name]) return new TextEncoder().encode(REPLACED_PARTS[name]);
-        if (CUSTOM_XML_ITEM.test(name)) return new TextEncoder().encode(EMPTY_CUSTOM_XML);
+    function decodeUtf8(bytes, name) {
+        try {
+            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (e) {
+            throw stripError('MALFORMED', 'Office part ' + name + ' is not UTF-8');
+        }
+    }
 
-        if (SCRUB_PART.test(name)) {
-            var raw = await readEntry(entry, budget);
-            var xml;
-            try {
-                xml = new TextDecoder('utf-8', { fatal: true }).decode(raw);
-            } catch (e) {
-                throw stripError('MALFORMED', 'Office part ' + name + ' is not UTF-8');
+    // Lower-cased names of the core, extended and custom property parts:
+    // the usual docProps/ paths plus wherever _rels/.rels points.
+    async function propertyParts(entries, budget) {
+        var parts = Object.assign({}, DEFAULT_PROPERTY_PARTS);
+        for (var i = 0; i < entries.length; i++) {
+            if (entries[i].name.toLowerCase() !== '_rels/.rels') continue;
+            var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
+            var tags = rels.match(/<Relationship\b(?:[^>"']|"[^"]*"|'[^']*')*>/g) || [];
+            for (var t = 0; t < tags.length; t++) {
+                var type = /\sType\s*=\s*["']([^"']*)/.exec(tags[t]);
+                var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
+                if (!type || !target) continue;
+                for (var k = 0; k < PROPERTY_REL_TYPES.length; k++) {
+                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[target[1].replace(/^\//, '').toLowerCase()] = PROPERTY_REL_TYPES[k][1];
+                }
             }
+        }
+        return parts;
+    }
+
+    // New bytes for an entry, or null to copy it unchanged. Parts that may
+    // hold metadata but can't be cleaned are listed in ctx.incomplete.
+    async function processEntry(entry, ctx, props) {
+        var name = entry.name;
+        var lname = name.toLowerCase();
+        if (props[lname]) return new TextEncoder().encode(PROPERTY_TEMPLATES[props[lname]]);
+        if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(EMPTY_CUSTOM_XML);
+
+        if (SCRUB_PART.test(lname)) {
+            var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
             var scrubbed = scrubOfficeXml(xml);
+            if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
             return scrubbed === xml ? null : new TextEncoder().encode(scrubbed);
         }
-        if (MEDIA_PART.test(name)) {
-            var media = await readEntry(entry, budget);
-            var type = detectType(media);
-            if (!type) return null;
-            var clean = type === 'jpeg' ? stripJpeg(media) : stripPng(media);
-            return sameBytes(clean, media) ? null : clean;
+        if (MEDIA_PART.test(lname) || EMBEDDED_PART.test(lname)) {
+            var data = await readEntry(entry, ctx.budget);
+            var type = detectType(data);
+            if (type) {
+                var clean = type === 'jpeg' ? stripJpeg(data) : stripPng(data);
+                return sameBytes(clean, data) ? null : clean;
+            }
+            if (EMBEDDED_PART.test(lname)) {
+                // An embedded Office file (a chart's workbook, a pasted
+                // document) has its own metadata: clean it the same way.
+                var inner = null;
+                if (isZip(data) && ctx.depth < MAX_EMBED_DEPTH) {
+                    try { inner = readZip(data); } catch (e) { inner = null; }
+                }
+                if (inner && isOoxml(inner)) {
+                    var child = { budget: ctx.budget, depth: ctx.depth + 1, incomplete: [] };
+                    var cleaned = await stripOoxml(inner, child);
+                    for (var i = 0; i < child.incomplete.length; i++) ctx.incomplete.push(name + '/' + child.incomplete[i]);
+                    return cleaned;
+                }
+                ctx.incomplete.push(name); // OLE objects and other embedded files
+            } else if (UNCLEANABLE_IMAGE.test(lname)) {
+                ctx.incomplete.push(name);
+            }
+            return null;
         }
-        if (PRINTER_SETTINGS.test(name)) {
-            // A Windows DEVMODE starts with the printer name (32 UTF-16 chars).
-            var dev = await readEntry(entry, budget);
+        if (VBA_PART.test(lname)) {
+            ctx.incomplete.push(name);
+            return null;
+        }
+        if (/^docprops\//.test(lname)) {
+            ctx.incomplete.push(name); // an unknown property part
+            return null;
+        }
+        if (PRINTER_SETTINGS.test(lname)) {
+            // A Windows DEVMODE starts with the printer name (32 UTF-16
+            // chars); the driver's private data (which can name users or
+            // accounts) follows the dmSize-byte public part.
+            var dev = await readEntry(entry, ctx.budget);
             if (dev.length < 64) return null;
             var copy = dev.slice();
             copy.fill(0, 0, 64);
+            if (copy.length >= 72) {
+                var pub = u16le(copy, 68);
+                if (pub >= 72 && pub < copy.length) copy.fill(0, pub);
+            }
             return copy;
         }
         return null;
@@ -481,13 +621,13 @@
      * timestamp, extra fields, comment and file attributes cleared. Entries
      * that don't change are copied without recompressing.
      */
-    async function stripOoxml(b, entries) {
+    async function stripOoxml(entries, ctx) {
         if (!compressionSupported()) throw stripError('UNSUPPORTED_BROWSER', 'This browser cannot remove metadata from Office files');
-        var budget = { left: MAX_INFLATED_BYTES };
+        var props = await propertyParts(entries, ctx.budget);
         var out = [];
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i];
-            var plain = await processEntry(e, budget);
+            var plain = await processEntry(e, ctx, props);
             if (plain === null) {
                 out.push({ e: e, method: e.method, crc: e.crc, size: e.size, data: e.data });
             } else {
@@ -557,8 +697,10 @@
      * Strip metadata from file bytes, detecting the type from the content
      * (never the extension). Resolves to { data: ArrayBuffer, type:
      * 'jpeg'|'png'|'office'|null, supported: bool, removedBytes: number,
-     * orientation: 1-8|null } (orientation is the value that was present
-     * BEFORE stripping). Unsupported types are returned unchanged with
+     * orientation: 1-8|null, incomplete: string[] } (orientation is the value
+     * that was present BEFORE stripping; incomplete lists the parts of an
+     * Office file that may still hold metadata, such as embedded OLE objects
+     * or TIFF images). Unsupported types are returned unchanged with
      * supported:false. Rejects when a supported type can't be stripped; the
      * error's code says why (see stripError).
      */
@@ -570,10 +712,10 @@
             try {
                 entries = readZip(b);
             } catch (err) {
-                // An unreadable zip only matters if it looks like an Office
-                // file (they start with [Content_Types].xml); other archives,
-                // zip64 ones included, pass through as unsupported.
-                if (startsLikeOoxml(b)) throw err;
+                // An unreadable zip only matters if it may be an Office
+                // file; other archives, zip64 ones included, pass through as
+                // unsupported.
+                if (mentionsContentTypes(b)) throw err;
                 entries = [];
             }
             if (isOoxml(entries)) {
@@ -583,18 +725,21 @@
         }
         if (!type) {
             var copy = (input instanceof ArrayBuffer) ? input : b.slice().buffer;
-            return { data: copy, type: null, supported: false, removedBytes: 0, orientation: null };
+            return { data: copy, type: null, supported: false, removedBytes: 0, orientation: null, incomplete: [] };
         }
         var orientation = null;
+        var incomplete = [];
         var out;
         if (type === 'office') {
-            out = await stripOoxml(b, entries);
+            var ctx = { budget: { left: MAX_INFLATED_BYTES }, depth: 0, incomplete: incomplete };
+            out = await stripOoxml(entries, ctx);
         } else {
             orientation = readOrientation(b);
             out = type === 'jpeg' ? stripJpeg(b) : stripPng(b);
         }
         var buf = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
-        return { data: buf, type: type, supported: true, removedBytes: b.length - out.length, orientation: orientation };
+        return { data: buf, type: type, supported: true, removedBytes: b.length - out.length, orientation: orientation,
+            incomplete: incomplete };
     }
 
     var api = {

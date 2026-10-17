@@ -1151,6 +1151,16 @@
             showToast(reason + '; uploading it unchanged.', 'warning', 6000);
             return arrayBuffer;
         }
+        if (result.incomplete && result.incomplete.length) {
+            const parts = 'This file contains parts whose metadata can\'t be removed, such as macros or embedded objects (' + result.incomplete.slice(0, 3).join(', ') +
+                (result.incomplete.length > 3 ? ', ...' : '') + ')';
+            if (serverConfig.anonymous_mode) {
+                const abort = new Error(parts + ', so the upload was stopped. Remove it or scrub the file first (for example with mat2) and try again.');
+                abort.metadataAbort = true;
+                throw abort;
+            }
+            showToast(parts + '; the rest was cleaned.', 'warning', 8000);
+        }
         if (!result.supported && !metadataNoticeShown) {
             metadataNoticeShown = true;
             showToast('Metadata in this file type (PDF, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
