@@ -1085,7 +1085,14 @@
             var candidates = [];
             if (lenVal && lenVal.t === 'num') candidates.push({ v: lenVal.v, direct: lenVal });
             if (lenVal && lenVal.t === 'ref') {
-                (ints[lenVal.n + ' ' + lenVal.g] || []).forEach(function (c) { candidates.push({ v: c.v, indirect: c, ref: lenVal.n + ' ' + lenVal.g }); });
+                // Each distinct value once, and only a few: duplicates of the
+                // length object can't make every stream try them all.
+                var tried = {};
+                (ints[lenVal.n + ' ' + lenVal.g] || []).forEach(function (c) {
+                    if (tried[c.v] || Object.keys(tried).length >= 8) return;
+                    tried[c.v] = true;
+                    candidates.push({ v: c.v, indirect: c, ref: lenVal.n + ' ' + lenVal.g });
+                });
             }
             var de = -1, lengthAt = null;
             for (var k = 0; k < candidates.length && de < 0; k++) {
@@ -1124,7 +1131,7 @@
      * stream data included) are skipped as a whole.
      */
     function scanTopLevel(S, ints) {
-        var objects = [], trailers = [];
+        var objects = [], trailers = [], trailerFailed = false;
         var n = S.length, i = 0;
         while (i < n) {
             i = skipPdfWs(S, i);
@@ -1138,15 +1145,24 @@
                     i = Math.max(obj.end, h.body);
                     continue;
                 }
-            } else if (S.startsWith('trailer', i) && !isRegular(S[i + 7])) {
+            } else if (!trailerFailed && S.startsWith('trailer', i) && !isRegular(S[i + 7])) {
+                // A trailer that doesn't parse can cost a scan to the end of
+                // the file, so later ones aren't retried.
                 var t = null;
                 try { t = parsePdfValue(S, i + 7, 0); } catch (e) { t = null; }
                 if (t && t.t === 'dict') { trailers.push(t); i = t.e; continue; }
+                trailerFailed = true;
             }
             // Anything else: step over one token.
             if (isRegular(S[i])) { while (i < n && isRegular(S[i])) i++; } else i++;
         }
         return { objects: objects, trailers: trailers };
+    }
+
+    // True if S[from, to) contains something that looks like an object header.
+    var RE_HEADER_ANYWHERE = /(?:^|[^0-9])\d{1,10}[\0\t\n\f\r ]+\d{1,5}[\0\t\n\f\r ]+obj(?![^\0\t\n\f\r ()<>\[\]{}\/%])/;
+    function hasHiddenHeader(S, from, to) {
+        return to > from && RE_HEADER_ANYWHERE.test(S.slice(from, to));
     }
 
     // Undo PNG predictors (as used by cross-reference streams): rows of
@@ -1325,6 +1341,16 @@
         if (!trailers.length) throw pdfError('No PDF trailer found');
         var byNum = {};
         objects.forEach(function (o) { (byNum[o.n + ' ' + o.g] = byNum[o.n + ' ' + o.g] || []).push(o); });
+        // Scanned objects in file order, for finding the one an offset is in.
+        var spans = objects.slice().sort(function (x, y) { return x.off - y.off; });
+        function containing(at) {
+            var lo = 0, hi = spans.length - 1, found = null;
+            while (lo <= hi) {
+                var mid = (lo + hi) >> 1;
+                if (spans[mid].off < at) { found = spans[mid]; lo = mid + 1; } else hi = mid - 1;
+            }
+            return found && at < found.end ? found : null;
+        }
         chain.entries.forEach(function (e) {
             if (e.type !== 1) return;
             var at = skipPdfWs(S, e.off + chain.shift);
@@ -1336,8 +1362,10 @@
                 // with this number nearby, unless the offset lands inside
                 // some other object.
                 var near = same.some(function (o) { return Math.abs(o.off - at) <= 64; });
-                var inside = objects.some(function (o) { return at > o.off && at < o.end && !(o.n === e.n && o.g === e.g); });
-                if (near && !inside) return;
+                if (near) {
+                    var host = containing(at);
+                    if (!host || (host.n === e.n && host.g === e.g)) return;
+                }
             }
             if (h && h.n === e.n && h.g === e.g) {
                 try {
@@ -1349,6 +1377,13 @@
             }
             ctx.incomplete.push('object listed in the cross-reference data but not found (object ' + e.n + ')');
         });
+
+        // Without usable cross-reference data a reader rebuilds it by looking
+        // for object headers anywhere, including inside other objects' stream
+        // data, where the scan above doesn't look. Report such a file.
+        if (chain.broken && objects.some(function (o) { return o.stream && hasHiddenHeader(S, o.stream.ds, o.stream.de); })) {
+            ctx.incomplete.push('objects hidden inside other objects (damaged cross-reference data)');
+        }
 
         // Length objects shared by several streams can't be rewritten for one.
         var lengthUses = {};

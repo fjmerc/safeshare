@@ -350,6 +350,17 @@ async function edgeCases() {
             !Buffer.from(r.data).includes('(Bob)'), JSON.stringify(r.incomplete));
     }
 
+    // With the cross-reference data broken, an object hidden inside another
+    // object's stream (which a reader's rebuild would find) is reported
+    {
+        const body = 'x\nendstream\nendobj\n4 0 obj\n<< /Type /Annot /Subtype /Text /T (Bob) >>\nendobj\n5 0 obj\n<< /Length 1 >>\nstream\ny';
+        const pdf = '%PDF-1.7\n1 0 obj\n' + CATALOG + '\nendobj\n2 0 obj\n' + PAGES + '\nendobj\n3 0 obj\n<< /Length ' + body.length +
+            ' >>\nstream\n' + body + '\nendstream\nendobj\ntrailer\n<< /Root 1 0 R >>\nstartxref\n999999\n%%EOF\n';
+        const r = await M.stripMetadata(u8(Buffer.from(pdf, 'latin1')));
+        check('broken xref: object hidden in stream data reported',
+            JSON.stringify(r.incomplete) === '["objects hidden inside other objects (damaged cross-reference data)"]', JSON.stringify(r.incomplete));
+    }
+
     // A cross-reference stream with zero-width entries doesn't loop forever
     {
         const data = require('zlib').deflateSync(Buffer.from('abc')).toString('latin1');
