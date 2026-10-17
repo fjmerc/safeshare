@@ -105,9 +105,10 @@ The server can't strip metadata from ciphertext. When `STRIP_METADATA=true`, the
   - Embedded Office files (a chart's workbook, a pasted document) are cleaned the same way.
 
   Kept: the text, formatting, comments and tracked changes themselves (a name typed into the text, or shown by an Author field, stays), web hyperlinks, embedded fonts and EMF, WMF and BMP images. Only parts known to be safe are copied unchanged; anything else is reported as not cleaned. That includes VBA macro projects, ActiveX controls, embedded OLE objects, data models, digital signatures, add-in data, Word fields that link to files (Paste Link, linked pictures, `INCLUDETEXT`, fields naming a local path), SVG images that embed raster images, and media other than JPEG, PNG and SVG (video, audio, GIF, TIFF, HEIC, WebP). In anonymous mode a file containing them is refused; in other modes it's uploaded with the rest cleaned and a warning. Visio, XPS and other Office-style packages aren't supported. This needs the browser's built-in compression streams (any current browser, including Tor Browser).
-- **Anything else** (PDF, OpenDocument, older `.doc`/`.xls`/`.ppt` files, password-protected Office files, Visio, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
+- **PDF**: the document information (author, creator, producer, title, subject, keywords, dates and any custom entries) is cleared in every revision of the file, including earlier revisions left behind by incremental saves and entries stored in compressed object streams. All XMP metadata streams (for the document, pages and images) are replaced with an empty packet, the file identifier (`/ID`) is zeroed, comment annotations lose their author and dates, and EXIF and other APP segments are removed from embedded JPEG images. Metadata is overwritten in place, so the file keeps its size and structure (including linearization). Kept: the text, images, comments' text, form fields and bookmarks. Reported as not cleaned: attached files, JPEG 2000 images, and anything that can't be rewritten in place. Encrypted or password-protected PDFs can't be cleaned.
+- **Anything else** (OpenDocument, older `.doc`/`.xls`/`.ppt` files, password-protected Office files, Visio, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
 
-In anonymous mode the upload is stopped instead of sending the original when a JPEG, PNG or Office file can't be stripped: it can't be parsed, an Office file is over 100 MB, contains parts that can't be cleaned, or the browser lacks compression streams.
+In anonymous mode the upload is stopped instead of sending the original when a JPEG, PNG, Office file or PDF can't be stripped: it can't be parsed, it's encrypted (PDF), an Office file or PDF is over 100 MB or contains parts that can't be cleaned, or the browser lacks compression streams.
 
 ## Technical Details
 
@@ -191,7 +192,7 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
 | Admin file inspection | Not applicable | Admins can see file metadata (size, upload time, claim code) but cannot read E2EE file contents. |
 | Import tool (`cmd/import-file`) | Not supported | The CLI import tool does not perform client-side encryption. Use standard server-side encryption at rest for imported files. |
-| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG, PNG and Office (docx/xlsx/pptx) metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
+| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
 | Malware scanning | Not compatible | Ciphertext can't be scanned. With `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, E2EE uploads are rejected and the toggle is hidden. |
 
 ## Security Properties

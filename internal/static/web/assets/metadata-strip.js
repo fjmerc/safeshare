@@ -902,10 +902,418 @@
         return z.subarray(0, pos);
     }
 
+    // ---- PDF ---------------------------------------------------------------
+
+    // Metadata is overwritten in place with values of the same length, so no
+    // object moves and the cross-reference data stays valid. A compressed
+    // stream that has to change (an object stream holding the Info
+    // dictionary, compressed XMP, a JPEG with EXIF) is rewritten in its own
+    // space: the new data must fit, /Length is rewritten in the same width,
+    // and the space left over becomes whitespace between objects.
+
+    function isPdf(b) {
+        var head = String.fromCharCode.apply(null, b.subarray(0, Math.min(b.length, 1024)));
+        return head.indexOf('%PDF-') !== -1;
+    }
+
+    var PDF_WS = { 0: 1, 9: 1, 10: 1, 12: 1, 13: 1, 32: 1 };
+    var PDF_DELIM = '()<>[]{}/%';
+    var MAX_PDF_DEPTH = 64;
+    // Comment annotations whose /T is the author (a form field's /T is its name)
+    var MARKUP_ANNOTS = { Text: 1, FreeText: 1, Line: 1, Square: 1, Circle: 1, Polygon: 1, PolyLine: 1, Highlight: 1,
+        Underline: 1, Squiggly: 1, StrikeOut: 1, Stamp: 1, Caret: 1, Ink: 1, FileAttachment: 1, Sound: 1, Redact: 1 };
+
+    function pdfError(msg) { return stripError('MALFORMED', msg); }
+
+    function skipPdfWs(S, i) {
+        var n = S.length;
+        while (i < n) {
+            var c = S.charCodeAt(i);
+            if (PDF_WS[c]) { i++; continue; }
+            if (c === 37) { // % comment to end of line
+                while (i < n && S[i] !== '\n' && S[i] !== '\r') i++;
+                continue;
+            }
+            break;
+        }
+        return i;
+    }
+
+    function isRegular(c) { return c !== undefined && !PDF_WS[c.charCodeAt(0)] && PDF_DELIM.indexOf(c) === -1; }
+
+    /**
+     * Parse one PDF value at S[i]. Returns { t, s, e, ... } with e exclusive:
+     * dict (map of key -> value), arr (items), name (v), num (v), ref (n, g),
+     * str (literal) and hex strings, bool, null.
+     */
+    function parsePdfValue(S, i, depth) {
+        if (depth > MAX_PDF_DEPTH) throw pdfError('PDF nesting too deep');
+        i = skipPdfWs(S, i);
+        var start = i, c = S[i];
+        if (c === undefined) throw pdfError('Unexpected end of PDF');
+        if (c === '<' && S[i + 1] === '<') {
+            var map = {};
+            i += 2;
+            for (;;) {
+                i = skipPdfWs(S, i);
+                if (S[i] === '>' && S[i + 1] === '>') return { t: 'dict', map: map, s: start, e: i + 2 };
+                if (S[i] !== '/') throw pdfError('Bad PDF dictionary key');
+                var key = parsePdfValue(S, i, depth + 1);
+                var val = parsePdfValue(S, key.e, depth + 1);
+                map[key.v] = val;
+                i = val.e;
+            }
+        }
+        if (c === '<') {
+            var close = S.indexOf('>', i);
+            if (close < 0) throw pdfError('Unterminated hex string');
+            return { t: 'hex', s: start, e: close + 1 };
+        }
+        if (c === '(') {
+            var level = 0;
+            for (; i < S.length; i++) {
+                var ch = S[i];
+                if (ch === '\\') { i++; continue; }
+                if (ch === '(') level++;
+                else if (ch === ')' && --level === 0) return { t: 'str', s: start, e: i + 1 };
+            }
+            throw pdfError('Unterminated string');
+        }
+        if (c === '[') {
+            var items = [];
+            i++;
+            for (;;) {
+                i = skipPdfWs(S, i);
+                if (S[i] === ']') return { t: 'arr', items: items, s: start, e: i + 1 };
+                var item = parsePdfValue(S, i, depth + 1);
+                items.push(item);
+                i = item.e;
+            }
+        }
+        if (c === '/') {
+            i++;
+            while (isRegular(S[i])) i++;
+            return { t: 'name', v: S.slice(start + 1, i), s: start, e: i };
+        }
+        var num = /^[+-]?(?:\d+\.?\d*|\.\d+)/.exec(S.slice(i, i + 32));
+        if (num) {
+            var after = i + num[0].length;
+            // An indirect reference: "12 0 R"
+            var ref = /^(\s+)(\d+)(\s+)R(?![^\s()<>\[\]{}\/%])/.exec(S.slice(after, after + 32));
+            if (/^\d+$/.test(num[0]) && ref) {
+                return { t: 'ref', n: +num[0], g: +ref[2], s: start, e: after + ref[0].length };
+            }
+            return { t: 'num', v: +num[0], s: start, e: after };
+        }
+        var word = /^(true|false|null)(?![^\s()<>\[\]{}\/%])/.exec(S.slice(i, i + 6));
+        if (word) return { t: word[1] === 'null' ? 'null' : 'bool', s: start, e: i + word[1].length };
+        throw pdfError('Unexpected PDF token at offset ' + i);
+    }
+
+    function nameOf(v) { return v && v.t === 'name' ? v.v : null; }
+
+    function filtersOf(dict) {
+        var f = dict.map.Filter;
+        if (!f) return [];
+        if (f.t === 'name') return [f.v];
+        if (f.t === 'arr') return f.items.map(nameOf);
+        return [null];
+    }
+
+    // Integer value of a top-level "N G obj <int> endobj", and where it is.
+    function findIntObject(S, n, g) {
+        var re = new RegExp('(?:^|[^0-9])' + n + '\\s+' + g + '\\s+obj\\s*(\\d+)\\s*endobj', 'g');
+        var found = [], m;
+        while ((m = re.exec(S)) !== null) {
+            var numStart = m.index + m[0].indexOf(m[1], m[0].indexOf('obj') + 3);
+            found.push({ v: +m[1], s: numStart, e: numStart + m[1].length });
+        }
+        return found;
+    }
+
+    /**
+     * Read the object whose header ("N G obj") starts at off. For a stream,
+     * finds its data from /Length, checked against the endstream keyword.
+     */
+    function readPdfObject(S, off, num, gen, bodyStart) {
+        var value = parsePdfValue(S, bodyStart, 0);
+        var p = skipPdfWs(S, value.e);
+        var obj = { n: num, g: gen, off: off, value: value, stream: null, end: 0 };
+        if (value.t === 'dict' && S.startsWith('stream', p)) {
+            var ds = p + 6;
+            if (S[ds] === '\r' && S[ds + 1] === '\n') ds += 2;
+            else if (S[ds] === '\n' || S[ds] === '\r') ds += 1;
+            var lenVal = value.map.Length;
+            var candidates = [];
+            if (lenVal && lenVal.t === 'num') candidates.push({ v: lenVal.v, direct: lenVal });
+            if (lenVal && lenVal.t === 'ref') {
+                findIntObject(S, lenVal.n, lenVal.g).forEach(function (c) { candidates.push({ v: c.v, indirect: c }); });
+            }
+            var de = -1, lengthAt = null;
+            for (var k = 0; k < candidates.length && de < 0; k++) {
+                var q = ds + candidates[k].v;
+                if (/^\s*endstream/.test(S.slice(q, q + 12))) { de = q; lengthAt = candidates[k]; }
+            }
+            if (de < 0) {
+                // /Length is missing or wrong: use the endstream keyword.
+                var es = S.indexOf('endstream', ds);
+                if (es < 0) throw pdfError('Unterminated stream');
+                de = es;
+                if (S[de - 1] === '\n') de--;
+                if (S[de - 1] === '\r') de--;
+            }
+            var endstream = S.indexOf('endstream', de);
+            obj.stream = { ds: ds, de: de, length: lengthAt, endstream: endstream };
+            p = endstream + 9;
+        }
+        var eo = S.indexOf('endobj', p);
+        obj.end = eo < 0 ? p : eo + 6;
+        return obj;
+    }
+
+    // Every top-level object, in file order, including ones left over from
+    // older revisions. A match inside the previous object (in its stream
+    // data, e.g. an attached PDF) is skipped.
+    function scanPdfObjects(S) {
+        var re = /(\d+)\s+(\d+)\s+obj\b/g;
+        var objects = [];
+        var floor = 0, m;
+        while ((m = re.exec(S)) !== null) {
+            if (m.index < floor) { re.lastIndex = floor; continue; }
+            var prev = S.charCodeAt(m.index - 1);
+            if (m.index > 0 && !PDF_WS[prev] && prev !== 62 && prev !== 41 && prev !== 93) continue;
+            var obj = readPdfObject(S, m.index, +m[1], +m[2], m.index + m[0].length);
+            objects.push(obj);
+            floor = obj.end;
+            re.lastIndex = Math.max(re.lastIndex, floor);
+        }
+        return objects;
+    }
+
+    // Trailer dictionaries ("trailer << ... >>") outside any object.
+    function scanTrailers(S, objects) {
+        var spans = objects.map(function (o) { return [o.off, o.end]; });
+        var re = /trailer\s*<</g, out = [], m;
+        while ((m = re.exec(S)) !== null) {
+            var inside = spans.some(function (sp) { return m.index >= sp[0] && m.index < sp[1]; });
+            if (!inside) out.push(parsePdfValue(S, m.index + m[0].length - 2, 0));
+        }
+        return out;
+    }
+
+    // Bytes as a string with exactly one char per byte (TextDecoder's
+    // "latin1" is really windows-1252 and not reliable across engines).
+    function pdfLatin1(b) {
+        var parts = [];
+        for (var i = 0; i < b.length; i += 8192) parts.push(String.fromCharCode.apply(null, b.subarray(i, i + 8192)));
+        return parts.join('');
+    }
+
+    async function inflatePdf(data, limit) {
+        return pipeBytes(new DecompressionStream('deflate'), data, limit);
+    }
+
+    /**
+     * Strip a PDF: the Info dictionary in every revision (including inside
+     * object streams) and the strings it references, all XMP metadata
+     * streams, the trailer /ID, comment authors and dates on annotations, and
+     * EXIF in embedded JPEG images. Attached files, other image formats and
+     * anything that can't be rewritten in place are listed in ctx.incomplete.
+     */
+    async function stripPdf(b, ctx) {
+        var S = pdfLatin1(b);
+        var out = b.slice();
+        var objects = scanPdfObjects(S);
+        if (!objects.length) throw pdfError('No objects found in PDF');
+        var trailers = scanTrailers(S, objects);
+        objects.forEach(function (o) {
+            if (o.value.t === 'dict' && nameOf(o.value.map.Type) === 'XRef') trailers.push(o.value);
+        });
+        if (!trailers.length) throw pdfError('No PDF trailer found');
+
+        var infoRefs = {};
+        trailers.forEach(function (t) {
+            if (t.map.Encrypt) throw stripError('ENCRYPTED', 'Encrypted PDF');
+            var info = t.map.Info;
+            if (info && info.t === 'ref') infoRefs[info.n + ' ' + info.g] = true;
+            if (info && info.t === 'dict') blankRange(out, info.s + 2, info.e - 2);
+            var id = t.map.ID;
+            if (id && id.t === 'arr') id.items.forEach(function (it) { zeroString(out, S, it); });
+        });
+
+        // Object streams, inflated once: { obj, text, objects: [{ n, value }] }
+        var objStms = [];
+        for (var i = 0; i < objects.length; i++) {
+            var o = objects[i];
+            if (!o.stream || nameOf(o.value.map.Type) !== 'ObjStm') continue;
+            var f = filtersOf(o.value);
+            if (f.length > 1 || (f.length === 1 && f[0] !== 'FlateDecode') || o.value.map.DecodeParms) {
+                ctx.incomplete.push('compressed objects (object ' + o.n + ')');
+                continue;
+            }
+            var raw = out.subarray(o.stream.ds, o.stream.de);
+            var plain = f.length ? await inflatePdf(raw, ctx.budget.left) : raw;
+            ctx.budget.left -= plain.length;
+            var text = pdfLatin1(plain);
+            var count = o.value.map.N && o.value.map.N.v, first = o.value.map.First && o.value.map.First.v;
+            if (!(count >= 0) || !(first >= 0)) throw pdfError('Bad object stream header');
+            var head = text.slice(0, first).trim().split(/\s+/).map(Number);
+            var members = [];
+            for (var k = 0; k < count; k++) {
+                var at = first + head[2 * k + 1];
+                if (!(at >= first && at < text.length)) throw pdfError('Bad object stream offset');
+                members.push({ n: head[2 * k], value: parsePdfValue(text, at, 0) });
+            }
+            objStms.push({ obj: o, text: text, bytes: plain.slice(), members: members, changed: false });
+        }
+
+        // Strings referenced from an Info dictionary (e.g. /Producer 11 0 R)
+        var stringRefs = {};
+        function noteInfoRefs(dict) {
+            Object.keys(dict.map).forEach(function (k) {
+                var v = dict.map[k];
+                if (v.t === 'ref') stringRefs[v.n + ' ' + v.g] = true;
+            });
+        }
+        objects.forEach(function (o) { if (infoRefs[o.n + ' ' + o.g] && o.value.t === 'dict') noteInfoRefs(o.value); });
+        objStms.forEach(function (st) {
+            st.members.forEach(function (m) { if (infoRefs[m.n + ' 0'] && m.value.t === 'dict') noteInfoRefs(m.value); });
+        });
+
+        // Top-level objects
+        for (i = 0; i < objects.length; i++) {
+            o = objects[i];
+            var key = o.n + ' ' + o.g;
+            var v = o.value;
+            if (infoRefs[key] && v.t === 'dict') blankRange(out, v.s + 2, v.e - 2);
+            if (stringRefs[key] && (v.t === 'str' || v.t === 'hex')) blankString(out, v);
+            if (v.t === 'dict' && !o.stream) blankAnnotation(out, v);
+            if (!o.stream) continue;
+            var type = nameOf(v.map.Type), subtype = nameOf(v.map.Subtype);
+            var filters = filtersOf(v);
+            if (type === 'Metadata') {
+                await replaceXmp(out, S, o, filters, ctx);
+            } else if (type === 'EmbeddedFile') {
+                ctx.incomplete.push('attached file (object ' + o.n + ')');
+            } else if (subtype === 'Image' && filters.indexOf('DCTDecode') !== -1) {
+                if (filters.length !== 1) {
+                    ctx.incomplete.push('image (object ' + o.n + ')');
+                } else {
+                    var jpg = out.subarray(o.stream.ds, o.stream.de);
+                    var clean = null;
+                    try { clean = stripJpeg(jpg); } catch (e) { clean = null; }
+                    if (!clean) ctx.incomplete.push('image (object ' + o.n + ')');
+                    else if (clean.length !== jpg.length) rewriteStream(out, S, o, clean.slice());
+                }
+            } else if (subtype === 'Image' && filters.indexOf('JPXDecode') !== -1) {
+                ctx.incomplete.push('JPEG 2000 image (object ' + o.n + ')');
+            }
+        }
+
+        // Objects inside object streams
+        for (i = 0; i < objStms.length; i++) {
+            var st = objStms[i];
+            for (k = 0; k < st.members.length; k++) {
+                var mem = st.members[k];
+                var mk = mem.n + ' 0';
+                if (infoRefs[mk] && mem.value.t === 'dict') { blankRange(st.bytes, mem.value.s + 2, mem.value.e - 2); st.changed = true; }
+                if (stringRefs[mk] && (mem.value.t === 'str' || mem.value.t === 'hex')) { blankString(st.bytes, mem.value); st.changed = true; }
+                if (mem.value.t === 'dict' && blankAnnotation(st.bytes, mem.value)) st.changed = true;
+            }
+            if (st.changed) {
+                var packed = await pipeBytes(new CompressionStream('deflate'), st.bytes, MAX_INFLATED_BYTES);
+                rewriteStream(out, S, st.obj, packed);
+            }
+        }
+
+        // XMP that wasn't in a metadata stream we could clear
+        var left = pdfLatin1(out).split(EMPTY_XMP).join('');
+        if (/<\?xpacket\s+begin|<x:xmpmeta/.test(left)) ctx.incomplete.push('XMP metadata outside a metadata stream');
+        return out;
+    }
+
+    function blankRange(out, s, e) { if (e > s) out.fill(0x20, s, e); }
+
+    // A string value becomes () followed by spaces.
+    function blankString(out, v) {
+        out[v.s] = 0x28; out[v.s + 1] = 0x29;
+        blankRange(out, v.s + 2, v.e);
+    }
+
+    // Keep the /ID strings' length but zero their contents.
+    function zeroString(out, S, v) {
+        if (v.t === 'hex') {
+            for (var i = v.s + 1; i < v.e - 1; i++) if (/[0-9A-Fa-f]/.test(S[i])) out[i] = 0x30;
+        } else if (v.t === 'str') {
+            out[v.s] = 0x3C; out[v.e - 1] = 0x3E; // rewrite as a hex string of zeros
+            for (var j = v.s + 1; j < v.e - 1; j++) out[j] = 0x30;
+        }
+    }
+
+    // Clear the author and dates of a comment annotation; true if changed.
+    function blankAnnotation(out, dict) {
+        if (!MARKUP_ANNOTS[nameOf(dict.map.Subtype)]) return false;
+        var changed = false;
+        ['T', 'M', 'CreationDate'].forEach(function (k) {
+            var v = dict.map[k];
+            if (v && (v.t === 'str' || v.t === 'hex')) { blankString(out, v); changed = true; }
+        });
+        return changed;
+    }
+
+    // An XMP packet with no properties, so validators still find valid XMP.
+    var EMPTY_XMP = '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>' +
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></x:xmpmeta>' +
+        '<?xpacket end="w"?>';
+
+    function asciiBytes(str) {
+        var b = new Uint8Array(str.length);
+        for (var i = 0; i < str.length; i++) b[i] = str.charCodeAt(i);
+        return b;
+    }
+
+    async function replaceXmp(out, S, o, filters, ctx) {
+        var empty = asciiBytes(EMPTY_XMP);
+        if (!filters.length) {
+            // Same length: the empty packet padded with spaces (or just
+            // spaces if the original was shorter).
+            blankRange(out, o.stream.ds, o.stream.de);
+            if (empty.length <= o.stream.de - o.stream.ds) out.set(empty, o.stream.ds);
+        } else if (filters.length === 1 && filters[0] === 'FlateDecode' && !o.value.map.DecodeParms) {
+            var packed = await pipeBytes(new CompressionStream('deflate'), empty, 1024);
+            // A tiny original may not have room for the packet: leave it empty.
+            if (o.stream.ds + packed.length + 17 > o.end) packed = await pipeBytes(new CompressionStream('deflate'), new Uint8Array(0), 1024);
+            rewriteStream(out, S, o, packed);
+        } else {
+            ctx.incomplete.push('metadata (object ' + o.n + ')');
+        }
+    }
+
+    /**
+     * Replace a stream's data with shorter data in its own space: the data,
+     * then endstream/endobj, then spaces up to where the object ended, with
+     * /Length rewritten in the same width.
+     */
+    function rewriteStream(out, S, o, data) {
+        var st = o.stream;
+        var tail = '\nendstream\nendobj';
+        if (st.ds + data.length + tail.length > o.end) throw pdfError('Cleaned data does not fit in object ' + o.n);
+        var len = o.value.map.Length;
+        var site = st.length && (st.length.direct || st.length.indirect);
+        if (!len || !site || !(len.t === 'num' || len.t === 'ref')) throw pdfError('Cannot update the length of object ' + o.n);
+        var digits = String(data.length);
+        if (digits.length > site.e - site.s) throw pdfError('Cannot update the length of object ' + o.n);
+        for (var i = 0; i < site.e - site.s; i++) out[site.s + i] = i < digits.length ? digits.charCodeAt(i) : 0x20;
+        out.set(data, st.ds);
+        var p = st.ds + data.length;
+        for (i = 0; i < tail.length; i++) out[p + i] = tail.charCodeAt(i);
+        blankRange(out, p + tail.length, o.end);
+    }
+
     /**
      * Strip metadata from file bytes, detecting the type from the content
      * (never the extension). Resolves to { data: ArrayBuffer, type:
-     * 'jpeg'|'png'|'office'|null, supported: bool, removedBytes: number,
+     * 'jpeg'|'png'|'office'|'pdf'|null, supported: bool, removedBytes: number,
      * orientation: 1-8|null, incomplete: string[] } (orientation is the value
      * that was present BEFORE stripping; incomplete lists the parts of an
      * Office file that may still hold metadata, such as embedded OLE objects
@@ -932,6 +1340,10 @@
                 type = 'office';
             }
         }
+        if (!type && isPdf(b)) {
+            if (b.length > MAX_CONTAINER_BYTES) throw stripError('TOO_LARGE', 'PDF too large to remove metadata in the browser');
+            type = 'pdf';
+        }
         if (!type) {
             var copy = (input instanceof ArrayBuffer) ? input : b.slice().buffer;
             return { data: copy, type: null, supported: false, removedBytes: 0, orientation: null, incomplete: [] };
@@ -939,9 +1351,10 @@
         var orientation = null;
         var incomplete = [];
         var out;
-        if (type === 'office') {
+        if (type === 'office' || type === 'pdf') {
+            if (!compressionSupported()) throw stripError('UNSUPPORTED_BROWSER', 'This browser cannot remove metadata from this file');
             var ctx = { budget: { left: MAX_INFLATED_BYTES }, depth: 0, incomplete: incomplete };
-            out = await stripOoxml(entries, ctx);
+            out = type === 'office' ? await stripOoxml(entries, ctx) : await stripPdf(b, ctx);
         } else {
             orientation = readOrientation(b);
             out = type === 'jpeg' ? stripJpeg(b) : stripPng(b);
