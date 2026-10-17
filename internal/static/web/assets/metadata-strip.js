@@ -1224,6 +1224,7 @@
         var size = d.map.Size ? d.map.Size.v : 0;
         var index = d.map.Index && d.map.Index.t === 'arr' ? d.map.Index.items.map(function (x) { return x.v; }) : [0, size];
         var rowLen = w[0] + w[1] + w[2], pos = 0;
+        if (rowLen === 0) return null;
         function field(width, dflt) {
             if (!width) return dflt;
             var v = 0;
@@ -1231,8 +1232,9 @@
             return v;
         }
         for (var s = 0; s + 1 < index.length; s += 2) {
-            for (var k = 0; k < index[s + 1]; k++) {
-                if (pos + rowLen > data.length) return d;
+            var count = Math.min(index[s + 1], Math.floor((data.length - pos) / rowLen));
+            if (!(count >= 0) || entries.length + count > 10000000) return null;
+            for (var k = 0; k < count; k++) {
                 var type = field(w[0], 1), f2 = field(w[1], 0), f3 = field(w[2], 0);
                 if (type === 1) entries.push({ n: index[s] + k, g: f3, type: 1, off: f2 });
                 else if (type === 2) entries.push({ n: index[s] + k, g: 0, type: 2, stm: f2, idx: f3 });
@@ -1326,10 +1328,17 @@
         chain.entries.forEach(function (e) {
             if (e.type !== 1) return;
             var at = skipPdfWs(S, e.off + chain.shift);
-            // Slightly-off offsets are common; accept the object nearby.
-            var known = (byNum[e.n + ' ' + e.g] || []).some(function (o) { return Math.abs(o.off - at) <= 64; });
-            if (known) return;
+            var same = byNum[e.n + ' ' + e.g] || [];
+            if (same.some(function (o) { return o.off === at; })) return;
             var h = parseHeader(S, at);
+            if (!(h && h.n === e.n && h.g === e.g)) {
+                // Slightly-off offsets are common: accept a scanned object
+                // with this number nearby, unless the offset lands inside
+                // some other object.
+                var near = same.some(function (o) { return Math.abs(o.off - at) <= 64; });
+                var inside = objects.some(function (o) { return at > o.off && at < o.end && !(o.n === e.n && o.g === e.g); });
+                if (near && !inside) return;
+            }
             if (h && h.n === e.n && h.g === e.g) {
                 try {
                     var x = readPdfObject(S, at, h.n, h.g, h.body, ints);

@@ -332,6 +332,36 @@ async function edgeCases() {
             JSON.stringify(r.incomplete));
     }
 
+    // A decoy with the same number close by doesn't excuse the real object
+    // the xref points at (hidden inside another object's stream)
+    {
+        let out = '%PDF-1.7\n1 0 obj\n' + CATALOG + '\nendobj\n2 0 obj\n' + PAGES + '\nendobj\n';
+        const decoy = out.length;
+        out += '4 0 obj\n<< >>\nendobj\n';
+        const body = '4 0 obj\n<< /Type /Annot /Subtype /Text /T (Bob) >>\nendobj\n';
+        out += '3 0 obj\n<< /Length ' + body.length + ' >>\nstream\n' + body + '\nendstream\nendobj\n';
+        const real = out.indexOf('4 0 obj', decoy + 1);
+        const third = out.indexOf('3 0 obj');
+        const xref = out.length;
+        out += 'xref\n0 5\n0000000000 65535 f \n' + [9, out.indexOf('2 0 obj'), third, real].map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+        out += 'trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+        const r = await M.stripMetadata(u8(Buffer.from(out, 'latin1')));
+        check('decoy nearby does not hide the object the xref points at (' + (real - decoy) + ' bytes apart)',
+            !Buffer.from(r.data).includes('(Bob)'), JSON.stringify(r.incomplete));
+    }
+
+    // A cross-reference stream with zero-width entries doesn't loop forever
+    {
+        const data = require('zlib').deflateSync(Buffer.from('abc')).toString('latin1');
+        let out = '%PDF-1.7\n1 0 obj\n' + CATALOG + '\nendobj\n';
+        const xo = out.length;
+        out += '2 0 obj\n<< /Type /XRef /W [0 0 0] /Index [0 2000000000] /Size 3 /Root 1 0 R /Filter /FlateDecode /Length ' +
+            data.length + ' >>\nstream\n' + data + '\nendstream\nendobj\nstartxref\n' + xo + '\n%%EOF\n';
+        const t2 = Date.now();
+        await M.stripMetadata(u8(Buffer.from(out, 'latin1')));
+        check('zero-width xref stream entries handled quickly', Date.now() - t2 < 1000, (Date.now() - t2) + ' ms');
+    }
+
     // Attachments without /Type /EmbeddedFile are recognised through /EF
     const untypedAttach = await M.stripMetadata(u8(makePdf([CATALOG, PAGES,
         '<< /Type /Filespec /F (a.txt) /EF << /F 4 0 R >> >>', '<< /Length 8 >>\nstream\nsecret!!\nendstream'])));
