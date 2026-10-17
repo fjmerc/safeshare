@@ -85,6 +85,8 @@
 
     // True when this server enforces E2E but the browser cannot do it
     let uploadBlocked = false;
+    // False until /api/config has loaded; padding fails closed while unknown
+    let serverConfigLoaded = false;
     // One-time notices about metadata stripping
     let metadataNoticeShown = false;
     let orientationNoticeShown = false;
@@ -168,6 +170,7 @@
             const response = await fetch('/api/config');
             if (response.ok) {
                 serverConfig = await response.json();
+                serverConfigLoaded = true;
                 console.log('Server config loaded:', serverConfig);
 
                 // Display version in footer
@@ -1068,7 +1071,9 @@
                 // real length, and the filename only if Hide filename is on.
                 // Otherwise: hiding the filename wraps [SF01 magic + filename + data]; with the
                 // filename visible, the raw bytes are encrypted.
-                const padUpload = !!serverConfig.anonymous_mode;
+                // If the config never loaded the mode is unknown: pad anyway (fail closed).
+                // Decryption handles padded payloads in every mode; the cost is ≤12% size.
+                const padUpload = !serverConfigLoaded || !!serverConfig.anonymous_mode;
                 const payload = padUpload
                     ? SafeShareCrypto.wrapPayloadPadded(hideFilename ? selectedFile.name : '', arrayBuffer, maxFileSizeBytes)
                     : (hideFilename

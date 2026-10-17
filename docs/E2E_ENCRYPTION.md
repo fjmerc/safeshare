@@ -118,7 +118,7 @@ An `SF02` payload is rejected (the download shows an error and nothing is saved)
 
 ### Size Padding (Anonymous Mode)
 
-The server stores ciphertext, so the stored size would otherwise be the file size plus 28 bytes. When `GET /api/config` reports `anonymous_mode: true`, the browser pads the framed payload to a bucket **before encryption**, so the padding is authenticated by GCM and indistinguishable from the rest of the ciphertext. Other modes are unchanged: no padding, same formats as before.
+The server stores ciphertext, so the stored size would otherwise be the file size plus 28 bytes. When `GET /api/config` reports `anonymous_mode: true`, the browser pads the framed payload to a bucket **before encryption**, so the padding is authenticated by GCM and indistinguishable from the rest of the ciphertext. Other modes are unchanged: no padding, same formats as before. If the browser can't load `/api/config`, it pads anyway, because the mode is unknown and padding is the safe default.
 
 - **Scheme: PADME** (Nikitin et al., "Reducing Metadata Leakage from Encrypted Files and Communication with PURBs", PETS 2019). The padded length keeps only the top bits of the length significant. Overhead is at most about 12% and shrinks as files grow, and the bucket leaks O(log log n) bits about the length. Power-of-two buckets would add up to 100% (a 300 MB file would become 512 MB in browser memory).
 - **Floor:** payloads smaller than 4096 bytes are padded to 4096, so notes and keys are not in fine-grained buckets of their own.
