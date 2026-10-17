@@ -96,9 +96,10 @@ The server can't strip metadata from ciphertext. When `STRIP_METADATA=true`, the
 
 - **JPEG**: APP1–APP15 segments (EXIF, GPS, XMP, IPTC, maker notes, ICC profiles) and comments are removed, including any between progressive scans. The JFIF header keeps no embedded thumbnail, and anything after the end-of-image marker (secondary images, vendor trailers) is dropped. The Adobe APP14 colour-transform marker is kept so CMYK images still decode. Removing EXIF also removes the orientation flag, so the page warns when a photo may display rotated.
 - **PNG**: only image-rendering chunks are kept (`IHDR`, `PLTE`, `IDAT`, `IEND`, `tRNS`, `cHRM`, `gAMA`, `iCCP`, `sBIT`, `sRGB`, `bKGD`, `pHYs` and the APNG animation chunks). Text, EXIF, timestamps, private chunks and anything after `IEND` are removed.
-- **Anything else** (PDF, Office documents, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
+- **Office documents** (Word, Excel and PowerPoint: `.docx`, `.xlsx`, `.pptx` and their macro-enabled versions): the document properties (author, last editor, company, manager, title, template, timestamps, custom properties) and custom XML data stores are emptied. Comment and tracked-change authors, initials and dates, the people and persons lists, shared-workbook user names, and the account IDs and e-mail addresses Office stores with them are cleared. Word revision-session IDs (`rsid`) and document IDs, Excel's save path and revision ID, the attached template's path and printer names are removed. Embedded JPEG and PNG images are stripped as above. Every zip entry's timestamp, comment and extra fields, and the archive comment, are cleared. The text, formatting, comments and tracked changes themselves are kept. Thumbnails, hyperlinks and links to other files are kept too. This needs the browser's built-in compression streams (any current browser, including Tor Browser).
+- **Anything else** (PDF, OpenDocument, older `.doc`/`.xls`/`.ppt` files, video, audio) is uploaded as is, with a warning. Scrub those files before uploading, for example with [mat2](https://0xacab.org/jvoisin/mat2).
 
-In anonymous mode, if the browser can't parse a JPEG or PNG to strip it, the upload is stopped instead of sending the original.
+In anonymous mode the upload is stopped instead of sending the original when a JPEG, PNG or Office file can't be stripped: it can't be parsed, it's password-protected, an Office file is over 100 MB, or the browser lacks compression streams.
 
 ## Technical Details
 
@@ -182,7 +183,7 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
 | Admin file inspection | Not applicable | Admins can see file metadata (size, upload time, claim code) but cannot read E2EE file contents. |
 | Import tool (`cmd/import-file`) | Not supported | The CLI import tool does not perform client-side encryption. Use standard server-side encryption at rest for imported files. |
-| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG and PNG metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
+| Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG, PNG and Office (docx/xlsx/pptx) metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
 | Malware scanning | Not compatible | Ciphertext can't be scanned. With `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, E2EE uploads are rejected and the toggle is hidden. |
 
 ## Security Properties

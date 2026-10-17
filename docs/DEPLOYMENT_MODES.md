@@ -44,7 +44,7 @@ flowchart TD
 | **User authentication** | None | Optional | Required | Required; MFA and SSO available (MFA enrollment not yet enforced) |
 | **IP logging** | Never received (Tor); not stored or logged | Logged | Logged | Logged + tamper-evident |
 | **File content visibility** | None: browser encryption required | Server-side encrypted | Server-side encrypted | Server-side encrypted |
-| **Metadata stripping** | In browser before upload (JPEG, PNG) | Off by default | Off by default | Off by default |
+| **Metadata stripping** | In browser before upload (JPEG, PNG, Office) | Off by default | Off by default | Off by default |
 | **Network access** | Tor only | Clearnet | Clearnet + proxy | Clearnet + proxy |
 | **Abuse prevention** | Minimal | Basic rate limits | Full controls | Full controls + audit |
 | **Audit trail** | None (by design: the audit log is off in anonymous mode) | Tamper-evident audit log (on by default) + application logs | Tamper-evident audit log + structured JSON logs | Tamper-evident audit log + structured JSON logs + scheduled backups |
@@ -144,7 +144,7 @@ These limits are inherent to the design. Plan around them rather than assuming t
 - **Browser encryption is checked by flag, not proven.** The server can't tell ciphertext from plaintext. Requiring the flag protects honest uploaders from sending plaintext by mistake. It doesn't stop someone who deliberately uploads plaintext with the flag set.
 - **Uploading needs Tor Browser or another browser with Web Crypto.** Tor Browser treats `.onion` pages as secure contexts, so encryption works over `http://`. Browsers that don't (for example Chromium behind a Tor proxy) are shown a message and can't upload. The SDKs and the import tool don't encrypt client-side, so they can't upload to a Ghost server.
 - **Files are encrypted in browser memory.** Very large files (warned above 500 MB) can exhaust the tab's memory. Padding adds up to about 12% to the stored size, which counts toward the quota and `MAX_FILE_SIZE`.
-- **Metadata stripping covers JPEG and PNG only.** Other formats keep their metadata. Tell sources to scrub them first, for example with [mat2](https://0xacab.org/jvoisin/mat2). If a JPEG or PNG can't be parsed, the upload is stopped rather than sent unstripped. For uploads the server can strip (only when `REQUIRE_CLIENT_ENCRYPTION=false`), a failure, a file over 100 MB, or an encrypted PDF is rejected with `422 METADATA_STRIP_FAILED`.
+- **Metadata stripping covers JPEG, PNG and Office (docx/xlsx/pptx) files only.** Other formats, including PDF, keep their metadata. Tell sources to scrub them first, for example with [mat2](https://0xacab.org/jvoisin/mat2). If one of the supported files can't be stripped, the upload is stopped rather than sent unstripped (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#metadata-stripping-and-e2ee)). For uploads the server can strip (only when `REQUIRE_CLIENT_ENCRYPTION=false`), a failure, a file over 100 MB, or an encrypted PDF is rejected with `422 METADATA_STRIP_FAILED`.
 - **The server still knows some things about each file.** It knows the size bucket of the ciphertext (the browser pads each upload to a PADME bucket, so it sees the bucket, not the exact size; the bucket still narrows the size to within about 12%), upload and expiry times (stored rounded to the hour, so a file can outlive its requested expiry by up to 59 minutes), download counts and the claim code. It also knows the filename unless **Hide filename** is checked, which is the default in Ghost mode. The admin dashboard shows these. They are deleted when the file expires. Rounding covers the database only: container and reverse-proxy request logs still carry exact times until they rotate, and the database outlives them. The stored files on disk also keep their operating-system modification times.
 - **Rate limits are shared by everyone.** Every Tor visitor arrives from the Tor container's address, so each per-IP limit is one budget for the whole service. That includes the login lockout. One heavy user can use it up for everyone until the hour rolls over. Size the limits above as service-wide ceilings.
 - **Turning on anonymous mode doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before `ANONYMOUS_MODE=true` was set stay in the database until those files expire or you delete them. Start Ghost deployments on a fresh database.
@@ -499,7 +499,7 @@ Comprehensive mapping of every major feature to its recommended deployment mode.
 |---------|:-----:|:--------:|:--------:|:--------:|
 | **Anonymous uploads** | On | On | Off | Off |
 | **Anonymous mode (IP redaction)** | On | Off | Off | Off |
-| **Metadata stripping** | On (in browser: JPEG, PNG) | Off | Off | Off |
+| **Metadata stripping** | On (in browser: JPEG, PNG, Office) | Off | Off | Off |
 | **Tor hidden service** | Yes | No | No | No |
 | **E2E encryption (client-side)** | Required (`REQUIRE_CLIENT_ENCRYPTION`) | Available | Available | Available |
 | **Encryption at rest (server-side)** | On | On | On | On |

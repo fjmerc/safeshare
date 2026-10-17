@@ -1054,7 +1054,7 @@
                 // The server can't strip metadata from ciphertext, so do it here first
                 if (serverConfig.strip_metadata && window.SafeShareMetadata) {
                     progressText.textContent = 'Removing metadata...';
-                    arrayBuffer = stripMetadataForUpload(arrayBuffer);
+                    arrayBuffer = await stripMetadataForUpload(arrayBuffer);
                 } else if (serverConfig.strip_metadata) {
                     // Stripper failed to load. Ghost mode is blocked at init; here, warn and continue.
                     showToast('Metadata removal is unavailable (script failed to load); uploading without it.', 'warning', 6000);
@@ -1120,25 +1120,40 @@
         }
     }
 
-    // Strip JPEG/PNG metadata in the browser. Ghost mode fails closed; otherwise
-    // falls back to the original bytes with a warning. Other types pass through
-    // with a one-time notice.
-    function stripMetadataForUpload(arrayBuffer) {
+    // Why metadata couldn't be removed, by SafeShareMetadata error code
+    function metadataFailureReason(err) {
+        switch (err && err.code) {
+            case 'UNSUPPORTED_BROWSER':
+                return 'This browser can\'t remove metadata from Office files. Use an up-to-date browser (Tor Browser, Firefox, Chrome or Safari)';
+            case 'TOO_LARGE':
+                return 'This file is too large (over 100 MB) to remove its metadata in the browser';
+            case 'ENCRYPTED':
+                return 'This file is password-protected or encrypted, so its metadata can\'t be removed';
+            default:
+                return 'Could not remove metadata from this file';
+        }
+    }
+
+    // Strip metadata in the browser (JPEG, PNG and Office files). Ghost mode
+    // fails closed; otherwise falls back to the original bytes with a warning.
+    // Other types pass through with a one-time notice.
+    async function stripMetadataForUpload(arrayBuffer) {
         let result;
         try {
-            result = SafeShareMetadata.stripMetadata(arrayBuffer);
+            result = await SafeShareMetadata.stripMetadata(arrayBuffer);
         } catch (err) {
+            const reason = metadataFailureReason(err);
             if (serverConfig.anonymous_mode) {
-                const abort = new Error('Could not remove metadata from this image, so the upload was stopped. Re-save or scrub the file (for example with mat2) and try again.');
+                const abort = new Error(reason + ', so the upload was stopped. Scrub the file first (for example with mat2) and try again.');
                 abort.metadataAbort = true;
                 throw abort;
             }
-            showToast('Could not remove metadata from this image; uploading it unchanged.', 'warning', 6000);
+            showToast(reason + '; uploading it unchanged.', 'warning', 6000);
             return arrayBuffer;
         }
         if (!result.supported && !metadataNoticeShown) {
             metadataNoticeShown = true;
-            showToast('Metadata in this file type (PDF, Office, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
+            showToast('Metadata in this file type (PDF, video and others) cannot be removed in the browser. Scrub it first, for example with mat2.', 'warning', 8000);
         }
         if (result.orientation && result.orientation !== 1 && !orientationNoticeShown) {
             orientationNoticeShown = true;

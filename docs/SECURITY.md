@@ -200,7 +200,7 @@ docker run -e ANONYMOUS_MODE=true ...
 
 **Contents**
 - **Client-side encryption required**: `REQUIRE_CLIENT_ENCRYPTION` defaults to on. Uploads not marked as encrypted in the browser are refused with `400 CLIENT_ENCRYPTION_REQUIRED`. See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) for what that does and doesn't guarantee
-- **Metadata stripping**: `STRIP_METADATA` defaults to on. The browser strips JPEG and PNG metadata before encrypting. When the server strips (only possible with `REQUIRE_CLIENT_ENCRYPTION=false`), a file it can't strip is rejected with `422 METADATA_STRIP_FAILED` instead of being stored with its metadata. That includes files over 100 MB and encrypted PDFs
+- **Metadata stripping**: `STRIP_METADATA` defaults to on. The browser strips JPEG, PNG and Office (docx/xlsx/pptx) metadata before encrypting. When the server strips (only possible with `REQUIRE_CLIENT_ENCRYPTION=false`), a file it can't strip is rejected with `422 METADATA_STRIP_FAILED` instead of being stored with its metadata. That includes files over 100 MB and encrypted PDFs
 
 **Records**
 - **No content hash**: the SHA-256 of uploads isn't stored or returned by `/api/claim/{code}/info`, so the server can't be used to confirm that a known document was shared
