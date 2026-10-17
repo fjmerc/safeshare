@@ -1159,16 +1159,16 @@
         return { objects: objects, trailers: trailers, trailerFailed: trailerFailed };
     }
 
-    // Everything that might be read as an object header by a lenient
-    // reader: any whitespace JS knows (plus NUL) between the parts, and no
-    // word character right after "obj".
-    function countLooseHeaders(S) {
-        var re = /\d{1,10}[\s\0]+\d{1,5}[\s\0]+obj(?!\w)/g, count = 0, m;
+    // Where anything that might be read as an object header by a lenient
+    // reader starts: any whitespace JS knows (plus NUL) between the parts,
+    // and no word character right after "obj".
+    function looseHeaderOffsets(S) {
+        var re = /\d{1,10}[\s\0]+\d{1,5}[\s\0]+obj(?!\w)/g, found = [], m;
         while ((m = re.exec(S)) !== null) {
             var prev = S.charCodeAt(m.index - 1);
-            if (!(prev >= 48 && prev <= 57)) count++;
+            if (!(prev >= 48 && prev <= 57)) found.push(m.index);
         }
-        return count;
+        return found;
     }
 
     // Undo PNG predictors (as used by cross-reference streams): rows of
@@ -1388,9 +1388,11 @@
         // name document information we never see.
         if (scan.trailerFailed) ctx.incomplete.push('unreadable trailer');
         // Without usable cross-reference data a reader rebuilds it by looking
-        // for object headers anywhere, with looser rules than ours. If a
-        // loose count finds more than we processed, report the file.
-        if (chain.broken && countLooseHeaders(S) > objects.length) {
+        // for object headers anywhere, with looser rules than ours. Every
+        // loose match must be where an object we processed starts.
+        var starts = {};
+        objects.forEach(function (o) { starts[o.off] = true; });
+        if (chain.broken && looseHeaderOffsets(S).some(function (at) { return !starts[at]; })) {
             ctx.incomplete.push('objects hidden inside other objects (damaged cross-reference data)');
         }
 
