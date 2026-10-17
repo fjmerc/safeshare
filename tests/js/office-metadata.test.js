@@ -490,14 +490,55 @@ async function hostileCases() {
         }, [[at, TAG]]), true);
     }
 
+    // An XML part under a binary name (Office goes by content type and
+    // relationships): it must not be copied unchanged
+    const moved = (fixture, from, to, relsPart) => variant(fixture, {
+        [from]: (t) => [to, t],
+        [relsPart]: rep(path.posix.basename(from), path.posix.basename(to)),
+        '[Content_Types].xml': rep('/' + from + '"', '/' + to + '"'),
+    });
+    for (const ext of ['emf', 'ttf', 'odttf', 'fntdata', 'svg', 'bmp']) {
+        await failsClosed('hostile comments part named .' + ext, moved('sample.docx', 'word/comments.xml', 'word/comments.' + ext, DOCRELS));
+    }
+    await failsClosed('hostile main document named .ttf', variant('sample.docx', {
+        'word/document.xml': (t) => ['word/document.ttf', t], '_rels/.rels': rep('word/document.xml', 'word/document.ttf'),
+        '[Content_Types].xml': rep('/word/document.xml"', '/word/document.ttf"'),
+        'word/_rels/document.xml.rels': (t) => ['word/_rels/document.ttf.rels', t] }));
+    await failsClosed('hostile comments as printer settings', variant('sample.xlsx', {
+        'xl/comments1.xml': (t) => ['xl/printerSettings/c.bin', t],
+        'xl/worksheets/_rels/sheet1.xml.rels': rep('../comments1.xml', '../printerSettings/c.bin'),
+        '[Content_Types].xml': rep('/xl/comments1.xml"', '/xl/printerSettings/c.bin"') }));
+
+    // Names with non-ASCII characters (a prefix like "wé:") and values that
+    // only mean something once decoded
+    await failsClosed('hostile non-ASCII prefix on authors', variant('sample.docx', {
+        'word/comments.xml': rep('<w:comment ', '<w:comment xmlns:wé="http://schemas.openxmlformats.org/wordprocessingml/2006/main" wé:author="ZQX7731" ') }));
+    await failsClosed('hostile non-ASCII Relationship prefix', variant('sample.docx', {
+        'word/_rels/settings.xml.rels': rep('<Relationship ', '<ré:Relationship xmlns:ré="http://schemas.openxmlformats.org/package/2006/relationships" ') }));
+    const link = (target, mode) => ({ [DOCRELS]: rep('</Relationships>', '<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/' +
+        'hyperlink" Target="' + target + '" TargetMode="' + mode + '"/></Relationships>') });
+    await failsClosed('hostile entity-encoded UNC target', variant('sample.docx', link('&#92;&#92;srv\\ZQX7731\\a.docx', 'External')));
+    await failsClosed('hostile entity-encoded drive target', variant('sample.docx', link('&#67;:/Users/ZQX7731/a.docx', 'External')));
+    await failsClosed('hostile entity-encoded file: target', variant('sample.docx', link('&#102;ile:///C:/Users/ZQX7731/a.docx', 'External')));
+    await failsClosed('hostile entity in TargetMode', variant('sample.docx', { [DOCRELS]: rep('</Relationships>',
+        '<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" ' +
+        'Target="https://corp-my.sharepoint.com/personal/ZQX7731/x.xlsx" TargetMode="Ext&#101;rnal"/></Relationships>') }));
+    for (const date of ['&#50;031-02-03T04:05:06Z', ' 2031-02-03T04:05:06Z']) {
+        const r = await M.stripMetadata(u8(variant('sample.docx', { 'word/comments.xml': rep('w:date="2031-02-03T04:05:06Z"', 'w:date="' + date + '"') })));
+        check('hostile date ' + JSON.stringify(date) + ' reset', !zipText(r.data).includes('031-02-03'), JSON.stringify(r.incomplete));
+    }
+    // A local path in an attribute no rule knows about
+    await failsClosed('unknown attribute with a local path', variant('sample.docx', {
+        'word/document.xml': rep('<w:body>', '<w:body><w:p w14:paraId="1" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:x="C:\\Users\\ZQX7731\\a.docx"/>') }), true);
+
     // Many comments before the root used to make a regex backtrack exponentially
     const t0 = Date.now();
     await failsClosed('comments before the root', variant('sample.docx', { 'word/document.xml': (t) => t.replace('<w:document', '<!---->'.repeat(40) + '<w:document') }));
     check('comments before the root are fast', Date.now() - t0 < 5000, (Date.now() - t0) + ' ms');
 }
 
-// Rejected, or a part reported as not cleaned, or no sentinel in the output.
-// mustReport: the sentinel's part must be reported (it can't be cleaned).
+// Rejected, or every part still holding the sentinel is itself reported as
+// not cleaned. mustReport: some part must be reported (it can't be cleaned).
 async function failsClosed(label, buf, mustReport) {
     let r;
     try {
@@ -506,10 +547,12 @@ async function failsClosed(label, buf, mustReport) {
         check(label + ': rejected', e.code === 'MALFORMED', e.code + ' ' + e.message);
         return;
     }
-    const leaked = zipText(r.data).includes('ZQX7731');
+    const reported = (n) => r.incomplete.some((i) => i === n || i.startsWith(n + ' ('));
+    const leaking = unzip(r.data).filter(([, d]) => d.toString('latin1').includes('ZQX7731')).map(([n]) => n);
+    const unreported = leaking.filter((n) => !reported(n));
     check(label + (r.incomplete.length ? ': reported ' + JSON.stringify(r.incomplete) : ': cleaned'),
-        mustReport ? r.incomplete.length > 0 : (r.incomplete.length > 0 || !leaked),
-        'incomplete=' + JSON.stringify(r.incomplete) + ' leaked=' + leaked);
+        unreported.length === 0 && (!mustReport || r.incomplete.length > 0),
+        'unreported parts with the sentinel: ' + JSON.stringify(unreported));
 }
 
 (async () => {

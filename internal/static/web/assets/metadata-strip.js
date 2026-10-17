@@ -474,6 +474,11 @@
         'http://schemas.microsoft.com/office/powerpoint/2015/10/main': 'revInfo',
         'http://schemas.microsoft.com/office/powerpoint/2013/main/command': 'chgInfo'
     };
+    // Newer than the SDK's list: Microsoft 365 Word's editor state (hashes and
+    // flags of checked text) and Excel's pictures in cells.
+    SCRUBBED_ROOTS['http://schemas.microsoft.com/office/intelligence/2019/intelligence'] = 'intelligence';
+    SCRUBBED_ROOTS['http://schemas.microsoft.com/office/intelligence/2020/intelligence'] = 'intelligence';
+    SCRUBBED_ROOTS['http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel'] = 'richValueRels';
     var ROOT_TEMPLATES = {};
     ROOT_TEMPLATES[CUSTOM_XML_NS + ' datastoreItem'] = 'customItemProps';
     ROOT_TEMPLATES['http://schemas.openxmlformats.org/package/2006/metadata/core-properties coreProperties'] = 'core';
@@ -507,9 +512,20 @@
     var VAL = '\\s*=\\s*(?:"[^"]*"|\'[^\']*\')';
     var FULL = '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'; // a non-empty value
     var WHO = '(?:author|initials|userId|providerId|userName|refreshedBy)';
-    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created|refreshedDateIso|timeString)';
-    // Elements whose name attribute is a person
-    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1 };
+    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created|refreshedDateIso|timeString|serverSldModifiedTime|clientInsertedTime)';
+    // Elements whose name attribute is a person (an Excel shared workbook's
+    // personal views are named "<user> - Personal View")
+    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1, customWorkbookView: 1 };
+    // Attributes removed from some elements: a pasted picture's source file
+    // (VML), a web query's or database query's source (which can be a local
+    // file), and OneDrive drive and item IDs of a linked workbook.
+    var DROPPED_ATTRS = {
+        imagedata: /\s(?:[A-Za-z_][\w.-]*:)?(?:href|src)\s*=\s*(?:"[^"]*"|'[^']*')/g,
+        fill: /\s(?:[A-Za-z_][\w.-]*:)?(?:href|src)\s*=\s*(?:"[^"]*"|'[^']*')/g,
+        webPr: /\s(?:url|sourceData)\s*=\s*(?:"[^"]*"|'[^']*')/g,
+        dbPr: /\scommand\s*=\s*(?:"[^"]*"|'[^']*')/g,
+        alternateUrls: /\s(?:driveId|itemId)\s*=\s*(?:"[^"]*"|'[^']*')/g
+    };
 
     var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
     var RE_USER_NAME = new RegExp('\\s' + P + 'userName' + VAL, 'g');
@@ -519,7 +535,7 @@
     var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
     var RE_DISPLAY_NAME = new RegExp('(\\s' + P + 'displayName)' + VAL, 'g'); // Excel persons (tables use it too)
     var RE_ID = new RegExp('(\\sid)' + VAL, 'g');
-    var RE_DATE = new RegExp('(\\s' + P + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
+    var RE_DATE = new RegExp('(\\s' + P + DATE_ATTR + ')' + FULL, 'g');
     var RE_REFRESHED = new RegExp('(\\srefreshedDate)' + VAL, 'g');
     var RE_RSID = new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*' + VAL, 'g');
     var RE_SECURITY = new RegExp('\\s' + P + 'securityDescriptor' + VAL, 'g');
@@ -529,19 +545,22 @@
     var RE_SOURCE_FILE = new RegExp('(\\s(?:odcFile|sourceFile))' + VAL, 'g');
     var RE_CONNECTION = new RegExp('(\\sconnection)' + VAL, 'g');
     var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
-    var RE_EXTERNAL = /\sTargetMode\s*=\s*["']External["']/;
-    var RE_HYPERLINK_TYPE = /\sType\s*=\s*["'][^"']*\/hyperlink["']/;
+    // Relationship decisions are made on decoded, trimmed values (Office
+    // reads "&#67;:\..." as "C:\...").
+    var RE_HYPERLINK_TYPE = /\/hyperlink$/;
     // Online video and audio (e.g. a YouTube video on a slide). Linked
     // pictures aren't included: they usually live in the author's own storage.
-    var RE_WEB_MEDIA = /\sType\s*=\s*["'][^"']*\/(?:video|audio|media)["']/;
-    var RE_WEB_TARGET = /\sTarget\s*=\s*["']\s*https?:/i;
+    var RE_WEB_MEDIA = /\/(?:video|audio|media)$/;
+    var RE_WEB_TARGET = /^https?:/i;
     // Personal cloud storage names its owner (…-my.sharepoint.com/personal/<user>)
-    var RE_PERSONAL_TARGET = /\sTarget\s*=\s*["'][^"']*(?:-my\.sharepoint\.com|onedrive\.live\.com|1drv\.ms|\/personal\/)/i;
-    var RE_TEMPLATE_TYPE = /\sType\s*=\s*["'][^"']*\/attachedTemplate["']/;
+    var RE_PERSONAL_TARGET = /-my\.sharepoint\.com|onedrive\.live\.com|1drv\.ms|\/personal\//i;
+    var RE_TEMPLATE_TYPE = /\/attachedTemplate$/;
     // Local and relative paths (file:, C:\, \\server, /Users/..., ../..)
-    var RE_LOCAL_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
+    var RE_LOCAL_TARGET = /^(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
     // Paths that are never package parts, whatever the target mode
-    var RE_ABSOLUTE_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
+    var RE_ABSOLUTE_TARGET = /^(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
+    // Attribute values that are local file paths (checked after scrubbing)
+    var RE_LOCAL_PATH = /^(?:file:|[A-Za-z]:[\\/]|\\\\|\/(?:Users|home)\/|~\/)/i;
 
     function tagName(tag) {
         var m = /^<\/?(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
@@ -573,7 +592,7 @@
 
     var STOP_WALK = {};
     // The root element's local name and namespace URI; null if there's none.
-    function rootElement(xml) {
+    function rootElement(xml, allowDoctype) {
         var root = null;
         try {
             walkXml(xml, function (kind, token) {
@@ -581,7 +600,7 @@
                     root = token;
                     throw STOP_WALK;
                 }
-            });
+            }, allowDoctype);
         } catch (e) {
             if (e !== STOP_WALK) throw e;
         }
@@ -624,16 +643,20 @@
         if (n.local === 'client') tag = tag.replace(RE_ID, '$1=""'); // PowerPoint revisionInfo
         if (n.local === 'absPath') tag = tag.replace(RE_URL, '$1=""');
         if (n.local === 'dbPr') tag = tag.replace(RE_CONNECTION, '$1=""');
+        if (DROPPED_ATTRS[n.local]) tag = tag.replace(DROPPED_ATTRS[n.local], '');
         if (n.local === 'Relationship') {
             // External targets other than web hyperlinks and online media
             // point at the author's files (templates, linked workbooks and
             // objects, mail merge sources); hyperlinks lose only local and
-            // relative paths.
-            var external = RE_EXTERNAL.test(tag);
-            var web = RE_HYPERLINK_TYPE.test(tag) ||
-                (RE_WEB_MEDIA.test(tag) && RE_WEB_TARGET.test(tag) && !RE_PERSONAL_TARGET.test(tag));
-            if (RE_TEMPLATE_TYPE.test(tag) || (external && !web) || (external && RE_LOCAL_TARGET.test(tag)) ||
-                RE_ABSOLUTE_TARGET.test(tag)) {
+            // relative paths. Any target mode other than Internal counts as
+            // external.
+            var a = tagAttrs(tag);
+            var mode = (a.TargetMode || '').trim(), type = (a.Type || '').trim(), target = (a.Target || '').trim();
+            var external = mode !== '' && mode !== 'Internal';
+            var web = RE_HYPERLINK_TYPE.test(type) ||
+                (RE_WEB_MEDIA.test(type) && RE_WEB_TARGET.test(target) && !RE_PERSONAL_TARGET.test(target));
+            if (RE_TEMPLATE_TYPE.test(type) || (external && !web) || (external && RE_LOCAL_TARGET.test(target)) ||
+                RE_ABSOLUTE_TARGET.test(target)) {
                 tag = tag.replace(RE_TARGET, '$1=""');
             }
         }
@@ -695,6 +718,10 @@
                         break;
                     } else if (c === 60) {
                         throw malformed('Unexpected < inside a tag');
+                    } else if (c > 0x7E) {
+                        // Office element and attribute names are ASCII; other
+                        // names (a prefix like "wé:") would slip past the rules
+                        throw malformed('Non-ASCII name in a tag');
                     } else if (c === 61) {
                         // '=' must be followed by a quoted value
                         var k = j + 1;
@@ -822,13 +849,16 @@
         new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
         new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
     ];
-    var RE_DATE_VALUE = new RegExp('\\s' + P + DATE_ATTR + '\\s*=\\s*["\'](\\d{4}-[^"\']*)', 'g');
+    var RE_DATE_VALUE = new RegExp('\\s' + P + DATE_ATTR + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\')', 'g');
 
     function officeLeftover(xml) {
         for (var i = 0; i < LEFTOVERS.length; i++) if (LEFTOVERS[i].test(xml)) return true;
         var m;
         RE_DATE_VALUE.lastIndex = 0;
-        while ((m = RE_DATE_VALUE.exec(xml)) !== null) if (m[1] !== EPOCH) return true;
+        while ((m = RE_DATE_VALUE.exec(xml)) !== null) {
+            var v = xmlUnescape(m[1] !== undefined ? m[1] : m[2]).trim();
+            if (v !== '' && v !== EPOCH) return true;
+        }
         return false;
     }
 
@@ -911,6 +941,59 @@
         return parts;
     }
 
+    // Each part's content type from [Content_Types].xml (Override by part
+    // name, else Default by extension). Office goes by content type and
+    // relationships, not file names, so an XML part named .emf is still XML.
+    async function contentTypes(entries, budget) {
+        var overrides = Object.create(null), defaults = Object.create(null);
+        for (var i = 0; i < entries.length; i++) {
+            if (partName(entries[i].name) !== '[content_types].xml') continue;
+            walkXml(decodeUtf8(await readEntry(entries[i], budget), entries[i].name), function (kind, token) {
+                if (kind !== 'tag' || token[1] === '/') return;
+                var n = tagName(token);
+                if (!n) return;
+                var a = tagAttrs(token);
+                var ct = (a.ContentType || '').trim().toLowerCase();
+                if (n.local === 'Override' && a.PartName !== undefined) overrides[partName(a.PartName.trim())] = ct;
+                if (n.local === 'Default' && a.Extension !== undefined) defaults[a.Extension.trim().toLowerCase()] = ct;
+            });
+        }
+        return function (lname) {
+            if (overrides[lname] !== undefined) return overrides[lname];
+            var dot = lname.lastIndexOf('.');
+            var ext = dot > lname.lastIndexOf('/') ? lname.slice(dot + 1) : '';
+            return defaults[ext] !== undefined ? defaults[ext] : '';
+        };
+    }
+    var XML_CONTENT_TYPE = /(?:[+/]xml)$/;
+
+    // XML that arrived where a binary part was expected (after an optional BOM
+    // and whitespace): Office would read it as XML, so it isn't copied as is.
+    function looksLikeXml(data) {
+        var i = 0;
+        if (data[0] === 0xEF && data[1] === 0xBB && data[2] === 0xBF) i = 3;
+        else if ((data[0] === 0xFF && data[1] === 0xFE) || (data[0] === 0xFE && data[1] === 0xFF)) return true;
+        while (i < data.length && (data[i] === 0x20 || data[i] === 0x09 || data[i] === 0x0A || data[i] === 0x0D)) i++;
+        return data[i] === 0x3C;
+    }
+
+    // Report attribute values that are still local file paths after scrubbing
+    // (a rule this scrubber doesn't have yet).
+    function hasLocalPath(xml) {
+        var found = false;
+        walkXml(xml, function (kind, token) {
+            if (found || kind !== 'tag' || token[1] === '/') return;
+            var a = tagAttrs(token);
+            for (var k in a) {
+                if (RE_LOCAL_PATH.test(a[k].trim())) {
+                    found = true;
+                    return;
+                }
+            }
+        });
+        return found;
+    }
+
     // A replacement part. Data store properties get a neutral item ID that is
     // still unique within the package.
     function template(kind, ctx) {
@@ -941,7 +1024,9 @@
         }
         if (props[lname]) return template(props[lname], ctx);
         if (CUSTOM_XML_PART.test(lname)) {
-            var store = rootElement(decodeUtf8(await readEntry(entry, ctx.budget), name));
+            // replaced either way; only which template depends on the root
+            var store = null;
+            try { store = rootElement(decodeUtf8(await readEntry(entry, ctx.budget), name)); } catch (e) { store = null; }
             return template(store && store.ns === CUSTOM_XML_NS && store.local === 'datastoreItem' ? 'customItemProps' : 'customItem', ctx);
         }
         if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
@@ -953,7 +1038,8 @@
             return null;
         }
 
-        if (XML_PART.test(lname)) {
+        var isSvg = /\.svg$/.test(lname) && !EMBEDDED_PART.test(lname);
+        if (XML_PART.test(lname) || (!isSvg && XML_CONTENT_TYPE.test(ctx.contentType(lname)))) {
             var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
             var action = rootAction(rootElement(xml));
             if (action !== 'scrub' && action !== 'incomplete') return template(action, ctx);
@@ -965,11 +1051,13 @@
             var scrubbed = scrubOfficeXml(xml);
             if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
             if (RE_LINKED_FIELD.test(scrubbed)) ctx.incomplete.push(name + ' (a field linking to a file)');
+            else if (hasLocalPath(scrubbed)) ctx.incomplete.push(name + ' (a local file path)');
             return scrubbed === xml ? null : new TextEncoder().encode(scrubbed);
         }
-        if (/\.svg$/.test(lname) && !EMBEDDED_PART.test(lname)) {
+        if (isSvg) {
             var svg = decodeUtf8(await readEntry(entry, ctx.budget), name);
-            var cleanSvg = scrubSvg(svg);
+            var svgRoot = rootElement(svg, true);
+            var cleanSvg = svgRoot && svgRoot.local === 'svg' ? scrubSvg(svg) : null;
             if (cleanSvg === null) {
                 ctx.incomplete.push(name);
                 return null;
@@ -981,6 +1069,7 @@
             // chars); the driver's private data (which can name users or
             // accounts) follows the dmSize-byte public part.
             var dev = await readEntry(entry, ctx.budget);
+            if (looksLikeXml(dev)) throw stripError('MALFORMED', 'Office part ' + name + ' is XML, not printer settings');
             if (dev.length < 64) return null;
             var copy = dev.slice();
             copy.fill(0, 0, 64);
@@ -990,7 +1079,10 @@
             }
             return copy;
         }
-        if (SAFE_BINARY.test(lname) && !EMBEDDED_PART.test(lname)) return null;
+        if (SAFE_BINARY.test(lname) && !EMBEDDED_PART.test(lname)) {
+            if (looksLikeXml(await readEntry(entry, ctx.budget))) throw stripError('MALFORMED', 'Office part ' + name + ' is XML, not an image or font');
+            return null;
+        }
 
         var data = await readEntry(entry, ctx.budget);
         var type = detectType(data);
@@ -1022,6 +1114,7 @@
     async function stripOoxml(entries, ctx) {
         if (!compressionSupported()) throw stripError('UNSUPPORTED_BROWSER', 'This browser cannot remove metadata from Office files');
         var props = await propertyParts(entries, ctx.budget);
+        ctx.contentType = await contentTypes(entries, ctx.budget);
         var out = [];
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i];
