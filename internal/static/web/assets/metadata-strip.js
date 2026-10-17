@@ -1156,13 +1156,19 @@
             // Anything else: step over one token.
             if (isRegular(S[i])) { while (i < n && isRegular(S[i])) i++; } else i++;
         }
-        return { objects: objects, trailers: trailers };
+        return { objects: objects, trailers: trailers, trailerFailed: trailerFailed };
     }
 
-    // True if S[from, to) contains something that looks like an object header.
-    var RE_HEADER_ANYWHERE = /(?:^|[^0-9])\d{1,10}[\0\t\n\f\r ]+\d{1,5}[\0\t\n\f\r ]+obj(?![^\0\t\n\f\r ()<>\[\]{}\/%])/;
-    function hasHiddenHeader(S, from, to) {
-        return to > from && RE_HEADER_ANYWHERE.test(S.slice(from, to));
+    // Everything that might be read as an object header by a lenient
+    // reader: any whitespace JS knows (plus NUL) between the parts, and no
+    // word character right after "obj".
+    function countLooseHeaders(S) {
+        var re = /\d{1,10}[\s\0]+\d{1,5}[\s\0]+obj(?!\w)/g, count = 0, m;
+        while ((m = re.exec(S)) !== null) {
+            var prev = S.charCodeAt(m.index - 1);
+            if (!(prev >= 48 && prev <= 57)) count++;
+        }
+        return count;
     }
 
     // Undo PNG predictors (as used by cross-reference streams): rows of
@@ -1378,10 +1384,13 @@
             ctx.incomplete.push('object listed in the cross-reference data but not found (object ' + e.n + ')');
         });
 
+        // A trailer that couldn't be read (later ones aren't retried) might
+        // name document information we never see.
+        if (scan.trailerFailed) ctx.incomplete.push('unreadable trailer');
         // Without usable cross-reference data a reader rebuilds it by looking
-        // for object headers anywhere, including inside other objects' stream
-        // data, where the scan above doesn't look. Report such a file.
-        if (chain.broken && objects.some(function (o) { return o.stream && hasHiddenHeader(S, o.stream.ds, o.stream.de); })) {
+        // for object headers anywhere, with looser rules than ours. If a
+        // loose count finds more than we processed, report the file.
+        if (chain.broken && countLooseHeaders(S) > objects.length) {
             ctx.incomplete.push('objects hidden inside other objects (damaged cross-reference data)');
         }
 

@@ -259,8 +259,10 @@ async function edgeCases() {
     const fake = makePdf([CATALOG, PAGES, '<< /Author (Bob) >>'], '/Info 3 0 R').toString('latin1')
         .replace('3 0 obj', '% 7 0 obj << /Foo 1 >> stream\n3 0 obj');
     const fk = await M.stripMetadata(u8(Buffer.from(fake, 'latin1')));
-    check('fake header in a comment ignored, real Info cleared', !Buffer.from(fk.data).includes('Bob') &&
-        fk.incomplete.length === 0,
+    // (The edit breaks the xref offsets, so the file also counts as damaged
+    // and the header-like comment gets it reported: fail closed.)
+    check('fake header in a comment ignored, real Info cleared, damaged file reported', !Buffer.from(fk.data).includes('Bob') &&
+        JSON.stringify(fk.incomplete) === '["objects hidden inside other objects (damaged cross-reference data)"]',
         JSON.stringify(fk.incomplete));
 
     // XMP behind ASCII85 + Flate is found; filters that can't be decoded are reported
