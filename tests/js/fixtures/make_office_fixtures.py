@@ -73,6 +73,12 @@ CUSTOM = DECL + ('<Properties xmlns="http://schemas.openxmlformats.org/officeDoc
                  '<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Owner">'
                  '<vt:lpwstr>%s@example.org</vt:lpwstr></property></Properties>') % S
 CUSTOM_ITEM = DECL + '<p:properties xmlns:p="urn:x"><Owner><DisplayName>%s</DisplayName></Owner></p:properties>' % S
+# SharePoint names its own list/field namespaces by GUID; they identify the site.
+CUSTOM_ITEM_PROPS = DECL.replace('yes', 'no') + (
+    '<ds:datastoreItem ds:itemID="{%s-0000-0000-0000-000000000001}" '
+    'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs>'
+    '<ds:schemaRef ds:uri="http://schemas.microsoft.com/office/2006/metadata/properties"/>'
+    '<ds:schemaRef ds:uri="%s-6b5d-4628-b7e0-5b86efa98958"/></ds:schemaRefs></ds:datastoreItem>') % (S, S)
 
 
 def png_with_text():
@@ -125,9 +131,12 @@ def common(ct_main):
         ('docProps/app.xml', APP),
         ('docProps/custom.xml', CUSTOM),
         ('customXml/item1.xml', CUSTOM_ITEM),
+        ('customXml/itemProps1.xml', CUSTOM_ITEM_PROPS),
+        ('customXml/_rels/item1.xml.rels', rels([('rId1', R + '/customXmlProps', 'itemProps1.xml', '')])),
         ('docProps/thumbnail.png', png_with_text()),
     ], (OV % ('docProps/core.xml', CORE_CT) + OV % ('docProps/app.xml', APP_CT) +
-        OV % ('docProps/custom.xml', CUSTOM_CT) + ct_main)
+        OV % ('docProps/custom.xml', CUSTOM_CT) +
+        OV % ('customXml/itemProps1.xml', 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml') + ct_main)
 
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -143,7 +152,10 @@ def docx():
         '<w:ins w:id="1" w:author="Inserter %s" w:date="%s"><w:r><w:t>Inserted.</w:t></w:r></w:ins>'
         '<w:commentRangeStart w:id="0"/><w:r><w:t>Commented.</w:t></w:r><w:commentRangeEnd w:id="0"/>'
         '<w:r><w:commentReference w:id="0"/></w:r></w:p>'
-        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE)
+        '<w:sdt><w:sdtPr><w:dataBinding w:prefixMappings="xmlns:ns0=\'%s-6b5d-4628-b7e0-5b86efa98958\'" '
+        'w:xpath="/root[1]/ns0:Owner[1]" w:storeItemID="{%s-0000-0000-0000-000000000001}"/></w:sdtPr>'
+        '<w:sdtContent><w:p><w:r><w:t>Bound field.</w:t></w:r></w:p></w:sdtContent></w:sdt>'
+        '<w:sectPr w:rsidR="00A1B2C3"/></w:body></w:document>') % (W, R, S, DATE, S, S)
     comments = DECL + ('<w:comments xmlns:w="%s"><w:comment w:id="0" w:author="Commenter %s" w:date="%s" w:initials="%s">'
                        '<w:p><w:r><w:t>Comment text</w:t></w:r></w:p></w:comment></w:comments>') % (W, S, DATE, S)
     people = DECL + ('<w15:people xmlns:w15="%s"><w15:person w15:author="Person %s">'

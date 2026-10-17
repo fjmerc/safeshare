@@ -404,6 +404,10 @@
         custom: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>',
         // customXml data stores (SharePoint columns, cover-page fields, ...)
         customItem: XML_DECL + '<root/>',
+        // their properties: SharePoint names its own schemas by GUIDs that
+        // identify the site, and the item ID is unique to the document
+        customItemProps: XML_DECL + '<ds:datastoreItem ds:itemID="{00000000-0000-0000-0000-ITEM}"' +
+            ' xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs/></ds:datastoreItem>',
         // Microsoft 365 sensitivity labels name the organisation (siteId)
         labels: XML_DECL + '<clbl:labelList xmlns:clbl="http://schemas.microsoft.com/office/2020/mipLabelMetadata"></clbl:labelList>'
     };
@@ -411,6 +415,7 @@
     var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom']];
 
     var CUSTOM_XML_ITEM = /^customxml\/item\d+\.xml$/;
+    var CUSTOM_XML_PROPS = /^customxml\/itemprops\d+\.xml$/;
     var XML_PART = /\.(?:xml|rels|vml)$/;
     var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
     var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
@@ -465,10 +470,12 @@
         return m ? { prefix: m[1] || '', local: m[2] } : null;
     }
 
-    // Elements removed whole (with their content).
+    // Elements removed whole (with their content). A content control's data
+    // binding names the custom XML store and its (SharePoint) namespaces;
+    // without it the control keeps its current text.
     function isRemovedElement(n) {
         return n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge' ||
-            (n.local === 'docId' && /^w\d*$/.test(n.prefix)) ||
+            ((n.local === 'docId' || n.local === 'dataBinding') && /^w\d*$/.test(n.prefix)) ||
             (n.local === 'revisionPtr' && /^xr\d*$/.test(n.prefix));
     }
 
@@ -679,7 +686,7 @@
         new RegExp('<' + P + 'author(?:\\s[^>]*[^/>]|\\s)?>\\s*(?:[^<\\s]|<!\\[CDATA)'),
         new RegExp('<' + P + 'person\\b[^>]*\\s' + P + 'displayName' + FULL),
         new RegExp('<' + P + '(?:rsids|docVars|mailMerge)\\b'),
-        /<w\d*:docId\b|<xr\d*:revisionPtr\b/,
+        /<w\d*:(?:docId|dataBinding)\b|<xr\d*:revisionPtr\b/,
         new RegExp('<' + P + 'absPath\\b[^>]*\\surl' + FULL),
         new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
         new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
@@ -761,6 +768,10 @@
         if (/^\[trash\]\//.test(lname)) return DROP; // stale data from earlier saves, unreferenced
         if (props[lname]) return new TextEncoder().encode(TEMPLATES[props[lname]]);
         if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(TEMPLATES.customItem);
+        if (CUSTOM_XML_PROPS.test(lname)) {
+            var item = ('00000000000' + (ctx.storeItems = (ctx.storeItems || 0) + 1).toString(16)).slice(-12);
+            return new TextEncoder().encode(TEMPLATES.customItemProps.replace('ITEM', item));
+        }
         if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
         if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname) || /(?:^|\/)webextensions\//.test(lname)) {
             // Digital signatures embed the signer's certificate; unknown
