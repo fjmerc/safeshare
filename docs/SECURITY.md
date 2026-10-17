@@ -204,6 +204,7 @@ docker run -e ANONYMOUS_MODE=true ...
 
 **Records**
 - **No content hash**: the SHA-256 of uploads isn't stored or returned by `/api/claim/{code}/info`, so the server can't be used to confirm that a known document was shared
+- **Rounded times**: a file's upload time and scan time are stored rounded down to the hour (UTC), and its expiry is rounded up to the next hour, so a seized database can't be lined up against network logs by exact time. Rounding never shortens a file's life: a file may stay available up to 59 minutes longer than requested (and the expiry shown to the uploader is the rounded one). SafeShare stores no per-download timestamp on file records. Rows already in the database are not rewritten
 - **Secure deletion**: SQLite overwrites deleted rows (`secure_delete`), and the write-ahead log is truncated after deletions, so expired files' records can't be recovered from the database files
 - **Audit log**: off by default. With `AUDIT_LOG=true`, entries record what happened but nothing about who: no IP address, account, username, user agent or filename
 
@@ -218,7 +219,10 @@ docker run -e ANONYMOUS_MODE=true ...
 
 - **Rate limiting still uses the raw client IP**, held in memory only and never stored. Behind Tor every visitor shares one address, so each limit is a single budget for the whole service (see [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md#upload-and-download-rate-limits))
 - **It doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before anonymous mode was turned on stay until those files expire or are deleted. Start anonymous deployments on a fresh database
-- **The server still knows each file's** size bucket, upload and expiry times, download count and claim code, and its filename unless the uploader hides it. Browser-encrypted uploads are padded to a PADME bucket, so the exact size is not visible, but the bucket narrows it to within about 12%. These are deleted with the file
+- **The server still knows each file's** size bucket, upload and expiry times (rounded to the hour), download count and claim code, and its filename unless the uploader hides it. Browser-encrypted uploads are padded to a PADME bucket, so the exact size is not visible, but the bucket narrows it to within about 12%. These are deleted with the file
+- **Only file records are rounded.** Chunked-upload session rows, login sessions, rate-limit and lockout rows, and download-session rows keep exact times while they exist (they are short-lived and cleaned up automatically). The `import-file` CLI tool doesn't know about anonymous mode and writes exact times; don't use it on a Ghost deployment
+- **Stored file blobs keep their filesystem times.** The encrypted file in the uploads directory (or the S3 object) has an exact modification and creation time set by the operating system, which SafeShare doesn't alter. Someone holding the disk can read upload times from there. Put uploads on storage that doesn't keep timestamps, or accept this limit
+- **Container request logs still carry exact times.** Rounding applies to the database only. Docker's and your reverse proxy's logs timestamp every request to the second until they rotate, while the database persists, so an adversary who gets both can still correlate. Rotate or disable those logs
 - **Docker's own logs** still contain whatever SafeShare logs. Use `logging: driver: none` for full deniability
 
 ### Behavior

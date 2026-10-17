@@ -291,12 +291,13 @@ func recordInfectedUpload(ctx context.Context, repos *repository.Repositories, c
 	// Bounded regardless of what the uploader asked for (params.neverExpire /
 	// params.expiresInMinutes are deliberately ignored here) — this is an
 	// audit record, not the file the uploader wanted.
-	auditExpiresAt := time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours()) * time.Hour)
+	auditExpiresAt := storeExpiry(time.Now().Add(time.Duration(cfg.GetDefaultExpirationHours())*time.Hour), cfg)
 
-	now := time.Now()
+	now := storeScannedAt(time.Now(), cfg)
 	sanitizedFilename := utils.SanitizeFilename(header.Filename)
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
+		CreatedAt:        storeCreatedAt(cfg),
 		OriginalFilename: sanitizedFilename,
 		// Placeholder to satisfy the NOT NULL column; no file is ever written
 		// for an infected upload, and claim.go's scanGate blocks download by
@@ -745,9 +746,11 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 	} else {
 		expiresAt = time.Now().Add(time.Duration(params.expiresInMinutes) * time.Minute)
 	}
+	expiresAt = storeExpiry(expiresAt, cfg)
 
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
+		CreatedAt:        storeCreatedAt(cfg),
 		OriginalFilename: sanitizedFilename,
 		StoredFilename:   result.storedFilename,
 		FileSize:         result.written,
@@ -762,7 +765,7 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		EncFileID:        result.encFileID,
 	}
 	if verdict.status != "" {
-		now := time.Now()
+		now := storeScannedAt(time.Now(), cfg)
 		fileRecord.ScanStatus = verdict.status
 		fileRecord.ScanResult = verdict.result
 		fileRecord.ScannedAt = &now

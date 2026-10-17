@@ -289,7 +289,7 @@ func GetAllFilesForAdmin(db *sql.DB, limit, offset int) ([]models.File, int, err
 		u.username
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
+		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, limit, offset)
 	if err != nil {
@@ -396,7 +396,7 @@ func SearchFilesForAdmin(db *sql.DB, searchTerm string, limit, offset int) ([]mo
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
-		ORDER BY f.created_at DESC LIMIT ? OFFSET ?`
+		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
 
 	rows, err := db.Query(query, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset)
 	if err != nil {
