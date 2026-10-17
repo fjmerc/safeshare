@@ -293,10 +293,16 @@ async function edgeCases() {
         '<!-- by Bob --><metadata><rdf:RDF><cc:Work><dc:creator>Bob</dc:creator></cc:Work></rdf:RDF></metadata>' +
         '<sodipodi:namedview inkscape:current-layer="Bob"/><path d="M0 0"/></svg>';
     const svgs = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'], ['word/media/image1.svg', svgIn],
-        ['word/media/image2.svg', '<svg><image href="data:image/jpeg;base64,AAAA"/></svg>']])));
+        ['word/media/image2.svg', '<svg><image href="data:image/jpeg;base64,AAAA"/></svg>'],
+        ['word/media/image3.svg', '<svg xmlns:xlink="x"><rdf:RDF><dc:creator>Bob</dc:creator></rdf:RDF><i:pgf>Bob</i:pgf>' +
+            '<image xlink:href="/home/bob/p.jpg"/><a href="#top"/><a href="https://example.org/"/></svg>'],
+        ['word/media/image4.svg', '<svg><style>@import url(file:///home/bob/a.css);</style></svg>'],
+        ['word/media/image5.svg', '<svg><image href="data:;base64,/9j/AAAA"/></svg>']])));
     const svgOut = zipText(svgs.data);
     check('SVG cleaned (metadata, comments, Inkscape data), data-URI SVG reported',
-        !/Bob|bob/.test(svgOut) && svgOut.includes('<path d="M0 0"/>') && JSON.stringify(svgs.incomplete) === '["word/media/image2.svg"]',
+        !/Bob|bob/.test(svgOut.replace(/word\/media\/image[245]\.svg\n[^\n]*/g, '')) && svgOut.includes('<path d="M0 0"/>') &&
+        svgOut.includes('href="#top"') && svgOut.includes('href="https://example.org/"') &&
+        JSON.stringify(svgs.incomplete) === '["word/media/image2.svg","word/media/image4.svg","word/media/image5.svg"]',
         JSON.stringify(svgs.incomplete));
 
     // Word fields that link to files keep the path in the field code
@@ -309,8 +315,17 @@ async function edgeCases() {
         check(label + ' reported as not cleaned', r.incomplete.length === 1 && r.incomplete[0].startsWith('word/document.xml'),
             JSON.stringify(r.incomplete));
     }
+    for (const [label, xml] of [
+        ['deleted LINK field', '<w:document><w:del><w:r><w:delInstrText> LINK Excel.Sheet.12 "C:\\\\Users\\\\Bob\\\\B.xlsx"</w:delInstrText></w:r></w:del></w:document>'],
+        ['old INCLUDE field with a Unix path', '<w:document><w:instrText> INCLUDE "/Users/bob/x.docx" </w:instrText></w:document>'],
+        ['HYPERLINK to a Unix path', '<w:document><w:instrText> HYPERLINK "/Users/bob/x.docx" </w:instrText></w:document>'],
+        ['lower-case link in fldSimple', '<w:document><w:fldSimple w:instr=" link Excel.Sheet.12 &quot;x.xlsx&quot;"/></w:document>'],
+    ]) {
+        const r = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', xml]])));
+        check(label + ' reported as not cleaned', r.incomplete.length === 1, JSON.stringify(r.incomplete));
+    }
     const webField = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml',
-        '<w:document><w:instrText> HYPERLINK "https://example.org/" </w:instrText><w:instrText> PAGE </w:instrText></w:document>']])));
+        '<w:document><w:instrText> HYPERLINK "https://example.org/link/page" </w:instrText><w:instrText> PAGE </w:instrText></w:document>']])));
     check('web HYPERLINK and PAGE fields are fine', webField.incomplete.length === 0, JSON.stringify(webField.incomplete));
 
     const webext = await M.stripMetadata(u8(storedZip([ct, ['word/document.xml', '<w:document/>'],
@@ -332,6 +347,12 @@ async function edgeCases() {
     const video = M.scrubOfficeXml('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/video" ' +
         'Target="https://www.youtube.com/embed/x" TargetMode="External"/>');
     check('online video link kept', video.includes('Target="https://www.youtube.com/embed/x"'), video);
+    const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';
+    for (const [type, target] of [['image', 'https://cdn.example.org/a.png'],
+        ['video', 'https://corp-my.sharepoint.com/personal/bob_corp_com/v.mp4']]) {
+        const out = M.scrubOfficeXml('<Relationship Type="' + R + type + '" Target="' + target + '" TargetMode="External"/>');
+        check('external ' + type + ' link ' + target + ' blanked', out.includes('Target=""'), out);
+    }
 
     const visio = await M.stripMetadata(u8(storedZip([ct, ['visio/document.xml', '<Creator>Bob</Creator>']])));
     check('Visio and other non-Office packages are unsupported, not "cleaned"', visio.supported === false);

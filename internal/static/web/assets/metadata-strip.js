@@ -448,9 +448,12 @@
     var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
     var RE_EXTERNAL = /\sTargetMode\s*=\s*["']External["']/;
     var RE_HYPERLINK_TYPE = /\sType\s*=\s*["'][^"']*\/hyperlink["']/;
-    // Online video, audio and pictures (e.g. a YouTube video on a slide)
-    var RE_WEB_MEDIA = /\sType\s*=\s*["'][^"']*\/(?:video|audio|image|media)["'][\s\S]*$/;
+    // Online video and audio (e.g. a YouTube video on a slide). Linked
+    // pictures aren't included: they usually live in the author's own storage.
+    var RE_WEB_MEDIA = /\sType\s*=\s*["'][^"']*\/(?:video|audio|media)["']/;
     var RE_WEB_TARGET = /\sTarget\s*=\s*["']\s*https?:/i;
+    // Personal cloud storage names its owner (…-my.sharepoint.com/personal/<user>)
+    var RE_PERSONAL_TARGET = /\sTarget\s*=\s*["'][^"']*(?:-my\.sharepoint\.com|onedrive\.live\.com|1drv\.ms|\/personal\/)/i;
     var RE_TEMPLATE_TYPE = /\sType\s*=\s*["'][^"']*\/attachedTemplate["']/;
     // Local and relative paths (file:, C:\, \\server, /Users/..., ../..)
     var RE_LOCAL_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
@@ -489,7 +492,8 @@
             // objects, mail merge sources); hyperlinks lose only local and
             // relative paths.
             var external = RE_EXTERNAL.test(tag);
-            var web = RE_HYPERLINK_TYPE.test(tag) || (RE_WEB_MEDIA.test(tag) && RE_WEB_TARGET.test(tag));
+            var web = RE_HYPERLINK_TYPE.test(tag) ||
+                (RE_WEB_MEDIA.test(tag) && RE_WEB_TARGET.test(tag) && !RE_PERSONAL_TARGET.test(tag));
             if (RE_TEMPLATE_TYPE.test(tag) || (external && !web) || (external && RE_LOCAL_TARGET.test(tag)) ||
                 RE_ABSOLUTE_TARGET.test(tag)) {
                 tag = tag.replace(RE_TARGET, '$1=""');
@@ -623,33 +627,44 @@
     }
 
     var RE_SVG_EDITOR_ATTR = new RegExp('\\s(?:sodipodi|inkscape):[\\w.-]+' + VAL, 'g');
+    // Links that aren't fragments or web addresses (file:///home/<name>/...)
+    var RE_SVG_LOCAL_HREF = /(\s(?:xlink:)?href)\s*=\s*(?:"(?!\s*(?:#|https?:))[^"]*"|'(?!\s*(?:#|https?:))[^']*')/g;
     var SVG_RULES = {
-        onTag: function (tag) { return tag.replace(RE_SVG_EDITOR_ATTR, ''); },
-        // <metadata> (RDF author, licence, ...) and editor-private elements
-        dropElement: function (n) { return n.local === 'metadata' || n.prefix === 'sodipodi' || n.prefix === 'inkscape'; },
+        onTag: function (tag) { return tag.replace(RE_SVG_EDITOR_ATTR, '').replace(RE_SVG_LOCAL_HREF, '$1=""'); },
+        // <metadata> and RDF/XMP blocks (author, licence, ...), Illustrator's
+        // private editing data and Inkscape/Sodipodi elements
+        dropElement: function (n) {
+            return n.local === 'metadata' || n.local === 'RDF' || n.local === 'xmpmeta' || n.local === 'pgf' ||
+                n.prefix === 'sodipodi' || n.prefix === 'inkscape';
+        },
         emptyElement: function () { return false; },
         dropComments: true,
         allowDoctype: true
     };
 
     /**
-     * Clean an SVG image: drop <metadata>, comments and Inkscape/Sodipodi
-     * data (which hold file paths). Returns null when it embeds raster images
-     * (data: URIs), whose own metadata can't be cleaned here.
+     * Clean an SVG image: drop <metadata>, RDF/XMP, comments, Illustrator and
+     * Inkscape/Sodipodi data, and links to local files. Returns null when
+     * something can't be cleaned here: embedded data (data: URIs, such as a
+     * raster image with its own EXIF), file: URLs or CSS imports.
      */
     function scrubSvg(svg) {
-        if (/data:image\//i.test(svg)) return null;
+        if (/data(?::|&#)|@import/i.test(svg)) return null;
         var out = rewriteXml(svg, SVG_RULES);
+        if (/file:/i.test(out)) return null;
         if (/<(?:[\w.-]+:)?metadata\b|\s(?:sodipodi|inkscape):[\w.-]+\s*=|<!--/.test(out)) throw malformed('Could not clean SVG image');
         return out;
     }
 
     // Word fields that link to files keep the path in the (hidden) field
-    // code: LINK and INCLUDEPICTURE/INCLUDETEXT fields, DDE links, and any
-    // field naming a local or network path.
-    var FIELD_LINK = '(?:\\b(?:LINK|INCLUDEPICTURE|INCLUDETEXT|DDE|DDEAUTO)\\b|[A-Za-z]:\\\\|\\\\\\\\|file:)';
-    var RE_LINKED_FIELD = new RegExp('<' + P + 'instrText\\b[^>]*>[^<]*' + FIELD_LINK +
-        '|\\s' + P + 'instr\\s*=\\s*(?:"[^"]*' + FIELD_LINK + '|\'[^\']*' + FIELD_LINK + ')', 'i');
+    // code, also inside tracked deletions: LINK, INCLUDE(PICTURE|TEXT), DDE,
+    // RD, DATABASE and IMPORT fields, and any field quoting a local, network
+    // or relative path.
+    var FIELD_KEYWORD = '\\s*(?:LINK|INCLUDEPICTURE|INCLUDETEXT|INCLUDE|DDE|DDEAUTO|RD|DATABASE|IMPORT)\\b';
+    var FIELD_PATH = '(?:[A-Za-z]:\\\\|\\\\\\\\|file:|(?:"|&quot;)\\s*(?:/|\\.\\.?[\\\\/]))';
+    var INSTR_TEXT = '<' + P + '(?:del)?instrText\\b[^>]*>';
+    var RE_LINKED_FIELD = new RegExp(INSTR_TEXT + FIELD_KEYWORD + '|' + INSTR_TEXT + '[^<]*' + FIELD_PATH +
+        '|\\s' + P + 'instr\\s*=\\s*(?:"' + FIELD_KEYWORD + '|\'' + FIELD_KEYWORD + '|"[^"]*' + FIELD_PATH + '|\'[^\']*' + FIELD_PATH + ')', 'i');
 
     // Checks run over the whole scrubbed part, text included, so anything the
     // scrubber missed fails closed. (A name typed into body text that looks
@@ -661,7 +676,7 @@
         new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*\\s*='),
         new RegExp('\\s' + P + 'securityDescriptor\\s*='),
         // a non-empty author element (an empty-element tag doesn't count)
-        new RegExp('<' + P + 'author(?:\\s[^>]*)?(?<!/)>\\s*(?:[^<\\s]|<!\\[CDATA)'),
+        new RegExp('<' + P + 'author(?:\\s[^>]*[^/>]|\\s)?>\\s*(?:[^<\\s]|<!\\[CDATA)'),
         new RegExp('<' + P + 'person\\b[^>]*\\s' + P + 'displayName' + FULL),
         new RegExp('<' + P + '(?:rsids|docVars|mailMerge)\\b'),
         /<w\d*:docId\b|<xr\d*:revisionPtr\b/,
