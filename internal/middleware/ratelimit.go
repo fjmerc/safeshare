@@ -217,6 +217,11 @@ func (r *requestRecord) checkCoarse(now time.Time, limit int) bool {
 // (~1800/hour) on several uploads at once.
 const minStatusRateLimitPerHour = 6000
 
+// claimInfoLimitMultiplier sets the /api/claim/{code}/info limit relative to
+// RATE_LIMIT_DOWNLOAD: room for a lookup before every download plus mistyped
+// codes, while still bounding claim-code guessing per IP.
+const claimInfoLimitMultiplier = 2
+
 // RateLimitMiddleware creates a middleware that enforces rate limits
 func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -259,7 +264,16 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// keeps one timestamp per request: ~150 KB for a full bucket.)
 				limit = max(rl.config.GetRateLimitUpload()*600, minStatusRateLimitPerHour)
 				limitType = "status"
-			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && !strings.HasSuffix(r.URL.Path, "/info") {
+			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && strings.HasSuffix(r.URL.Path, "/info") {
+				// The info endpoint answers "does this claim code exist?",
+				// so leaving it unlimited let a client guess codes at full
+				// speed and spend its download budget only on hits. It gets
+				// its own bucket, at claimInfoLimitMultiplier times the
+				// download limit, because the download page calls it once
+				// before each download.
+				limit = rl.config.GetRateLimitDownload() * claimInfoLimitMultiplier
+				limitType = "claim_info"
+			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
 			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
@@ -267,7 +281,7 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				limitType = "regeneration"
 			} else {
 				// No rate limit for other endpoints:
-				// - health, info, static files
+				// - health, static files
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -192,3 +192,56 @@ func TestDBRateLimiter_ProductionChainSpoofResistant(t *testing.T) {
 		}
 	}
 }
+
+// TestDBRateLimitMiddleware_ClaimInfoLimit mirrors TestRateLimiter_ClaimInfoLimit
+// for the database-backed limiter.
+func TestDBRateLimitMiddleware_ClaimInfoLimit(t *testing.T) {
+	cfg := &mockConfigProvider{uploadLimit: 1, downloadLimit: 3}
+	rl := NewDBRateLimiter(cfg, newFakeRateLimitRepo())
+	defer rl.Stop()
+
+	handler := DBRateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.79:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	infoLimit := 3 * claimInfoLimitMultiplier
+	for i := 1; i <= infoLimit; i++ {
+		if code := send("/api/claim/guess/info"); code != http.StatusOK {
+			t.Fatalf("info request %d: got %d, want 200", i, code)
+		}
+	}
+	if code := send("/api/claim/guess/info"); code != http.StatusTooManyRequests {
+		t.Fatalf("info request %d: got %d, want 429", infoLimit+1, code)
+	}
+	if code := send("/api/claim/AbCd1234"); code != http.StatusOK {
+		t.Fatalf("download after exhausting info budget: got %d, want 200", code)
+	}
+
+	// And the other way, from a fresh IP: exhausting downloads leaves
+	// lookups alone.
+	sendFrom := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.80:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for i := 1; i <= 3; i++ {
+		if code := sendFrom("/api/claim/AbCd1234"); code != http.StatusOK {
+			t.Fatalf("download %d: got %d, want 200", i, code)
+		}
+	}
+	if code := sendFrom("/api/claim/AbCd1234"); code != http.StatusTooManyRequests {
+		t.Fatalf("download 4: got %d, want 429", code)
+	}
+	if code := sendFrom("/api/claim/AbCd1234/info"); code != http.StatusOK {
+		t.Fatalf("info after exhausting download budget: got %d, want 200", code)
+	}
+}

@@ -43,6 +43,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Security
 - **PDF metadata stripping now has a 60-second time limit.** A crafted PDF could previously keep the stripper busy indefinitely. A PDF that takes longer is rejected in anonymous mode (`METADATA_STRIP_FAILED`: HTTP 422 for direct uploads, a failed upload status for chunked ones) and stored unstripped otherwise, as with other stripping failures.
 - Updated the PDF library (pdfcpu 0.16.1), which fixes several crashes and overflows triggered by malicious PDFs.
+- **Claim-code lookups are now rate limited** (reported in #497). `/api/claim/{code}/info` says whether a claim code exists, and it had no rate limit, so a client could guess codes there as fast as it liked and use its download allowance only on codes it already knew were valid. It now has its own per-IP limit of twice `RATE_LIMIT_DOWNLOAD` (100 an hour by default), which leaves room for the download page's lookup before each download. It doesn't count against the download limit.
 
 ## [1.15.0] - 2026-10-16
 
