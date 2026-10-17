@@ -218,7 +218,7 @@ docker run -e ANONYMOUS_MODE=true ...
 
 - **Rate limiting still uses the raw client IP**, held in memory only and never stored. Behind Tor every visitor shares one address, so each limit is a single budget for the whole service (see [TOR_DEPLOYMENT.md](TOR_DEPLOYMENT.md#upload-and-download-rate-limits))
 - **It doesn't erase earlier data.** IPs, user agents, hashes and audit entries recorded before anonymous mode was turned on stay until those files expire or are deleted. Start anonymous deployments on a fresh database
-- **The server still knows each file's** size, upload and expiry times, download count and claim code, and its filename unless the uploader hides it. These are deleted with the file
+- **The server still knows each file's** size bucket, upload and expiry times, download count and claim code, and its filename unless the uploader hides it. Browser-encrypted uploads are padded to a PADME bucket, so the exact size is not visible, but the bucket narrows it to within about 12%. These are deleted with the file
 - **Docker's own logs** still contain whatever SafeShare logs. Use `logging: driver: none` for full deniability
 
 ### Behavior
