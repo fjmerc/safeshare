@@ -2,11 +2,13 @@
  * SafeShare client-side metadata stripping (dependency-free).
  *
  * Used before end-to-end encryption: the server only ever sees ciphertext, so
- * it cannot remove EXIF/XMP/text metadata itself. Supports JPEG and PNG; other
- * types pass through unchanged (callers should warn the user).
+ * it cannot remove metadata itself. Supports JPEG, PNG and Office Open XML
+ * (docx/xlsx/pptx and their macro-enabled variants); other types pass through
+ * unchanged (callers should warn the user). Office files need the browser's
+ * built-in DecompressionStream/CompressionStream ("deflate-raw").
  *
- * Pure functions on ArrayBuffer/Uint8Array, exported on
- * window.SafeShareMetadata (and module.exports under Node for tests).
+ * Exported on window.SafeShareMetadata (and module.exports under Node for
+ * tests). stripMetadata is async; the JPEG/PNG helpers are synchronous.
  */
 (function (root) {
     'use strict';
@@ -223,24 +225,730 @@
         return null;
     }
 
+    // ---- Office Open XML (zip) -------------------------------------------
+
+    // Same limits as the server-side stripper (internal/privacy): files above
+    // MAX_CONTAINER_BYTES are not stripped, and inflating more than
+    // MAX_INFLATED_BYTES in total is treated as a decompression bomb.
+    var MAX_CONTAINER_BYTES = 100 * 1024 * 1024;
+    var MAX_INFLATED_BYTES = 500 * 1024 * 1024;
+
     /**
-     * Strip metadata from file bytes, detecting the type by magic bytes.
-     * Returns { data: ArrayBuffer, type: 'jpeg'|'png'|null, supported: bool,
-     * removedBytes: number, orientation: 1-8|null } (orientation is the value
-     * that was present BEFORE stripping). Unsupported types are returned
-     * unchanged with supported:false. Throws if a JPEG/PNG is malformed.
+     * Errors from the Office stripper carry a code so callers can explain them:
+     * UNSUPPORTED_BROWSER (no deflate-raw streams), TOO_LARGE, ENCRYPTED,
+     * MALFORMED.
      */
-    function stripMetadata(input) {
+    function stripError(code, message) {
+        var err = new Error(message);
+        err.code = code;
+        return err;
+    }
+
+    var CRC_TABLE = (function () {
+        var t = new Uint32Array(256);
+        for (var n = 0; n < 256; n++) {
+            var c = n;
+            for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+            t[n] = c >>> 0;
+        }
+        return t;
+    })();
+
+    function crc32(b) {
+        var c = 0xFFFFFFFF;
+        for (var i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    function u16le(b, o) { return b[o] | (b[o + 1] << 8); }
+    function u32le(b, o) { return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
+
+    /** True if this browser can inflate and deflate raw streams (needed for Office files). */
+    function compressionSupported() {
+        try {
+            if (typeof DecompressionStream !== 'function' || typeof CompressionStream !== 'function') return false;
+            new DecompressionStream('deflate-raw');
+            new CompressionStream('deflate-raw');
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Run bytes through a (De)CompressionStream, failing once the output
+    // passes limit bytes.
+    async function pipeBytes(transform, input, limit) {
+        var reader = new Blob([input]).stream().pipeThrough(transform).getReader();
+        var parts = [];
+        var total = 0;
+        for (;;) {
+            var r = await reader.read();
+            if (r.done) break;
+            total += r.value.length;
+            if (total > limit) {
+                reader.cancel().catch(function () {});
+                throw stripError('TOO_LARGE', 'Office file expands to more than the stripping limit');
+            }
+            parts.push(r.value);
+        }
+        return concat(parts, total);
+    }
+
+    var ZIP_SIG = [0x50, 0x4B, 0x03, 0x04];
+
+    function isZip(b) {
+        for (var i = 0; i < 4; i++) if (b[i] !== ZIP_SIG[i]) return false;
+        return true;
+    }
+
+    /**
+     * Read a zip's central directory. Only plain single-disk zips are
+     * accepted: zip64, encrypted entries and spanned archives throw.
+     */
+    function readZip(b) {
+        var min = Math.max(0, b.length - 65557); // EOCD is 22 bytes plus at most a 64 KB comment
+        var eocd = -1;
+        for (var p = b.length - 22; p >= min; p--) {
+            // The real record's comment runs exactly to the end of the file,
+            // which skips a fake signature inside the comment itself.
+            if (b[p] === 0x50 && b[p + 1] === 0x4B && b[p + 2] === 0x05 && b[p + 3] === 0x06 &&
+                p + 22 + u16le(b, p + 20) === b.length) { eocd = p; break; }
+        }
+        if (eocd < 0) throw stripError('MALFORMED', 'Not a zip file (no end of central directory)');
+        if (eocd >= 20 && u32le(b, eocd - 20) === 0x07064B50) throw stripError('MALFORMED', 'Zip64 files are not supported');
+        var disk = u16le(b, eocd + 4), cdDisk = u16le(b, eocd + 6);
+        var countDisk = u16le(b, eocd + 8), count = u16le(b, eocd + 10);
+        var cdSize = u32le(b, eocd + 12), cdOffset = u32le(b, eocd + 16);
+        if (disk !== 0 || cdDisk !== 0 || countDisk !== count) throw stripError('MALFORMED', 'Multi-disk zip files are not supported');
+        if (count === 0xFFFF || cdOffset === 0xFFFFFFFF || cdSize === 0xFFFFFFFF) throw stripError('MALFORMED', 'Zip64 files are not supported');
+        if (cdOffset + cdSize > eocd) throw stripError('MALFORMED', 'Zip central directory out of range');
+
+        var names = new TextDecoder('utf-8');
+        var entries = [];
+        var pos = cdOffset;
+        for (var i = 0; i < count; i++) {
+            if (pos + 46 > eocd || u32le(b, pos) !== 0x02014B50) throw stripError('MALFORMED', 'Bad zip central directory entry');
+            var flags = u16le(b, pos + 8);
+            var method = u16le(b, pos + 10);
+            var crc = u32le(b, pos + 16);
+            var compSize = u32le(b, pos + 20), size = u32le(b, pos + 24);
+            var nameLen = u16le(b, pos + 28), extraLen = u16le(b, pos + 30), commentLen = u16le(b, pos + 32);
+            var localOffset = u32le(b, pos + 42);
+            if (flags & 0x41) throw stripError('ENCRYPTED', 'Encrypted zip entries are not supported');
+            if (compSize === 0xFFFFFFFF || size === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) throw stripError('MALFORMED', 'Zip64 files are not supported');
+            if (pos + 46 + nameLen > eocd) throw stripError('MALFORMED', 'Bad zip entry name');
+            var nameBytes = b.subarray(pos + 46, pos + 46 + nameLen);
+
+            if (localOffset + 30 > b.length || u32le(b, localOffset) !== 0x04034B50) throw stripError('MALFORMED', 'Bad zip local header');
+            var dataStart = localOffset + 30 + u16le(b, localOffset + 26) + u16le(b, localOffset + 28);
+            if (dataStart + compSize > b.length) throw stripError('MALFORMED', 'Zip entry data out of range');
+
+            entries.push({
+                name: names.decode(nameBytes),
+                nameBytes: nameBytes,
+                flags: flags,
+                method: method,
+                crc: crc,
+                size: size,
+                data: b.subarray(dataStart, dataStart + compSize)
+            });
+            pos += 46 + nameLen + extraLen + commentLen;
+        }
+        return entries;
+    }
+
+    var CONTENT_TYPES = [];
+    for (var ci = 0; ci < '[content_types].xml'.length; ci++) CONTENT_TYPES.push('[content_types].xml'.charCodeAt(ci));
+
+    function lowerByte(c) { return c >= 0x41 && c <= 0x5A ? c + 32 : c; }
+
+    // True if the bytes contain the name [Content_Types].xml (any case)
+    // anywhere: it is in every Office file's directory, whatever the entry
+    // order or zip variant.
+    function mentionsContentTypes(b) {
+        var n = CONTENT_TYPES.length;
+        for (var i = b.indexOf(0x5B); i !== -1 && i + n <= b.length; i = b.indexOf(0x5B, i + 1)) {
+            var j = 1;
+            while (j < n && lowerByte(b[i + j]) === CONTENT_TYPES[j]) j++;
+            if (j === n) return true;
+        }
+        return false;
+    }
+
+    // Part names are compared lower-cased with forward slashes and no leading
+    // slash: OPC part names are case-insensitive.
+    function partName(name) {
+        return name.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
+    }
+
+    // A Word, Excel or PowerPoint package. Other OPC packages (Visio, XPS,
+    // 3MF, ...) aren't handled and are reported as unsupported.
+    function isOoxml(entries) {
+        var types = false, main = false;
+        for (var i = 0; i < entries.length; i++) {
+            var n = partName(entries[i].name);
+            if (n === '[content_types].xml') types = true;
+            if (/^(?:word|xl|ppt)\//.test(n)) main = true;
+        }
+        return types && main;
+    }
+
+    var XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
+    var VT_NS = ' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"';
+    // Empty but valid replacements for parts that are all metadata.
+    var TEMPLATES = {
+        core: XML_DECL + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"' +
+            ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"' +
+            ' xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></cp:coreProperties>',
+        app: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"' + VT_NS + '></Properties>',
+        custom: XML_DECL + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"' + VT_NS + '></Properties>',
+        // customXml data stores (SharePoint columns, cover-page fields, ...)
+        customItem: XML_DECL + '<root/>',
+        // Microsoft 365 sensitivity labels name the organisation (siteId)
+        labels: XML_DECL + '<clbl:labelList xmlns:clbl="http://schemas.microsoft.com/office/2020/mipLabelMetadata"></clbl:labelList>'
+    };
+    var DEFAULT_PROPERTY_PARTS = { 'docprops/core.xml': 'core', 'docprops/app.xml': 'app', 'docprops/custom.xml': 'custom' };
+    var PROPERTY_REL_TYPES = [[/\/metadata\/core-properties$/, 'core'], [/\/extended-?properties$/i, 'app'], [/\/custom-?properties$/i, 'custom']];
+
+    var CUSTOM_XML_ITEM = /^customxml\/item\d+\.xml$/;
+    var XML_PART = /\.(?:xml|rels|vml)$/;
+    var EMBEDDED_PART = /^(?:word|ppt|xl)\/embeddings\//;
+    var PRINTER_SETTINGS = /^(?:word|ppt|xl)\/printersettings\/.+\.bin$/;
+    // Binary parts that carry no metadata and are copied unchanged. Everything
+    // else that isn't XML or a JPEG/PNG (video, audio, SVG, GIF, TIFF, VBA,
+    // ActiveX, OLE objects, data models, ...) is reported as not cleaned.
+    var SAFE_BINARY = /\.(?:emf|wmf|bmp|odttf|fntdata|ttf|otf)$/;
+    // How deep embedded Office files (e.g. a chart's workbook) are cleaned.
+    var MAX_EMBED_DEPTH = 2;
+    var DROP = {};
+
+    var EPOCH = '1970-01-01T00:00:00Z';
+    var P = '(?:[A-Za-z_][\\w.-]*:)?'; // optional namespace prefix (an NCName)
+    var VAL = '\\s*=\\s*(?:"[^"]*"|\'[^\']*\')';
+    var FULL = '\\s*=\\s*(?:"[^"]+"|\'[^\']+\')'; // a non-empty value
+    var WHO = '(?:author|initials|userId|providerId|userName|refreshedBy)';
+    var DATE_ATTR = '(?:date|dateUtc|dateTime|dt|dT|created|refreshedDateIso|timeString)';
+    // Elements whose name attribute is a person
+    var NAME_ATTR_TAGS = { cmAuthor: 1, author: 1, userInfo: 1, chgData: 1 };
+
+    var RE_WHO = new RegExp('(\\s' + P + WHO + ')' + VAL, 'g');
+    var RE_NAME = new RegExp('(\\s' + P + 'name)' + VAL, 'g');
+    var RE_ED = new RegExp('(\\s' + P + 'ed)' + VAL, 'g'); // editing-permission editor
+    var RE_DISPLAY_NAME = new RegExp('(\\s' + P + 'displayName)' + VAL, 'g'); // Excel persons (tables use it too)
+    var RE_ID = new RegExp('(\\sid)' + VAL, 'g');
+    var RE_DATE = new RegExp('(\\s' + P + DATE_ATTR + ')\\s*=\\s*(?:"\\d{4}-[^"]*"|\'\\d{4}-[^\']*\')', 'g');
+    var RE_REFRESHED = new RegExp('(\\srefreshedDate)' + VAL, 'g');
+    var RE_RSID = new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*' + VAL, 'g');
+    var RE_SECURITY = new RegExp('\\s' + P + 'securityDescriptor' + VAL, 'g');
+    var RE_URL = new RegExp('(\\surl)' + VAL);
+    // Excel data connections: the .odc/source file path, and the connection
+    // string (which can hold a user name or password).
+    var RE_SOURCE_FILE = new RegExp('(\\s(?:odcFile|sourceFile))' + VAL, 'g');
+    var RE_CONNECTION = new RegExp('(\\sconnection)' + VAL, 'g');
+    var RE_TARGET = new RegExp('(\\sTarget)' + VAL);
+    var RE_EXTERNAL = /\sTargetMode\s*=\s*["']External["']/;
+    var RE_HYPERLINK_TYPE = /\sType\s*=\s*["'][^"']*\/hyperlink["']/;
+    // Online video and audio (e.g. a YouTube video on a slide). Linked
+    // pictures aren't included: they usually live in the author's own storage.
+    var RE_WEB_MEDIA = /\sType\s*=\s*["'][^"']*\/(?:video|audio|media)["']/;
+    var RE_WEB_TARGET = /\sTarget\s*=\s*["']\s*https?:/i;
+    // Personal cloud storage names its owner (…-my.sharepoint.com/personal/<user>)
+    var RE_PERSONAL_TARGET = /\sTarget\s*=\s*["'][^"']*(?:-my\.sharepoint\.com|onedrive\.live\.com|1drv\.ms|\/personal\/)/i;
+    var RE_TEMPLATE_TYPE = /\sType\s*=\s*["'][^"']*\/attachedTemplate["']/;
+    // Local and relative paths (file:, C:\, \\server, /Users/..., ../..)
+    var RE_LOCAL_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/i;
+    // Paths that are never package parts, whatever the target mode
+    var RE_ABSOLUTE_TARGET = /\sTarget\s*=\s*["']\s*(?:file:|[A-Za-z]:[\\/]|\\\\)/i;
+
+    function tagName(tag) {
+        var m = /^<\/?(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
+        return m ? { prefix: m[1] || '', local: m[2] } : null;
+    }
+
+    // Elements removed whole (with their content).
+    function isRemovedElement(n) {
+        return n.local === 'rsids' || n.local === 'docVars' || n.local === 'mailMerge' ||
+            (n.local === 'docId' && /^w\d*$/.test(n.prefix)) ||
+            (n.local === 'revisionPtr' && /^xr\d*$/.test(n.prefix));
+    }
+
+    function scrubTag(tag, n) {
+        tag = tag
+            .replace(RE_WHO, '$1=""')
+            .replace(RE_DATE, '$1="' + EPOCH + '"')
+            .replace(RE_REFRESHED, '$1="0"')
+            .replace(RE_RSID, '')
+            .replace(RE_SECURITY, '')
+            .replace(RE_SOURCE_FILE, '$1=""');
+        if (NAME_ATTR_TAGS[n.local]) tag = tag.replace(RE_NAME, '$1=""');
+        if (n.local === 'permStart') tag = tag.replace(RE_ED, '$1=""');
+        if (n.local === 'person') tag = tag.replace(RE_DISPLAY_NAME, '$1=""');
+        if (n.local === 'client') tag = tag.replace(RE_ID, '$1=""'); // PowerPoint revisionInfo
+        if (n.local === 'absPath') tag = tag.replace(RE_URL, '$1=""');
+        if (n.local === 'dbPr') tag = tag.replace(RE_CONNECTION, '$1=""');
+        if (n.local === 'Relationship') {
+            // External targets other than web hyperlinks and online media
+            // point at the author's files (templates, linked workbooks and
+            // objects, mail merge sources); hyperlinks lose only local and
+            // relative paths.
+            var external = RE_EXTERNAL.test(tag);
+            var web = RE_HYPERLINK_TYPE.test(tag) ||
+                (RE_WEB_MEDIA.test(tag) && RE_WEB_TARGET.test(tag) && !RE_PERSONAL_TARGET.test(tag));
+            if (RE_TEMPLATE_TYPE.test(tag) || (external && !web) || (external && RE_LOCAL_TARGET.test(tag)) ||
+                RE_ABSOLUTE_TARGET.test(tag)) {
+                tag = tag.replace(RE_TARGET, '$1=""');
+            }
+        }
+        return tag;
+    }
+
+    function malformed(msg) { return stripError('MALFORMED', msg); }
+
+    /**
+     * Walk XML markup in one linear pass, calling visit(kind, token) with
+     * kind 'text', 'tag' (start, end or empty-element tag) or 'other'
+     * (comment, CDATA, processing instruction, DOCTYPE). Throws on malformed
+     * markup: unterminated constructs, '<' inside a tag, unquoted attribute
+     * values, and a DOCTYPE unless allowDoctype (never one with an internal
+     * subset, which could declare entities).
+     */
+    function walkXml(xml, visit, allowDoctype) {
+        var n = xml.length;
+        var i = 0;
+        while (i < n) {
+            var lt = xml.indexOf('<', i);
+            if (lt === -1) {
+                visit('text', xml.slice(i));
+                return;
+            }
+            if (lt > i) visit('text', xml.slice(i, lt));
+            var end;
+            if (xml.startsWith('<!--', lt)) {
+                end = xml.indexOf('-->', lt + 4);
+                if (end < 0) throw malformed('Unterminated XML comment');
+                end += 3;
+                visit('other', xml.slice(lt, end));
+            } else if (xml.startsWith('<![CDATA[', lt)) {
+                end = xml.indexOf(']]>', lt + 9);
+                if (end < 0) throw malformed('Unterminated CDATA section');
+                end += 3;
+                visit('other', xml.slice(lt, end));
+            } else if (xml.startsWith('<?', lt)) {
+                end = xml.indexOf('?>', lt + 2);
+                if (end < 0) throw malformed('Unterminated processing instruction');
+                end += 2;
+                visit('other', xml.slice(lt, end));
+            } else if (xml[lt + 1] === '!') {
+                end = xml.indexOf('>', lt);
+                if (!allowDoctype || !xml.startsWith('<!DOCTYPE', lt) || end < 0 || xml.slice(lt, end).indexOf('[') !== -1) {
+                    throw malformed('Unexpected markup declaration'); // Office never writes a DOCTYPE
+                }
+                end += 1;
+                visit('other', xml.slice(lt, end));
+            } else {
+                var j = lt + 1, quote = 0;
+                for (; j < n; j++) {
+                    var c = xml.charCodeAt(j);
+                    if (quote) {
+                        if (c === quote) quote = 0;
+                    } else if (c === 34 || c === 39) {
+                        quote = c;
+                    } else if (c === 62) {
+                        break;
+                    } else if (c === 60) {
+                        throw malformed('Unexpected < inside a tag');
+                    } else if (c === 61) {
+                        // '=' must be followed by a quoted value
+                        var k = j + 1;
+                        while (k < n && /\s/.test(xml[k])) k++;
+                        if (xml[k] !== '"' && xml[k] !== "'") throw malformed('Unquoted attribute value');
+                    }
+                }
+                if (j >= n) throw malformed('Unterminated tag');
+                end = j + 1;
+                visit('tag', xml.slice(lt, end));
+            }
+            i = end;
+        }
+    }
+
+    /**
+     * Shared rewrite loop: each tag goes through onTag(token, name), which
+     * returns the replacement token, and may drop an element whole
+     * (dropElement) or keep it but drop its content (emptyElement).
+     * Comments are dropped when dropComments is set.
+     */
+    function rewriteXml(xml, rules) {
+        var out = [];
+        var mode = null; // { remove: bool, name: qualified name, depth }
+        walkXml(xml, function (kind, token) {
+            if (kind !== 'tag') {
+                if (!mode && !(rules.dropComments && token.startsWith('<!--'))) out.push(token);
+                return;
+            }
+            var name = tagName(token);
+            if (!name) throw malformed('Bad tag');
+            var qname = (name.prefix ? name.prefix + ':' : '') + name.local;
+            var closing = token[1] === '/';
+            var selfClosing = !closing && token[token.length - 2] === '/';
+            if (mode) {
+                if (qname === mode.name && !selfClosing) mode.depth += closing ? -1 : 1;
+                if (mode.depth === 0) {
+                    if (!mode.remove) out.push(token); // keep the emptied element's end tag
+                    mode = null;
+                }
+            } else if (closing) {
+                out.push(token);
+            } else if (rules.dropElement(name)) {
+                if (!selfClosing) mode = { remove: true, name: qname, depth: 1 };
+            } else {
+                out.push(rules.onTag(token, name));
+                if (rules.emptyElement(name) && !selfClosing) mode = { remove: false, name: qname, depth: 1 };
+            }
+        }, rules.allowDoctype);
+        if (mode) throw malformed('Unclosed <' + mode.name + '> element');
+        return out.join('');
+    }
+
+    var OFFICE_RULES = {
+        onTag: scrubTag,
+        dropElement: isRemovedElement,
+        emptyElement: function (n) { return n.local === 'author'; }
+    };
+
+    /**
+     * Remove people, dates, edit-session identifiers and local file paths
+     * from an Office XML part: attributes are edited only inside tags (so
+     * document text is never touched), some elements are removed whole, and
+     * the content of author elements is dropped. Malformed markup throws.
+     */
+    function scrubOfficeXml(xml) {
+        return rewriteXml(xml, OFFICE_RULES);
+    }
+
+    var RE_SVG_EDITOR_ATTR = new RegExp('\\s(?:sodipodi|inkscape):[\\w.-]+' + VAL, 'g');
+    // Links that aren't fragments or web addresses (file:///home/<name>/...)
+    var RE_SVG_LOCAL_HREF = /(\s(?:xlink:)?href)\s*=\s*(?:"(?!\s*(?:#|https?:))[^"]*"|'(?!\s*(?:#|https?:))[^']*')/g;
+    var SVG_RULES = {
+        onTag: function (tag) { return tag.replace(RE_SVG_EDITOR_ATTR, '').replace(RE_SVG_LOCAL_HREF, '$1=""'); },
+        // <metadata> and RDF/XMP blocks (author, licence, ...), Illustrator's
+        // private editing data and Inkscape/Sodipodi elements
+        dropElement: function (n) {
+            return n.local === 'metadata' || n.local === 'RDF' || n.local === 'xmpmeta' || n.local === 'pgf' ||
+                n.prefix === 'sodipodi' || n.prefix === 'inkscape';
+        },
+        emptyElement: function () { return false; },
+        dropComments: true,
+        allowDoctype: true
+    };
+
+    /**
+     * Clean an SVG image: drop <metadata>, RDF/XMP, comments, Illustrator and
+     * Inkscape/Sodipodi data, and links to local files. Returns null when
+     * something can't be cleaned here: embedded data (data: URIs, such as a
+     * raster image with its own EXIF), file: URLs or CSS imports.
+     */
+    function scrubSvg(svg) {
+        if (/data(?::|&#)|@import/i.test(svg)) return null;
+        var out = rewriteXml(svg, SVG_RULES);
+        if (/file:/i.test(out)) return null;
+        if (/<(?:[\w.-]+:)?metadata\b|\s(?:sodipodi|inkscape):[\w.-]+\s*=|<!--/.test(out)) throw malformed('Could not clean SVG image');
+        return out;
+    }
+
+    // Word fields that link to files keep the path in the (hidden) field
+    // code, also inside tracked deletions: LINK, INCLUDE(PICTURE|TEXT), DDE,
+    // RD, DATABASE and IMPORT fields, and any field quoting a local, network
+    // or relative path.
+    var FIELD_KEYWORD = '\\s*(?:LINK|INCLUDEPICTURE|INCLUDETEXT|INCLUDE|DDE|DDEAUTO|RD|DATABASE|IMPORT)\\b';
+    var FIELD_PATH = '(?:[A-Za-z]:\\\\|\\\\\\\\|file:|(?:"|&quot;)\\s*(?:/|\\.\\.?[\\\\/]))';
+    var INSTR_TEXT = '<' + P + '(?:del)?instrText\\b[^>]*>';
+    var RE_LINKED_FIELD = new RegExp(INSTR_TEXT + FIELD_KEYWORD + '|' + INSTR_TEXT + '[^<]*' + FIELD_PATH +
+        '|\\s' + P + 'instr\\s*=\\s*(?:"' + FIELD_KEYWORD + '|\'' + FIELD_KEYWORD + '|"[^"]*' + FIELD_PATH + '|\'[^\']*' + FIELD_PATH + ')', 'i');
+
+    // Checks run over the whole scrubbed part, text included, so anything the
+    // scrubber missed fails closed. (A name typed into body text that looks
+    // like one of these attributes also fails closed.)
+    var LEFTOVERS = [
+        new RegExp('\\s' + P + WHO + FULL),
+        new RegExp('<' + P + '(?:cmAuthor|author|userInfo|chgData)\\b[^>]*\\s' + P + 'name' + FULL),
+        new RegExp('<' + P + 'permStart\\b[^>]*\\s' + P + 'ed' + FULL),
+        new RegExp('\\s[A-Za-z_][\\w.-]*:rsid[A-Za-z]*\\s*='),
+        new RegExp('\\s' + P + 'securityDescriptor\\s*='),
+        // a non-empty author element (an empty-element tag doesn't count)
+        new RegExp('<' + P + 'author(?:\\s[^>]*[^/>]|\\s)?>\\s*(?:[^<\\s]|<!\\[CDATA)'),
+        new RegExp('<' + P + 'person\\b[^>]*\\s' + P + 'displayName' + FULL),
+        new RegExp('<' + P + '(?:rsids|docVars|mailMerge)\\b'),
+        /<w\d*:docId\b|<xr\d*:revisionPtr\b/,
+        new RegExp('<' + P + 'absPath\\b[^>]*\\surl' + FULL),
+        new RegExp('\\s(?:odcFile|sourceFile)' + FULL),
+        new RegExp('<' + P + 'dbPr\\b[^>]*\\sconnection' + FULL)
+    ];
+    var RE_DATE_VALUE = new RegExp('\\s' + P + DATE_ATTR + '\\s*=\\s*["\'](\\d{4}-[^"\']*)', 'g');
+
+    function officeLeftover(xml) {
+        for (var i = 0; i < LEFTOVERS.length; i++) if (LEFTOVERS[i].test(xml)) return true;
+        var m;
+        RE_DATE_VALUE.lastIndex = 0;
+        while ((m = RE_DATE_VALUE.exec(xml)) !== null) if (m[1] !== EPOCH) return true;
+        return false;
+    }
+
+    function sameBytes(a, b) {
+        if (a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+        return true;
+    }
+
+    async function readEntry(entry, budget) {
+        var out;
+        if (entry.method === 0) {
+            out = entry.data;
+        } else if (entry.method === 8) {
+            if (entry.size > budget.left) throw stripError('TOO_LARGE', 'Office file expands to more than the stripping limit');
+            out = await pipeBytes(new DecompressionStream('deflate-raw'), entry.data, budget.left);
+            budget.left -= out.length;
+        } else {
+            throw stripError('MALFORMED', 'Unsupported zip compression method ' + entry.method);
+        }
+        if (out.length !== entry.size || crc32(out) !== entry.crc) throw stripError('MALFORMED', 'Zip entry ' + entry.name + ' is corrupt');
+        return out;
+    }
+
+    function decodeUtf8(bytes, name) {
+        try {
+            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (e) {
+            throw stripError('MALFORMED', 'Office part ' + name + ' is not UTF-8');
+        }
+    }
+
+    // Names of the core, extended and custom property parts: the usual
+    // docProps/ paths plus wherever _rels/.rels points.
+    async function propertyParts(entries, budget) {
+        var parts = Object.assign({}, DEFAULT_PROPERTY_PARTS);
+        for (var i = 0; i < entries.length; i++) {
+            if (partName(entries[i].name) !== '_rels/.rels') continue;
+            var rels = decodeUtf8(await readEntry(entries[i], budget), entries[i].name);
+            var tags = [];
+            walkXml(rels, function (kind, token) {
+                if (kind === 'tag' && /^<Relationship\b/.test(token)) tags.push(token);
+            });
+            for (var t = 0; t < tags.length; t++) {
+                var type = /\sType\s*=\s*["']([^"']*)/.exec(tags[t]);
+                var target = /\sTarget\s*=\s*["']([^"']*)/.exec(tags[t]);
+                if (!type || !target) continue;
+                for (var k = 0; k < PROPERTY_REL_TYPES.length; k++) {
+                    if (PROPERTY_REL_TYPES[k][0].test(type[1])) parts[partName(target[1])] = PROPERTY_REL_TYPES[k][1];
+                }
+            }
+        }
+        return parts;
+    }
+
+    function cleanImage(data, type) {
+        var clean = type === 'jpeg' ? stripJpeg(data) : stripPng(data);
+        return sameBytes(clean, data) ? null : clean;
+    }
+
+    // New bytes for an entry, null to copy it unchanged, or DROP to leave it
+    // out. Parts that may hold metadata but can't be cleaned are copied and
+    // listed in ctx.incomplete.
+    async function processEntry(entry, ctx, props) {
+        var name = entry.name;
+        var lname = partName(name);
+        if (lname === '' || lname[lname.length - 1] === '/' || entry.size === 0) return null; // directories, empty parts
+        if (/^\[trash\]\//.test(lname)) return DROP; // stale data from earlier saves, unreferenced
+        if (props[lname]) return new TextEncoder().encode(TEMPLATES[props[lname]]);
+        if (CUSTOM_XML_ITEM.test(lname)) return new TextEncoder().encode(TEMPLATES.customItem);
+        if (lname === 'docmetadata/labelinfo.xml') return new TextEncoder().encode(TEMPLATES.labels);
+        if (/^_xmlsignatures\//.test(lname) || /^docprops\/.+\.xml$/.test(lname) || /(?:^|\/)webextensions\//.test(lname)) {
+            // Digital signatures embed the signer's certificate; unknown
+            // property parts are all metadata; add-in (web extension) state
+            // can hold anything, including e-mail addresses and tokens.
+            ctx.incomplete.push(name);
+            return null;
+        }
+
+        if (XML_PART.test(lname)) {
+            var xml = decodeUtf8(await readEntry(entry, ctx.budget), name);
+            var scrubbed = scrubOfficeXml(xml);
+            if (officeLeftover(scrubbed)) throw stripError('MALFORMED', 'Could not clean Office part ' + name);
+            if (RE_LINKED_FIELD.test(scrubbed)) ctx.incomplete.push(name + ' (a field linking to a file)');
+            return scrubbed === xml ? null : new TextEncoder().encode(scrubbed);
+        }
+        if (/\.svg$/.test(lname) && !EMBEDDED_PART.test(lname)) {
+            var svg = decodeUtf8(await readEntry(entry, ctx.budget), name);
+            var cleanSvg = scrubSvg(svg);
+            if (cleanSvg === null) {
+                ctx.incomplete.push(name);
+                return null;
+            }
+            return cleanSvg === svg ? null : new TextEncoder().encode(cleanSvg);
+        }
+        if (PRINTER_SETTINGS.test(lname)) {
+            // A Windows DEVMODE starts with the printer name (32 UTF-16
+            // chars); the driver's private data (which can name users or
+            // accounts) follows the dmSize-byte public part.
+            var dev = await readEntry(entry, ctx.budget);
+            if (dev.length < 64) return null;
+            var copy = dev.slice();
+            copy.fill(0, 0, 64);
+            if (copy.length >= 72) {
+                var pub = u16le(copy, 68);
+                if (pub >= 72 && pub < copy.length) copy.fill(0, pub);
+            }
+            return copy;
+        }
+        if (SAFE_BINARY.test(lname) && !EMBEDDED_PART.test(lname)) return null;
+
+        var data = await readEntry(entry, ctx.budget);
+        var type = detectType(data);
+        if (type) return cleanImage(data, type);
+        if (EMBEDDED_PART.test(lname) && isZip(data) && ctx.depth < MAX_EMBED_DEPTH) {
+            // An embedded Office file (a chart's workbook, a pasted document)
+            // has its own metadata: clean it the same way.
+            var inner = null;
+            try { inner = readZip(data); } catch (e) { inner = null; }
+            if (inner && isOoxml(inner)) {
+                var child = { budget: ctx.budget, depth: ctx.depth + 1, incomplete: [] };
+                var cleaned = await stripOoxml(inner, child);
+                for (var i = 0; i < child.incomplete.length; i++) ctx.incomplete.push(name + '/' + child.incomplete[i]);
+                return cleaned;
+            }
+        }
+        ctx.incomplete.push(name);
+        return null;
+    }
+
+    function writeU16(out, o, v) { out[o] = v & 0xFF; out[o + 1] = (v >>> 8) & 0xFF; }
+    function writeU32(out, o, v) { writeU16(out, o, v & 0xFFFF); writeU16(out, o + 2, v >>> 16); }
+
+    /**
+     * Rebuild an Office zip: metadata parts replaced or scrubbed, every entry's
+     * timestamp, extra fields, comment and file attributes cleared. Entries
+     * that don't change are copied without recompressing.
+     */
+    async function stripOoxml(entries, ctx) {
+        if (!compressionSupported()) throw stripError('UNSUPPORTED_BROWSER', 'This browser cannot remove metadata from Office files');
+        var props = await propertyParts(entries, ctx.budget);
+        var out = [];
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var plain = await processEntry(e, ctx, props);
+            if (plain === DROP) continue;
+            if (plain === null) {
+                out.push({ e: e, method: e.method, crc: e.crc, size: e.size, data: e.data });
+            } else {
+                var packed = await pipeBytes(new CompressionStream('deflate-raw'), plain, MAX_INFLATED_BYTES);
+                out.push({ e: e, method: 8, crc: crc32(plain), size: plain.length, data: packed });
+            }
+        }
+
+        var total = 22;
+        for (i = 0; i < out.length; i++) total += 30 + 46 + 2 * out[i].e.nameBytes.length + out[i].data.length;
+        if (total > 0xFFFFFFFF || out.length >= 0xFFFF) throw stripError('TOO_LARGE', 'Office file too large to rebuild');
+
+        var z = new Uint8Array(total);
+        var pos = 0;
+        var offsets = [];
+        // DOS date 1980-01-01, time 00:00: no entry keeps its save time.
+        var DOS_DATE = 0x21;
+        for (i = 0; i < out.length; i++) {
+            var o = out[i];
+            var flags = o.e.flags & 0x0800; // keep only the UTF-8 name flag
+            offsets.push(pos);
+            writeU32(z, pos, 0x04034B50);
+            writeU16(z, pos + 4, 20);
+            writeU16(z, pos + 6, flags);
+            writeU16(z, pos + 8, o.method);
+            writeU16(z, pos + 10, 0);
+            writeU16(z, pos + 12, DOS_DATE);
+            writeU32(z, pos + 14, o.crc);
+            writeU32(z, pos + 18, o.data.length);
+            writeU32(z, pos + 22, o.size);
+            writeU16(z, pos + 26, o.e.nameBytes.length);
+            writeU16(z, pos + 28, 0);
+            z.set(o.e.nameBytes, pos + 30);
+            pos += 30 + o.e.nameBytes.length;
+            z.set(o.data, pos);
+            pos += o.data.length;
+        }
+        var cdStart = pos;
+        for (i = 0; i < out.length; i++) {
+            o = out[i];
+            writeU32(z, pos, 0x02014B50);
+            writeU16(z, pos + 4, 20); // made by: MS-DOS, spec 2.0 (hides the creating OS)
+            writeU16(z, pos + 6, 20);
+            writeU16(z, pos + 8, o.e.flags & 0x0800);
+            writeU16(z, pos + 10, o.method);
+            writeU16(z, pos + 12, 0);
+            writeU16(z, pos + 14, DOS_DATE);
+            writeU32(z, pos + 16, o.crc);
+            writeU32(z, pos + 20, o.data.length);
+            writeU32(z, pos + 24, o.size);
+            writeU16(z, pos + 28, o.e.nameBytes.length);
+            // extra, comment, disk, internal and external attributes all zero
+            writeU32(z, pos + 42, offsets[i]);
+            z.set(o.e.nameBytes, pos + 46);
+            pos += 46 + o.e.nameBytes.length;
+        }
+        writeU32(z, pos, 0x06054B50);
+        writeU16(z, pos + 8, out.length);
+        writeU16(z, pos + 10, out.length);
+        writeU32(z, pos + 12, pos - cdStart);
+        writeU32(z, pos + 16, cdStart);
+        pos += 22;
+        return z.subarray(0, pos);
+    }
+
+    /**
+     * Strip metadata from file bytes, detecting the type from the content
+     * (never the extension). Resolves to { data: ArrayBuffer, type:
+     * 'jpeg'|'png'|'office'|null, supported: bool, removedBytes: number,
+     * orientation: 1-8|null, incomplete: string[] } (orientation is the value
+     * that was present BEFORE stripping; incomplete lists the parts of an
+     * Office file that may still hold metadata, such as embedded OLE objects
+     * or TIFF images). Unsupported types are returned unchanged with
+     * supported:false. Rejects when a supported type can't be stripped; the
+     * error's code says why (see stripError).
+     */
+    async function stripMetadata(input) {
         var b = toU8(input);
         var type = detectType(b);
+        var entries = null;
+        if (!type && isZip(b)) {
+            try {
+                entries = readZip(b);
+            } catch (err) {
+                // An unreadable zip only matters if it may be an Office
+                // file; other archives, zip64 ones included, pass through as
+                // unsupported.
+                if (mentionsContentTypes(b)) throw err;
+                entries = [];
+            }
+            if (isOoxml(entries)) {
+                if (b.length > MAX_CONTAINER_BYTES) throw stripError('TOO_LARGE', 'Office file too large to remove metadata in the browser');
+                type = 'office';
+            }
+        }
         if (!type) {
             var copy = (input instanceof ArrayBuffer) ? input : b.slice().buffer;
-            return { data: copy, type: null, supported: false, removedBytes: 0, orientation: null };
+            return { data: copy, type: null, supported: false, removedBytes: 0, orientation: null, incomplete: [] };
         }
-        var orientation = readOrientation(b);
-        var out = type === 'jpeg' ? stripJpeg(b) : stripPng(b);
+        var orientation = null;
+        var incomplete = [];
+        var out;
+        if (type === 'office') {
+            var ctx = { budget: { left: MAX_INFLATED_BYTES }, depth: 0, incomplete: incomplete };
+            out = await stripOoxml(entries, ctx);
+        } else {
+            orientation = readOrientation(b);
+            out = type === 'jpeg' ? stripJpeg(b) : stripPng(b);
+        }
         var buf = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
-        return { data: buf, type: type, supported: true, removedBytes: b.length - out.length, orientation: orientation };
+        return { data: buf, type: type, supported: true, removedBytes: b.length - out.length, orientation: orientation,
+            incomplete: incomplete };
     }
 
     var api = {
@@ -248,6 +956,8 @@
         stripJpeg: stripJpeg,
         stripPng: stripPng,
         readOrientation: readOrientation,
+        compressionSupported: compressionSupported,
+        scrubOfficeXml: scrubOfficeXml,
         stripMetadata: stripMetadata
     };
 
