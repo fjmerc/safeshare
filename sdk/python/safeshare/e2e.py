@@ -54,6 +54,9 @@ V2_FIXED_HEADER = 16
 # cryptography package takes at most 2**31 - 1 bytes in one call.
 MAX_ENCRYPTED_PAYLOAD = 2**31 - 1 - 1024
 
+# cryptography's AESGCM takes at most 2**31 - 1 bytes per call.
+_AESGCM_MAX = 2**31 - 1
+
 MAGIC_V1 = b"SF01"
 MAGIC_V2 = b"SF02"
 
@@ -102,6 +105,10 @@ def wrap_payload(name: str, data: bytes, pad: bool = True, max_stored: int = 0) 
     if pad:
         used = V2_FIXED_HEADER + len(nb) + len(data)
         total = padded_payload_length(used, max_stored)
+        if total > _AESGCM_MAX:
+            raise PayloadTooLargeError(
+                f"File is too large to encrypt in one piece: the padded size would be {total} bytes"
+            )
         header = MAGIC_V2 + struct.pack("<IQ", len(nb), len(data)) + nb
         return header + data + bytes(total - used)
     out = (MAGIC_V1 + struct.pack("<I", len(nb)) + nb + data) if nb else bytes(data)
@@ -218,8 +225,13 @@ class ShareLink:
 
 
 def parse_share_url(link: str) -> ShareLink:
-    """Parse an encrypted share link (keeps any path prefix of the server;
-    drops credentials and the query)."""
+    """Parse an encrypted share link (keeps any path prefix of the server).
+
+    Links with a backslash or user info are refused: parsers disagree about
+    which host they name, so a link that opens one server in a browser could
+    send requests (and an API token) to another here."""
+    if "\\" in link or "@" in link.split("#", 1)[0]:
+        raise ValidationError("The link must not contain a backslash or user info")
     try:
         parts = urlsplit(link.strip())
         host, port = parts.hostname, parts.port

@@ -114,9 +114,16 @@ def test_parse_share_url_rejects(link):
         e2e.parse_share_url(link)
 
 
-def test_parse_share_url_drops_userinfo_and_query():
-    link = e2e.parse_share_url("https://share.example.com@evil.example:8443/p/?x=1#/claim/abcdefgh/key/" + VECTORS["key"])
-    assert link.base_url == "https://evil.example:8443/p"
+@pytest.mark.parametrize("prefix", ["https://share.example.com@evil.example", "https://good.example\\@evil.example",
+                                    "https://good.example:443\\evil"])
+def test_parse_share_url_refuses_userinfo_and_backslashes(prefix):
+    with pytest.raises(ValidationError):
+        e2e.parse_share_url(prefix + "/#/claim/abcdefgh/key/" + VECTORS["key"])
+
+
+def test_parse_share_url_drops_query():
+    link = e2e.parse_share_url("https://share.example.com:8443/p/?x=1#/claim/abcdefgh/key/" + VECTORS["key"])
+    assert link.base_url == "https://share.example.com:8443/p"
 
 
 @pytest.mark.parametrize(
@@ -451,7 +458,7 @@ def test_proxy_env_rules(monkeypatch):
     assert _proxy_options(None, False) == {"proxy": "socks5h://127.0.0.1:9050"}
     monkeypatch.setenv("NO_PROXY", "localhost,.corp.example,10.0.0.1")
     opts = _proxy_options(None, False)
-    assert opts["trust_env"] is False
+    assert "trust_env" not in opts  # SSL_CERT_FILE etc. still honoured
     assert set(opts["mounts"]) == {"all://", "all://localhost", "all://*.corp.example", "all://10.0.0.1"}
     assert opts["mounts"]["all://localhost"] is None and opts["mounts"]["all://"] is not None
     # http:// and https:// URLs not in NO_PROXY both go through the proxy
@@ -460,12 +467,58 @@ def test_proxy_env_rules(monkeypatch):
             assert hc._transport_for_url(httpx.URL(url)) is opts["mounts"]["all://"]
         assert hc._transport_for_url(httpx.URL("http://localhost/x")) is not opts["mounts"]["all://"]
     monkeypatch.setenv("NO_PROXY", "*")
-    assert _proxy_options(None, False) == {"trust_env": False}
+    assert _proxy_options(None, False) == {}
     monkeypatch.delenv("NO_PROXY")
     monkeypatch.delenv("ALL_PROXY")
-    monkeypatch.setenv("HTTP_PROXY", "host:3128")
+    monkeypatch.setenv("HTTP_PROXY", "proxy.corp:3128")  # scheme-less, as httpx accepts
+    assert _proxy_options(None, False) == {"proxy": "http://proxy.corp:3128"}
+    monkeypatch.setenv("HTTP_PROXY", "ftp://x")
     with pytest.raises(ValidationError, match="environment"):
         _proxy_options(None, False)
+
+
+def test_httpoxy_uppercase_http_proxy_ignored_under_cgi(monkeypatch):
+    from safeshare.client import _proxy_options
+
+    for n in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(n, raising=False)
+    monkeypatch.setenv("REQUEST_METHOD", "GET")
+    monkeypatch.setenv("HTTP_PROXY", "http://attacker:8080")  # from a client's Proxy: header
+    assert _proxy_options(None, False) == {}
+
+
+def test_padded_size_over_aesgcm_limit_is_refused(monkeypatch):
+    # A file just under the cap pads past AES-GCM's 2**31 - 1 byte limit.
+    assert e2e.padded_payload_length(16 + 13 + e2e.MAX_ENCRYPTED_PAYLOAD - 10) > e2e._AESGCM_MAX
+    monkeypatch.setattr(e2e, "padded_payload_length", lambda used, max_stored=0: e2e._AESGCM_MAX + 1)
+    with pytest.raises(PayloadTooLargeError):
+        e2e.wrap_payload("n", b"x")
+
+
+def test_failed_exclusive_write_leaves_no_partial_file(tmp_path, monkeypatch):
+    from safeshare import client as client_mod
+
+    dest = tmp_path / "out.bin"
+    real_fdopen = client_mod.os.fdopen
+
+    class Boom:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.f.close()
+
+        def write(self, data):
+            self.f.write(data[:3])
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(client_mod.os, "fdopen", lambda fd, mode: Boom(real_fdopen(fd, mode)))
+    with pytest.raises(OSError):
+        client_mod._write_private(dest, b"secret data", overwrite=False)
+    assert not dest.exists()
 
 
 def test_key_not_in_repr():

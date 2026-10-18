@@ -119,9 +119,12 @@ async function writePrivate(path: string, data: Buffer, overwrite: boolean): Pro
     const fh = await openFile(path, "wx", 0o600);
     try {
       await fh.writeFile(data);
-    } finally {
-      await fh.close();
+    } catch (err) {
+      await fh.close().catch(() => undefined);
+      await unlink(path).catch(() => undefined); // don't leave a partial file behind
+      throw err;
     }
+    await fh.close();
     return;
   }
   const tmp = join(dirname(path), `.safeshare-${randomBytes(6).toString("hex")}.tmp`);

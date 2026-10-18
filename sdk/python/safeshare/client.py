@@ -69,8 +69,15 @@ def _write_private(path: Path, data: bytes, overwrite: bool) -> None:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             raise DownloadError(f"Destination already exists: {path}") from None
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+        except BaseException:
+            try:
+                os.unlink(path)  # don't leave a partial file behind
+            except OSError:
+                pass
+            raise
         return
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".safeshare-", suffix=".tmp")
     try:
@@ -93,16 +100,23 @@ def _rate_limit_poll_delay(error: RateLimitError) -> float:
 _ENCRYPT_MODES = ("auto", "always", "never")
 
 
-def _env_any(*names: str) -> str:
-    for n in names:
-        v = os.environ.get(n)
-        if v:
-            return v
-    return ""
+def _env_proxy(scheme: str) -> str:
+    """The proxy environment variable for scheme ("http", "https", "all" or
+    "no"), lowercase first as urllib does. Under CGI (REQUEST_METHOD set) the
+    uppercase HTTP_PROXY can come from a client's Proxy: header (httpoxy,
+    CVE-2016-1000110), so it is ignored there."""
+    v = os.environ.get(f"{scheme}_proxy")
+    if v:
+        return v
+    if scheme == "http" and "REQUEST_METHOD" in os.environ:
+        return ""
+    return os.environ.get(f"{scheme.upper()}_PROXY", "")
 
 
 def _normalize_proxy(url: str, source: str = "proxy") -> str:
     url = url.strip()
+    if source != "proxy" and "://" not in url and url:
+        url = "http://" + url  # as httpx does for environment values
     scheme, sep, rest = url.partition("://")
     if not sep or scheme.lower() not in ("socks5", "socks5h", "http", "https") or not rest:
         raise ValidationError(f"{source} must be a URL such as socks5://127.0.0.1:9050")
@@ -136,24 +150,26 @@ def _proxy_options(proxy: Optional[str], disable_proxy: bool, verify: bool = Tru
         return {"proxy": _normalize_proxy(proxy), "trust_env": False}
     if disable_proxy:
         return {"trust_env": False}
-    https_p = _env_any("HTTPS_PROXY", "https_proxy")
-    http_p = _env_any("HTTP_PROXY", "http_proxy")
+    https_p = _env_proxy("https")
+    http_p = _env_proxy("http")
     if https_p and http_p:
         return {}  # httpx's usual per-scheme and NO_PROXY rules
-    single = https_p or http_p or _env_any("ALL_PROXY", "all_proxy")
+    single = https_p or http_p or _env_proxy("all")
     if not single:
         return {}
     single = _normalize_proxy(single, "The proxy environment variable")
-    no_proxy = _env_any("NO_PROXY", "no_proxy")
+    no_proxy = _env_proxy("no")
     if not no_proxy:
         return {"proxy": single}
     if no_proxy.strip() == "*":
-        return {"trust_env": False}  # NO_PROXY=* means no proxy at all
+        return {}  # NO_PROXY=* means no proxy at all; httpx applies it
     # The one proxy covers both schemes; only hosts NO_PROXY names go direct.
+    # trust_env stays on (SSL_CERT_FILE etc.); httpx's own env mounts for the
+    # same proxy and NO_PROXY hosts merge with these.
     mounts: dict = {"all://": httpx.HTTPTransport(proxy=single, verify=verify)}
     for pattern in _no_proxy_patterns(no_proxy):
         mounts[pattern] = None
-    return {"mounts": mounts, "trust_env": False}
+    return {"mounts": mounts}
 
 
 class SafeShareClient:

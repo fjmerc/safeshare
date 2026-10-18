@@ -104,8 +104,11 @@ describe("e2e helpers", () => {
     ]) {
       expect(() => e2e.parseShareUrl(link), link).toThrow();
     }
-    const l = e2e.parseShareUrl(`https://share.example.com@evil.example:8443/p/?x=1#/claim/abcdefgh/key/${VECTORS.key}`);
-    expect(l.baseUrl).toBe("https://evil.example:8443/p");
+    for (const prefix of ["https://share.example.com@evil.example", "https://good.example\\@evil.example", "https://good.example:443\\evil"]) {
+      expect(() => e2e.parseShareUrl(`${prefix}/#/claim/abcdefgh/key/${VECTORS.key}`), prefix).toThrow();
+    }
+    const l = e2e.parseShareUrl(`https://share.example.com:8443/p/?x=1#/claim/abcdefgh/key/${VECTORS.key}`);
+    expect(l.baseUrl).toBe("https://share.example.com:8443/p");
   });
 
   it("safeFilename", () => {

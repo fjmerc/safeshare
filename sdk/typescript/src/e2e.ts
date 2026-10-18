@@ -38,6 +38,9 @@ const V2_FIXED_HEADER = 16;
 /** What an encrypted upload or download may hold in memory (fs.readFile refuses files of 2 GiB or more). */
 export const MAX_ENCRYPTED_PAYLOAD = 2 ** 31 - 1024;
 
+/** Largest input encrypted in one call (Node's cipher and Buffer limits). */
+const MAX_CIPHER_INPUT = 2 ** 31 - 1;
+
 const MAGIC_V1 = Buffer.from("SF01");
 const MAGIC_V2 = Buffer.from("SF02");
 const CLAIM_CODE = /^[A-Za-z0-9_-]{8,32}$/;
@@ -81,7 +84,11 @@ export function wrapPayload(name: string, data: Uint8Array, pad = true, maxStore
   const nb = nameBytes(name);
   if (pad) {
     const used = V2_FIXED_HEADER + nb.length + data.length;
-    const out = Buffer.alloc(paddedPayloadLength(used, maxStored)); // zero-filled: the padding
+    const total = paddedPayloadLength(used, maxStored);
+    if (total > MAX_CIPHER_INPUT) {
+      throw new PayloadTooLargeError(`File is too large to encrypt in one piece: the padded size would be ${total} bytes`);
+    }
+    const out = Buffer.alloc(total); // zero-filled: the padding
     MAGIC_V2.copy(out, 0);
     out.writeUInt32LE(nb.length, 4);
     out.writeBigUInt64LE(BigInt(data.length), 8);
@@ -206,6 +213,12 @@ export interface ShareLink {
 
 /** Parse an encrypted share link (keeps any path prefix of the server; drops credentials and query). */
 export function parseShareUrl(link: string): ShareLink {
+  // Parsers disagree about which host a link with a backslash or user info
+  // names, so a link that opens one server elsewhere could send requests (and
+  // an API token) to another here. Real share links have neither.
+  if (link.includes("\\") || link.split("#")[0].includes("@")) {
+    throw new ValidationError("The link must not contain a backslash or user info");
+  }
   let u: URL;
   try {
     u = new URL(link.trim());
