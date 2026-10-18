@@ -42,7 +42,7 @@
                     <dd>{{.Recipient}}</dd>
                 </dl>
                 {{- if .Cleaned}}
-                <p>Hidden information was removed from the file before it was locked.</p>
+                <p>Hidden information was removed from the file before it was locked (the drop page lists what can remain).</p>
                 {{- else if .HasFile}}
                 <p>This kind of file can't be cleaned of hidden information, so it was sent as it was.</p>
                 {{- end}}

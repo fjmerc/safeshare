@@ -39,11 +39,11 @@ The server sees the file before encrypting it, so it can clean more types than a
 | Type | Removed |
 |------|---------|
 | JPEG, PNG | EXIF, GPS, XMP, IPTC and comment data; PNG text and time chunks |
-| PDF | the whole document information dictionary (author, title, dates, producer, custom keys), the XMP metadata stream, and the document ID |
-| MP4, MOV, MP3 | metadata tags (location, dates, device, titles) |
-| Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | document properties (`docProps/`, `customXml/`): author, company, dates; and the save times of the parts inside the file. **Comments and tracked changes keep their authors' names, and editing-session IDs stay.** Senders should remove comments and accept changes in Office first |
+| PDF | the whole document information dictionary (author, title, dates, producer, custom keys), XMP metadata on the document, pages, images and other objects, PieceInfo, the author, dates and ID of each annotation (comments, highlights), and the document ID. **Photos inside a PDF keep their own EXIF data** |
+| MP4 family (MP4, MOV, M4V, M4A, 3GP), MP3 | metadata tags (location, dates, device, titles) |
+| Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | document properties (`docProps/`, `customXml/`): author, company, dates; the save times of the parts inside the file; and the metadata of JPEG and PNG photos inside it. **Comments and tracked changes keep their authors' names (and the lists of comment authors stay), editing-session IDs stay, an Excel workbook can keep the folder it was last saved in (often including a Windows user name), and a Word file can keep the path of its template.** Senders should remove comments, accept changes and save a copy from a new folder first |
 
-The type is decided from the file's content. A file whose name says it is one of these types but whose content isn't recognised as one (say, `photo.jpg` that is really a text file) is refused, so it can't skip cleaning by being misnamed. Password-protected PDFs can't be cleaned and are refused. Other types are sent as they are, and the result page says so.
+The type is decided from the file's content. A file whose name says it is one of these types but whose content isn't recognised as one (say, `photo.jpg` that is really a text file) is refused, so it can't skip cleaning by being misnamed. Password-protected PDFs can't be cleaned and are refused, and so are PDFs with more than 100,000 objects and Office files with more than 10,000 parts, which would take too much memory to clean (real documents have far fewer). Other types are sent as they are, and the result page says so.
 
 ## Setting it up
 
@@ -82,7 +82,7 @@ services:
 
 Invalid values stop SafeShare at startup rather than falling back to a default.
 
-**Memory:** drops are held in memory, in two stages. While they arrive, all the drops in progress together may hold at most `DROP_MAX_CONCURRENT` full-size drops' worth of data; a sender only holds memory for what they have actually sent, so slow senders can't lock others out, and new drops are turned away (`503`, try again) when that budget is used up. Once a drop has arrived, cleaning and encrypting it needs one of `DROP_MAX_CONCURRENT` slots and up to about three times its size. Allow roughly `DROP_MAX_CONCURRENT × 4 × DROP_MAX_SIZE` (400 MB with the defaults) on top of SafeShare's usual needs. Office files are not inflated to be cleaned: only their two small structural XML files are.
+**Memory:** drops are held in memory, in two stages. While they arrive, all the drops in progress together may hold at most `DROP_MAX_CONCURRENT` full-size drops' worth of data; a sender only holds memory for what they have actually sent, so slow senders can't lock others out, and new drops are turned away (`503`, try again) when that budget is used up. Once a drop has arrived, cleaning and encrypting it needs one of `DROP_MAX_CONCURRENT` slots and usually up to about three times its size. Allow roughly `DROP_MAX_CONCURRENT × 4 × DROP_MAX_SIZE` (400 MB with the defaults) on top of SafeShare's usual needs. PDFs are the exception: the PDF parser holds every object in memory, so a large PDF made of many small objects can need several hundred MB to clean; ones with more than 100,000 objects are refused. Office files aren't inflated to be cleaned, apart from their two small structural XML files and the photos in them.
 
 Drops share the upload rate limit (`RATE_LIMIT_UPLOAD`, per IP address; over Tor, all visitors share one).
 

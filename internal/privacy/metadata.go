@@ -37,7 +37,14 @@ var supportedMimeTypes = map[string]func(string) error{
 	"application/vnd.openxmlformats-officedocument.presentationml.presentation": stripOfficeMetadata, // .pptx
 	"video/mp4":       stripMP4Metadata, // .mp4
 	"video/quicktime": stripMP4Metadata, // .mov
-	"audio/mpeg":      stripMP3Metadata, // .mp3
+	// The rest of the MP4 family (same atom structure, other brands):
+	// iTunes/iPhone video and audio, phone video.
+	"video/x-m4v": stripMP4Metadata, // .m4v
+	"audio/mp4":   stripMP4Metadata, // .m4a
+	"audio/x-m4a": stripMP4Metadata, // .m4a
+	"video/3gpp":  stripMP4Metadata, // .3gp
+	"video/3gpp2": stripMP4Metadata, // .3g2
+	"audio/mpeg":  stripMP3Metadata, // .mp3
 }
 
 // supportedBytesStrippers is supportedMimeTypes for in-memory files. The two
@@ -51,6 +58,11 @@ var supportedBytesStrippers = map[string]func([]byte) ([]byte, bool, error){
 	"application/vnd.openxmlformats-officedocument.presentationml.presentation": stripOfficeBytes,
 	"video/mp4":       stripMP4Bytes,
 	"video/quicktime": stripMP4Bytes,
+	"video/x-m4v":     stripMP4Bytes,
+	"audio/mp4":       stripMP4Bytes,
+	"audio/x-m4a":     stripMP4Bytes,
+	"video/3gpp":      stripMP4Bytes,
+	"video/3gpp2":     stripMP4Bytes,
 	"audio/mpeg":      stripMP3Bytes,
 }
 

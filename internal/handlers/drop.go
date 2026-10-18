@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"filippo.io/age"
 	"github.com/gabriel-vasile/mimetype"
@@ -101,6 +102,8 @@ var dropExtensionTypes = func() map[string]cleanableType {
 		xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 		pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	)
+	// One container format, told apart only by its brand.
+	mp4Family := []string{"video/mp4", "video/x-m4v", "audio/mp4", "audio/x-m4a", "video/3gpp", "video/3gpp2"}
 	return map[string]cleanableType{
 		".jpg":  {"image/jpeg", []string{"image/jpeg"}},
 		".jpeg": {"image/jpeg", []string{"image/jpeg"}},
@@ -109,7 +112,11 @@ var dropExtensionTypes = func() map[string]cleanableType {
 		".docx": {docx, []string{docx, "application/zip"}},
 		".xlsx": {xlsx, []string{xlsx, "application/zip"}},
 		".pptx": {pptx, []string{pptx, "application/zip"}},
-		".mp4":  {"video/mp4", []string{"video/mp4", "video/x-m4v", "audio/mp4"}},
+		".mp4":  {"video/mp4", mp4Family},
+		".m4v":  {"video/mp4", mp4Family},
+		".m4a":  {"video/mp4", mp4Family},
+		".3gp":  {"video/mp4", mp4Family},
+		".3g2":  {"video/mp4", mp4Family},
 		".mov":  {"video/quicktime", []string{"video/quicktime"}},
 		".mp3":  {"audio/mpeg", []string{"audio/mpeg"}},
 	}
@@ -174,7 +181,9 @@ func DropPageHandler(cfg *config.Config) http.HandlerFunc {
 func DropHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	concurrent := int64(max(cfg.Drop.MaxConcurrent, 1))
 	slots := make(chan struct{}, concurrent)
-	received := &byteBudget{limit: concurrent * (cfg.Drop.MaxSize + dropMaxMessage)}
+	// A little over the exact sizes, for the minimum allocation of small
+	// files and messages.
+	received := &byteBudget{limit: concurrent * (cfg.Drop.MaxSize + dropMaxMessage + 256*1024)}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -304,11 +313,18 @@ func readAllCapped(r io.Reader, limit int64, tooLarge error, hold *budgetHold) (
 			if int64(len(out)+n) > limit {
 				return nil, tooLarge
 			}
-			before := cap(out)
-			out = append(out, chunk[:n]...)
-			if grown := cap(out) - before; grown > 0 && !hold.take(int64(grown)) {
-				return nil, errDropBusy
+			if len(out)+n > cap(out) {
+				// Grow by doubling, but never past the limit, so a file of
+				// exactly the limit fits in exactly the budget it may take.
+				newCap := int(min(max(2*int64(cap(out)), int64(len(out)+n), 64*1024), limit))
+				if !hold.take(int64(newCap - cap(out))) {
+					return nil, errDropBusy
+				}
+				grown := make([]byte, len(out), newCap)
+				copy(grown, out)
+				out = grown
 			}
+			out = append(out, chunk[:n]...)
 		}
 		if err == io.EOF {
 			return out, nil
@@ -450,8 +466,10 @@ func prepareDrop(r *http.Request, cfg *config.Config, form *dropForm) ([]byte, d
 			return nil, info, derr
 		}
 	}
-	if name == dropMessageName {
-		name = "file-" + dropMessageName
+	// Case-insensitive file systems would unpack "Message.txt" over the
+	// message.
+	if strings.EqualFold(name, dropMessageName) {
+		name = "file-" + name
 	}
 
 	sealed, err := sealDrop(name, form.data, form.message, cfg.Drop.Recipient)
@@ -474,7 +492,7 @@ func checkDropFile(cfg *config.Config, form *dropForm) (string, *dropError) {
 	if err := utils.ValidateUploadFilename(form.filename); err != nil {
 		return "", badName
 	}
-	name := utils.SanitizeFilename(form.filename)
+	name := shortenDropName(utils.SanitizeFilename(form.filename))
 	if name == "" || name == "." || name == ".." {
 		name = "file"
 	}
@@ -599,7 +617,9 @@ func stripDrop(name string, data []byte) ([]byte, bool, *dropError) {
 
 	out, err := stripMetadataBytesSafe(data, stripAs)
 	if err != nil {
-		slog.Warn("drop rejected: metadata stripping failed", "mime_type", stripAs, "error", err)
+		// The error can quote the document (part names, parser messages), so
+		// only its kind is logged.
+		slog.Warn("drop rejected: metadata stripping failed", "mime_type", stripAs, "reason", stripFailureReason(err))
 		detail := "Its hidden information couldn't be removed, so nothing was sent."
 		switch {
 		case errors.Is(err, privacy.ErrEncryptedDocument):
@@ -610,6 +630,42 @@ func stripDrop(name string, data []byte) ([]byte, bool, *dropError) {
 		return nil, false, &dropError{http.StatusUnprocessableEntity, "The file couldn't be cleaned.", detail}
 	}
 	return out, true, nil
+}
+
+// stripFailureReason names the kind of a stripping failure for the log.
+func stripFailureReason(err error) string {
+	switch {
+	case errors.Is(err, privacy.ErrEncryptedDocument):
+		return "encrypted"
+	case errors.Is(err, privacy.ErrFileTooLarge):
+		return "too large"
+	case errors.Is(err, privacy.ErrStripTimeout):
+		return "timeout"
+	case strings.Contains(err.Error(), "panicked"):
+		return "panic"
+	}
+	return "unreadable"
+}
+
+// maxDropNameBytes keeps archive entry names within the 255-byte file name
+// limit of common file systems, so "tar -x" can unpack them.
+const maxDropNameBytes = 200
+
+// shortenDropName cuts a long name to maxDropNameBytes, keeping its
+// extension and not splitting a UTF-8 character.
+func shortenDropName(name string) string {
+	if len(name) <= maxDropNameBytes {
+		return name
+	}
+	ext := filepath.Ext(name)
+	if len(ext) > 16 {
+		ext = ""
+	}
+	base := name[:maxDropNameBytes-len(ext)]
+	for len(base) > 0 && !utf8.ValidString(base) {
+		base = base[:len(base)-1]
+	}
+	return base + ext
 }
 
 // stripMetadataBytes is privacy.StripMetadataBytes; a variable so tests can

@@ -111,16 +111,25 @@ func stripOfficeMetadata(filePath string) error {
 	return nil
 }
 
+// maxOfficeEntries caps the parts in an Office file. Real documents have
+// tens to a few thousand; each part costs memory to parse and rebuild, so
+// a crafted file with hundreds of thousands of empty ones is refused.
+const maxOfficeEntries = 10000
+
 // stripOfficeBytes is stripOfficeMetadata on an in-memory file. The file is
 // always rebuilt, even with no docProps/customXml to drop, because the
-// rebuild also clears the entries' save times, extra fields and comments.
+// rebuild also clears the entries' save times, extra fields and comments,
+// and the metadata of embedded photos.
 func stripOfficeBytes(data []byte) ([]byte, bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, false, fmt.Errorf("not a valid ZIP/Office file: %w", err)
 	}
+	if len(reader.File) > maxOfficeEntries {
+		return nil, false, fmt.Errorf("office file has too many parts (%d, max %d)", len(reader.File), maxOfficeEntries)
+	}
 
-	result, err := rebuildOfficeZIP(reader)
+	result, err := rebuildOfficeZIP(reader, int64(len(data)))
 	if err != nil {
 		return nil, false, err
 	}
@@ -131,16 +140,37 @@ func stripOfficeBytes(data []byte) ([]byte, bool, error) {
 // file: the original times record when the document was last saved.
 var officeEntryTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// rebuildOfficeZIP creates a new ZIP without metadata entries. Entries it
-// doesn't change are copied still compressed, so a crafted file can't make
-// it inflate more than the two small XML files it filters (each capped at
-// maxXMLEntrySize, and all together at maxDecompressedSize). Entry times,
+// isOfficeImage reports whether a part is a photo embedded in the document
+// (word/media/, ppt/media/, xl/media/), whose EXIF/GPS data is stripped.
+func isOfficeImage(name string) (stripper func([]byte) ([]byte, bool, error), ok bool) {
+	lower := strings.ToLower(name)
+	if !strings.HasPrefix(lower, "word/media/") && !strings.HasPrefix(lower, "ppt/media/") && !strings.HasPrefix(lower, "xl/media/") {
+		return nil, false
+	}
+	switch filepath.Ext(lower) {
+	case ".jpg", ".jpeg":
+		return stripJPEGBytes, true
+	case ".png":
+		return stripPNGBytes, true
+	}
+	return nil, false
+}
+
+// rebuildOfficeZIP creates a new ZIP without metadata entries, from a file
+// of inputSize bytes. Entries it doesn't change are copied still
+// compressed; the ones it does change (the two structural XML files and
+// embedded photos) are inflated under maxDecompressedSize, photos also
+// under twice the file's size (photos barely compress). The compressed
+// entries together can't exceed the file itself: zip readers don't notice
+// several directory records pointing at the same data, which would
+// otherwise let a small file copy one entry over and over. Entry times,
 // extra fields and comments are not carried over.
-func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
+func rebuildOfficeZIP(reader *zip.Reader, inputSize int64) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
 
-	var totalDecompressed int64
+	var totalDecompressed, totalImages, totalCompressed int64
+	maxImages := min(maxDecompressedSize, 2*inputSize+1<<20)
 
 	for _, f := range reader.File {
 		// Skip metadata directories
@@ -151,7 +181,15 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 		// Reject path traversal in ZIP entries (defense in depth)
 		cleaned := filepath.ToSlash(f.Name)
 		if strings.Contains(cleaned, "..") {
-			return nil, fmt.Errorf("invalid ZIP entry name: %s", f.Name)
+			return nil, fmt.Errorf("invalid ZIP entry name")
+		}
+
+		if f.CompressedSize64 > uint64(inputSize) {
+			return nil, fmt.Errorf("ZIP entry larger than the file")
+		}
+		totalCompressed += int64(f.CompressedSize64)
+		if totalCompressed > inputSize {
+			return nil, fmt.Errorf("ZIP entries overlap or exceed the file size")
 		}
 
 		var filter func([]byte) ([]byte, error)
@@ -161,32 +199,49 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 		case "_rels/.rels":
 			filter = filterRelationships
 		}
+		image, isImage := isOfficeImage(f.Name)
 
-		if filter == nil {
+		if filter == nil && !isImage {
 			if err := copyZipEntryRaw(writer, f); err != nil {
 				return nil, err
 			}
 			continue
 		}
 
-		// Read entry with decompression size limit
+		// Read entry with decompression size limits
+		limit := maxDecompressedSize - totalDecompressed
+		if isImage {
+			limit = min(limit, maxImages-totalImages)
+		}
 		rc, err := f.Open()
 		if err != nil {
-			return nil, fmt.Errorf("failed to open ZIP entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("failed to open ZIP entry: %w", err)
 		}
-		limited := io.LimitReader(rc, maxDecompressedSize-totalDecompressed+1)
-		entryData, err := io.ReadAll(limited)
+		entryData, err := io.ReadAll(io.LimitReader(rc, limit+1))
 		rc.Close()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read ZIP entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("failed to read ZIP entry: %w", err)
+		}
+		if int64(len(entryData)) > limit {
+			return nil, fmt.Errorf("ZIP decompressed size exceeds limit")
 		}
 		totalDecompressed += int64(len(entryData))
-		if totalDecompressed > maxDecompressedSize {
-			return nil, fmt.Errorf("ZIP decompressed size exceeds limit (%d bytes)", maxDecompressedSize)
+		if isImage {
+			totalImages += int64(len(entryData))
 		}
 
-		// Filter structural XML files to remove metadata references
-		if entryData, err = filter(entryData); err != nil {
+		if isImage {
+			// An embedded photo that can't be parsed is refused rather than
+			// passed through with its EXIF/GPS data.
+			if len(entryData) > 0 {
+				out, _, err := image(entryData)
+				if err != nil {
+					return nil, fmt.Errorf("embedded image can't be cleaned: %w", err)
+				}
+				entryData = out
+			}
+		} else if entryData, err = filter(entryData); err != nil {
+			// Filter structural XML files to remove metadata references
 			return nil, fmt.Errorf("failed to filter %s: %w", f.Name, err)
 		}
 
@@ -199,10 +254,10 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 		}
 		w, err := writer.CreateHeader(header)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create ZIP entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("failed to create ZIP entry: %w", err)
 		}
 		if _, err := w.Write(entryData); err != nil {
-			return nil, fmt.Errorf("failed to write ZIP entry %s: %w", f.Name, err)
+			return nil, fmt.Errorf("failed to write ZIP entry: %w", err)
 		}
 	}
 
@@ -217,11 +272,11 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 // header that keeps only what reading it needs.
 func copyZipEntryRaw(w *zip.Writer, f *zip.File) error {
 	if f.Method != zip.Store && f.Method != zip.Deflate {
-		return fmt.Errorf("unsupported compression method %d in ZIP entry %s", f.Method, f.Name)
+		return fmt.Errorf("unsupported compression method %d in ZIP entry", f.Method)
 	}
 	raw, err := f.OpenRaw()
 	if err != nil {
-		return fmt.Errorf("failed to open ZIP entry %s: %w", f.Name, err)
+		return fmt.Errorf("failed to open ZIP entry: %w", err)
 	}
 	dst, err := w.CreateRaw(&zip.FileHeader{
 		Name:   f.Name,
@@ -236,10 +291,10 @@ func copyZipEntryRaw(w *zip.Writer, f *zip.File) error {
 		UncompressedSize64: f.UncompressedSize64,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create ZIP entry %s: %w", f.Name, err)
+		return fmt.Errorf("failed to create ZIP entry: %w", err)
 	}
 	if _, err := io.Copy(dst, raw); err != nil {
-		return fmt.Errorf("failed to copy ZIP entry %s: %w", f.Name, err)
+		return fmt.Errorf("failed to copy ZIP entry: %w", err)
 	}
 	return nil
 }

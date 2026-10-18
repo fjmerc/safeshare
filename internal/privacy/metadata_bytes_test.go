@@ -3,13 +3,20 @@ package privacy
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // The in-memory and file strippers must cover the same types, or a type
@@ -231,4 +238,219 @@ func TestStripOfficeBytes_RealDocument(t *testing.T) {
 		}
 		rc.Close()
 	}
+}
+
+// overlappingZip builds a zip whose central directory lists the same
+// stored entry copies times: every record points at the one local entry.
+func overlappingZip(t *testing.T, entrySize, copies int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "word/media/big.bin", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(bytes.Repeat([]byte{'A'}, entrySize)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	eocd := bytes.LastIndex(data, []byte("PK\x05\x06"))
+	cdSize := int(binary.LittleEndian.Uint32(data[eocd+12:]))
+	cdOff := int(binary.LittleEndian.Uint32(data[eocd+16:]))
+	record := data[cdOff : cdOff+cdSize]
+
+	var out bytes.Buffer
+	out.Write(data[:cdOff])
+	for i := 0; i < copies; i++ {
+		out.Write(record)
+	}
+	end := append([]byte(nil), data[eocd:eocd+22]...)
+	binary.LittleEndian.PutUint16(end[8:], uint16(copies))
+	binary.LittleEndian.PutUint16(end[10:], uint16(copies))
+	binary.LittleEndian.PutUint32(end[12:], uint32(cdSize*copies))
+	out.Write(end)
+	return out.Bytes()
+}
+
+func TestStripOfficeBytes_RefusesOverlappingEntries(t *testing.T) {
+	data := overlappingZip(t, 1<<20, 300)
+	if zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data))); err != nil || len(zr.File) != 300 {
+		t.Fatalf("fixture: %v files, %v", len(zr.File), err)
+	}
+	out, _, err := stripOfficeBytes(data)
+	if err == nil {
+		t.Fatalf("accepted; output %d bytes from a %d-byte file", len(out), len(data))
+	}
+}
+
+func TestStripOfficeBytes_RefusesTooManyEntries(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for i := 0; i <= maxOfficeEntries; i++ {
+		if _, err := zw.Create(fmt.Sprintf("word/p%d.xml", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stripOfficeBytes(buf.Bytes()); err == nil {
+		t.Error("accepted a file with too many parts")
+	}
+}
+
+func TestStripOfficeBytes_CleansEmbeddedPhotos(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	writeZipEntry(t, zw, "[Content_Types].xml", []byte(`<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>`))
+	writeZipEntry(t, zw, "word/document.xml", []byte("<w:document/>"))
+	writeZipEntry(t, zw, "word/media/image1.jpeg", buildJPEG(true))
+	writeZipEntry(t, zw, "ppt/media/image2.png", buildPNGWithEXIF())
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := stripOfficeBytes(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jpg := zipEntryContent(t, out, "word/media/image1.jpeg")
+	if containsMarker(jpg, 0xE1) {
+		t.Error("embedded JPEG keeps its APP1 (EXIF) segment")
+	}
+	if png := zipEntryContent(t, out, "ppt/media/image2.png"); containsPNGChunk(png, "eXIf") {
+		t.Error("embedded PNG keeps its eXIf chunk")
+	}
+	if got := zipEntryContent(t, out, "word/document.xml"); string(got) != "<w:document/>" {
+		t.Errorf("document part changed: %q", got)
+	}
+
+	// A broken embedded photo stops the whole file rather than passing
+	// through uncleaned.
+	var bad bytes.Buffer
+	zw = zip.NewWriter(&bad)
+	writeZipEntry(t, zw, "word/media/image1.jpeg", []byte("not a jpeg"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stripOfficeBytes(bad.Bytes()); err == nil {
+		t.Error("accepted a broken embedded photo")
+	}
+}
+
+// buildPDF assembles objects (numbered from 1, object 1 the catalog) into a
+// PDF with a correct cross-reference table.
+func buildPDF(objects []string) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.7\n")
+	offsets := make([]int, len(objects))
+	for i, obj := range objects {
+		offsets[i] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xref := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return buf.Bytes()
+}
+
+func TestStripPDFBytes_PageMetadataAndAnnotationAuthors(t *testing.T) {
+	xmp := "<x:xmpmeta>PAGEXMPSECRET</x:xmpmeta>"
+	data := buildPDF([]string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Metadata 4 0 R /Annots [5 0 R] /PieceInfo << /App << /Private (PIECEINFOSECRET) >> >> >>",
+		fmt.Sprintf("<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream", len(xmp), xmp),
+		"<< /Type /Annot /Subtype /Text /Rect [10 10 50 50] /Contents (a note) /T (ANNOTAUTHORSECRET) /M (D:20260101120000Z) /CreationDate (D:20260101120000Z) /NM (ANNOTIDSECRET) >>",
+	})
+	out, err := StripMetadataBytes(data, "application/pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pdfcpu packs objects into compressed object streams on write, so look
+	// at the parsed objects, not the raw bytes.
+	all := pdfObjectsText(t, out)
+	for _, needle := range []string{"PAGEXMPSECRET", "PIECEINFOSECRET", "ANNOTAUTHORSECRET", "ANNOTIDSECRET", "D:20260101120000Z"} {
+		if strings.Contains(all, needle) {
+			t.Errorf("%s survived", needle)
+		}
+	}
+	if !strings.Contains(all, "a note") {
+		t.Error("the annotation's text was removed; only its author and dates should go")
+	}
+}
+
+func TestStripPDFBytes_RefusesTooManyObjects(t *testing.T) {
+	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [] /Count 0 >>"}
+	for len(objects) < maxPDFObjects+10 {
+		objects = append(objects, "<< /A 1 >>")
+	}
+	if _, err := StripMetadataBytes(buildPDF(objects), "application/pdf"); err == nil {
+		t.Error("accepted a PDF with too many objects")
+	}
+}
+
+func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
+	ok := []byte("1 0 obj << /Type /ObjStm /N 50 /First 10 /Length 3 >> stream\nabc\nendstream endobj")
+	if err := checkPDFObjectCount(ok); err != nil {
+		t.Errorf("small object stream refused: %v", err)
+	}
+	for name, data := range map[string]string{
+		"huge count":   "1 0 obj << /Type /ObjStm /N 900000 /First 10 >> endobj",
+		"indirect /N":  "1 0 obj << /Type /ObjStm /N 7 0 R /First 10 >> endobj",
+		"/N far away":  "1 0 obj << /Type /ObjStm " + strings.Repeat(" ", 2000) + "/N 5 >> endobj",
+		"no /N at all": "1 0 obj << /Type /ObjStm /First 10 >> endobj",
+	} {
+		if err := checkPDFObjectCount([]byte(data)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// The real sample PDFs used by the browser tests (one with object streams,
+// one linearized) still clean.
+func TestStripPDFBytes_RealSamples(t *testing.T) {
+	for _, name := range []string{"sample.pdf", "sample-objstm.pdf", "sample-linear.pdf"} {
+		data, err := os.ReadFile("../../tests/js/fixtures/" + name)
+		if err != nil {
+			t.Skipf("fixtures not available: %v", err)
+		}
+		if _, err := StripMetadataBytes(data, "application/pdf"); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// pdfObjectsText parses a PDF and returns every object it holds as text,
+// stream contents decoded, so tests can search it.
+func pdfObjectsText(t *testing.T, data []byte) string {
+	t.Helper()
+	conf := model.NewStatelessConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	ctx, err := api.ReadContext(context.Background(), bytes.NewReader(data), conf)
+	if err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if err := api.ValidateContext(context.Background(), ctx); err != nil {
+		t.Fatalf("output doesn't validate: %v", err)
+	}
+	var sb strings.Builder
+	for nr, entry := range ctx.XRefTable.Table {
+		if entry == nil || entry.Free || entry.Object == nil {
+			continue
+		}
+		fmt.Fprintf(&sb, "%d: %v\n", nr, entry.Object)
+		if sd, ok := entry.Object.(types.StreamDict); ok {
+			if err := sd.Decode(); err == nil {
+				sb.Write(sd.Content)
+				sb.WriteByte('\n')
+			}
+		}
+	}
+	return sb.String()
 }

@@ -50,9 +50,9 @@
                 <p>Before locking it, the server removes:</p>
                 <ul>
                     <li><strong>JPEG and PNG photos:</strong> location, camera details, dates and other EXIF/XMP data.</li>
-                    <li><strong>PDF:</strong> author, title, dates, the software used, and the document IDs.</li>
-                    <li><strong>MP4, MOV and MP3:</strong> the metadata tags (location, dates, device, titles).</li>
-                    <li><strong>Word, Excel and PowerPoint (.docx, .xlsx, .pptx):</strong> the document properties (author, company, dates). <em>Comments and tracked changes keep the names of whoever wrote them</em>: remove them in Office before sending.</li>
+                    <li><strong>PDF:</strong> author, title, dates, the software used, the document IDs, XMP data on pages and images, and the names and dates on comments. <em>Photos inside a PDF keep their own data.</em></li>
+                    <li><strong>Videos and audio (MP4, MOV, M4V, M4A, 3GP, MP3):</strong> the metadata tags (location, dates, device, titles).</li>
+                    <li><strong>Word, Excel and PowerPoint (.docx, .xlsx, .pptx):</strong> the document properties (author, company, dates), the save times inside the file, and the data in photos inside it. <em>Comments and tracked changes keep the names of whoever wrote them, and an Excel file can keep the folder it was saved in, which may include a user name</em>: remove comments, accept changes, and save a copy in a new folder before sending.</li>
                 </ul>
                 <p>If that fails, nothing is sent. Other kinds of file are sent as they are. Nothing can remove what is visible in the file itself, such as a name in the text or a face in a photo.</p>
             </section>

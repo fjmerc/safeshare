@@ -5,8 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -58,7 +59,7 @@ func StripTimeout() time.Duration { return pdfStripTimeout }
 // The caller (metadata.go / StripFileMetadata) is responsible for the
 // maxStrippableFileSize guard; this function does not duplicate that check.
 func stripPDFMetadata(filePath string) error {
-	f, err := os.Open(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("open PDF file: %w", err)
 	}
@@ -68,8 +69,7 @@ func stripPDFMetadata(filePath string) error {
 	stripCtx, cancel := context.WithTimeout(context.Background(), pdfStripTimeout)
 	defer cancel()
 
-	ctx, err := readAndCleanPDF(stripCtx, f)
-	f.Close()
+	ctx, err := readAndCleanPDF(stripCtx, data)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func stripPDFBytes(data []byte) ([]byte, bool, error) {
 	stripCtx, cancel := context.WithTimeout(context.Background(), pdfStripTimeout)
 	defer cancel()
 
-	ctx, err := readAndCleanPDF(stripCtx, bytes.NewReader(data))
+	ctx, err := readAndCleanPDF(stripCtx, data)
 	if err != nil {
 		return nil, false, err
 	}
@@ -108,9 +108,90 @@ func checkPDFWrite(stripCtx context.Context, err error) error {
 	return nil
 }
 
-// readAndCleanPDF parses the PDF in r and removes its metadata from the
+// maxPDFObjects caps the objects in a PDF the stripper parses: pdfcpu holds
+// every object in memory (a few KB each), so a crafted file of a million
+// tiny objects would take gigabytes. Long real documents have tens of
+// thousands.
+const maxPDFObjects = 100_000
+
+var (
+	pdfObjStmMarker = []byte("/ObjStm")
+	pdfObjStmCount  = regexp.MustCompile(`/N\s+(\d+)(\s+\d+\s+R)?`)
+)
+
+// checkPDFObjectCount estimates the objects in data without parsing it:
+// each plain object has an "obj" and usually an "endobj" keyword, and each
+// object stream (/Type /ObjStm) says in its dictionary, as /N, how many it
+// holds. An object stream whose /N can't be read nearby, or is an indirect
+// reference, can't be checked and is refused.
+func checkPDFObjectCount(data []byte) error {
+	objects := int64(bytes.Count(data, []byte("obj")) / 2)
+	for rest, at := data, 0; ; {
+		i := bytes.Index(rest, pdfObjStmMarker)
+		if i < 0 {
+			break
+		}
+		pos := at + i
+		lo, hi := max(pos-512, 0), min(pos+512, len(data))
+		m := pdfObjStmCount.FindSubmatch(data[lo:hi])
+		if m == nil || len(m[2]) > 0 {
+			return fmt.Errorf("PDF object stream without a readable object count")
+		}
+		n, err := strconv.ParseInt(string(m[1]), 10, 64)
+		if err != nil || n > maxPDFObjects {
+			return fmt.Errorf("PDF has too many objects")
+		}
+		objects += n
+		at = pos + len(pdfObjStmMarker)
+		rest = data[at:]
+	}
+	if objects > maxPDFObjects {
+		return fmt.Errorf("PDF has too many objects (about %d, max %d)", objects, maxPDFObjects)
+	}
+	return nil
+}
+
+// pdfAnnotationIdentityKeys are the entries in an annotation (comment,
+// highlight, note) that identify who made it and when.
+var pdfAnnotationIdentityKeys = []string{"T", "M", "CreationDate", "NM"}
+
+// cleanPDFObjects removes metadata kept outside the Info dictionary and
+// the catalog: XMP and PieceInfo attached to pages, images and other
+// objects, and annotation authors and dates.
+func cleanPDFObjects(ctx *model.Context) {
+	for _, entry := range ctx.XRefTable.Table {
+		if entry == nil || entry.Free {
+			continue
+		}
+		var d types.Dict
+		switch o := entry.Object.(type) {
+		case types.Dict:
+			d = o
+		case types.StreamDict:
+			d = o.Dict
+		default:
+			continue
+		}
+		d.Delete("Metadata")
+		d.Delete("PieceInfo")
+		typ := d.NameEntry("Type")
+		_, hasRect := d.Find("Rect")
+		_, hasSubtype := d.Find("Subtype")
+		if (typ != nil && *typ == "Annot") || (hasRect && hasSubtype && typ == nil) {
+			for _, key := range pdfAnnotationIdentityKeys {
+				d.Delete(key)
+			}
+		}
+	}
+}
+
+// readAndCleanPDF parses the PDF in data and removes its metadata from the
 // parsed document (see stripPDFMetadata), ready to be written out.
-func readAndCleanPDF(stripCtx context.Context, r io.ReadSeeker) (*model.Context, error) {
+func readAndCleanPDF(stripCtx context.Context, data []byte) (*model.Context, error) {
+	if err := checkPDFObjectCount(data); err != nil {
+		return nil, err
+	}
+	r := bytes.NewReader(data)
 	// Stateless configuration: pdfcpu must not read or create config files
 	// under $HOME/.config. model.NewDefaultConfiguration() does, and since
 	// pdfcpu v0.16 it panics (outside any recover) when it finds a config.yml
@@ -169,6 +250,9 @@ func readAndCleanPDF(stripCtx context.Context, r io.ReadSeeker) (*model.Context,
 	if _, found := catalog.Find("Metadata"); found {
 		catalog.Delete("Metadata")
 	}
+
+	// --- Metadata elsewhere: pages, images, annotations ---
+	cleanPDFObjects(ctx)
 
 	// --- Clear the document ID array ---
 	// The ID array (two hex strings) links document revisions and can be

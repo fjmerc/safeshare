@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"filippo.io/age"
 
@@ -429,16 +430,21 @@ func TestDrop_SlowSendersShareAMemoryBudget(t *testing.T) {
 		t.Fatalf("drop behind a stalled sender: status %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Stalled after most of a large file: the budget is nearly used up.
+	// Two senders stalled after most of a large file: together they hold
+	// nearly the whole budget (one full drop plus its message and margin).
 	big := strings.Repeat("z", maxSize-1024)
-	finishBig := slowDrop(t, e, maxSize-4096, multipartPart{name: "file", filename: "big.txt", content: big})
+	finishBig1 := slowDrop(t, e, maxSize-4096, multipartPart{name: "file", filename: "big1.txt", content: big})
+	finishBig2 := slowDrop(t, e, maxSize-4096, multipartPart{name: "file", filename: "big2.txt", content: big})
 	rr := e.post(t, multipartPart{name: "file", filename: "second.txt", content: strings.Repeat("y", 200*1024)})
 	if rr.Code != http.StatusServiceUnavailable || rr.Header().Get("Retry-After") == "" {
 		t.Errorf("drop past the budget: status %d, Retry-After %q", rr.Code, rr.Header().Get("Retry-After"))
 	}
 
-	if code := finishBig(); code != http.StatusOK {
+	if code := finishBig1(); code != http.StatusOK {
 		t.Errorf("large slow drop: status %d", code)
+	}
+	if code := finishBig2(); code != http.StatusOK {
+		t.Errorf("second large slow drop: status %d", code)
 	}
 	if code := finishSmall(); code != http.StatusOK {
 		t.Errorf("small slow drop: status %d", code)
@@ -695,5 +701,92 @@ func TestDrop_StalledUploadTimesOut(t *testing.T) {
 	status, _ := stallUpload(t, srv, "/drop", "multipart/form-data; boundary=x", 4096, "--x\r\nContent-Disposition: form-data; name=\"message\"\r\n\r\nhel")
 	if status != http.StatusRequestTimeout {
 		t.Errorf("status %d, want 408", status)
+	}
+}
+
+// mp4Box encodes one ISO-BMFF box.
+func mp4Box(typ string, payload ...[]byte) []byte {
+	body := bytes.Join(payload, nil)
+	out := make([]byte, 8, 8+len(body))
+	n := uint32(8 + len(body))
+	out[0], out[1], out[2], out[3] = byte(n>>24), byte(n>>16), byte(n>>8), byte(n)
+	copy(out[4:], typ)
+	return append(out, body...)
+}
+
+// mp4WithGPS is a minimal MP4-family file of the given brand whose moov/udta
+// carries a location (©xyz) tag.
+func mp4WithGPS(brand, gps string) []byte {
+	ftyp := mp4Box("ftyp", []byte(brand), []byte{0, 0, 0, 0}, []byte(brand), []byte("isom"))
+	mvhd := mp4Box("mvhd", make([]byte, 100))
+	xyz := mp4Box("\xa9xyz", []byte{0, byte(len(gps)), 0x15, 0xc7}, []byte(gps))
+	moov := mp4Box("moov", mvhd, mp4Box("udta", xyz))
+	return bytes.Join([][]byte{ftyp, moov, mp4Box("mdat", []byte("frames"))}, nil)
+}
+
+// Every MP4-family file is cleaned, whatever its brand and name.
+func TestDrop_CleansMP4Family(t *testing.T) {
+	const gps = "+40.7128-074.0060/"
+	cases := []struct{ brand, name string }{
+		{"mp42", "clip.mp4"},
+		{"M4V ", "clip.m4v"},
+		{"M4V ", "clip.mp4"},
+		{"M4V ", "clip"},
+		{"M4A ", "memo.m4a"},
+		{"3gp4", "video.3gp"},
+		{"qt  ", "movie.mov"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.TrimSpace(tc.brand)+" "+tc.name, func(t *testing.T) {
+			e := newDropEnv(t, nil)
+			rr := e.post(t, multipartPart{name: "file", filename: tc.name, content: string(mp4WithGPS(tc.brand, gps))})
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "Hidden information was removed") {
+				t.Error("not reported as cleaned")
+			}
+			entries, _ := e.openDrop(t, e.download(t, claimCodeFrom(t, rr.Body.String())))
+			if len(entries) != 1 || bytes.Contains(entries[0].data, []byte(gps)) {
+				t.Error("location tag survived")
+			}
+		})
+	}
+}
+
+// A file of exactly the size limit fits, even with nothing else running
+// and one slot: the memory charged for it doesn't overshoot the limit.
+func TestDrop_FileOfExactlyTheLimit(t *testing.T) {
+	const limit = 3*1024*1024 + 12345
+	e := newDropEnv(t, map[string]string{"DROP_MAX_CONCURRENT": "1", "DROP_MAX_SIZE": fmt.Sprint(limit)})
+	rr := e.post(t, multipartPart{name: "file", filename: "full.bin", content: strings.Repeat("\x01", limit)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestShortenDropName(t *testing.T) {
+	long := strings.Repeat("é", 150) + ".pdf" // 304 bytes
+	got := shortenDropName(long)
+	if len(got) > maxDropNameBytes || !strings.HasSuffix(got, ".pdf") || !utf8.ValidString(got) {
+		t.Errorf("shortenDropName = %q (%d bytes)", got, len(got))
+	}
+	if shortenDropName("short.txt") != "short.txt" {
+		t.Error("short names must stay as they are")
+	}
+}
+
+func TestDrop_MessageNameClashIgnoresCase(t *testing.T) {
+	e := newDropEnv(t, nil)
+	rr := e.post(t,
+		multipartPart{name: "file", filename: "Message.TXT", content: "file"},
+		multipartPart{name: "message", content: "msg"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d", rr.Code)
+	}
+	entries, _ := e.openDrop(t, e.download(t, claimCodeFrom(t, rr.Body.String())))
+	if len(entries) != 2 || strings.EqualFold(entries[0].hdr.Name, entries[1].hdr.Name) {
+		t.Errorf("entries clash: %q %q", entries[0].hdr.Name, entries[1].hdr.Name)
 	}
 }
