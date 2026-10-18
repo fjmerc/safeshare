@@ -177,13 +177,14 @@ func isPDFDelimiter(c byte) bool {
 }
 
 // pdfEnclosingDict finds the dictionary around pos: the "<<" before it and
-// the matching ">>" after it, within 4 KB either way. A string anywhere in
-// it makes the nesting unreliable, so that is reported as not found.
+// the matching ">>" after it, within 4 KB either way. A string or a comment
+// anywhere in it could hide or fake keys and brackets, so that is reported
+// as not found.
 func pdfEnclosingDict(data []byte, pos int) (start, end int, ok bool) {
 	depth := 0
 	for i := pos - 1; i > 0 && i >= pos-4096; i-- {
 		switch {
-		case data[i] == '(' || data[i] == ')':
+		case data[i] == '(' || data[i] == ')' || data[i] == '%':
 			return 0, 0, false
 		case data[i-1] == '>' && data[i] == '>':
 			depth++
@@ -202,7 +203,7 @@ forward:
 	depth = 0
 	for i := pos; i+1 < len(data) && i <= pos+4096; i++ {
 		switch {
-		case data[i] == '(' || data[i] == ')':
+		case data[i] == '(' || data[i] == ')' || data[i] == '%':
 			return 0, 0, false
 		case data[i] == '<' && data[i+1] == '<':
 			depth++

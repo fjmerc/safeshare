@@ -448,6 +448,8 @@ func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
 		"no /Type, /First":     "1 0 obj << /N 900000 /First 10 >> endobj",
 		"no /Type, indirect":   "1 0 obj << /N 7 0 R /First 10 >> endobj",
 		"string in dictionary": "1 0 obj << /Type /ObjStm /X (<<) /N 5 /First 1 >> endobj",
+		"comment hiding /N":    "1 0 obj << /Type /ObjStm /N 900000 %>> /N 5\n /First 1 >> endobj",
+		"comment faking /N":    "1 0 obj << /Type /ObjStm %\n/N 5\n /First 1 >> endobj",
 	} {
 		if err := checkPDFObjectCount([]byte(data)); err == nil {
 			t.Errorf("%s: accepted", name)
