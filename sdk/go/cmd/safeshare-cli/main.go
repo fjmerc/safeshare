@@ -4,6 +4,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"unicode"
+
+	safeshare "github.com/fjmerc/safeshare/sdk/go"
 
 	"github.com/spf13/cobra"
 )
@@ -12,6 +16,7 @@ var (
 	// Global flags
 	baseURL  string
 	apiToken string
+	proxyURL string
 	verbose  bool
 )
 
@@ -31,11 +36,15 @@ Examples:
   safeshare-cli download abc12345 ./output.pdf
   safeshare-cli list
   safeshare-cli delete abc12345`,
+		// Errors are printed once by main; usage only on request.
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&baseURL, "url", os.Getenv("SAFESHARE_URL"), "SafeShare server URL (or SAFESHARE_URL env)")
 	rootCmd.PersistentFlags().StringVar(&apiToken, "token", os.Getenv("SAFESHARE_TOKEN"), "API token (or SAFESHARE_TOKEN env)")
+	rootCmd.PersistentFlags().StringVar(&proxyURL, "proxy", os.Getenv("SAFESHARE_PROXY"), "Send every request through this proxy, e.g. socks5://127.0.0.1:9050 for Tor (or SAFESHARE_PROXY env; ALL_PROXY/HTTPS_PROXY/HTTP_PROXY also work)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 
 	// Add subcommands
@@ -51,6 +60,38 @@ Examples:
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// newClient creates an SDK client for server with the CLI's proxy setting.
+func newClient(server, token string) (*safeshare.Client, error) {
+	return safeshare.NewClient(safeshare.ClientConfig{BaseURL: server, APIToken: token, Proxy: proxyURL})
+}
+
+// proxyInUse reports whether requests go through a proxy (the --proxy flag or
+// a proxy environment variable), which suggests the user is hiding their
+// network location.
+func proxyInUse() bool {
+	if proxyURL != "" {
+		return true
+	}
+	for _, n := range []string{"ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		if os.Getenv(n) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// display makes a name from the server or an uploader safe to print: names
+// with control or invisible formatting characters (terminal escapes,
+// right-to-left overrides) are shown quoted and escaped.
+func display(name string) string {
+	for _, r := range name {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return strconv.Quote(name)
+		}
+	}
+	return name
 }
 
 // checkConfig validates that required configuration is present.

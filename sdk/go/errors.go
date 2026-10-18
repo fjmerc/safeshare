@@ -50,6 +50,17 @@ var (
 	// larger than the server's scan size limit) and this server requires
 	// all uploads to be scannable (MALWARE_SCAN_REJECT_UNSCANNABLE, ADR-015).
 	ErrUnscannableUpload = errors.New("upload cannot be scanned for malware")
+	// ErrClientEncryptionRequired indicates the server only accepts files
+	// encrypted before upload (REQUIRE_CLIENT_ENCRYPTION); use EncryptAuto or
+	// EncryptAlways.
+	ErrClientEncryptionRequired = errors.New("server requires client-side encryption")
+	// ErrMetadataNotRemoved indicates an encrypted upload to a Ghost-mode
+	// server was refused because the file may contain metadata the SDK cannot
+	// remove. Scrub it first (for example with mat2) or set KeepMetadata.
+	ErrMetadataNotRemoved = errors.New("metadata not removed")
+	// ErrDestinationExists indicates a download destination already exists
+	// and overwriting was not allowed.
+	ErrDestinationExists = errors.New("destination file already exists, set Overwrite option to true to replace")
 )
 
 // APIError represents an error response from the SafeShare API.
@@ -176,6 +187,9 @@ func newAPIError(statusCode int, message string, code string) *APIError {
 		return err
 	case "UNSCANNABLE_UPLOAD":
 		err.Err = ErrUnscannableUpload
+		return err
+	case "CLIENT_ENCRYPTION_REQUIRED":
+		err.Err = ErrClientEncryptionRequired
 		return err
 	}
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -29,10 +28,7 @@ Examples:
 			}
 
 			// Create client
-			client, err := safeshare.NewClient(safeshare.ClientConfig{
-				BaseURL:  baseURL,
-				APIToken: apiToken,
-			})
+			client, err := newClient(baseURL, apiToken)
 			if err != nil {
 				return err
 			}
@@ -53,7 +49,7 @@ Examples:
 
 			for _, f := range files.Files {
 				fmt.Printf("\n%-12s %s\n", "Claim Code:", f.ClaimCode)
-				fmt.Printf("%-12s %s\n", "Filename:", f.Filename)
+				fmt.Printf("%-12s %s\n", "Filename:", display(f.Filename))
 				fmt.Printf("%-12s %s\n", "Size:", formatBytes(f.Size))
 				fmt.Printf("%-12s %s\n", "Uploaded:", f.UploadedAt.Format("2006-01-02 15:04:05"))
 				if f.ExpiresAt != nil {
@@ -102,10 +98,7 @@ Example:
 			claimCode := args[0]
 
 			// Create client
-			client, err := safeshare.NewClient(safeshare.ClientConfig{
-				BaseURL:  baseURL,
-				APIToken: apiToken,
-			})
+			client, err := newClient(baseURL, apiToken)
 			if err != nil {
 				return err
 			}
@@ -119,7 +112,7 @@ Example:
 					return err
 				}
 
-				fmt.Printf("Delete file: %s (%s)?\n", info.Filename, formatBytes(info.Size))
+				fmt.Printf("Delete file: %s (%s)?\n", display(info.Filename), formatBytes(info.Size))
 				fmt.Print("Type 'yes' to confirm: ")
 
 				var confirm string
@@ -162,10 +155,7 @@ Example:
 			newFilename := args[1]
 
 			// Create client
-			client, err := safeshare.NewClient(safeshare.ClientConfig{
-				BaseURL:  baseURL,
-				APIToken: apiToken,
-			})
+			client, err := newClient(baseURL, apiToken)
 			if err != nil {
 				return err
 			}
@@ -176,7 +166,7 @@ Example:
 				return err
 			}
 
-			fmt.Printf("File renamed to: %s\n", result.NewFilename)
+			fmt.Printf("File renamed to: %s\n", display(result.NewFilename))
 			return nil
 		},
 	}
