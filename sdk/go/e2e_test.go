@@ -258,6 +258,9 @@ func TestParseShareURLRejects(t *testing.T) {
 		"https://h.example/#/claim/abcdefgh/key/" + good + "AA", // key too long
 		"https://h.example/#/claim/../../x/key/" + good,
 		"https:///#/claim/abcdefgh/key/" + good,
+		"https://share.example.com@evil.example/#/claim/abcdefgh/key/" + good,
+		"https://good.example\\@evil.example/#/claim/abcdefgh/key/" + good,
+		"https://good.example:443\\evil/#/claim/abcdefgh/key/" + good,
 	} {
 		if _, err := ParseShareURL(link); err == nil {
 			t.Errorf("ParseShareURL(%q) accepted", link)
