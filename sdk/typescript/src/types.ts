@@ -28,7 +28,26 @@ export interface UploadResult {
   passwordProtected: boolean;
   /** User ID of the uploader (if authenticated) */
   userId?: number;
+  /** True when the file was encrypted before upload */
+  encrypted?: boolean;
+  /**
+   * Base64url decryption key (encrypted uploads only). The server never sees
+   * it; anyone with it and the claim code can read the file.
+   */
+  encryptionKey?: string;
+  /** Link that downloads and decrypts the file in a browser; contains the key. Treat it as a secret. */
+  shareUrl?: string;
+  /** File type when an encrypted upload may still contain metadata the server would have removed */
+  metadataKept?: string;
 }
+
+/**
+ * End-to-end encryption mode for uploads: "auto" encrypts on servers in Ghost
+ * (anonymous) mode or that require client-side encryption; "always" on any
+ * server (use it if the server itself isn't trusted to report its mode);
+ * "never" never does.
+ */
+export type EncryptMode = "auto" | "always" | "never";
 
 /**
  * Request options for uploading a file
@@ -42,6 +61,19 @@ export interface UploadOptions {
   password?: string;
   /** Progress callback for upload progress */
   onProgress?: (progress: UploadProgress) => void;
+  /**
+   * End-to-end encryption (default "auto"). Encrypted files are read into
+   * memory, encrypted in the web app's format and padded to a size bucket.
+   */
+  encrypt?: EncryptMode;
+  /** Let the server see the filename of an encrypted upload (hidden by default; stored as "encrypted.bin"). */
+  showFilename?: boolean;
+  /**
+   * Allow encrypted uploads to Ghost servers of JPEG, PNG, PDF and Office
+   * files, whose metadata neither the SDK nor the server can remove; without
+   * it they throw MetadataNotRemovedError. Scrub them first (e.g. with mat2).
+   */
+  keepMetadata?: boolean;
 }
 
 /**
@@ -174,6 +206,8 @@ export interface FileInfo {
    * See ADR-015. Optional/undefined for servers that predate this field.
    */
   scanStatus?: ScanStatus;
+  /** True when the uploader said the file was encrypted before upload; it needs the share link's key */
+  clientEncrypted?: boolean;
   /**
    * False when the scan gate currently blocks downloading this file
    * (infected, pending, or errored — see ADR-015); download() will throw
@@ -240,6 +274,14 @@ export interface DownloadOptions {
   password?: string;
   /** Progress callback for download progress */
   onProgress?: (progress: DownloadProgress) => void;
+  /**
+   * Base64url key of an end-to-end encrypted file (the part after "/key/" in
+   * its share link). The file is then downloaded into memory, decrypted and
+   * written decrypted (mode 0600).
+   */
+  decryptionKey?: string;
+  /** With decryptionKey: replace an existing destination (default false) */
+  overwrite?: boolean;
 }
 
 /**
@@ -316,6 +358,12 @@ export interface PublicConfig {
   maxExpirationHours: number;
   /** Whether user registration is enabled */
   registrationEnabled: boolean;
+  /** Ghost (anonymous) mode */
+  anonymousMode: boolean;
+  /** The server only accepts files encrypted before upload */
+  clientEncryptionRequired: boolean;
+  /** The server removes metadata from uploads (it can't from encrypted ones) */
+  stripMetadata: boolean;
 }
 
 // ============================================================================

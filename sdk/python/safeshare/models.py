@@ -32,6 +32,23 @@ class UploadResult(BaseModel):
     file_size: int = Field(description="File size in bytes")
     original_filename: str = Field(description="Original filename")
     sha256_hash: Optional[str] = Field(default=None, description="SHA-256 hash of the file")
+    encrypted: bool = Field(default=False, description="True when the file was encrypted before upload")
+    encryption_key: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+        description="Base64url decryption key (encrypted uploads only). Left out of model_dump/JSON on purpose.",
+    )
+    share_url: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+        description="Link that downloads and decrypts the file in a browser; contains the key. Treat it as a secret.",
+    )
+    metadata_kept: Optional[str] = Field(
+        default=None,
+        description="File type when an encrypted upload may still contain metadata the server would have removed",
+    )
 
 
 class FileInfo(BaseModel):
@@ -55,6 +72,10 @@ class FileInfo(BaseModel):
             "pre-ADR-015 legacy files. See ADR-015 and the SCAN_STATUS_* "
             "constants in this module."
         ),
+    )
+    client_encrypted: bool = Field(
+        default=False,
+        description="True when the uploader said the file was encrypted before upload; it needs the share link's key.",
     )
     download_available: Optional[bool] = Field(
         default=None,
@@ -198,12 +219,15 @@ class PublicConfig(BaseModel):
 
     version: str
     max_file_size: int
-    default_expiration_hours: int
+    default_expiration_hours: Optional[int] = None  # not sent by current servers
     max_expiration_hours: int
     chunked_upload_enabled: bool
     chunked_upload_threshold: int
     chunk_size: int
     require_auth_for_upload: bool
+    anonymous_mode: bool = False
+    client_encryption_required: bool = False
+    strip_metadata: bool = False
 
 
 class TokenInfo(BaseModel):

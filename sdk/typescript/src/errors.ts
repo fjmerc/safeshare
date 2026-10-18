@@ -278,6 +278,48 @@ export class ChunkedUploadError extends SafeShareError {
   }
 }
 
+// ---- end-to-end encryption (see e2e.ts) ----
+
+/** The key is wrong or the file was changed. */
+export class DecryptionError extends SafeShareError {
+  constructor(message = "File data is corrupted or the key is wrong") {
+    super(message);
+    this.name = "DecryptionError";
+  }
+}
+
+/** A decrypted payload has a malformed header. */
+export class InvalidPayloadError extends SafeShareError {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidPayloadError";
+  }
+}
+
+/** The file doesn't fit under the server's limit once encrypted. */
+export class PayloadTooLargeError extends SafeShareError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+/** An encrypted upload to a Ghost server was refused: the file may contain metadata neither the SDK nor the server can remove. */
+export class MetadataNotRemovedError extends SafeShareError {
+  constructor(message: string) {
+    super(message);
+    this.name = "MetadataNotRemovedError";
+  }
+}
+
+/** The server only accepts files encrypted before upload. */
+export class ClientEncryptionRequiredError extends SafeShareError {
+  constructor(message = "This server only accepts files encrypted before upload") {
+    super(message);
+    this.name = "ClientEncryptionRequiredError";
+  }
+}
+
 /**
  * Map HTTP response to appropriate error type
  */
