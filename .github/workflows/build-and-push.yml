@@ -413,8 +413,41 @@ jobs:
           [ ${#files[@]} -gt 0 ] || { echo "::error::no stripped Office files found"; exit 1; }
           dotnet run --project tests/js/validate-ooxml -- "${files[@]}"
 
+  # The Docker image's binaries must be byte-identical to a plain `go build`
+  # of the same source with the Go version in go.mod, on a different setup
+  # (another Go install, paths and base image). Releases are checked the same
+  # way for both architectures; see docs/VERIFYING_RELEASES.md.
+  reproducible-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image (linux/amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: safeshare:reproducible-check
+          cache-from: type=gha
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compare the image's binaries with a build from source
+        run: scripts/verify-image.sh --local-go safeshare:reproducible-check linux/amd64
+
   build-and-push:
-    needs: [test, race, test-postgres, test-minio, security-scan, js-test]
+    needs: [test, race, test-postgres, test-minio, security-scan, js-test, reproducible-build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -561,10 +594,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Hash the web app for `safeshare-cli verify`, and check the pushed
+      # image's binaries (both architectures) rebuild byte-for-byte from this
+      # tag before publishing their hashes.
+      - name: Hash web assets and verify the image reproduces
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/safeshare
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          scripts/web-asset-hashes.sh > web-assets.sha256
+          scripts/verify-image.sh --local-go --sums binaries.sha256 "${IMAGE}:${GH_REF_NAME#v}" linux/amd64 linux/arm64
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
         with:
           generate_release_notes: true
+          files: |
+            web-assets.sha256
+            binaries.sha256
           body: |
             ## Docker Images
 
@@ -589,3 +642,10 @@ jobs:
             ```
 
             See [PRODUCTION.md](docs/PRODUCTION.md) for complete deployment guide.
+
+            ## Verify
+
+            - `web-assets.sha256`: SHA-256 of every web page and script. Check a running server with `safeshare-cli verify <url>`.
+            - `binaries.sha256`: SHA-256 of the server binaries in the image, checked in CI to rebuild byte-for-byte from this tag. Rebuild them yourself with `scripts/verify-image.sh`.
+
+            See [VERIFYING_RELEASES.md](docs/VERIFYING_RELEASES.md).

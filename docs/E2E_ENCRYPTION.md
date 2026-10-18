@@ -147,6 +147,10 @@ SAFESHARE_URL=http://xyz.onion safeshare-cli upload notes.txt
 
 In Go code, `client.Upload` uses `UploadOptions.Encrypt` (`EncryptAuto` by default, which follows the server's settings, or `EncryptAlways`/`EncryptNever`); the result's `ShareURL` and `EncryptionKey` carry the key (they are left out of JSON encodings). `ClientConfig.Proxy` sets a proxy for every request. `client.DownloadDecrypted` (or `DownloadOptions.DecryptionKey`) decrypts, and `ParseShareURL` splits a share link. The Python and TypeScript SDKs work the same way (`encrypt="always"`, `download_decrypted`/`downloadDecrypted`, `parse_share_url`/`parseShareUrl`); see their READMEs. Test vectors generated from the browser's `crypto.js` (`sdk/testdata/e2e-vectors.json`, checked in CI by `tests/js/e2e-vectors.test.js`) keep all of them byte-for-byte the same as the browser.
 
+## Checking the Web App
+
+In the browser, the encryption code comes from the server, so you trust it to send the released code. From v1.17.0, each release publishes the SHA-256 of every page and script, and `safeshare-cli verify <url>` checks a running server against them. It shows whether the server (or a CDN in front of it) changed the web app, but only for what the server sent to you at the time. See [VERIFYING_RELEASES.md](VERIFYING_RELEASES.md).
+
 ## Technical Details
 
 ### Payload Format and Versions

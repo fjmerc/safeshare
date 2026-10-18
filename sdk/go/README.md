@@ -425,6 +425,19 @@ safeshare-cli rename abc12345 "new-name.pdf"
 safeshare-cli config
 ```
 
+#### Verify a Server's Web App
+
+```bash
+# Compare every page and script with the hashes published for the server's release
+safeshare-cli verify https://share.example.com
+
+# Over Tor, or against a hash list you made from a checkout
+safeshare-cli verify --proxy socks5://127.0.0.1:9050 http://example.onion
+safeshare-cli verify https://share.example.com --manifest web-assets.sha256
+```
+
+Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYING_RELEASES.md](../../docs/VERIFYING_RELEASES.md) for what it can and can't show. From Go: `ParseWebAssetManifest`, `Client.FetchReleaseManifest` and `Client.VerifyWebAssets`.
+
 ## Security
 
 - **Token Redaction**: API tokens are redacted in `String()` output to prevent accidental logging

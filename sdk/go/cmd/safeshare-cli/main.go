@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -36,7 +37,8 @@ Examples:
   safeshare-cli upload myfile.txt --expires 24
   safeshare-cli download abc12345 ./output.pdf
   safeshare-cli list
-  safeshare-cli delete abc12345`,
+  safeshare-cli delete abc12345
+  safeshare-cli verify https://share.example.com`,
 		// Errors are printed once by main; usage only on request.
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -56,9 +58,14 @@ Examples:
 	rootCmd.AddCommand(deleteCmd())
 	rootCmd.AddCommand(renameCmd())
 	rootCmd.AddCommand(configCmd())
+	rootCmd.AddCommand(verifyCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, escapeControls(err.Error()))
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		os.Exit(1)
 	}
 }
