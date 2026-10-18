@@ -327,7 +327,14 @@ type ShareLink struct {
 
 // ParseShareURL parses an encrypted share link made by the web app or by
 // BuildShareURL. The base URL keeps any path prefix the server is served under.
+//
+// Links with a backslash or user info are refused: parsers disagree about
+// which host they name, so a link that opens one server in a browser could
+// send requests to another here. Real share links have neither.
 func ParseShareURL(link string) (*ShareLink, error) {
+	if before, _, _ := strings.Cut(link, "#"); strings.Contains(link, "\\") || strings.Contains(before, "@") {
+		return nil, &ValidationError{Field: "link", Message: "must not contain a backslash or user info"}
+	}
 	u, err := url.Parse(strings.TrimSpace(link))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, &ValidationError{Field: "link", Message: "must be an http(s) share link"}
