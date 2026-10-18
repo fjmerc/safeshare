@@ -369,6 +369,7 @@ func (c *Client) GetConfig(ctx context.Context) (*PublicConfig, error) {
 		AnonymousMode:            apiResp.AnonymousMode,
 		ClientEncryptionRequired: apiResp.ClientEncryptionRequired,
 		StripMetadata:            apiResp.StripMetadata,
+		Version:                  apiResp.Version,
 	}
 
 	return c.configCache, nil

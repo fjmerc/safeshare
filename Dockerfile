@@ -14,19 +14,24 @@ RUN go mod download
 COPY . .
 
 # Build binaries (CGO not needed with modernc.org/sqlite)
+# Reproducible: -trimpath drops build paths and -buildvcs=false the VCS stamp
+# (.git is not in the build context anyway), so the same source and Go
+# version give byte-identical binaries on any machine. See
+# docs/VERIFYING_RELEASES.md and scripts/verify-image.sh for checking a
+# released image against source.
 # Essential binaries: main app, import-file, and migrate-encryption (needed
 # in-image for --upgrade-format — see cmd/migrate-encryption/README.md's
 # "Docker Usage" section; it must run as the same non-root user that owns
 # /app/uploads, which only holds true inside this image, not on the host).
 # migrate-chunks is a one-off historical tool and is not shipped here — it
 # can still be built and run separately if ever needed again.
-RUN CGO_ENABLED=0 GOOS=linux go build -a \
+RUN CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o safeshare ./cmd/safeshare && \
-    CGO_ENABLED=0 GOOS=linux go build -a \
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o import-file ./cmd/import-file && \
-    CGO_ENABLED=0 GOOS=linux go build -a \
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o migrate-encryption ./cmd/migrate-encryption
 

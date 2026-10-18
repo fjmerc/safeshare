@@ -269,6 +269,9 @@ type PublicConfig struct {
 	// StripMetadata is true when the server removes metadata from uploads. It
 	// cannot do that for encrypted uploads.
 	StripMetadata bool `json:"strip_metadata"`
+	// Version is the SafeShare version the server reports. The operator can
+	// set it to anything (APP_VERSION), so treat it as a hint.
+	Version string `json:"version"`
 }
 
 // CreateTokenRequest contains parameters for creating an API token.
@@ -391,14 +394,15 @@ type apiUserFilesResponse struct {
 
 // apiConfigResponse is the raw API response for server config.
 type apiConfigResponse struct {
-	MaxFileSize              int64 `json:"max_file_size"`
-	ChunkUploadThreshold     int64 `json:"chunked_upload_threshold"`
-	ChunkSize                int64 `json:"chunk_size"`
-	MaxExpirationHours       int   `json:"max_expiration_hours"`
-	RegistrationEnabled      bool  `json:"registration_enabled"`
-	AnonymousMode            bool  `json:"anonymous_mode"`
-	ClientEncryptionRequired bool  `json:"client_encryption_required"`
-	StripMetadata            bool  `json:"strip_metadata"`
+	MaxFileSize              int64  `json:"max_file_size"`
+	ChunkUploadThreshold     int64  `json:"chunked_upload_threshold"`
+	ChunkSize                int64  `json:"chunk_size"`
+	MaxExpirationHours       int    `json:"max_expiration_hours"`
+	RegistrationEnabled      bool   `json:"registration_enabled"`
+	AnonymousMode            bool   `json:"anonymous_mode"`
+	ClientEncryptionRequired bool   `json:"client_encryption_required"`
+	StripMetadata            bool   `json:"strip_metadata"`
+	Version                  string `json:"version"`
 }
 
 // apiChunkedUploadInitResponse is the raw API response for chunked upload init.

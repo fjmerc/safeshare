@@ -1127,6 +1127,8 @@ func run() error {
 	}
 
 	// Register static file routes (embedded frontend)
+	// The URLs web files are served at are mirrored in sdk/go/verify.go
+	// (assetRoute) for `safeshare-cli verify`; update it when they change.
 	mux.Handle("/assets/", http.StripPrefix("/", static.Handler()))
 
 	// Anonymous mode offers no installable app (it needs the service worker it
@@ -1498,14 +1500,12 @@ func serveUserPage(path string) http.HandlerFunc {
 // in place, so the route has to answer with a script that removes it.
 func serveServiceWorker(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		name, cacheControl := "service-worker.js", "no-cache"
 		if cfg.IsAnonymousMode() {
-			w.Header().Set("Content-Type", "application/javascript")
-			w.Header().Set("Cache-Control", "no-store")
-			_, _ = io.WriteString(w, killSwitchServiceWorker)
-			return
+			name, cacheControl = killSwitchServiceWorker, "no-store"
 		}
 		fs := static.FileSystem()
-		file, err := fs.Open("service-worker.js")
+		file, err := fs.Open(name)
 		if err != nil {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
@@ -1520,7 +1520,7 @@ func serveServiceWorker(cfg *config.Config) http.HandlerFunc {
 
 		// Set proper MIME type and cache headers for service worker
 		w.Header().Set("Content-Type", "application/javascript")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", cacheControl)
 		http.ServeContent(w, r, "service-worker.js", stat.ModTime(), file.(io.ReadSeeker))
 	}
 }
