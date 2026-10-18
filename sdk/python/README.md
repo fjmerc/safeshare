@@ -139,7 +139,7 @@ with SafeShareClient(link.base_url) as recipient:
 - Files are encrypted and decrypted in memory.
 - `encryption_key` and `share_url` are left out of `model_dump()`/JSON on purpose.
 - Over Tor: `SafeShareClient(url, proxy="socks5h://127.0.0.1:9050")` sends every request through the proxy, and host names are resolved there. Redirects are never followed.
-- With only one of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set (and no `NO_PROXY`), that proxy is used for every request.
+- With only one of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set, that proxy is used for every request except hosts listed in `NO_PROXY`.
 
 ## Download Files
 

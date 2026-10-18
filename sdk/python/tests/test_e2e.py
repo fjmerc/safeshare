@@ -449,8 +449,18 @@ def test_proxy_env_rules(monkeypatch):
         monkeypatch.delenv(n, raising=False)
     monkeypatch.setenv("ALL_PROXY", "socks5h://127.0.0.1:9050")
     assert _proxy_options(None, False) == {"proxy": "socks5h://127.0.0.1:9050"}
-    monkeypatch.setenv("NO_PROXY", "localhost")
-    assert _proxy_options(None, False) == {}  # httpx applies NO_PROXY itself
+    monkeypatch.setenv("NO_PROXY", "localhost,.corp.example,10.0.0.1")
+    opts = _proxy_options(None, False)
+    assert opts["trust_env"] is False
+    assert set(opts["mounts"]) == {"all://", "all://localhost", "all://*.corp.example", "all://10.0.0.1"}
+    assert opts["mounts"]["all://localhost"] is None and opts["mounts"]["all://"] is not None
+    # http:// and https:// URLs not in NO_PROXY both go through the proxy
+    with httpx.Client(**opts) as hc:
+        for url in ("http://abc.onion/x", "https://share.example.com/x"):
+            assert hc._transport_for_url(httpx.URL(url)) is opts["mounts"]["all://"]
+        assert hc._transport_for_url(httpx.URL("http://localhost/x")) is not opts["mounts"]["all://"]
+    monkeypatch.setenv("NO_PROXY", "*")
+    assert _proxy_options(None, False) == {"trust_env": False}
     monkeypatch.delenv("NO_PROXY")
     monkeypatch.delenv("ALL_PROXY")
     monkeypatch.setenv("HTTP_PROXY", "host:3128")

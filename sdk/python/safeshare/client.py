@@ -109,7 +109,28 @@ def _normalize_proxy(url: str, source: str = "proxy") -> str:
     return url
 
 
-def _proxy_options(proxy: Optional[str], disable_proxy: bool) -> dict:
+def _no_proxy_patterns(no_proxy: str) -> list:
+    """httpx mount patterns for NO_PROXY entries (as httpx itself builds them)."""
+    import ipaddress
+
+    out = []
+    for host in (h.strip() for h in no_proxy.split(",")):
+        if not host:
+            continue
+        if "://" in host:
+            out.append(host)
+            continue
+        try:
+            ip = ipaddress.ip_address(host)
+            out.append(f"all://{host}" if ip.version == 4 else f"all://[{host}]")
+            continue
+        except ValueError:
+            pass
+        out.append("all://localhost" if host.lower() == "localhost" else f"all://*{host}")
+    return out
+
+
+def _proxy_options(proxy: Optional[str], disable_proxy: bool, verify: bool = True) -> dict:
     """httpx options for the proxy rules in SafeShareClient.__init__."""
     if proxy:
         return {"proxy": _normalize_proxy(proxy), "trust_env": False}
@@ -117,12 +138,22 @@ def _proxy_options(proxy: Optional[str], disable_proxy: bool) -> dict:
         return {"trust_env": False}
     https_p = _env_any("HTTPS_PROXY", "https_proxy")
     http_p = _env_any("HTTP_PROXY", "http_proxy")
-    if (https_p and http_p) or _env_any("NO_PROXY", "no_proxy"):
+    if https_p and http_p:
         return {}  # httpx's usual per-scheme and NO_PROXY rules
     single = https_p or http_p or _env_any("ALL_PROXY", "all_proxy")
-    if single:
-        return {"proxy": _normalize_proxy(single, "The proxy environment variable")}
-    return {}
+    if not single:
+        return {}
+    single = _normalize_proxy(single, "The proxy environment variable")
+    no_proxy = _env_any("NO_PROXY", "no_proxy")
+    if not no_proxy:
+        return {"proxy": single}
+    if no_proxy.strip() == "*":
+        return {"trust_env": False}  # NO_PROXY=* means no proxy at all
+    # The one proxy covers both schemes; only hosts NO_PROXY names go direct.
+    mounts: dict = {"all://": httpx.HTTPTransport(proxy=single, verify=verify)}
+    for pattern in _no_proxy_patterns(no_proxy):
+        mounts[pattern] = None
+    return {"mounts": mounts, "trust_env": False}
 
 
 class SafeShareClient:
@@ -191,7 +222,7 @@ class SafeShareClient:
             timeout=timeout,
             verify=verify_ssl,
             headers=self._build_headers(),
-            **_proxy_options(proxy, disable_proxy),
+            **_proxy_options(proxy, disable_proxy, verify_ssl),
         )
 
     @property
