@@ -1,11 +1,15 @@
 package privacy
 
 import (
+	"archive/zip"
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // The in-memory and file strippers must cover the same types, or a type
@@ -141,5 +145,90 @@ func TestStripMetadataBytes_Errors(t *testing.T) {
 	big := make([]byte, maxStrippableFileSize+1)
 	if _, err := StripMetadataBytes(big, "image/jpeg"); !errors.Is(err, ErrFileTooLarge) {
 		t.Errorf("oversized input: err = %v, want ErrFileTooLarge", err)
+	}
+}
+
+// Entries the cleaner doesn't change are copied still compressed: a part
+// that inflates past the old 500 MB budget no longer gets inflated at all.
+func TestStripOfficeBytes_CopiesUnchangedPartsCompressed(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	writeZipEntry(t, zw, "[Content_Types].xml", []byte(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`))
+	writeZipEntry(t, zw, "_rels/.rels", []byte(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`))
+	writeZipEntry(t, zw, "docProps/core.xml", []byte(`<cp:coreProperties><dc:creator>Jane Source</dc:creator></cp:coreProperties>`))
+	big, err := zw.CreateHeader(&zip.FileHeader{Name: "word/media/huge.bin", Method: zip.Deflate, Modified: time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const hugeSize = maxDecompressedSize + 20<<20
+	zeros := make([]byte, 1<<20)
+	for written := 0; written < hugeSize; written += len(zeros) {
+		if _, err := big.Write(zeros); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, stripped, err := stripOfficeBytes(buf.Bytes())
+	if err != nil {
+		t.Fatalf("stripOfficeBytes: %v", err)
+	}
+	if !stripped || zipContainsEntry(out, "docProps/") || bytes.Contains(out, []byte("Jane Source")) {
+		t.Fatal("docProps not removed")
+	}
+	zr, err := zip.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		if !f.Modified.Equal(officeEntryTime) {
+			t.Errorf("%s keeps its time %v", f.Name, f.Modified)
+		}
+		if f.Name == "word/media/huge.bin" {
+			if f.UncompressedSize64 != hugeSize {
+				t.Errorf("huge entry size = %d", f.UncompressedSize64)
+			}
+			// Reading it back checks the copied data against its CRC.
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, err := io.Copy(io.Discard, rc)
+			rc.Close()
+			if err != nil || n != hugeSize {
+				t.Errorf("reading huge entry: %d bytes, %v", n, err)
+			}
+		}
+	}
+}
+
+// A real Word document still reads entry by entry after cleaning.
+func TestStripOfficeBytes_RealDocument(t *testing.T) {
+	data, err := os.ReadFile("../../tests/js/fixtures/sample.docx")
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	out, err := StripMetadataBytes(data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "docProps/") {
+			t.Errorf("%s left in", f.Name)
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("%s: %v", f.Name, err)
+		}
+		if _, err := io.Copy(io.Discard, rc); err != nil {
+			t.Errorf("%s: %v", f.Name, err)
+		}
+		rc.Close()
 	}
 }

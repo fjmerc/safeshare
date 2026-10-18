@@ -406,8 +406,9 @@ Defaults are read from the configuration code (`internal/config`, `internal/util
 | `METRICS_IN_ANONYMOUS_MODE` | `false` | Keep serving `/metrics` in anonymous mode |
 | `DROP_RECIPIENT` | unset | age public key (`age1…` or `age1pq1…`) that turns on the no-JavaScript drop page at `/drop`; drops are encrypted to it on arrival. See [DROP_PAGE.md](DROP_PAGE.md) |
 | `DROP_MAX_SIZE` | `52428800` | Largest drop in bytes (held in memory; also capped by `MAX_FILE_SIZE`) |
-| `DROP_MAX_CONCURRENT` | `2` | Drops processed at once (1 to 64); more get `503` |
+| `DROP_MAX_CONCURRENT` | `2` | Full-size drops that may be arriving and being processed at once (1 to 64); more get `503` |
 | `DROP_EXPIRATION_HOURS` | `168` | How long a drop is kept (capped by `MAX_EXPIRATION_HOURS`) |
+| `DROP_ALLOW_WITHOUT_LOGIN` | `false` | Confirms the drop page (which never asks for a login) on a server with `REQUIRE_AUTH_FOR_UPLOAD=true`; without it SafeShare won't start with both |
 
 **Chunked upload assembly**
 

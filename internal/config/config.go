@@ -264,6 +264,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 	cfg.Drop = drop
+	if err := validateDropAuth(drop, cfg.RequireAuthForUpload); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
 
 	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
 	if cfg.DatabaseType == "postgresql" {

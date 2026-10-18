@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -53,15 +55,19 @@ const (
 	// dropPadMin is the smallest padded archive, as for browser uploads
 	// (PAD_MIN_BYTES in crypto.js): all small drops look the same size.
 	dropPadMin = 4096
-	// dropStripBudget is the extra request time allowed for stripping (the
-	// PDF stripper's own limit is 60s).
-	dropStripBudget = 90 * time.Second
+	// dropSlotWait is how long a received drop waits for a processing slot
+	// before the sender is told the server is busy.
+	dropSlotWait = 30 * time.Second
+	// dropReadChunk is how much of the body is read (and charged to the
+	// memory budget) at a time.
+	dropReadChunk = 32 * 1024
 )
 
 var (
 	errDropTooLarge     = errors.New("drop: file too large")
 	errDropMessageBig   = errors.New("drop: message too long")
 	errDropTooManyParts = errors.New("drop: too many form parts")
+	errDropBusy         = errors.New("drop: memory budget for drops in progress is used up")
 )
 
 // dropResultTemplate renders both the success page and error pages.
@@ -75,22 +81,48 @@ type dropPage struct {
 	HasFile, Cleaned                    bool
 }
 
-// dropExtensionTypes maps the extensions of the file types the server can
-// clean to the type their content must have. A file named like one of them
-// whose content isn't that type would otherwise be sent uncleaned; it is
-// refused instead.
-var dropExtensionTypes = map[string]string{
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png":  "image/png",
-	".pdf":  "application/pdf",
-	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	".mp4":  "video/mp4",
-	".mov":  "video/quicktime",
-	".mp3":  "audio/mpeg",
+// cleanableType is a file type the server can clean, as named by a file's
+// extension: the content types that count as it, and the type to clean it
+// as.
+type cleanableType struct {
+	stripAs string
+	accept  []string
 }
+
+// dropExtensionTypes maps the extensions of the file types the server can
+// clean. A file named like one of them whose content isn't detected as one
+// of the accepted types would otherwise be sent uncleaned; it is refused
+// instead. The aliases cover what mimetype reports for some genuine files
+// (MP4 variants; Office files it only recognises as ZIP, which the Office
+// cleaner validates itself).
+var dropExtensionTypes = func() map[string]cleanableType {
+	const (
+		docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	)
+	return map[string]cleanableType{
+		".jpg":  {"image/jpeg", []string{"image/jpeg"}},
+		".jpeg": {"image/jpeg", []string{"image/jpeg"}},
+		".png":  {"image/png", []string{"image/png"}},
+		".pdf":  {"application/pdf", []string{"application/pdf"}},
+		".docx": {docx, []string{docx, "application/zip"}},
+		".xlsx": {xlsx, []string{xlsx, "application/zip"}},
+		".pptx": {pptx, []string{pptx, "application/zip"}},
+		".mp4":  {"video/mp4", []string{"video/mp4", "video/x-m4v", "audio/mp4"}},
+		".mov":  {"video/quicktime", []string{"video/quicktime"}},
+		".mp3":  {"audio/mpeg", []string{"audio/mpeg"}},
+	}
+}()
+
+// dropError is a refusal to show the sender: an HTTP status, a headline and
+// a detail line, all plain text.
+type dropError struct {
+	status          int
+	message, detail string
+}
+
+func (e *dropError) Error() string { return e.message }
 
 // DropPageHandler serves the drop form (GET/HEAD /drop), or a 404 page when
 // the drop page is off.
@@ -112,9 +144,14 @@ func DropPageHandler(cfg *config.Config) http.HandlerFunc {
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
+		rs, ok := f.(io.ReadSeeker)
+		if !ok {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeContent(w, r, "drop.html", stat.ModTime(), f.(io.ReadSeeker))
+		http.ServeContent(w, r, "drop.html", stat.ModTime(), rs)
 	}
 }
 
@@ -125,8 +162,19 @@ func DropPageHandler(cfg *config.Config) http.HandlerFunc {
 // The plaintext must never reach the disk: the body is read with
 // r.MultipartReader only (r.FormValue and ParseMultipartForm spool files to
 // the temp dir), and only the age ciphertext is written.
+//
+// Memory is bounded in two stages, so that slow senders can't lock others
+// out. While bodies arrive, every drop in progress charges the bytes it has
+// actually received to one shared budget (DROP_MAX_CONCURRENT full-size
+// drops): a slow or stalled sender holds only what it has sent, and the idle
+// deadline cuts it off if it stops. Once a body is in, the memory-heavy work
+// (scan, strip, encrypt: up to about three copies) needs one of
+// DROP_MAX_CONCURRENT slots, which no client can hold for long because that
+// work doesn't wait on the client.
 func DropHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
-	slots := make(chan struct{}, max(cfg.Drop.MaxConcurrent, 1))
+	concurrent := int64(max(cfg.Drop.MaxConcurrent, 1))
+	slots := make(chan struct{}, concurrent)
+	received := &byteBudget{limit: concurrent * (cfg.Drop.MaxSize + dropMaxMessage)}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -142,21 +190,13 @@ func DropHandler(repos *repository.Repositories, cfg *config.Config) http.Handle
 			return
 		}
 
-		// Each drop is held in memory: bound how many run at once.
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-		default:
-			w.Header().Set("Retry-After", "30")
-			sendDropError(w, http.StatusServiceUnavailable, "The server is busy.", "Nothing was sent. Please try again in a minute.")
-			return
-		}
-
 		maxSize := cfg.Drop.MaxSize
 		if limit := cfg.GetMaxFileSize(); limit < maxSize {
 			maxSize = limit
 		}
-		extra := dropStripBudget
+		// Time for stripping after the body is in: the PDF stripper's own
+		// limit, with room to spare.
+		extra := privacy.StripTimeout() + 30*time.Second
 		if cfg.Features.IsMalwareScanEnabled() {
 			extra += time.Duration(cfg.ClamAV.ScanTimeout)*time.Second + 30*time.Second
 		}
@@ -164,13 +204,28 @@ func DropHandler(repos *repository.Repositories, cfg *config.Config) http.Handle
 		body := newIdleDeadlineReader(w, http.MaxBytesReader(w, r.Body, maxSize+dropFormSlack), deadline)
 		r.Body = body
 
-		form, err := readDropForm(r, maxSize)
+		hold := &budgetHold{budget: received}
+		defer hold.release()
+		form, err := readDropForm(r, maxSize, hold)
 		if err == nil {
 			err = body.drainRest()
 		}
 		body.finish(err)
 		if err != nil {
 			sendDropFormError(w, r, err, maxSize)
+			return
+		}
+
+		// The memory-heavy part: wait briefly for a slot.
+		wait := time.NewTimer(dropSlotWait)
+		defer wait.Stop()
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		case <-wait.C:
+			sendDropBusy(w)
+			return
+		case <-r.Context().Done():
 			return
 		}
 
@@ -194,9 +249,10 @@ type dropForm struct {
 }
 
 // readDropForm reads the multipart body into memory: the first "file" part
-// (at most maxSize bytes) and the "message" field. Other parts are read
-// and discarded. r.Body must already be size-limited.
-func readDropForm(r *http.Request, maxSize int64) (*dropForm, error) {
+// (at most maxSize bytes) and the "message" field, charging the memory they
+// take to hold. Other parts are read and discarded. r.Body must already be
+// size-limited.
+func readDropForm(r *http.Request, maxSize int64, hold *budgetHold) (*dropForm, error) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		return nil, err
@@ -220,11 +276,11 @@ func readDropForm(r *http.Request, maxSize int64) (*dropForm, error) {
 		case part.FormName() == "file" && !gotFile:
 			gotFile = true
 			form.filename = part.FileName()
-			form.data, err = readAllCapped(part, maxSize, errDropTooLarge)
+			form.data, err = readAllCapped(part, maxSize, errDropTooLarge, hold)
 		case part.FormName() == "message" && part.FileName() == "" && !gotMessage:
 			gotMessage = true
 			var msg []byte
-			msg, err = readAllCapped(part, dropMaxMessage, errDropMessageBig)
+			msg, err = readAllCapped(part, dropMaxMessage, errDropMessageBig, hold)
 			form.message = string(msg)
 		default:
 			_, err = io.Copy(io.Discard, part)
@@ -236,17 +292,72 @@ func readDropForm(r *http.Request, maxSize int64) (*dropForm, error) {
 	}
 }
 
-// readAllCapped reads r into memory, failing with tooLarge past limit bytes.
-func readAllCapped(r io.Reader, limit int64, tooLarge error) ([]byte, error) {
-	var buf bytes.Buffer
-	n, err := buf.ReadFrom(io.LimitReader(r, limit+1))
-	if err != nil {
-		return nil, err
+// readAllCapped reads r into memory, failing with tooLarge past limit bytes,
+// and with errDropBusy when hold can't get budget for the memory it grows
+// into.
+func readAllCapped(r io.Reader, limit int64, tooLarge error, hold *budgetHold) ([]byte, error) {
+	var out []byte
+	chunk := make([]byte, dropReadChunk)
+	for {
+		n, err := r.Read(chunk)
+		if n > 0 {
+			if int64(len(out)+n) > limit {
+				return nil, tooLarge
+			}
+			before := cap(out)
+			out = append(out, chunk[:n]...)
+			if grown := cap(out) - before; grown > 0 && !hold.take(int64(grown)) {
+				return nil, errDropBusy
+			}
+		}
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	if n > limit {
-		return nil, tooLarge
+}
+
+// byteBudget is a memory budget shared by the drops in progress.
+type byteBudget struct {
+	mu    sync.Mutex
+	used  int64
+	limit int64
+}
+
+// budgetHold is one drop's share of a byteBudget.
+type budgetHold struct {
+	budget *byteBudget
+	held   int64
+}
+
+// take charges n more bytes to the hold, or reports false (charging
+// nothing) if the budget can't cover them.
+func (h *budgetHold) take(n int64) bool {
+	b := h.budget
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.used+n > b.limit {
+		return false
 	}
-	return buf.Bytes(), nil
+	b.used += n
+	h.held += n
+	return true
+}
+
+// release gives everything the hold took back to the budget.
+func (h *budgetHold) release() {
+	b := h.budget
+	b.mu.Lock()
+	b.used -= h.held
+	b.mu.Unlock()
+	h.held = 0
+}
+
+func sendDropBusy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "30")
+	sendDropError(w, http.StatusServiceUnavailable, "The server is busy.", "Nothing was sent. Please try again in a minute.")
 }
 
 // sendDropFormError answers a body that couldn't be read.
@@ -261,6 +372,8 @@ func sendDropFormError(w http.ResponseWriter, r *http.Request, err error, maxSiz
 	case errors.Is(err, errDropTooLarge), errors.As(err, &maxBytes):
 		sendDropError(w, http.StatusRequestEntityTooLarge, "The file is too large.",
 			fmt.Sprintf("Nothing was sent. This server accepts files up to %s here.", formatDropSize(maxSize)))
+	case errors.Is(err, errDropBusy):
+		sendDropBusy(w)
 	case errors.Is(err, errDropMessageBig):
 		sendDropError(w, http.StatusRequestEntityTooLarge, "The message is too long.", "Nothing was sent. Shorten the message, or put it in a file.")
 	default:
@@ -271,90 +384,134 @@ func sendDropFormError(w http.ResponseWriter, r *http.Request, err error, maxSiz
 // handleDrop checks, cleans, encrypts and stores a parsed drop, then sends
 // the result page.
 func handleDrop(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, form *dropForm) {
-	ctx := r.Context()
-	clientIP := getClientIP(r)
-	hasFile := form.filename != "" || len(form.data) > 0
-	if !hasFile && strings.TrimSpace(form.message) == "" {
-		sendDropError(w, http.StatusBadRequest, "Nothing to send.", "Choose a file or write a message.")
+	sealed, info, derr := prepareDrop(r, cfg, form)
+	if derr != nil {
+		if derr.status == http.StatusServiceUnavailable {
+			w.Header().Set("Retry-After", "30")
+		}
+		sendDropError(w, derr.status, derr.message, derr.detail)
 		return
 	}
-	if hasFile && len(form.data) == 0 {
-		sendDropError(w, http.StatusBadRequest, "The file is empty.", "Nothing was sent.")
+
+	record, derr := storeDrop(r.Context(), repos, cfg, sealed, info.verdict, getClientIP(r))
+	if derr != nil {
+		sendDropError(w, derr.status, derr.message, derr.detail)
 		return
+	}
+
+	slog.Info("drop received",
+		"claim_code", redactClaimCode(record.ClaimCode),
+		"stored_size", record.FileSize,
+		"has_file", info.hasFile,
+		"cleaned", info.cleaned,
+		"client_ip", logIP(getClientIP(r), cfg),
+	)
+	renderDropPage(w, http.StatusOK, dropPage{
+		ClaimCode: record.ClaimCode,
+		Link:      buildShareURL(r, cfg, record.ClaimCode),
+		Expires:   record.ExpiresAt.UTC().Format("2 January 2006, 15:04 UTC"),
+		Recipient: shortRecipientKey(cfg.Drop.RecipientKey),
+		HasFile:   info.hasFile,
+		Cleaned:   info.cleaned,
+	})
+}
+
+// dropInfo describes a prepared drop for the record and the result page.
+type dropInfo struct {
+	hasFile, cleaned bool
+	verdict          scanVerdict
+}
+
+var (
+	errDropServer = &dropError{http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent."}
+	errDropFull   = &dropError{http.StatusInsufficientStorage, "The server is out of space.", "Nothing was sent."}
+)
+
+// prepareDrop validates, scans and cleans the drop in form, then seals it:
+// it returns the age ciphertext to store. The plaintext in form is released.
+func prepareDrop(r *http.Request, cfg *config.Config, form *dropForm) ([]byte, dropInfo, *dropError) {
+	// A message-only drop has nothing to scan.
+	info := dropInfo{verdict: scanVerdict{status: scanning.ScanStatusNotScanned}}
+	info.hasFile = form.filename != "" || len(form.data) > 0
+	if !info.hasFile && strings.TrimSpace(form.message) == "" {
+		return nil, info, &dropError{http.StatusBadRequest, "Nothing to send.", "Choose a file or write a message."}
 	}
 
 	name := ""
-	cleaned := false
-	if hasFile {
-		if err := utils.ValidateUploadFilename(form.filename); err != nil {
-			sendDropError(w, http.StatusBadRequest, "The file name isn't allowed.", "Rename the file and try again.")
-			return
+	if info.hasFile {
+		var derr *dropError
+		if name, derr = checkDropFile(cfg, form); derr != nil {
+			return nil, info, derr
 		}
-		name = utils.SanitizeFilename(form.filename)
-		if name == "" || name == "." || name == ".." {
-			name = "file"
+		if info.verdict, derr = scanDrop(r, cfg, form.data); derr != nil {
+			return nil, info, derr
 		}
-		allowed, blockedExt, err := utils.IsFileAllowed(name, cfg.GetBlockedExtensions())
-		if err != nil {
-			sendDropError(w, http.StatusBadRequest, "The file name isn't allowed.", "Rename the file and try again.")
-			return
-		}
-		if !allowed {
-			sendDropError(w, http.StatusBadRequest, "This kind of file isn't accepted.",
-				fmt.Sprintf("This server doesn't accept %s files.", blockedExt))
-			return
-		}
-
-		if !scanDrop(w, r, cfg, form.data) {
-			return
-		}
-
-		var ok bool
-		form.data, cleaned, ok = stripDrop(w, cfg, name, form.data)
-		if !ok {
-			return
+		if form.data, info.cleaned, derr = stripDrop(name, form.data); derr != nil {
+			return nil, info, derr
 		}
 	}
 	if name == dropMessageName {
 		name = "file-" + dropMessageName
 	}
 
-	recipient := cfg.Drop.Recipient
-	sealed, err := sealDrop(name, form.data, form.message, recipient)
+	sealed, err := sealDrop(name, form.data, form.message, cfg.Drop.Recipient)
 	// The plaintext isn't needed any more.
 	form.data, form.message = nil, ""
 	if err != nil {
 		slog.Error("failed to encrypt drop", "error", err)
-		sendDropError(w, http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent.")
-		return
+		return nil, info, errDropServer
 	}
+	return sealed, info, nil
+}
 
+// checkDropFile checks the file's name and size and returns the name it is
+// stored under in the archive.
+func checkDropFile(cfg *config.Config, form *dropForm) (string, *dropError) {
+	if len(form.data) == 0 {
+		return "", &dropError{http.StatusBadRequest, "The file is empty.", "Nothing was sent."}
+	}
+	badName := &dropError{http.StatusBadRequest, "The file name isn't allowed.", "Rename the file and try again."}
+	if err := utils.ValidateUploadFilename(form.filename); err != nil {
+		return "", badName
+	}
+	name := utils.SanitizeFilename(form.filename)
+	if name == "" || name == "." || name == ".." {
+		name = "file"
+	}
+	allowed, blockedExt, err := utils.IsFileAllowed(name, cfg.GetBlockedExtensions())
+	if err != nil {
+		return "", badName
+	}
+	if !allowed {
+		return "", &dropError{http.StatusBadRequest, "This kind of file isn't accepted.", fmt.Sprintf("This server doesn't accept %s files.", blockedExt)}
+	}
+	return name, nil
+}
+
+// storeDrop writes the sealed drop and its record. The record follows the
+// server's mode (rounded times and no IP or hash in Ghost mode).
+func storeDrop(ctx context.Context, repos *repository.Repositories, cfg *config.Config, sealed []byte, verdict scanVerdict, clientIP string) (*models.File, *dropError) {
 	quotaConfigured := cfg.GetQuotaLimitGB() > 0
 	if hasSpace, _, err := utils.CheckDiskSpace(cfg.UploadDir, int64(len(sealed)), quotaConfigured); err != nil || !hasSpace {
 		if err != nil {
 			slog.Error("failed to check disk space", "error", err)
 		}
-		sendDropError(w, http.StatusInsufficientStorage, "The server is out of space.", "Nothing was sent.")
-		return
+		return nil, errDropFull
 	}
 
 	claimCode, err := newUniqueClaimCode(ctx, repos)
 	if err != nil {
-		sendDropError(w, http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent.")
-		return
+		return nil, errDropServer
 	}
-
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 		slog.Error("failed to create upload directory", "error", err)
-		sendDropError(w, http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent.")
-		return
+		return nil, errDropServer
 	}
 	storedFilename := uuid.New().String() + ".age"
 	filePath := filepath.Join(cfg.UploadDir, storedFilename)
 	written, hash, encFileID, err := writeStoredFile(bytes.NewReader(sealed), int64(len(sealed)), filePath, cfg)
 	if err != nil {
-		sendDropError(w, http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent.")
-		return
+		return nil, errDropServer
 	}
 
 	hours := min(cfg.Drop.ExpirationHours, cfg.GetMaxExpirationHours())
@@ -371,102 +528,78 @@ func handleDrop(w http.ResponseWriter, r *http.Request, repos *repository.Reposi
 		EncFileID:        encFileID,
 	}
 	if cfg.Features.IsMalwareScanEnabled() {
-		// The plaintext was scanned above (scanDrop); what's stored is age
+		// The plaintext was scanned (scanDrop); what's stored is age
 		// ciphertext, which a download-time scan can't read.
 		now := storeScannedAt(time.Now(), cfg)
-		record.ScanStatus = dropScanStatus(hasFile)
+		record.ScanStatus = verdict.status
+		record.ScanResult = verdict.result
 		record.ScannedAt = &now
 	}
 	if err := createDropRecord(ctx, repos, cfg, record, quotaConfigured); err != nil {
-		os.Remove(filePath)
+		if rmErr := os.Remove(filePath); rmErr != nil {
+			slog.Error("failed to remove drop after its record failed", "error", rmErr)
+		}
 		if errors.Is(err, repository.ErrQuotaExceeded) {
-			sendDropError(w, http.StatusInsufficientStorage, "The server is out of space.", "Nothing was sent.")
-			return
+			return nil, errDropFull
 		}
 		slog.Error("failed to create drop record", "error", err)
-		sendDropError(w, http.StatusInternalServerError, "Something went wrong on the server.", "Nothing was sent.")
-		return
+		return nil, errDropServer
 	}
-
-	slog.Info("drop received",
-		"claim_code", redactClaimCode(claimCode),
-		"stored_size", written,
-		"has_file", hasFile,
-		"cleaned", cleaned,
-		"client_ip", logIP(clientIP, cfg),
-	)
-
-	renderDropPage(w, http.StatusOK, dropPage{
-		ClaimCode: claimCode,
-		Link:      buildShareURL(r, cfg, claimCode),
-		Expires:   record.ExpiresAt.UTC().Format("2 January 2006, 15:04 UTC"),
-		Recipient: shortRecipientKey(cfg.Drop.RecipientKey),
-		HasFile:   hasFile,
-		Cleaned:   cleaned,
-	})
-}
-
-// dropScanStatus is the scan status recorded for a drop that passed
-// scanDrop: a message-only drop has nothing to scan.
-func dropScanStatus(hasFile bool) string {
-	if hasFile {
-		return scanning.ScanStatusClean
-	}
-	return scanning.ScanStatusNotScanned
+	return record, nil
 }
 
 // scanDrop runs the malware scan on the plaintext, with the same rules as
-// direct uploads. It answers and returns false when the drop must stop.
-func scanDrop(w http.ResponseWriter, r *http.Request, cfg *config.Config, data []byte) bool {
+// direct uploads, and returns its verdict for the record (as UploadHandler
+// stores it: a scan that failed but was let through is "error").
+func scanDrop(r *http.Request, cfg *config.Config, data []byte) (scanVerdict, *dropError) {
 	if !cfg.Features.IsMalwareScanEnabled() {
-		return true
+		return scanVerdict{}, nil
 	}
 	if cfg.ClamAV.RejectUnscannable && isUnscannable(cfg, int64(len(data)), false) {
-		sendDropError(w, http.StatusUnprocessableEntity, "This file is too large to be checked for viruses, and this server refuses files it can't check.", "Nothing was sent.")
-		return false
+		return scanVerdict{}, &dropError{http.StatusUnprocessableEntity, "This file is too large to be checked for viruses, and this server refuses files it can't check.", "Nothing was sent."}
 	}
 	verdict, err := scanUpload(r.Context(), cfg, bytes.NewReader(data), int64(len(data)), false)
 	if err != nil {
 		if !cfg.ClamAV.AllowUnverified {
 			slog.Error("malware scan failed; rejecting drop (fail closed)", "error", err)
-			w.Header().Set("Retry-After", "30")
-			sendDropError(w, http.StatusServiceUnavailable, "The virus check isn't working right now.", "Nothing was sent. Please try again shortly.")
-			return false
+			return scanVerdict{}, &dropError{http.StatusServiceUnavailable, "The virus check isn't working right now.", "Nothing was sent. Please try again shortly."}
 		}
 		slog.Warn("malware scan failed; accepting drop unverified (MALWARE_SCAN_ALLOW_UNVERIFIED)", "error", err)
-		return true
+		return scanVerdict{status: scanning.ScanStatusError, result: err.Error()}, nil
 	}
 	if verdict.status == scanning.ScanStatusInfected {
 		slog.Warn("malware detected in drop; rejected", "virus", verdict.result, "client_ip", logIP(getClientIP(r), cfg))
-		sendDropError(w, http.StatusUnprocessableEntity, "The virus check flagged this file.", "Nothing was sent.")
-		return false
+		return scanVerdict{}, &dropError{http.StatusUnprocessableEntity, "The virus check flagged this file.", "Nothing was sent."}
 	}
-	return true
+	return verdict, nil
 }
 
 // stripDrop removes the file's metadata in memory. It fails closed, in
 // every mode: a file of a type the server can clean is refused if cleaning
-// fails, and so is one whose name says it is such a type when its content
-// isn't. It returns the cleaned file, whether anything was cleaned, and
-// false after answering when the drop must stop.
-func stripDrop(w http.ResponseWriter, cfg *config.Config, name string, data []byte) ([]byte, bool, bool) {
+// fails, and so is one named like such a type whose content isn't
+// recognised as it. It returns the cleaned file and whether anything was
+// cleaned.
+func stripDrop(name string, data []byte) ([]byte, bool, *dropError) {
 	mimeType := mimetype.Detect(data).String()
 	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
 		mimeType = mimeType[:i]
 	}
+	stripAs := mimeType
 	ext := strings.ToLower(filepath.Ext(name))
-	if want, ok := dropExtensionTypes[ext]; ok && want != mimeType {
-		sendDropError(w, http.StatusUnprocessableEntity, "The file's name doesn't match its content.",
-			fmt.Sprintf("It is named like a %s file but isn't one, so its hidden information couldn't be removed. Nothing was sent.", strings.ToUpper(strings.TrimPrefix(ext, "."))))
-		return nil, false, false
+	if ct, ok := dropExtensionTypes[ext]; ok {
+		if !slices.Contains(ct.accept, mimeType) {
+			return nil, false, &dropError{http.StatusUnprocessableEntity, "The file couldn't be recognised.",
+				fmt.Sprintf("It is named like a %s file, but its content couldn't be recognised as one, so its hidden information couldn't be removed. Nothing was sent.", strings.ToUpper(strings.TrimPrefix(ext, ".")))}
+		}
+		stripAs = ct.stripAs
 	}
-	if !privacy.SupportsMetadataStripping(mimeType) {
-		return data, false, true
+	if !privacy.SupportsMetadataStripping(stripAs) {
+		return data, false, nil
 	}
 
-	out, err := stripMetadataBytesSafe(data, mimeType)
+	out, err := stripMetadataBytesSafe(data, stripAs)
 	if err != nil {
-		slog.Warn("drop rejected: metadata stripping failed", "mime_type", mimeType, "error", err)
+		slog.Warn("drop rejected: metadata stripping failed", "mime_type", stripAs, "error", err)
 		detail := "Its hidden information couldn't be removed, so nothing was sent."
 		switch {
 		case errors.Is(err, privacy.ErrEncryptedDocument):
@@ -474,13 +607,16 @@ func stripDrop(w http.ResponseWriter, cfg *config.Config, name string, data []by
 		case errors.Is(err, privacy.ErrFileTooLarge):
 			detail = "It is too large to have its hidden information removed. Nothing was sent."
 		}
-		sendDropError(w, http.StatusUnprocessableEntity, "The file couldn't be cleaned.", detail)
-		return nil, false, false
+		return nil, false, &dropError{http.StatusUnprocessableEntity, "The file couldn't be cleaned.", detail}
 	}
-	return out, true, true
+	return out, true, nil
 }
 
-// stripMetadataBytesSafe is privacy.StripMetadataBytes with a recover: the
+// stripMetadataBytes is privacy.StripMetadataBytes; a variable so tests can
+// make it panic.
+var stripMetadataBytes = privacy.StripMetadataBytes
+
+// stripMetadataBytesSafe is stripMetadataBytes with a recover: the
 // strippers parse untrusted input (pdfcpu has panicked on crafted files),
 // and a panic must reject the drop, not send it uncleaned.
 func stripMetadataBytesSafe(data []byte, mimeType string) (out []byte, err error) {
@@ -489,7 +625,7 @@ func stripMetadataBytesSafe(data []byte, mimeType string) (out []byte, err error
 			out, err = nil, fmt.Errorf("metadata stripping panicked: %v", p)
 		}
 	}()
-	return privacy.StripMetadataBytes(data, mimeType)
+	return stripMetadataBytes(data, mimeType)
 }
 
 // sealDrop packs the file (as name) and the message into a tar archive,
@@ -497,8 +633,12 @@ func stripMetadataBytesSafe(data []byte, mimeType string) (out []byte, err error
 // Zero bytes after the end of a tar archive are ignored by tar readers, so
 // "age -d -i key.txt safeshare-drop.tar.age | tar -x" unpacks it.
 func sealDrop(name string, data []byte, message string, recipient age.Recipient) ([]byte, error) {
+	// Room for the padded archive (tar headers and block rounding, plus up
+	// to ~12% padding) and age's overhead (a header, and 16 bytes per 64 KiB
+	// chunk), so the buffer isn't copied as it grows.
+	archive := dropPaddedLength(int64(len(data)+len(message)) + 8*1024)
 	var out bytes.Buffer
-	out.Grow(len(data) + len(message) + 16*1024)
+	out.Grow(int(archive + archive/4096 + 8*1024))
 	enc, err := age.Encrypt(&out, recipient)
 	if err != nil {
 		return nil, err

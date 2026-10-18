@@ -3,7 +3,9 @@ package handlers
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -16,7 +18,9 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/fjmerc/safeshare/internal/config"
 	"github.com/fjmerc/safeshare/internal/models"
+	"github.com/fjmerc/safeshare/internal/scanning"
 )
 
 type dropEnv struct {
@@ -313,8 +317,9 @@ func TestDrop_RefusesWhatCantBeCleaned(t *testing.T) {
 		name, filename, content, want string
 	}{
 		{"broken pdf", "report.pdf", "%PDF-1.4\nthis is not really a pdf", "couldn"},
-		{"named like a jpeg", "photo.JPG", "plain text, not a photo", "doesn"},
-		{"named like a docx", "memo.docx", "PK\x03\x04 not a document", "doesn"},
+		{"named like a jpeg", "photo.JPG", "plain text, not a photo", "recognised"},
+		{"named like a docx", "memo.docx", "plain text, not a document", "recognised"},
+		{"docx that is a broken zip", "memo.docx", "PK\x03\x04 not a document", "couldn"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -383,48 +388,63 @@ func TestDrop_MessageOnlyAndNameClash(t *testing.T) {
 	}
 }
 
-func TestDrop_BusyWhenFull(t *testing.T) {
-	e := newDropEnv(t, map[string]string{"DROP_MAX_CONCURRENT": "1"})
-
-	// The first drop holds the only slot while its body is still arriving.
-	body, contentType := buildMultipart(t, multipartPart{name: "message", content: "slow"})
+// slowDrop starts a drop whose body arrives in two parts: first is sent at
+// once, the rest when the returned function is called, which then waits
+// for the handler and returns its status.
+func slowDrop(t *testing.T, e *dropEnv, first int, parts ...multipartPart) func() int {
+	t.Helper()
+	body, contentType := buildMultipart(t, parts...)
 	pr, pw := io.Pipe()
 	req := httptest.NewRequest(http.MethodPost, "/drop", pr)
 	req.Header.Set("Content-Type", contentType)
-	done := make(chan int)
+	done := make(chan int, 1)
 	go func() {
 		rr := httptest.NewRecorder()
 		e.handler.ServeHTTP(rr, req)
 		done <- rr.Code
 	}()
-	if _, err := pw.Write(body.Bytes()[:10]); err != nil {
+	// io.Pipe hands over each write only once the handler has read it.
+	if _, err := pw.Write(body.Bytes()[:first]); err != nil {
 		t.Fatal(err)
 	}
-
-	busy := false
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		rr := e.post(t, multipartPart{name: "message", content: "second"})
-		if rr.Code == http.StatusServiceUnavailable {
-			busy = true
-			if rr.Header().Get("Retry-After") == "" {
-				t.Error("no Retry-After on the busy page")
-			}
-			break
+	return func() int {
+		if _, err := pw.Write(body.Bytes()[first:]); err != nil {
+			t.Fatal(err)
 		}
+		pw.Close()
+		return <-done
 	}
-	if !busy {
-		t.Error("second drop wasn't turned away while the slot was taken")
+}
+
+// A slow sender holds only the memory for what it has sent, so it can't
+// lock others out; a full budget turns new drops away.
+func TestDrop_SlowSendersShareAMemoryBudget(t *testing.T) {
+	const maxSize = 300 * 1024
+	e := newDropEnv(t, map[string]string{"DROP_MAX_CONCURRENT": "1", "DROP_MAX_SIZE": "307200"})
+	// The budget is one full drop: maxSize + dropMaxMessage.
+
+	// Stalled after a few bytes: others still get through.
+	finishSmall := slowDrop(t, e, 10, multipartPart{name: "message", content: "slow"})
+	if rr := e.post(t, multipartPart{name: "message", content: "meanwhile"}); rr.Code != http.StatusOK {
+		t.Fatalf("drop behind a stalled sender: status %d: %s", rr.Code, rr.Body.String())
 	}
 
-	if _, err := pw.Write(body.Bytes()[10:]); err != nil {
-		t.Fatal(err)
+	// Stalled after most of a large file: the budget is nearly used up.
+	big := strings.Repeat("z", maxSize-1024)
+	finishBig := slowDrop(t, e, maxSize-4096, multipartPart{name: "file", filename: "big.txt", content: big})
+	rr := e.post(t, multipartPart{name: "file", filename: "second.txt", content: strings.Repeat("y", 200*1024)})
+	if rr.Code != http.StatusServiceUnavailable || rr.Header().Get("Retry-After") == "" {
+		t.Errorf("drop past the budget: status %d, Retry-After %q", rr.Code, rr.Header().Get("Retry-After"))
 	}
-	pw.Close()
-	if code := <-done; code != http.StatusOK {
-		t.Errorf("first drop status = %d", code)
+
+	if code := finishBig(); code != http.StatusOK {
+		t.Errorf("large slow drop: status %d", code)
 	}
-	if rr := e.post(t, multipartPart{name: "message", content: "third"}); rr.Code != http.StatusOK {
-		t.Errorf("slot not released: status %d", rr.Code)
+	if code := finishSmall(); code != http.StatusOK {
+		t.Errorf("small slow drop: status %d", code)
+	}
+	if rr := e.post(t, multipartPart{name: "file", filename: "third.txt", content: strings.Repeat("x", 200*1024)}); rr.Code != http.StatusOK {
+		t.Errorf("budget not released: status %d", rr.Code)
 	}
 }
 
@@ -517,5 +537,163 @@ func TestSealDrop_PaddingIsZeroAfterArchive(t *testing.T) {
 	}
 	if bytes.ContainsFunc(plain[6656:], func(r rune) bool { return r != 0 }) {
 		t.Error("padding isn't all zero bytes")
+	}
+}
+
+type fakeScanner struct {
+	result *scanning.ScanResult
+	err    error
+}
+
+func (f fakeScanner) ScanReader(_ context.Context, r io.Reader, _ int64) (*scanning.ScanResult, error) {
+	_, _ = io.Copy(io.Discard, r)
+	return f.result, f.err
+}
+
+func withFakeScanner(t *testing.T, e *dropEnv, s fakeScanner) {
+	t.Helper()
+	orig := newScanner
+	newScanner = func(*config.Config) malwareScanner { return s }
+	t.Cleanup(func() { newScanner = orig })
+	e.cfg.Features.SetMalwareScanEnabled(true)
+}
+
+func TestDrop_ScanOutcomes(t *testing.T) {
+	file := multipartPart{name: "file", filename: "a.txt", content: "hello"}
+	t.Run("clean", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{result: &scanning.ScanResult{Clean: true}})
+		rr := e.post(t, file)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d", rr.Code)
+		}
+		if rec := e.record(t, claimCodeFrom(t, rr.Body.String())); rec.ScanStatus != scanning.ScanStatusClean {
+			t.Errorf("scan_status = %q", rec.ScanStatus)
+		}
+	})
+	t.Run("infected", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{result: &scanning.ScanResult{Infected: true, VirusName: "Eicar"}})
+		if rr := e.post(t, file); rr.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status %d", rr.Code)
+		}
+		assertNothingStored(t, e)
+	})
+	t.Run("scanner down", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{err: errors.New("clamd unreachable")})
+		rr := e.post(t, file)
+		if rr.Code != http.StatusServiceUnavailable || rr.Header().Get("Retry-After") == "" {
+			t.Fatalf("status %d, Retry-After %q", rr.Code, rr.Header().Get("Retry-After"))
+		}
+		assertNothingStored(t, e)
+	})
+	t.Run("scanner down, unverified allowed", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{err: errors.New("clamd unreachable")})
+		e.cfg.ClamAV.AllowUnverified = true
+		rr := e.post(t, file)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d", rr.Code)
+		}
+		if rec := e.record(t, claimCodeFrom(t, rr.Body.String())); rec.ScanStatus != scanning.ScanStatusError {
+			t.Errorf("scan_status = %q, want error (not clean)", rec.ScanStatus)
+		}
+	})
+	t.Run("too large to scan", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{result: &scanning.ScanResult{Skipped: true}})
+		rr := e.post(t, file)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d", rr.Code)
+		}
+		if rec := e.record(t, claimCodeFrom(t, rr.Body.String())); rec.ScanStatus == scanning.ScanStatusClean {
+			t.Error("a skipped scan is recorded as clean")
+		}
+	})
+	t.Run("message only", func(t *testing.T) {
+		e := newDropEnv(t, nil)
+		withFakeScanner(t, e, fakeScanner{result: &scanning.ScanResult{Clean: true}})
+		rr := e.post(t, multipartPart{name: "message", content: "hi"})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d", rr.Code)
+		}
+		if rec := e.record(t, claimCodeFrom(t, rr.Body.String())); rec.ScanStatus != scanning.ScanStatusNotScanned {
+			t.Errorf("scan_status = %q", rec.ScanStatus)
+		}
+	})
+}
+
+func TestDrop_FormLimits(t *testing.T) {
+	e := newDropEnv(t, nil)
+	var parts []multipartPart
+	for i := 0; i <= dropMaxParts; i++ {
+		parts = append(parts, multipartPart{name: fmt.Sprintf("x%d", i), content: "1"})
+	}
+	if rr := e.post(t, parts...); rr.Code != http.StatusBadRequest {
+		t.Errorf("too many parts: status %d", rr.Code)
+	}
+
+	// Only the first file part counts.
+	rr := e.post(t,
+		multipartPart{name: "file", filename: "first.txt", content: "one"},
+		multipartPart{name: "file", filename: "second.txt", content: "two"},
+	)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("two file parts: status %d", rr.Code)
+	}
+	entries, _ := e.openDrop(t, e.download(t, claimCodeFrom(t, rr.Body.String())))
+	if len(entries) != 1 || entries[0].hdr.Name != "first.txt" {
+		t.Errorf("entries = %v", entries)
+	}
+
+	// A body past the overall limit (file limit plus form slack) is cut off.
+	e2 := newDropEnv(t, map[string]string{"DROP_MAX_SIZE": "1024"})
+	rr = e2.post(t, multipartPart{name: "junk", content: strings.Repeat("j", dropFormSlack+4096)})
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized body: status %d", rr.Code)
+	}
+}
+
+func TestDrop_StripperPanicRefusesDrop(t *testing.T) {
+	orig := stripMetadataBytes
+	stripMetadataBytes = func([]byte, string) ([]byte, error) { panic("crafted file") }
+	t.Cleanup(func() { stripMetadataBytes = orig })
+
+	e := newDropEnv(t, nil)
+	rr := e.post(t, multipartPart{name: "file", filename: "photo.jpg", content: string(jpegWithEXIF("x"))})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", rr.Code)
+	}
+	assertNothingStored(t, e)
+}
+
+func TestDrop_RealWordDocument(t *testing.T) {
+	data, err := os.ReadFile("../../tests/js/fixtures/sample.docx")
+	if err != nil {
+		t.Skipf("fixture not available: %v", err)
+	}
+	e := newDropEnv(t, nil)
+	rr := e.post(t, multipartPart{name: "file", filename: "memo.docx", content: string(data)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Hidden information was removed") {
+		t.Error("docx not cleaned")
+	}
+	entries, _ := e.openDrop(t, e.download(t, claimCodeFrom(t, rr.Body.String())))
+	if len(entries) != 1 || bytes.Contains(entries[0].data, []byte("docProps/core.xml")) {
+		t.Error("docProps left in the document")
+	}
+}
+
+func TestDrop_StalledUploadTimesOut(t *testing.T) {
+	shrinkIdleReadInterval(t, 200*time.Millisecond)
+	e := newDropEnv(t, nil)
+	srv := httptest.NewServer(e.handler)
+	defer srv.Close()
+	status, _ := stallUpload(t, srv, "/drop", "multipart/form-data; boundary=x", 4096, "--x\r\nContent-Disposition: form-data; name=\"message\"\r\n\r\nhel")
+	if status != http.StatusRequestTimeout {
+		t.Errorf("status %d, want 408", status)
 	}
 }

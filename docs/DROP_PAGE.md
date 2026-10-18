@@ -41,9 +41,9 @@ The server sees the file before encrypting it, so it can clean more types than a
 | JPEG, PNG | EXIF, GPS, XMP, IPTC and comment data; PNG text and time chunks |
 | PDF | the whole document information dictionary (author, title, dates, producer, custom keys), the XMP metadata stream, and the document ID |
 | MP4, MOV, MP3 | metadata tags (location, dates, device, titles) |
-| Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | document properties (`docProps/`, `customXml/`): author, company, dates. **Comments and tracked changes keep their authors' names, and editing-session IDs stay.** Senders should remove comments and accept changes in Office first |
+| Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | document properties (`docProps/`, `customXml/`): author, company, dates; and the save times of the parts inside the file. **Comments and tracked changes keep their authors' names, and editing-session IDs stay.** Senders should remove comments and accept changes in Office first |
 
-The type is decided from the file's content. A file whose name says it is one of these types but whose content isn't (say, `photo.jpg` that is really a text file) is refused, so it can't skip cleaning by being misnamed. Password-protected PDFs can't be cleaned and are refused. Other types are sent as they are, and the result page says so.
+The type is decided from the file's content. A file whose name says it is one of these types but whose content isn't recognised as one (say, `photo.jpg` that is really a text file) is refused, so it can't skip cleaning by being misnamed. Password-protected PDFs can't be cleaned and are refused. Other types are sent as they are, and the result page says so.
 
 ## Setting it up
 
@@ -78,12 +78,13 @@ services:
 | `DROP_MAX_SIZE` | `52428800` (50 MB) | Largest file in bytes. Also capped by `MAX_FILE_SIZE` |
 | `DROP_MAX_CONCURRENT` | `2` | How many drops are processed at once (1 to 64). More get a "busy, try again" page (`503`) |
 | `DROP_EXPIRATION_HOURS` | `168` (a week) | How long a drop is kept. Also capped by `MAX_EXPIRATION_HOURS` |
+| `DROP_ALLOW_WITHOUT_LOGIN` | `false` | Needed when `REQUIRE_AUTH_FOR_UPLOAD=true`: the drop page never asks for a login, so SafeShare refuses to start with both unless you confirm this |
 
 Invalid values stop SafeShare at startup rather than falling back to a default.
 
-**Memory:** every drop is held in memory while it is cleaned and encrypted, using up to about three times its size. Allow roughly `DROP_MAX_CONCURRENT × 3 × DROP_MAX_SIZE` (300 MB with the defaults) on top of SafeShare's usual needs.
+**Memory:** drops are held in memory, in two stages. While they arrive, all the drops in progress together may hold at most `DROP_MAX_CONCURRENT` full-size drops' worth of data; a sender only holds memory for what they have actually sent, so slow senders can't lock others out, and new drops are turned away (`503`, try again) when that budget is used up. Once a drop has arrived, cleaning and encrypting it needs one of `DROP_MAX_CONCURRENT` slots and up to about three times its size. Allow roughly `DROP_MAX_CONCURRENT × 4 × DROP_MAX_SIZE` (400 MB with the defaults) on top of SafeShare's usual needs. Office files are not inflated to be cleaned: only their two small structural XML files are.
 
-Drops share the upload rate limit (`RATE_LIMIT_UPLOAD`, per IP address; over Tor, all visitors share one). The page needs no account, even when `REQUIRE_AUTH_FOR_UPLOAD` is on.
+Drops share the upload rate limit (`RATE_LIMIT_UPLOAD`, per IP address; over Tor, all visitors share one).
 
 ### 3. Publish the public key somewhere else
 

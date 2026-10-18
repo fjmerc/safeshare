@@ -9,11 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Directories to strip from Office Open XML files.
 const (
-	docPropsPrefix = "docProps/"
+	docPropsPrefix  = "docProps/"
 	customXMLPrefix = "customXml/"
 )
 
@@ -136,7 +137,15 @@ func stripOfficeBytes(data []byte) ([]byte, bool, error) {
 	return result, true, nil
 }
 
-// rebuildOfficeZIP creates a new ZIP without metadata entries.
+// officeEntryTime replaces every entry's modification time in a rebuilt
+// file: the original times record when the document was last saved.
+var officeEntryTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// rebuildOfficeZIP creates a new ZIP without metadata entries. Entries it
+// doesn't change are copied still compressed, so a crafted file can't make
+// it inflate more than the two small XML files it filters (each capped at
+// maxXMLEntrySize, and all together at maxDecompressedSize). Entry times,
+// extra fields and comments are not carried over.
 func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
@@ -155,48 +164,49 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 			return nil, fmt.Errorf("invalid ZIP entry name: %s", f.Name)
 		}
 
+		var filter func([]byte) ([]byte, error)
+		switch f.Name {
+		case "[Content_Types].xml":
+			filter = filterContentTypes
+		case "_rels/.rels":
+			filter = filterRelationships
+		}
+
+		if filter == nil {
+			if err := copyZipEntryRaw(writer, f); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
 		// Read entry with decompression size limit
 		rc, err := f.Open()
 		if err != nil {
 			return nil, fmt.Errorf("failed to open ZIP entry %s: %w", f.Name, err)
 		}
-
 		limited := io.LimitReader(rc, maxDecompressedSize-totalDecompressed+1)
 		entryData, err := io.ReadAll(limited)
 		rc.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read ZIP entry %s: %w", f.Name, err)
 		}
-
 		totalDecompressed += int64(len(entryData))
 		if totalDecompressed > maxDecompressedSize {
 			return nil, fmt.Errorf("ZIP decompressed size exceeds limit (%d bytes)", maxDecompressedSize)
 		}
 
 		// Filter structural XML files to remove metadata references
-		switch f.Name {
-		case "[Content_Types].xml":
-			entryData, err = filterContentTypes(entryData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to filter [Content_Types].xml: %w", err)
-			}
-		case "_rels/.rels":
-			entryData, err = filterRelationships(entryData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to filter _rels/.rels: %w", err)
-			}
+		if entryData, err = filter(entryData); err != nil {
+			return nil, fmt.Errorf("failed to filter %s: %w", f.Name, err)
 		}
 
 		// Create entry preserving the original compression method
 		header := &zip.FileHeader{
 			Name:     f.Name,
 			Method:   f.Method,
-			Modified: f.Modified,
+			Modified: officeEntryTime,
+			NonUTF8:  f.NonUTF8,
 		}
-		if f.NonUTF8 {
-			header.NonUTF8 = true
-		}
-
 		w, err := writer.CreateHeader(header)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ZIP entry %s: %w", f.Name, err)
@@ -211,6 +221,37 @@ func rebuildOfficeZIP(reader *zip.Reader) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// copyZipEntryRaw copies f into w without decompressing it, under a fresh
+// header that keeps only what reading it needs.
+func copyZipEntryRaw(w *zip.Writer, f *zip.File) error {
+	if f.Method != zip.Store && f.Method != zip.Deflate {
+		return fmt.Errorf("unsupported compression method %d in ZIP entry %s", f.Method, f.Name)
+	}
+	raw, err := f.OpenRaw()
+	if err != nil {
+		return fmt.Errorf("failed to open ZIP entry %s: %w", f.Name, err)
+	}
+	dst, err := w.CreateRaw(&zip.FileHeader{
+		Name:   f.Name,
+		Method: f.Method,
+		// CreateRaw writes the MS-DOS date fields as given (unlike
+		// CreateHeader, it doesn't derive them from Modified): 1980-01-01.
+		Modified:           officeEntryTime,
+		ModifiedDate:       1<<5 | 1,
+		NonUTF8:            f.NonUTF8,
+		CRC32:              f.CRC32,
+		CompressedSize64:   f.CompressedSize64,
+		UncompressedSize64: f.UncompressedSize64,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create ZIP entry %s: %w", f.Name, err)
+	}
+	if _, err := io.Copy(dst, raw); err != nil {
+		return fmt.Errorf("failed to copy ZIP entry %s: %w", f.Name, err)
+	}
+	return nil
 }
 
 // filterContentTypes removes Override entries referencing metadata from [Content_Types].xml.

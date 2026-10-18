@@ -9,7 +9,7 @@ import (
 
 func clearDropEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"DROP_RECIPIENT", "DROP_MAX_SIZE", "DROP_MAX_CONCURRENT", "DROP_EXPIRATION_HOURS"} {
+	for _, k := range []string{"DROP_RECIPIENT", "DROP_MAX_SIZE", "DROP_MAX_CONCURRENT", "DROP_EXPIRATION_HOURS", "DROP_ALLOW_WITHOUT_LOGIN"} {
 		t.Setenv(k, "")
 	}
 }
@@ -105,5 +105,32 @@ func TestLoad_FailsOnBadDropRecipient(t *testing.T) {
 	t.Setenv("DROP_RECIPIENT", "nope")
 	if _, err := Load(); err == nil {
 		t.Error("Load accepted an invalid DROP_RECIPIENT")
+	}
+}
+
+func TestLoad_DropNeedsConfirmationWithUploadAuth(t *testing.T) {
+	x, _ := age.GenerateX25519Identity()
+	clearDropEnv(t)
+	t.Setenv("DROP_RECIPIENT", x.Recipient().String())
+	t.Setenv("REQUIRE_AUTH_FOR_UPLOAD", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DROP_ALLOW_WITHOUT_LOGIN") {
+		t.Fatalf("Load = %v, want a refusal naming DROP_ALLOW_WITHOUT_LOGIN", err)
+	}
+	t.Setenv("DROP_ALLOW_WITHOUT_LOGIN", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("confirmed: %v", err)
+	}
+	if !cfg.Drop.Enabled() || !cfg.Drop.AllowWithoutLogin {
+		t.Error("drop page should be on once confirmed")
+	}
+}
+
+func TestLoad_UppercasePublicKeyRefused(t *testing.T) {
+	x, _ := age.GenerateX25519Identity()
+	clearDropEnv(t)
+	t.Setenv("DROP_RECIPIENT", strings.ToUpper(x.Recipient().String()))
+	if _, err := loadDropConfig(); err == nil {
+		t.Error("uppercase key accepted; age keys are lowercase Bech32 in age's own files")
 	}
 }

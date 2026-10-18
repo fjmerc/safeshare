@@ -16,8 +16,8 @@ import (
 )
 
 // pdfInfoKeys are the standard Info dictionary entries that identify the author or
-// processing history of a PDF document. All are stripped; the PDF spec marks
-// them as optional.
+// processing history of a PDF document. The stripper empties the whole
+// dictionary; the tests use this list to check that these keys are gone.
 var pdfInfoKeys = []string{
 	"Author",
 	"Creator",
@@ -39,6 +39,11 @@ var pdfInfoKeys = []string{
 //
 // A var so tests can shorten it; tests that change it must not use t.Parallel.
 var pdfStripTimeout = 60 * time.Second
+
+// StripTimeout is the longest stripping one file may take (the PDF
+// stripper's limit; the others don't take long). Callers that wait on
+// stripping budget their own deadlines with it.
+func StripTimeout() time.Duration { return pdfStripTimeout }
 
 // stripPDFMetadata removes identifying metadata from a PDF file in-place.
 //
@@ -84,14 +89,23 @@ func stripPDFBytes(data []byte) ([]byte, bool, error) {
 	}
 	var out bytes.Buffer
 	out.Grow(len(data))
-	// As in writeStrippedPDF: a write that overran its deadline is discarded.
-	if err := api.WriteContext(stripCtx, ctx, &out); err != nil || stripCtx.Err() != nil {
-		if stripCtx.Err() != nil {
-			return nil, false, fmt.Errorf("%w: write PDF", ErrStripTimeout)
-		}
-		return nil, false, fmt.Errorf("write stripped PDF: %w", err)
+	if err := checkPDFWrite(stripCtx, api.WriteContext(stripCtx, ctx, &out)); err != nil {
+		return nil, false, err
 	}
 	return out.Bytes(), true, nil
+}
+
+// checkPDFWrite maps the result of writing a cleaned PDF to the stripper's
+// errors. A write that overran its deadline is discarded (fail closed) even
+// when it reports success.
+func checkPDFWrite(stripCtx context.Context, err error) error {
+	if stripCtx.Err() != nil {
+		return fmt.Errorf("%w: write PDF", ErrStripTimeout)
+	}
+	if err != nil {
+		return fmt.Errorf("write stripped PDF: %w", err)
+	}
+	return nil
 }
 
 // readAndCleanPDF parses the PDF in r and removes its metadata from the
@@ -174,12 +188,9 @@ func writeStrippedPDF(stripCtx context.Context, ctx *model.Context, filePath str
 	defer os.Remove(tmpPath)
 	// Check the deadline even when the write reports success: a write that
 	// overran its deadline is discarded (fail closed) rather than trusted.
-	if err := api.WriteContextFile(stripCtx, ctx, tmpPath); err != nil || stripCtx.Err() != nil {
+	if err := checkPDFWrite(stripCtx, api.WriteContextFile(stripCtx, ctx, tmpPath)); err != nil {
 		os.Remove(tmpPath)
-		if stripCtx.Err() != nil {
-			return fmt.Errorf("%w: write PDF", ErrStripTimeout)
-		}
-		return fmt.Errorf("write stripped PDF: %w", err)
+		return err
 	}
 
 	info, err := os.Stat(filePath)

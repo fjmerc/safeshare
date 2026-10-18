@@ -165,7 +165,7 @@ func logDropPage(cfg *config.Config) {
 		slog.Warn("drop page enabled without ANONYMOUS_MODE: senders' IP addresses, exact times and file hashes are recorded and logged as for any upload; set ANONYMOUS_MODE=true for sources who need anonymity (docs/DROP_PAGE.md)")
 	}
 	if cfg.RequireAuthForUpload {
-		slog.Warn("drop page enabled with REQUIRE_AUTH_FOR_UPLOAD: /drop accepts files from anyone, without a login")
+		slog.Warn("drop page enabled with REQUIRE_AUTH_FOR_UPLOAD (DROP_ALLOW_WITHOUT_LOGIN=true): /drop accepts files from anyone, without a login")
 	}
 	if cfg.Drop.MaxSize > cfg.GetMaxFileSize() {
 		slog.Warn("DROP_MAX_SIZE is larger than MAX_FILE_SIZE; drops are limited to MAX_FILE_SIZE")

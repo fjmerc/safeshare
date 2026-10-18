@@ -32,13 +32,20 @@ type DropConfig struct {
 	// whole file is held in memory, so it is also capped by MAX_FILE_SIZE
 	// when a drop arrives.
 	MaxSize int64
-	// MaxConcurrent caps how many drops are processed at once
-	// (DROP_MAX_CONCURRENT, default 2); more get 503. Memory use is roughly
-	// MaxConcurrent × 3 × MaxSize.
+	// MaxConcurrent (DROP_MAX_CONCURRENT, default 2) sizes both the memory
+	// budget for drops still arriving (MaxConcurrent full drops) and the
+	// slots for cleaning and encrypting them; past either, senders get 503.
+	// Memory use is roughly MaxConcurrent × 4 × MaxSize.
 	MaxConcurrent int
 	// ExpirationHours is how long a drop is kept (DROP_EXPIRATION_HOURS,
 	// default 168), capped by MAX_EXPIRATION_HOURS when it arrives.
 	ExpirationHours int
+	// AllowWithoutLogin (DROP_ALLOW_WITHOUT_LOGIN) confirms that the drop
+	// page, which never asks for a login, may run on a server that requires
+	// one for uploads (REQUIRE_AUTH_FOR_UPLOAD). Without it that combination
+	// stops startup, so turning on the drop page can't quietly reopen
+	// anonymous uploads.
+	AllowWithoutLogin bool
 }
 
 // Enabled reports whether the drop page is on.
@@ -82,7 +89,17 @@ func loadDropConfig() (DropConfig, error) {
 		return d, fmt.Errorf("DROP_EXPIRATION_HOURS is too large: %d", n)
 	}
 	d.ExpirationHours = int(n)
+	d.AllowWithoutLogin = getEnvBool("DROP_ALLOW_WITHOUT_LOGIN", false)
 	return d, nil
+}
+
+// validateDropAuth refuses a drop page on a server that requires a login
+// for uploads, unless the operator confirmed it (DROP_ALLOW_WITHOUT_LOGIN).
+func validateDropAuth(d DropConfig, requireAuthForUpload bool) error {
+	if d.Enabled() && requireAuthForUpload && !d.AllowWithoutLogin {
+		return fmt.Errorf("DROP_RECIPIENT turns on the drop page, which accepts files without a login, but REQUIRE_AUTH_FOR_UPLOAD=true: set DROP_ALLOW_WITHOUT_LOGIN=true to confirm, or unset DROP_RECIPIENT")
+	}
+	return nil
 }
 
 // parseDropRecipient accepts exactly one native age public key. Plugin and
