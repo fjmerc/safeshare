@@ -118,7 +118,7 @@ import { SafeShareClient, parseShareUrl, safeFilename } from "safeshare-sdk";
 const result = await client.upload("./report.pdf", { encrypt: "always" });
 console.log(result.shareUrl); // https://host/#/claim/CODE/key/KEY - keep it secret
 
-const link = parseShareUrl(shareUrl);
+const link = parseShareUrl(result.shareUrl!);
 const file = await new SafeShareClient({ baseUrl: link.baseUrl }).downloadDecrypted(link.claimCode, link.key);
 // file.filename comes from the uploader: use safeFilename(file.filename) before saving
 ```
@@ -127,6 +127,7 @@ const file = await new SafeShareClient({ baseUrl: link.baseUrl }).downloadDecryp
 - The SDK can't remove metadata: on Ghost servers, JPEG, PNG, PDF and Office files throw `MetadataNotRemovedError` unless `keepMetadata: true`.
 - `download()` and `downloadToBuffer()` also take `decryptionKey`.
 - Files are encrypted in memory.
+- `encryptionKey` and `shareUrl` are non-enumerable, so `JSON.stringify` and `console.log` of a result leave them out.
 - Redirects are refused whenever a token, password or key is involved.
 - The SDK uses `fetch`, which has no built-in SOCKS proxy. For Tor, pass a `fetch` wired to a proxy, or use `safeshare-cli` or the Python SDK.
 

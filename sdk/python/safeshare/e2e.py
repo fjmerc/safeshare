@@ -25,14 +25,21 @@ import re
 import secrets
 import struct
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from safeshare.exceptions import SafeShareError, ValidationError
+from safeshare.exceptions import (  # noqa: F401 - re-exported for convenience
+    ClientEncryptionRequiredError,
+    DecryptionError,
+    InvalidPayloadError,
+    MetadataNotRemovedError,
+    PayloadTooLargeError,
+    ValidationError,
+)
 
 IV_LENGTH = 12
 TAG_LENGTH = 16
@@ -43,35 +50,16 @@ PAD_MIN_BYTES = 4096
 UPLOAD_ENVELOPE_SLACK = 4096
 MAX_FILENAME_BYTES = 1024
 V2_FIXED_HEADER = 16
-# What an encrypted upload or download may hold in memory.
-MAX_ENCRYPTED_PAYLOAD = 16 << 30
+# What an encrypted upload or download may hold in memory: AES-GCM in the
+# cryptography package takes at most 2**31 - 1 bytes in one call.
+MAX_ENCRYPTED_PAYLOAD = 2**31 - 1 - 1024
 
 MAGIC_V1 = b"SF01"
 MAGIC_V2 = b"SF02"
 
-_CLAIM_CODE = re.compile(r"^[A-Za-z0-9_-]{8,32}$")
-_FRAGMENT = re.compile(r"^/claim/([^/]+)/key/(.+)$")
-
-
-class DecryptionError(SafeShareError):
-    """The key is wrong or the file was changed."""
-
-
-class InvalidPayloadError(SafeShareError):
-    """A decrypted payload has a malformed header."""
-
-
-class PayloadTooLargeError(SafeShareError):
-    """The file doesn't fit under the server's limit once encrypted."""
-
-
-class MetadataNotRemovedError(SafeShareError):
-    """An encrypted upload to a Ghost server was refused: the file may contain
-    metadata that neither this SDK nor the server can remove."""
-
-
-class ClientEncryptionRequiredError(SafeShareError):
-    """The server only accepts files encrypted before upload."""
+_CLAIM_CODE = re.compile(r"[A-Za-z0-9_-]{8,32}")
+_FRAGMENT = re.compile(r"/claim/([^/]+)/key/(.+)", re.DOTALL)
+_CONTENT_TYPES_RE = re.compile(rb"\[content_types\]\.xml", re.IGNORECASE)
 
 
 def padme_length(n: int) -> int:
@@ -142,7 +130,7 @@ def unwrap_payload(b: bytes) -> UnwrappedPayload:
         end = start + data_len
         if end > len(b):
             raise InvalidPayloadError("Payload length exceeds the decrypted size")
-        if any(b[end:]):
+        if b.count(0, end) != len(b) - end:
             raise InvalidPayloadError("Payload padding is invalid")
         name = b[V2_FIXED_HEADER:start].decode("utf-8", errors="replace") if name_len else None
         return UnwrappedPayload(name, b[start:end], 2)
@@ -175,7 +163,7 @@ class DecryptedFile:
     comes from the uploader: pass it through safe_filename() before saving."""
 
     filename: str
-    data: bytes
+    data: bytes = field(repr=False)
 
 
 def generate_key() -> str:
@@ -226,30 +214,34 @@ def build_share_url(base_url: str, claim_code: str, key: str) -> str:
 class ShareLink:
     base_url: str
     claim_code: str
-    key: str
+    key: str = field(repr=False)
 
 
 def parse_share_url(link: str) -> ShareLink:
-    """Parse an encrypted share link (keeps any path prefix of the server)."""
-    parts = urlsplit(link.strip())
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    """Parse an encrypted share link (keeps any path prefix of the server;
+    drops credentials and the query)."""
+    try:
+        parts = urlsplit(link.strip())
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        raise ValidationError("The link must be an http(s) share link") from None
+    if parts.scheme not in ("http", "https") or not host:
         raise ValidationError("The link must be an http(s) share link")
-    m = _FRAGMENT.match(parts.fragment)
+    m = _FRAGMENT.fullmatch(parts.fragment)
     if not m:
         raise ValidationError("The link has no #/claim/<code>/key/<key> part; it is not an encrypted share link")
     code, key = m.group(1), m.group(2)
-    if not _CLAIM_CODE.match(code):
+    if not _CLAIM_CODE.fullmatch(code):
         raise ValidationError("The link's claim code is invalid")
     decode_key(key)
-    netloc = parts.hostname if parts.port is None else f"{parts.hostname}:{parts.port}"
-    if ":" in parts.hostname:  # IPv6 literal
-        netloc = f"[{parts.hostname}]" + ("" if parts.port is None else f":{parts.port}")
+    netloc = f"[{host}]" if ":" in host else host  # IPv6 literal
+    if port is not None:
+        netloc += f":{port}"
     base = urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
     return ShareLink(base, code, key)
 
 
 _PNG = b"\x89PNG\r\n\x1a\n"
-_CONTENT_TYPES = b"[content_types].xml"
 
 
 def metadata_file_type(b: bytes) -> Optional[str]:
@@ -259,7 +251,7 @@ def metadata_file_type(b: bytes) -> Optional[str]:
         return "JPEG image"
     if b[:8] == _PNG:
         return "PNG image"
-    if b[:4] == b"PK\x03\x04" and _CONTENT_TYPES in b.lower():
+    if b[:4] == b"PK\x03\x04" and _CONTENT_TYPES_RE.search(b):
         return "Office document"
     head, tail = b[: 1024 * 1024], b[-2048:]
     if b"%PDF-" in head or (b"startxref" in tail and b"%%EOF" in tail):

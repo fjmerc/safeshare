@@ -128,6 +128,13 @@ describe("e2e helpers", () => {
     for (const [name, want] of cases) expect(e2e.safeFilename(name, "fallback"), name).toBe(want);
   });
 
+  it("metadataFileType scans big zips in place", () => {
+    const big = Buffer.alloc(64 * 1024 * 1024);
+    big.write("PK\x03\x04", 0, "latin1");
+    big.write("[Content_Types].XML", big.length - 100, "latin1");
+    expect(e2e.metadataFileType(big)).toBe("Office document");
+  });
+
   it("metadataFileType", () => {
     expect(e2e.metadataFileType(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0]))).toBe("JPEG image");
     expect(e2e.metadataFileType(Buffer.from("PK\x03\x04...[Content_Types].XML", "latin1"))).toBe("Office document");
@@ -215,13 +222,15 @@ describe("encrypted uploads and downloads", () => {
     expect(res.encrypted).toBe(true);
     expect(res.filename).toBe("notes.txt");
     expect(res.shareUrl).toBe(e2e.buildShareUrl(BASE, "Claim1234", res.encryptionKey!));
+    expect(JSON.stringify(res)).not.toContain(res.encryptionKey!);
+    expect(JSON.stringify({ ...res })).not.toContain(res.encryptionKey!);
     expect(state.name).toBe("encrypted.bin");
     expect(state.stored.includes("secret notes")).toBe(false);
     expect(state.stored.length).toBe(e2e.PAD_MIN_BYTES + e2e.CIPHERTEXT_OVERHEAD);
     const up = state.requests.find((r) => r.url === "/api/upload")!;
     expect((up.init.headers as Record<string, string>)["X-SafeShare-Client-Encrypted"]).toBe("true");
     expect((up.init.body as FormData).get("client_encrypted")).toBe("true");
-    expect(up.init.redirect).toBe("error");
+    expect(up.init.redirect).toBe("follow"); // no token: nothing to leak on a redirect
 
     const f = await client.downloadDecrypted("Claim1234", res.encryptionKey!);
     expect([f.filename, f.data.toString()]).toEqual(["notes.txt", "secret notes"]);

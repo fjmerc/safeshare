@@ -58,11 +58,6 @@ export type {
 // End-to-end encryption (web-app compatible)
 export * as e2e from "./e2e.js";
 export {
-  DecryptionError,
-  InvalidPayloadError,
-  PayloadTooLargeError,
-  MetadataNotRemovedError,
-  ClientEncryptionRequiredError,
   parseShareUrl,
   buildShareUrl,
   safeFilename,
@@ -89,4 +84,9 @@ export {
   ScanUnavailableError,
   ScanFailedError,
   UnscannableUploadError,
+  DecryptionError,
+  InvalidPayloadError,
+  PayloadTooLargeError,
+  MetadataNotRemovedError,
+  ClientEncryptionRequiredError,
 } from "./errors.js";

@@ -188,6 +188,8 @@ class FakeServer:
         self.stored = b""
         self.name = ""
         self.requests = []
+        self.extra = b""
+        self.extra_headers = {}
         httpx_mock.add_callback(self._handle, is_reusable=True, is_optional=True)
         self.config = config
 
@@ -208,13 +210,40 @@ class FakeServer:
                 "claim_code": "Claim1234", "download_url": f"{BASE}/api/claim/Claim1234",
                 "file_size": len(self.stored), "original_filename": self.name,
             })
+        if path == "/api/upload/init":
+            self.init = json.loads(request.read())
+            self.init_header = request.headers.get("x-safeshare-client-encrypted")
+            self.chunks = {}
+            size = self.init["total_size"]
+            return httpx.Response(200, json={
+                "upload_id": "0123abcd-0000-4000-8000-000000000000", "chunk_size": 1000,
+                "total_chunks": -(-size // 1000), "expires_at": "2026-10-19T00:00:00Z",
+            })
+        if path.startswith("/api/upload/chunk/"):
+            n = int(path.rsplit("/", 1)[1])
+            body = request.read()
+            boundary = request.headers["content-type"].split("boundary=")[1].encode()
+            for part in body.split(b"--" + boundary):
+                if b'name="chunk"' in part:
+                    self.chunks[n] = part.partition(b"\r\n\r\n")[2][:-2]
+            return httpx.Response(200, json={
+                "upload_id": "x", "chunk_number": n, "chunks_received": len(self.chunks),
+                "total_chunks": 0, "complete": False,
+            })
+        if path.startswith("/api/upload/complete/"):
+            self.stored = b"".join(self.chunks[i] for i in sorted(self.chunks))
+            self.name = self.init["filename"]
+            return httpx.Response(200, json={
+                "claim_code": "Claim1234", "download_url": f"{BASE}/api/claim/Claim1234",
+                "file_size": len(self.stored), "original_filename": self.name,
+            })
         if path == "/api/claim/Claim1234/info":
             return httpx.Response(200, json={
                 "claim_code": "Claim1234", "original_filename": self.name, "file_size": len(self.stored),
                 "created_at": "2026-10-18T10:00:00Z", "client_encrypted": True,
             })
         if path == "/api/claim/Claim1234":
-            return httpx.Response(200, content=self.stored)
+            return httpx.Response(200, content=self.stored + self.extra, headers=self.extra_headers)
         return httpx.Response(404, json={"error": "not found"})
 
 
@@ -246,7 +275,7 @@ def test_ghost_upload_is_encrypted_padded_and_round_trips(ghost, tmp_path):
         assert dest.read_bytes() == b"secret notes" and (dest.stat().st_mode & 0o777) == 0o600
         before = len(ghost.requests)
         with pytest.raises(DownloadError):
-            c.download("Claim1234", dest, decryption_key=res.encryption_key, overwrite=False)
+            c.download("Claim1234", dest, decryption_key=res.encryption_key)  # refuses by default
         assert len(ghost.requests) == before, "checked the destination only after downloading"
 
         with pytest.raises(DecryptionError):
@@ -354,8 +383,81 @@ def test_socks_proxy_gets_unresolved_hostname(scheme, monkeypatch):
     t.start()
     port = srv.getsockname()[1]
     with SafeShareClient("http://exampleonionaddressxyz.onion", proxy=f"{scheme}://127.0.0.1:{port}") as c:
-        with pytest.raises(Exception):
+        with pytest.raises(httpx.HTTPError):
             c.get_config()
     t.join(5)
     srv.close()
     assert seen == {"atyp": 3, "host": "exampleonionaddressxyz.onion", "port": 80}
+
+
+def test_chunked_encrypted_upload_sends_flag_at_init(httpx_mock, tmp_path):
+    srv = FakeServer(httpx_mock, {**GHOST, "chunked_upload_threshold": 2000})
+    body = b"0123456789" * 900
+    src = tmp_path / "big.log"
+    src.write_bytes(body)
+    with SafeShareClient(BASE) as c:
+        res = c.upload(src, show_filename=True)
+        assert srv.init["client_encrypted"] is True and srv.init_header == "true" and srv.init["filename"] == "big.log"
+        assert len(srv.chunks) > 1
+        assert len(srv.stored) == e2e.padme_length(16 + 9000) + e2e.CIPHERTEXT_OVERHEAD
+        f = c.download_decrypted("Claim1234", res.encryption_key)
+        assert (f.filename, f.data) == ("big.log", body)
+
+
+def test_upload_file_object_from_current_position(ghost):
+    import io as _io
+
+    buf = _io.BytesIO(b"HEADERsecret")
+    buf.seek(6)
+    with SafeShareClient(BASE) as c:
+        res = c.upload(buf, filename="s.txt")
+        assert c.download_decrypted("Claim1234", res.encryption_key).data == b"secret"
+
+
+def test_download_refuses_symlink_and_oversized_bodies(ghost, tmp_path):
+    src = tmp_path / "a.txt"
+    src.write_bytes(b"abc")
+    with SafeShareClient(BASE) as c:
+        res = c.upload(src)
+        victim = tmp_path / "victim"
+        victim.write_text("keep")
+        link = tmp_path / "link"
+        link.symlink_to(victim)
+        with pytest.raises(DownloadError, match="symbolic link"):
+            c.download("Claim1234", link, decryption_key=res.encryption_key, overwrite=True)
+        assert victim.read_text() == "keep"
+
+        ghost.extra = b"x"
+        with pytest.raises(DownloadError, match="sent"):
+            c.download_decrypted("Claim1234", res.encryption_key)
+        ghost.extra = b""
+        ghost.extra_headers = {"content-length": str(len(ghost.stored) + 5)}
+        with pytest.raises(DownloadError):
+            c.download_decrypted("Claim1234", res.encryption_key)
+
+
+@pytest.mark.parametrize("link", ["https://h:99999/#/claim/abcdefgh/key/K", "https://[::1/#/claim/abcdefgh/key/K"])
+def test_parse_share_url_bad_host_raises_validation_error(link):
+    with pytest.raises(ValidationError):
+        e2e.parse_share_url(link)
+
+
+def test_proxy_env_rules(monkeypatch):
+    from safeshare.client import _proxy_options
+
+    for n in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(n, raising=False)
+    monkeypatch.setenv("ALL_PROXY", "socks5h://127.0.0.1:9050")
+    assert _proxy_options(None, False) == {"proxy": "socks5h://127.0.0.1:9050"}
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    assert _proxy_options(None, False) == {}  # httpx applies NO_PROXY itself
+    monkeypatch.delenv("NO_PROXY")
+    monkeypatch.delenv("ALL_PROXY")
+    monkeypatch.setenv("HTTP_PROXY", "host:3128")
+    with pytest.raises(ValidationError, match="environment"):
+        _proxy_options(None, False)
+
+
+def test_key_not_in_repr():
+    link = e2e.parse_share_url("https://h.example/#/claim/abcdefgh/key/" + VECTORS["key"])
+    assert VECTORS["key"] not in repr(link)

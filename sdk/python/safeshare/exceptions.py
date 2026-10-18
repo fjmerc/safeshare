@@ -169,6 +169,30 @@ _SCAN_ERROR_CODES = {
 }
 
 
+# ---- end-to-end encryption (safeshare.e2e) ----
+
+
+class DecryptionError(SafeShareError):
+    """The key is wrong or the file was changed."""
+
+
+class InvalidPayloadError(SafeShareError):
+    """A decrypted payload has a malformed header."""
+
+
+class PayloadTooLargeError(SafeShareError):
+    """The file doesn't fit under the server's limit once encrypted."""
+
+
+class MetadataNotRemovedError(SafeShareError):
+    """An encrypted upload to a Ghost server was refused: the file may contain
+    metadata that neither this SDK nor the server can remove."""
+
+
+class ClientEncryptionRequiredError(SafeShareError):
+    """The server only accepts files encrypted before upload."""
+
+
 def raise_for_status(status_code: int, message: str, error_code: Optional[str] = None) -> None:
     """
     Raise appropriate exception based on HTTP status code.

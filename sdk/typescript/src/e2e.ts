@@ -15,7 +15,16 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-import { SafeShareError, ValidationError } from "./errors.js";
+import {
+  ValidationError,
+  DecryptionError,
+  InvalidPayloadError,
+  PayloadTooLargeError,
+  MetadataNotRemovedError,
+  ClientEncryptionRequiredError,
+} from "./errors.js";
+
+export { DecryptionError, InvalidPayloadError, PayloadTooLargeError, MetadataNotRemovedError, ClientEncryptionRequiredError };
 
 export const IV_LENGTH = 12;
 export const TAG_LENGTH = 16;
@@ -26,53 +35,13 @@ export const PAD_MIN_BYTES = 4096;
 const UPLOAD_ENVELOPE_SLACK = 4096;
 const MAX_FILENAME_BYTES = 1024;
 const V2_FIXED_HEADER = 16;
-/** What an encrypted upload or download may hold in memory (Node's Buffer limit is lower on some builds). */
-export const MAX_ENCRYPTED_PAYLOAD = 2 ** 32;
+/** What an encrypted upload or download may hold in memory (fs.readFile refuses files of 2 GiB or more). */
+export const MAX_ENCRYPTED_PAYLOAD = 2 ** 31 - 1024;
 
 const MAGIC_V1 = Buffer.from("SF01");
 const MAGIC_V2 = Buffer.from("SF02");
 const CLAIM_CODE = /^[A-Za-z0-9_-]{8,32}$/;
 const FRAGMENT = /^#\/claim\/([^/]+)\/key\/(.+)$/;
-
-/** The key is wrong or the file was changed. */
-export class DecryptionError extends SafeShareError {
-  constructor(message = "File data is corrupted or the key is wrong") {
-    super(message);
-    this.name = "DecryptionError";
-  }
-}
-
-/** A decrypted payload has a malformed header. */
-export class InvalidPayloadError extends SafeShareError {
-  constructor(message: string) {
-    super(message);
-    this.name = "InvalidPayloadError";
-  }
-}
-
-/** The file doesn't fit under the server's limit once encrypted. */
-export class PayloadTooLargeError extends SafeShareError {
-  constructor(message: string) {
-    super(message);
-    this.name = "PayloadTooLargeError";
-  }
-}
-
-/** An encrypted upload to a Ghost server was refused: the file may contain metadata neither the SDK nor the server can remove. */
-export class MetadataNotRemovedError extends SafeShareError {
-  constructor(message: string) {
-    super(message);
-    this.name = "MetadataNotRemovedError";
-  }
-}
-
-/** The server only accepts files encrypted before upload. */
-export class ClientEncryptionRequiredError extends SafeShareError {
-  constructor(message = "This server only accepts files encrypted before upload") {
-    super(message);
-    this.name = "ClientEncryptionRequiredError";
-  }
-}
 
 /** PADME padded length (Nikitin et al., PETS 2019): at most ~12% overhead. */
 export function padmeLength(n: number): number {
@@ -253,14 +222,30 @@ export function parseShareUrl(link: string): ShareLink {
   return { baseUrl: `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`, claimCode: m[1], key: m[2] };
 }
 
+const CONTENT_TYPES = Buffer.from("[content_types].xml");
+
+/** True if "[Content_Types].xml" (any case) appears anywhere; scans in place. */
+function mentionsContentTypes(b: Buffer): boolean {
+  const n = CONTENT_TYPES.length;
+  for (let i = b.indexOf(0x5b); i !== -1 && i + n <= b.length; i = b.indexOf(0x5b, i + 1)) {
+    let j = 1;
+    while (j < n) {
+      const c = b[i + j];
+      if ((c >= 0x41 && c <= 0x5a ? c + 32 : c) !== CONTENT_TYPES[j]) break;
+      j++;
+    }
+    if (j === n) return true;
+  }
+  return false;
+}
+
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** Name of the file type when it is one the web app cleans of metadata before encrypting, else null. */
 export function metadataFileType(b: Buffer): string | null {
   if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "JPEG image";
   if (b.length >= 8 && b.subarray(0, 8).equals(PNG)) return "PNG image";
-  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 3 && b[3] === 4 &&
-      b.toString("latin1").toLowerCase().includes("[content_types].xml")) {
+  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 3 && b[3] === 4 && mentionsContentTypes(b)) {
     return "Office document";
   }
   const head = b.subarray(0, 1024 * 1024).toString("latin1");

@@ -277,9 +277,8 @@ export class SafeShareClient {
           ...options.headers,
         },
         body: options.body,
-        // The API has no redirects; following one could send the token or
-        // custom headers to another host.
-        redirect: "error",
+        // Following a redirect could send the token to another host.
+        redirect: this.apiToken ? "error" : "follow",
         signal: controller.signal,
       });
 
@@ -434,14 +433,18 @@ export class SafeShareClient {
     const result = blob.length >= config.chunkUploadThreshold
       ? await this.uploadChunked(src, options, true)
       : await this.uploadSimple(src, options, true);
-    return {
+    const out: UploadResult = {
       ...result,
       filename,
       encrypted: true,
-      encryptionKey: key,
-      shareUrl: e2e.buildShareUrl(this.baseUrl, result.claimCode, key),
       metadataKept: kind && config.stripMetadata ? kind : undefined,
     };
+    // Non-enumerable, so JSON.stringify, console.log and spreads leave the key out.
+    Object.defineProperties(out, {
+      encryptionKey: { value: key, enumerable: false },
+      shareUrl: { value: e2e.buildShareUrl(this.baseUrl, result.claimCode, key), enumerable: false },
+    });
+    return out;
   }
 
   /**
@@ -927,11 +930,21 @@ export class SafeShareClient {
     if (options.decryptionKey !== undefined) {
       // Check the destination first, so a limited download isn't used up.
       const existing = await lstat(resolvedDest).catch(() => null);
-      if (existing && (existing.isSymbolicLink() || !options.overwrite)) {
+      if (existing?.isSymbolicLink()) {
+        throw new DownloadError(`Destination is a symbolic link, refusing to write to it: ${resolvedDest}`);
+      }
+      if (existing && !options.overwrite) {
         throw new DownloadError(`Destination already exists: ${resolvedDest}`);
       }
       const file = await this.downloadDecrypted(claimCode, options.decryptionKey, options);
-      await writePrivate(resolvedDest, file.data, !!options.overwrite);
+      try {
+        await writePrivate(resolvedDest, file.data, !!options.overwrite);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        throw new DownloadError(
+          code === "EEXIST" ? `Destination already exists: ${resolvedDest}` : `Writing the file failed: ${String(err)}`
+        );
+      }
       return resolvedDest;
     }
 
@@ -1011,15 +1024,15 @@ export class SafeShareClient {
   ): Promise<e2e.DecryptedFile> {
     this.validateClaimCode(claimCode);
     const rawKey = e2e.decodeKey(key);
-    const info = await this.getFileInfo(claimCode);
-    const limit = info.size;
-    if (!Number.isSafeInteger(limit) || limit < 0 || limit > e2e.MAX_ENCRYPTED_PAYLOAD + e2e.CIPHERTEXT_OVERHEAD) {
-      throw new DownloadError(`The server reports ${limit} bytes; decrypting holds the whole file in memory`);
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
+      const info = await this.getFileInfo(claimCode);
+      const limit = info.size;
+      if (!Number.isSafeInteger(limit) || limit < 0 || limit > e2e.MAX_ENCRYPTED_PAYLOAD + e2e.CIPHERTEXT_OVERHEAD) {
+        throw new DownloadError(`The server reports ${limit} bytes; decrypting holds the whole file in memory`);
+      }
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), this.timeout);
       const response = await this.fetchImpl(`${this.baseUrl}/api/claim/${claimCode}`, {
         method: "GET",
         headers: this.downloadHeaders(options.password),
@@ -1060,7 +1073,7 @@ export class SafeShareClient {
       const plaintext = e2e.decryptBlob(rawKey, Buffer.concat(chunks));
       return e2e.unwrapDownload(plaintext, info.filename);
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       rawKey.fill(0);
     }
   }

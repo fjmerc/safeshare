@@ -38,12 +38,15 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Added
 
 - **End-to-end encryption in the Go SDK and `safeshare-cli`**: the command-line tool can now upload to and download from Ghost-mode servers and servers that require client-side encryption. Files are encrypted on your machine in the same format as the web app, so a CLI upload opens from its share link in a browser and the other way round, with no need to trust JavaScript sent by the server. The filename is hidden and the size padded, as in Ghost-mode browser uploads. `download` accepts a share link (or `-` to read it from standard input).
-- **End-to-end encryption in the Python and TypeScript SDKs**, in the same format and with the same defaults: `upload(..., encrypt=...)` (`"auto"`, `"always"` or `"never"`) and `download_decrypted`/`downloadDecrypted`. The Python SDK also takes a `proxy` (`socks5h://` for Tor) and now depends on `cryptography` and `httpx[socks]`.
+- **End-to-end encryption in the Python and TypeScript SDKs**, in the same format and with the same encryption defaults: `upload(..., encrypt=...)` (`"auto"`, `"always"` or `"never"`) and `download_decrypted`/`downloadDecrypted`. The Python SDK also takes a `proxy` (`socks5h://` for Tor) and now depends on `cryptography` and `httpx[socks]`.
 - `safeshare-cli --proxy` (or `SAFESHARE_PROXY`) and the Go SDK's `ClientConfig.Proxy` send every request through a proxy, `socks5://` included, with host names resolved at the proxy, so they work over Tor and with `.onion` addresses. `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` are honoured as well.
 
 ### Changed
 
 - **Go SDK:** `Upload` now encrypts by default (`EncryptAuto`) on servers in Ghost mode or that require client-side encryption, instead of failing on them. On a Ghost server with `REQUIRE_CLIENT_ENCRYPTION=false` that used to accept plaintext, uploads are now encrypted, so they need the share link (not just the claim code) to download. Use `EncryptNever` for the old behaviour where the server allows it.
+- **Python and TypeScript SDKs:** the same change: `upload()` encrypts by default (`encrypt="auto"`) on Ghost servers and servers that require client-side encryption, and on Ghost servers JPEG, PNG, PDF and Office uploads raise `MetadataNotRemovedError` unless `keep_metadata`/`keepMetadata` is set. Downloading such files needs the key (`decryption_key`/`decryptionKey`); without it you get the ciphertext.
+- **Python SDK:** when only one of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` is set (and no `NO_PROXY`), it is now used for every request. Python 3.8 still works, but the dev and test tools now need 3.9 or later.
+- **TypeScript SDK:** redirects are refused when an API token is set (as they already were for file passwords).
 - **Go SDK:** the client now honours proxy environment variables and refuses redirects to another host or scheme (`ClientConfig.DisableProxy` turns proxies off).
 
 ### Fixed
