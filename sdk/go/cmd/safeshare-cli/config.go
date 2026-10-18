@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -23,10 +22,7 @@ Example:
 			}
 
 			// Create client
-			client, err := safeshare.NewClient(safeshare.ClientConfig{
-				BaseURL:  baseURL,
-				APIToken: apiToken,
-			})
+			client, err := newClient(baseURL, apiToken)
 			if err != nil {
 				return err
 			}
@@ -45,6 +41,9 @@ Example:
 			fmt.Printf("%-25s %s\n", "Chunk Size:", formatBytes(config.ChunkSize))
 			fmt.Printf("%-25s %d hours\n", "Max Expiration:", config.MaxExpirationHours)
 			fmt.Printf("%-25s %v\n", "Registration Enabled:", config.RegistrationEnabled)
+			fmt.Printf("%-25s %v\n", "Ghost (anonymous) Mode:", config.AnonymousMode)
+			fmt.Printf("%-25s %v\n", "Encryption Required:", config.ClientEncryptionRequired)
+			fmt.Printf("%-25s %v\n", "Strips Metadata:", config.StripMetadata)
 			fmt.Println(strings.Repeat("─", 40))
 
 			return nil

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,8 +73,19 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		timeout = 5 * time.Minute
 	}
 
+	proxy, err := proxyFunc(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create HTTP client
 	transport := &http.Transport{
+		Proxy: proxy,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 30 * time.Second, // generous for Tor circuits
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: cfg.InsecureSkipVerify,
 		},
@@ -85,8 +97,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	httpClient := &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
+		Timeout:       timeout,
+		Transport:     transport,
+		CheckRedirect: sameOriginRedirect,
 	}
 
 	return &Client{
@@ -94,6 +107,84 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		apiToken:   cfg.APIToken,
 		httpClient: httpClient,
 	}, nil
+}
+
+// sameOriginRedirect follows redirects only within the same scheme and host.
+// The API has no cross-origin redirects; following one could send the token
+// or a file password elsewhere, downgrade https to http, or (for an http URL
+// not covered by the proxy) connect directly and reveal a Tor user's address.
+func sameOriginRedirect(r *http.Request, via []*http.Request) error {
+	if r.URL.Scheme != via[0].URL.Scheme || r.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("refusing redirect to %s://%s", r.URL.Scheme, r.URL.Host)
+	}
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// proxyFunc picks the proxy for every request:
+//   - ClientConfig.Proxy, if set, for all requests (no NO_PROXY or loopback
+//     exceptions);
+//   - otherwise, with DisableProxy, none;
+//   - otherwise, a single proxy from the environment (ALL_PROXY alone, or only
+//     one of HTTPS_PROXY/HTTP_PROXY) for all requests, so a Tor setup that
+//     names one proxy can't be bypassed by an http:// URL;
+//   - otherwise Go's usual per-scheme HTTPS_PROXY/HTTP_PROXY/NO_PROXY rules.
+//
+// A socks5:// proxy is handed host names unresolved, so DNS goes through it too.
+func proxyFunc(cfg ClientConfig) (func(*http.Request) (*url.URL, error), error) {
+	fixed := cfg.Proxy
+	if fixed == "" {
+		if cfg.DisableProxy {
+			return nil, nil
+		}
+		httpsP, httpP, allP := envAny("HTTPS_PROXY", "https_proxy"), envAny("HTTP_PROXY", "http_proxy"), envAny("ALL_PROXY", "all_proxy")
+		switch {
+		case httpsP != "" && httpP != "":
+			return http.ProxyFromEnvironment, nil
+		case httpsP != "":
+			fixed = httpsP
+		case httpP != "":
+			fixed = httpP
+		default:
+			fixed = allP
+		}
+		if fixed == "" {
+			return nil, nil
+		}
+	}
+	u, err := ParseProxyURL(fixed)
+	if err != nil {
+		return nil, err
+	}
+	return http.ProxyURL(u), nil
+}
+
+// ParseProxyURL parses a proxy URL (socks5://, socks5h:// or http(s)://).
+// socks5h is accepted as socks5, which Go already resolves at the proxy.
+func ParseProxyURL(s string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil || u.Host == "" {
+		return nil, &ValidationError{Field: "Proxy", Message: "must be a URL such as socks5://127.0.0.1:9050"}
+	}
+	switch u.Scheme {
+	case "socks5h":
+		u.Scheme = "socks5"
+	case "socks5", "http", "https":
+	default:
+		return nil, &ValidationError{Field: "Proxy", Message: "scheme must be socks5, socks5h, http or https"}
+	}
+	return u, nil
+}
+
+func envAny(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // String returns a string representation with the API token redacted.
@@ -180,6 +271,11 @@ func (c *Client) request(ctx context.Context, method, path string, body io.Reade
 // Unlike Authorization, Go's http.Client forwards custom headers on a
 // redirect to another host, so password requests refuse cross-host redirects.
 func (c *Client) requestWithPassword(ctx context.Context, method, path string, body io.Reader, contentType, password string) (*http.Response, error) {
+	return c.doRequest(ctx, method, path, body, contentType, password, nil)
+}
+
+// doRequest is requestWithPassword plus extra request headers.
+func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader, contentType, password string, extra http.Header) (*http.Response, error) {
 	reqURL := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -188,6 +284,11 @@ func (c *Client) requestWithPassword(ctx context.Context, method, path string, b
 	}
 
 	// Set headers
+	for k, vs := range extra {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
 	if c.apiToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiToken)
 	}
@@ -195,27 +296,13 @@ func (c *Client) requestWithPassword(ctx context.Context, method, path string, b
 		req.Header.Set("Content-Type", contentType)
 	}
 
-	httpClient := c.httpClient
 	if password != "" {
+		// Safe to send on redirects: sameOriginRedirect refuses other hosts
+		// and schemes, which would otherwise receive this custom header.
 		req.Header.Set("X-File-Password", password)
-		guarded := *c.httpClient
-		next := c.httpClient.CheckRedirect
-		guarded.CheckRedirect = func(r *http.Request, via []*http.Request) error {
-			if r.URL.Host != via[0].URL.Host {
-				return fmt.Errorf("refusing redirect to another host with a file password: %s", r.URL.Host)
-			}
-			if next != nil {
-				return next(r, via)
-			}
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			return nil
-		}
-		httpClient = &guarded
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
@@ -233,7 +320,7 @@ func handleResponse(resp *http.Response, target interface{}) error {
 			Error string `json:"error"`
 			Code  string `json:"code"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&errResp); err != nil {
 			errResp.Error = resp.Status
 		}
 		apiErr := newAPIError(resp.StatusCode, errResp.Error, errResp.Code)
@@ -274,11 +361,14 @@ func (c *Client) GetConfig(ctx context.Context) (*PublicConfig, error) {
 	}
 
 	c.configCache = &PublicConfig{
-		MaxFileSize:          apiResp.MaxFileSize,
-		ChunkUploadThreshold: apiResp.ChunkUploadThreshold,
-		ChunkSize:            apiResp.ChunkSize,
-		MaxExpirationHours:   apiResp.MaxExpirationHours,
-		RegistrationEnabled:  apiResp.RegistrationEnabled,
+		MaxFileSize:              apiResp.MaxFileSize,
+		ChunkUploadThreshold:     apiResp.ChunkUploadThreshold,
+		ChunkSize:                apiResp.ChunkSize,
+		MaxExpirationHours:       apiResp.MaxExpirationHours,
+		RegistrationEnabled:      apiResp.RegistrationEnabled,
+		AnonymousMode:            apiResp.AnonymousMode,
+		ClientEncryptionRequired: apiResp.ClientEncryptionRequired,
+		StripMetadata:            apiResp.StripMetadata,
 	}
 
 	return c.configCache, nil

@@ -35,6 +35,22 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- **End-to-end encryption in the Go SDK and `safeshare-cli`**: the command-line tool can now upload to and download from Ghost-mode servers and servers that require client-side encryption. Files are encrypted on your machine in the same format as the web app, so a CLI upload opens from its share link in a browser and the other way round, with no need to trust JavaScript sent by the server. The filename is hidden and, in Ghost mode, the size padded, as in the browser. `download` accepts a share link (or `-` to read it from standard input).
+- `safeshare-cli --proxy` (or `SAFESHARE_PROXY`) and the Go SDK's `ClientConfig.Proxy` send every request through a proxy, `socks5://` included, with host names resolved at the proxy, so they work over Tor and with `.onion` addresses. `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` are honoured as well.
+
+### Changed
+
+- **Go SDK:** `Upload` now encrypts by default (`EncryptAuto`) on servers in Ghost mode or that require client-side encryption, instead of failing on them. On a Ghost server with `REQUIRE_CLIENT_ENCRYPTION=false` that used to accept plaintext, uploads are now encrypted, so they need the share link (not just the claim code) to download. Use `EncryptNever` for the old behaviour where the server allows it.
+- **Go SDK:** the client now honours proxy environment variables and refuses redirects to another host or scheme (`ClientConfig.DisableProxy` turns proxies off).
+
+### Security
+
+- Over a proxy or to an `.onion` address, `safeshare-cli` always encrypts, rather than trusting the server to say it is in Ghost mode.
+- On Ghost servers, `safeshare-cli` refuses to upload JPEG, PNG, PDF and Office files encrypted with their metadata, because it can't remove it and the server can't remove it from ciphertext; scrub them first or pass `--keep-metadata`.
+- `safeshare-cli download` cleans filenames from the server or the uploader before saving: no folders, no hidden dot-files (such as `.bashrc`), no invisible or Windows-reserved characters. It doesn't overwrite files unless asked, and it prints names with terminal control characters escaped.
+
 ## [1.16.0] - 2026-10-17
 
 ### Changed
