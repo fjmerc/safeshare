@@ -111,23 +111,13 @@ func stripOfficeMetadata(filePath string) error {
 	return nil
 }
 
-// stripOfficeBytes is stripOfficeMetadata on an in-memory file. It reports
-// whether anything was removed.
+// stripOfficeBytes is stripOfficeMetadata on an in-memory file. The file is
+// always rebuilt, even with no docProps/customXml to drop, because the
+// rebuild also clears the entries' save times, extra fields and comments.
 func stripOfficeBytes(data []byte) ([]byte, bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, false, fmt.Errorf("not a valid ZIP/Office file: %w", err)
-	}
-
-	hasMetadata := false
-	for _, f := range reader.File {
-		if isMetadataPath(f.Name) {
-			hasMetadata = true
-			break
-		}
-	}
-	if !hasMetadata {
-		return data, false, nil
 	}
 
 	result, err := rebuildOfficeZIP(reader)

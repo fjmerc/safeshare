@@ -755,10 +755,21 @@ func TestStripOfficeMetadata_WithoutDocProps(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// File should be unchanged (no docProps to strip)
+	// No docProps to drop, but the file is still rebuilt so that the
+	// entries' save times go too; every part survives.
 	after, _ := os.ReadFile(f)
-	if !bytes.Equal(original, after) {
-		t.Error("file should be unchanged when no docProps present")
+	zr, err := zip.NewReader(bytes.NewReader(after), int64(len(after)))
+	if err != nil {
+		t.Fatalf("result is not a ZIP: %v", err)
+	}
+	orig, _ := zip.NewReader(bytes.NewReader(original), int64(len(original)))
+	if len(zr.File) != len(orig.File) {
+		t.Errorf("entries = %d, want %d", len(zr.File), len(orig.File))
+	}
+	for _, e := range zr.File {
+		if !e.Modified.Equal(officeEntryTime) {
+			t.Errorf("%s keeps its time %v", e.Name, e.Modified)
+		}
 	}
 }
 
