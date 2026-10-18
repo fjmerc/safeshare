@@ -556,12 +556,22 @@ func parseUploadParameters(w http.ResponseWriter, r *http.Request, cfg *config.C
 
 // generateUniqueClaimCode creates a unique claim code with retry logic
 func generateUniqueClaimCode(ctx context.Context, w http.ResponseWriter, repos *repository.Repositories) (string, error) {
-	maxRetries := 5
+	claimCode, err := newUniqueClaimCode(ctx, repos)
+	if err != nil {
+		sendError(w, "Failed to generate claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return "", err
+	}
+	return claimCode, nil
+}
+
+// newUniqueClaimCode returns a claim code no file has yet, retrying a few
+// times on a collision. Errors are logged here.
+func newUniqueClaimCode(ctx context.Context, repos *repository.Repositories) (string, error) {
+	const maxRetries = 5
 	for i := 0; i < maxRetries; i++ {
 		claimCode, err := utils.GenerateClaimCode()
 		if err != nil {
 			slog.Error("failed to generate claim code", "error", err)
-			sendError(w, "Failed to generate claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return "", err
 		}
 
@@ -569,20 +579,15 @@ func generateUniqueClaimCode(ctx context.Context, w http.ResponseWriter, repos *
 		existing, err := repos.Files.GetByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("failed to check claim code", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return "", err
 		}
 
 		if existing == nil {
 			return claimCode, nil
 		}
-
-		if i == maxRetries-1 {
-			sendError(w, "Failed to generate unique claim code", "INTERNAL_ERROR", http.StatusInternalServerError)
-			return "", fmt.Errorf("failed to generate unique claim code")
-		}
 	}
-	return "", fmt.Errorf("unreachable")
+	slog.Error("failed to generate unique claim code", "attempts", maxRetries)
+	return "", fmt.Errorf("failed to generate unique claim code")
 }
 
 // processAndStoreFile handles MIME detection, streaming, hashing, and storage
@@ -651,6 +656,21 @@ func detectMimeTypeAndCreateReader(w http.ResponseWriter, file multipart.File, h
 // Returns (written, sha256Hash, encFileID, err). encFileID is non-nil and 16 bytes
 // when encryption is enabled (SFSE2); nil when encryption is disabled.
 func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multipart.FileHeader, filePath string, cfg *config.Config) (int64, string, []byte, error) {
+	written, sha256Hash, encFileID, err := writeStoredFile(reader, header.Size, filePath, cfg)
+	if err != nil {
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return 0, "", nil, err
+	}
+	slog.Debug("file stored", "size", written, "filename", logFilename(header.Filename, cfg), "encrypted_at_rest", encFileID != nil)
+	return written, sha256Hash, encFileID, nil
+}
+
+// writeStoredFile writes size bytes from reader to filePath (via a temp file
+// and a rename), encrypting them at rest with SFSE2 when ENCRYPTION_KEY is
+// set, and hashing them on the way. It returns (written, sha256Hash,
+// encFileID, err); encFileID is nil without encryption. Errors are logged
+// here; nothing is left on disk after one.
+func writeStoredFile(reader io.Reader, size int64, filePath string, cfg *config.Config) (int64, string, []byte, error) {
 	// Setup SHA256 hashing during streaming
 	hasher := sha256.New()
 	hashedReader := io.TeeReader(reader, hasher)
@@ -660,7 +680,6 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	tempFile, err := os.Create(tempPath)
 	if err != nil {
 		slog.Error("failed to create temp file", "path", tempPath, "error", err)
-		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 		return 0, "", nil, err
 	}
 
@@ -680,28 +699,20 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 		encFileID, err = utils.GenerateEncFileID()
 		if err != nil {
 			slog.Error("failed to generate enc_file_id", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return 0, "", nil, err
 		}
-		err = utils.EncryptFileStreamingV2FromReader(tempFile, hashedReader, cfg.EncryptionKey, encFileID, header.Size)
+		err = utils.EncryptFileStreamingV2FromReader(tempFile, hashedReader, cfg.EncryptionKey, encFileID, size)
 		if err != nil {
 			slog.Error("failed to encrypt file stream (SFSE2)", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return 0, "", nil, err
 		}
-		written = header.Size
-		slog.Debug("file encrypted with SFSE2 streaming encryption",
-			"original_size", header.Size,
-			"filename", logFilename(header.Filename, cfg),
-		)
+		written = size
 	} else {
 		written, err = io.Copy(tempFile, hashedReader)
 		if err != nil {
 			slog.Error("failed to write file stream", "error", err)
-			sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 			return 0, "", nil, err
 		}
-		slog.Debug("file written without encryption", "size", written)
 	}
 
 	// Finalize hash
@@ -710,13 +721,11 @@ func streamFileToStorage(w http.ResponseWriter, reader io.Reader, header *multip
 	// Close and atomically rename
 	if err := tempFile.Close(); err != nil {
 		slog.Error("failed to close temp file", "path", tempPath, "error", err)
-		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 		return 0, "", nil, err
 	}
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		slog.Error("failed to rename temp file", "temp", tempPath, "final", filePath, "error", err)
-		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
 		return 0, "", nil, err
 	}
 

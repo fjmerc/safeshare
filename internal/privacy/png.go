@@ -36,11 +36,7 @@ func stripPNGMetadata(filePath string) error {
 		return fmt.Errorf("failed to read PNG file: %w", err)
 	}
 
-	if len(data) < 8 || !bytes.Equal(data[:8], pngSignature) {
-		return fmt.Errorf("not a valid PNG file: missing signature")
-	}
-
-	result, stripped, err := filterPNGChunks(data)
+	result, stripped, err := stripPNGBytes(data)
 	if err != nil {
 		return err
 	}
@@ -50,6 +46,15 @@ func stripPNGMetadata(filePath string) error {
 	}
 
 	return os.WriteFile(filePath, result, info.Mode().Perm())
+}
+
+// stripPNGBytes is stripPNGMetadata on an in-memory file. It reports
+// whether anything was removed.
+func stripPNGBytes(data []byte) ([]byte, bool, error) {
+	if len(data) < 8 || !bytes.Equal(data[:8], pngSignature) {
+		return nil, false, fmt.Errorf("not a valid PNG file: missing signature")
+	}
+	return filterPNGChunks(data)
 }
 
 // filterPNGChunks walks PNG chunks and removes metadata chunks.

@@ -149,3 +149,25 @@ func manifestHandler(cfg *config.Config, assets http.Handler) http.Handler {
 		http.StripPrefix("/", assets).ServeHTTP(w, r)
 	})
 }
+
+// logDropPage reports at startup whether the no-JavaScript drop page is on,
+// and warns about settings that undercut it.
+func logDropPage(cfg *config.Config) {
+	if !cfg.Drop.Enabled() {
+		return
+	}
+	slog.Info("drop page enabled at /drop: uploads are encrypted to DROP_RECIPIENT on arrival",
+		"recipient", cfg.Drop.RecipientKey,
+		"max_size", cfg.Drop.MaxSize,
+		"max_concurrent", cfg.Drop.MaxConcurrent,
+		"expiration_hours", cfg.Drop.ExpirationHours)
+	if !cfg.IsAnonymousMode() {
+		slog.Warn("drop page enabled without ANONYMOUS_MODE: senders' IP addresses, exact times and file hashes are recorded and logged as for any upload; set ANONYMOUS_MODE=true for sources who need anonymity (docs/DROP_PAGE.md)")
+	}
+	if cfg.RequireAuthForUpload {
+		slog.Warn("drop page enabled with REQUIRE_AUTH_FOR_UPLOAD: /drop accepts files from anyone, without a login")
+	}
+	if cfg.Drop.MaxSize > cfg.GetMaxFileSize() {
+		slog.Warn("DROP_MAX_SIZE is larger than MAX_FILE_SIZE; drops are limited to MAX_FILE_SIZE")
+	}
+}

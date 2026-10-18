@@ -1490,11 +1490,12 @@ Retrieve public-facing configuration (no authentication required).
   "unscannable_uploads_rejected": false,
   "anonymous_mode": false,
   "client_encryption_required": false,
-  "strip_metadata": false
+  "strip_metadata": false,
+  "drop_enabled": false
 }
 ```
 
-`malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all. `anonymous_mode`, `client_encryption_required` and `strip_metadata` tell clients to force end-to-end encryption, keep nothing identifying on the device, and strip metadata before encrypting (the server can't strip ciphertext).
+`malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all. `anonymous_mode`, `client_encryption_required` and `strip_metadata` tell clients to force end-to-end encryption, keep nothing identifying on the device, and strip metadata before encrypting (the server can't strip ciphertext). `drop_enabled` says whether the [no-JavaScript drop page](DROP_PAGE.md) is on at `/drop`.
 
 **Use Case**: Frontend configuration, dynamic UI updates
 

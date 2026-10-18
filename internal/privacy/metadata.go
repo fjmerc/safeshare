@@ -40,6 +40,20 @@ var supportedMimeTypes = map[string]func(string) error{
 	"audio/mpeg":      stripMP3Metadata, // .mp3
 }
 
+// supportedBytesStrippers is supportedMimeTypes for in-memory files. The two
+// maps must cover the same types (checked by a test).
+var supportedBytesStrippers = map[string]func([]byte) ([]byte, bool, error){
+	"image/jpeg":      stripJPEGBytes,
+	"image/png":       stripPNGBytes,
+	"application/pdf": stripPDFBytes,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   stripOfficeBytes,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         stripOfficeBytes,
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": stripOfficeBytes,
+	"video/mp4":       stripMP4Bytes,
+	"video/quicktime": stripMP4Bytes,
+	"audio/mpeg":      stripMP3Bytes,
+}
+
 // SupportsMetadataStripping returns true if the MIME type supports metadata stripping.
 func SupportsMetadataStripping(mimeType string) bool {
 	_, ok := supportedMimeTypes[mimeType]
@@ -67,4 +81,31 @@ func StripFileMetadata(filePath string, mimeType string) error {
 	}
 
 	return stripFunc(filePath)
+}
+
+// StripMetadataBytes is StripFileMetadata for a file held in memory: it
+// returns the file with its identifying metadata removed, without writing
+// anything to disk. For an unsupported type, or a supported one with no
+// metadata, it returns data unchanged. It returns an error, and no data,
+// only if stripping was attempted but failed; the caller must not fall back
+// to data in that case if it has to fail closed.
+func StripMetadataBytes(data []byte, mimeType string) ([]byte, error) {
+	strip, ok := supportedBytesStrippers[mimeType]
+	if !ok {
+		return data, nil
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("file is empty")
+	}
+	if len(data) > maxStrippableFileSize {
+		return nil, fmt.Errorf("%w: %d bytes (max %d)", ErrFileTooLarge, len(data), maxStrippableFileSize)
+	}
+	out, changed, err := strip(data)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return data, nil
+	}
+	return out, nil
 }

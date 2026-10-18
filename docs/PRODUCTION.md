@@ -404,6 +404,10 @@ Defaults are read from the configuration code (`internal/config`, `internal/util
 | `REQUIRE_CLIENT_ENCRYPTION` | value of `ANONYMOUS_MODE` | Refuse uploads that weren't encrypted in the browser (`400 CLIENT_ENCRYPTION_REQUIRED`). See [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#requiring-client-side-encryption) |
 | `STRIP_METADATA` | value of `ANONYMOUS_MODE` | Strip identifying metadata from uploads (in the browser before encryption for JPEG, PNG, Office and PDF files; on the server for unencrypted uploads) |
 | `METRICS_IN_ANONYMOUS_MODE` | `false` | Keep serving `/metrics` in anonymous mode |
+| `DROP_RECIPIENT` | unset | age public key (`age1…` or `age1pq1…`) that turns on the no-JavaScript drop page at `/drop`; drops are encrypted to it on arrival. See [DROP_PAGE.md](DROP_PAGE.md) |
+| `DROP_MAX_SIZE` | `52428800` | Largest drop in bytes (held in memory; also capped by `MAX_FILE_SIZE`) |
+| `DROP_MAX_CONCURRENT` | `2` | Drops processed at once (1 to 64); more get `503` |
+| `DROP_EXPIRATION_HOURS` | `168` | How long a drop is kept (capped by `MAX_EXPIRATION_HOURS`) |
 
 **Chunked upload assembly**
 

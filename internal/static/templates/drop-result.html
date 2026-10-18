@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .Error}}Not sent{{else}}Sent{{end}} - SafeShare</title>
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/drop.css">
+</head>
+<body>
+    <div class="container drop-page">
+        <header>
+            <div class="logo-container">
+                <img src="/assets/logo.svg" alt="" class="logo">
+            </div>
+            <h1>{{if .Error}}Not sent{{else}}Sent{{end}}</h1>
+        </header>
+
+        <main id="main">
+{{- if .Error}}
+            <section class="card drop-error" aria-labelledby="resultHeading">
+                <h2 id="resultHeading">{{.Error}}</h2>
+                {{- if .Detail}}
+                <p>{{.Detail}}</p>
+                {{- end}}
+                <p><a href="/drop">Back to the drop page</a></p>
+            </section>
+{{- else}}
+            <section class="card" aria-labelledby="resultHeading">
+                <h2 id="resultHeading">Your code</h2>
+                <code class="drop-code">{{.ClaimCode}}</code>
+                <p><strong>Write it down now.</strong> This page won't be shown again. Give the code to the recipient the way you agreed; with it, they can download what you sent and open it with their private key.</p>
+                <dl class="drop-details">
+                    <dt>Link</dt>
+                    <dd>{{.Link}}</dd>
+                    <dt>Kept until</dt>
+                    <dd>{{.Expires}}</dd>
+                    <dt>Locked with</dt>
+                    <dd>{{.Recipient}}</dd>
+                </dl>
+                {{- if .Cleaned}}
+                <p>Hidden information was removed from the file before it was locked.</p>
+                {{- else if .HasFile}}
+                <p>This kind of file can't be cleaned of hidden information, so it was sent as it was.</p>
+                {{- end}}
+                <p>The server no longer has an unencrypted copy. Downloading with the code gives a locked file (<code>safeshare-drop.tar.age</code>) that only the private key opens.</p>
+                <p><a href="/drop">Send something else</a></p>
+            </section>
+{{- end}}
+        </main>
+    </div>
+</body>
+</html>

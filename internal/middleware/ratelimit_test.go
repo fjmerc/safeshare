@@ -962,3 +962,34 @@ func TestRequestRecord_CheckCoarse(t *testing.T) {
 		t.Fatal("record without a coarse window reported active")
 	}
 }
+
+// A drop (POST /drop) spends the upload budget, shared with /api/upload;
+// loading the form (GET /drop) doesn't.
+func TestRateLimiter_DropCountsAsUpload(t *testing.T) {
+	rl := NewRateLimiter(&mockConfigProvider{uploadLimit: 3, downloadLimit: 50})
+	defer rl.Stop()
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(method, path string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "192.168.7.7:1234"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	for i := 0; i < 10; i++ {
+		if code := send(http.MethodGet, "/drop"); code != http.StatusOK {
+			t.Fatalf("GET /drop %d: status %d", i, code)
+		}
+	}
+	for i, path := range []string{"/drop", "/api/upload", "/drop"} {
+		if code := send(http.MethodPost, path); code != http.StatusOK {
+			t.Fatalf("POST %s (%d): status %d", path, i, code)
+		}
+	}
+	if code := send(http.MethodPost, "/drop"); code != http.StatusTooManyRequests {
+		t.Errorf("4th upload-bucket request: status %d, want 429", code)
+	}
+}

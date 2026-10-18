@@ -114,9 +114,10 @@ type Config struct {
 	Version                     string // Application version
 	CleanupIntervalMinutes      int
 	PublicURL                   string
-	DownloadURL                 string // Optional: Separate URL for downloads (bypasses CDN timeouts)
-	ClaimCodeLength             int    // Length of newly generated claim codes (8-32, default 16)
-	ShortClaimLinks             bool   // Serve and advertise share links as /<code> (redirects to /api/claim/<code>)
+	DownloadURL                 string     // Optional: Separate URL for downloads (bypasses CDN timeouts)
+	ClaimCodeLength             int        // Length of newly generated claim codes (8-32, default 16)
+	ShortClaimLinks             bool       // Serve and advertise share links as /<code> (redirects to /api/claim/<code>)
+	Drop                        DropConfig // No-JavaScript drop page (DROP_*); see drop.go
 	EncryptionKey               string
 	AdminUsername               string
 	SessionExpiryHours          int
@@ -257,6 +258,12 @@ func Load() (*Config, error) {
 	// Metadata stripping likewise defaults on in anonymous mode; an explicit
 	// STRIP_METADATA value still wins.
 	cfg.StripMetadata = getEnvBool("STRIP_METADATA", cfg.anonymousMode)
+
+	drop, err := loadDropConfig()
+	if err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+	cfg.Drop = drop
 
 	// Load PostgreSQL configuration if DATABASE_TYPE=postgresql
 	if cfg.DatabaseType == "postgresql" {

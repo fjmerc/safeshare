@@ -226,6 +226,7 @@ func run() error {
 		slog.Info("client-side encryption is required for uploads (REQUIRE_CLIENT_ENCRYPTION)")
 		clientEncryptionScanConflict(cfg)
 	}
+	logDropPage(cfg)
 
 	// Create upload directory if it doesn't exist
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
@@ -422,6 +423,25 @@ func run() error {
 
 	mux.HandleFunc("/api/upload/status/", func(w http.ResponseWriter, r *http.Request) {
 		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+
+	// No-JavaScript drop page (DROP_RECIPIENT; 404 when unset). Open to
+	// anyone, like anonymous uploads: senders have no account.
+	dropPage := handlers.DropPageHandler(cfg)
+	dropPost := handlers.DropHandler(repos, cfg)
+	mux.HandleFunc("/drop", func(w http.ResponseWriter, r *http.Request) {
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead:
+				dropPage(w, r)
+			case http.MethodPost:
+				dropPost(w, r)
+			default:
+				w.Header().Set("Allow", "GET, HEAD, POST")
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		}
+		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
 
 	// Note: Order matters - info endpoint must be registered before catch-all claim handler

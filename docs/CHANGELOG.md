@@ -41,6 +41,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **End-to-end encryption in the Python and TypeScript SDKs**, in the same format and with the same encryption defaults: `upload(..., encrypt=...)` (`"auto"`, `"always"` or `"never"`) and `download_decrypted`/`downloadDecrypted`. The Python SDK also takes a `proxy` (`socks5h://` for Tor) and now depends on `cryptography` and `httpx[socks]`.
 - **Checking a server's web app**: `safeshare-cli verify <url>` compares every page and script a server sends with the SHA-256 hashes published for its release, and reports `VERIFIED`, `NOT VERIFIED` (a file differs) or `COULD NOT VERIFY`. Releases now attach `web-assets.sha256` for it, made by `scripts/web-asset-hashes.sh` from the source. It works over `--proxy`/Tor, sends no token or cookies, fetches pages the way a browser does (some CDNs only inject scripts then), warns when the server isn't on the latest release, and fails when its Content Security Policy allows scripts from elsewhere (`--allow-loose-csp` to accept that). It can only check what the server sent to you; see `docs/VERIFYING_RELEASES.md`.
 - **Reproducible server binaries**: the binaries in the Docker image now rebuild byte-for-byte from the release's source. Releases attach `binaries.sha256` after CI checks both architectures, and `scripts/verify-image.sh` lets you check an image yourself (binaries plus how the image starts them).
+- **No-JavaScript drop page** (`/drop`, off unless `DROP_RECIPIENT` is set): a plain HTML form for senders who can't run the server's JavaScript, such as Tor Browser on its Safest setting. The server holds the upload in memory only, removes its metadata, packs it with an optional message into a padded tar archive, and encrypts that with [age](https://age-encryption.org) to the operator's public key before storing it, so only the private key's holder can open it. The trade-off, set out on the page and in `docs/DROP_PAGE.md`: the server sees the file unencrypted for the moment it takes to encrypt it. `DROP_MAX_SIZE` (default 50 MB), `DROP_MAX_CONCURRENT` (2) and `DROP_EXPIRATION_HOURS` (a week) tune it; `/api/config` reports `drop_enabled`. The main page points visitors with JavaScript off to it.
 - `safeshare-cli --proxy` (or `SAFESHARE_PROXY`) and the Go SDK's `ClientConfig.Proxy` send every request through a proxy, `socks5://` included, with host names resolved at the proxy, so they work over Tor and with `.onion` addresses. `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` are honoured as well.
 
 ### Changed
@@ -52,6 +53,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **Go SDK:** the client now honours proxy environment variables and refuses redirects to another host or scheme (`ClientConfig.DisableProxy` turns proxies off).
 
 ### Fixed
+
+- Server-side PDF metadata stripping no longer adds its own `Producer` (pdfcpu) and the time of cleaning as `CreationDate`/`ModDate`: the document information dictionary is now written empty.
 
 - **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 

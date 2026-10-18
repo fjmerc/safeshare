@@ -89,26 +89,12 @@ func stripOfficeMetadata(filePath string) error {
 		return fmt.Errorf("failed to read Office file: %w", err)
 	}
 
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return fmt.Errorf("not a valid ZIP/Office file: %w", err)
-	}
-
-	// Check if there is any metadata to strip
-	hasMetadata := false
-	for _, f := range reader.File {
-		if isMetadataPath(f.Name) {
-			hasMetadata = true
-			break
-		}
-	}
-	if !hasMetadata {
-		return nil // No metadata to strip
-	}
-
-	result, err := rebuildOfficeZIP(reader)
+	result, stripped, err := stripOfficeBytes(data)
 	if err != nil {
 		return err
+	}
+	if !stripped {
+		return nil // No metadata to strip
 	}
 
 	// Atomic write: temp file then rename to prevent data loss on crash
@@ -122,6 +108,32 @@ func stripOfficeMetadata(filePath string) error {
 		return fmt.Errorf("failed to rename stripped file: %w", err)
 	}
 	return nil
+}
+
+// stripOfficeBytes is stripOfficeMetadata on an in-memory file. It reports
+// whether anything was removed.
+func stripOfficeBytes(data []byte) ([]byte, bool, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, false, fmt.Errorf("not a valid ZIP/Office file: %w", err)
+	}
+
+	hasMetadata := false
+	for _, f := range reader.File {
+		if isMetadataPath(f.Name) {
+			hasMetadata = true
+			break
+		}
+	}
+	if !hasMetadata {
+		return data, false, nil
+	}
+
+	result, err := rebuildOfficeZIP(reader)
+	if err != nil {
+		return nil, false, err
+	}
+	return result, true, nil
 }
 
 // rebuildOfficeZIP creates a new ZIP without metadata entries.

@@ -367,3 +367,9 @@ var mp4ContainerAtoms = map[string]bool{
 	"moov": true, // Top-level movie container — we process its children.
 	"trak": true, // Per-track container — contains tkhd.
 }
+
+// stripMP4Bytes is the in-memory form of the file-based stripper above. It reports
+// whether anything was removed.
+func stripMP4Bytes(data []byte) ([]byte, bool, error) {
+	return processMP4Atoms(data)
+}

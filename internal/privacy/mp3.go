@@ -184,3 +184,9 @@ func parseAPETag(data []byte) (int, bool, error) {
 
 	return total, true, nil
 }
+
+// stripMP3Bytes is the in-memory form of the file-based stripper above. It reports
+// whether anything was removed.
+func stripMP3Bytes(data []byte) ([]byte, bool, error) {
+	return removeMP3Tags(data)
+}
