@@ -128,7 +128,7 @@ const file = await new SafeShareClient({ baseUrl: link.baseUrl }).downloadDecryp
 - `download()` and `downloadToBuffer()` also take `decryptionKey`.
 - Files are encrypted in memory.
 - `encryptionKey` and `shareUrl` are non-enumerable, so `JSON.stringify` and `console.log` of a result leave them out.
-- Redirects are refused whenever a token, password or key is involved.
+- API requests never follow redirects, and downloads don't when a token, password or key is involved. Use the server's final `https://` address as `baseUrl`.
 - The SDK uses `fetch`, which has no built-in SOCKS proxy. For Tor, pass a `fetch` wired to a proxy, or use `safeshare-cli` or the Python SDK.
 
 ### Downloading Files

@@ -277,8 +277,11 @@ export class SafeShareClient {
           ...options.headers,
         },
         body: options.body,
-        // Following a redirect could send the token to another host.
-        redirect: this.apiToken ? "error" : "follow",
+        // The API has no redirects. Following one (a 307/308 resends the body)
+        // could send the token, a file password in an upload form, or the
+        // upload itself to another host, so refuse them all. Point baseUrl at
+        // the final https:// address instead.
+        redirect: "error",
         signal: controller.signal,
       });
 

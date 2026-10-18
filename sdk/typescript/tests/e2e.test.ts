@@ -230,7 +230,7 @@ describe("encrypted uploads and downloads", () => {
     const up = state.requests.find((r) => r.url === "/api/upload")!;
     expect((up.init.headers as Record<string, string>)["X-SafeShare-Client-Encrypted"]).toBe("true");
     expect((up.init.body as FormData).get("client_encrypted")).toBe("true");
-    expect(up.init.redirect).toBe("follow"); // no token: nothing to leak on a redirect
+    expect(up.init.redirect).toBe("error");
 
     const f = await client.downloadDecrypted("Claim1234", res.encryptionKey!);
     expect([f.filename, f.data.toString()]).toEqual(["notes.txt", "secret notes"]);
