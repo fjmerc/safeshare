@@ -498,3 +498,54 @@ func TestVerifiedNeedsCoreFilesAndKnownRoutes(t *testing.T) {
 		t.Errorf("404 on /: %v, Verified() = %v", a.Status, r.Verified())
 	}
 }
+
+func TestVerifyWebAssetsOriginOnly(t *testing.T) {
+	m, files := repoManifest(t)
+	srv := httptest.NewServer(&assetServer{files: files})
+	defer srv.Close()
+	for _, base := range []string{srv.URL + "/share", srv.URL + "/?x=", srv.URL + "/?", srv.URL + "/#", srv.URL + "/#x", "http://u:p@" + strings.TrimPrefix(srv.URL, "http://")} {
+		c, err := NewClient(ClientConfig{BaseURL: base, DisableProxy: true})
+		if err != nil {
+			continue // NewClient refused it already
+		}
+		if _, err := c.VerifyWebAssets(context.Background(), m); err == nil {
+			t.Errorf("%s accepted", base)
+		}
+	}
+	for _, ok := range []string{srv.URL, srv.URL + "/", "https://share.example.com", "http://abc.onion"} {
+		if err := CheckVerifyURL(ok); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+}
+
+func TestVerifyWebAssetsRefreshHeader(t *testing.T) {
+	m, files := repoManifest(t)
+	s := &assetServer{files: files, override: map[string]func(http.ResponseWriter, *http.Request){
+		"/": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Refresh", "0; url=/evil")
+			_, _ = w.Write(files["index.html"])
+		},
+	}}
+	r := verifyAgainst(t, s, m)
+	if a, _ := statusOf(r, "index.html"); a.Status != AssetFetchFailed || r.Verified() {
+		t.Fatalf("Refresh header: %v, Verified() = %v", a.Status, r.Verified())
+	}
+}
+
+func TestVerifyTLSChecks(t *testing.T) {
+	c, err := NewClient(ClientConfig{BaseURL: "https://share.example.com", InsecureSkipVerify: true, DisableProxy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.VerifyWebAssets(context.Background(), map[string]string{"index.html": strings.Repeat("0", 64)}); err == nil {
+		t.Error("verification without certificate checks accepted")
+	}
+	tr := c.githubClient(true).Transport.(*http.Transport)
+	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("GitHub requests skip certificate checks")
+	}
+	if orig := c.httpClient.Transport.(*http.Transport); !orig.TLSClientConfig.InsecureSkipVerify {
+		t.Error("githubClient changed the client's own transport")
+	}
+}

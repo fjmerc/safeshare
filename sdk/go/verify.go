@@ -281,12 +281,12 @@ const unknownRoute = "no known URL"
 // The server must use https, unless it is a .onion or loopback address: over
 // plain http anyone on the path could change the files.
 func (c *Client) VerifyWebAssets(ctx context.Context, manifest map[string]string) (*WebAssetReport, error) {
-	base, err := url.Parse(c.baseURL)
+	origin, err := verifyOrigin(c.baseURL)
 	if err != nil {
 		return nil, err
 	}
-	if base.Scheme != "https" && !onionOrLoopback(base.Hostname()) {
-		return nil, &ValidationError{Field: "BaseURL", Message: "must use https to verify (http is only accepted for .onion and loopback addresses)"}
+	if t, ok := c.httpClient.Transport.(*http.Transport); ok && t.TLSClientConfig != nil && t.TLSClientConfig.InsecureSkipVerify {
+		return nil, &ValidationError{Field: "InsecureSkipVerify", Message: "must be off to verify: without certificate checks anyone on the path can change the files"}
 	}
 
 	hc := *c.httpClient
@@ -319,12 +319,12 @@ func (c *Client) VerifyWebAssets(ctx context.Context, manifest map[string]string
 				continue
 			}
 			swDone = true
-			res = c.checkServiceWorker(ctx, &hc, manifest)
+			res = checkServiceWorker(ctx, &hc, origin, manifest)
 			report.Results = append(report.Results, res)
 			continue
 		}
 		res.URLPath = urlPath
-		sum, status, hdr, detail := fetchHash(ctx, &hc, c.baseURL+urlPath, isPage(file))
+		sum, status, hdr, detail := fetchHash(ctx, &hc, origin+urlPath, isPage(file))
 		res.Got, res.Detail = sum, detail
 		if file == "index.html" && hdr != nil {
 			report.PageCSP = hdr.Get("Content-Security-Policy")
@@ -346,7 +346,7 @@ func (c *Client) VerifyWebAssets(ctx context.Context, manifest map[string]string
 	return report, nil
 }
 
-func (c *Client) checkServiceWorker(ctx context.Context, hc *http.Client, manifest map[string]string) AssetResult {
+func checkServiceWorker(ctx context.Context, hc *http.Client, origin string, manifest map[string]string) AssetResult {
 	res := AssetResult{File: "service-worker.js", URLPath: "/service-worker.js"}
 	names := []string{"service-worker.js", "service-worker-anonymous.js"}
 	var accept []string
@@ -356,7 +356,7 @@ func (c *Client) checkServiceWorker(ctx context.Context, hc *http.Client, manife
 		}
 	}
 	res.Expected = strings.Join(accept, " or ")
-	sum, status, _, detail := fetchHash(ctx, hc, c.baseURL+res.URLPath, false)
+	sum, status, _, detail := fetchHash(ctx, hc, origin+res.URLPath, false)
 	res.Got, res.Detail = sum, detail
 	switch {
 	case status == http.StatusNotFound:
@@ -414,6 +414,13 @@ func fetchHash(ctx context.Context, hc *http.Client, u string, page bool) (sum s
 		}
 		return "", resp.StatusCode, resp.Header, detail
 	}
+	if page && resp.Header.Get("Refresh") != "" {
+		// A genuine page with a Refresh header sends the browser elsewhere.
+		return "", resp.StatusCode, resp.Header, "the page has a Refresh header, which sends browsers to another page"
+	}
+	if len(resp.Header.Values("Content-Encoding")) > 1 {
+		return "", resp.StatusCode, resp.Header, "more than one Content-Encoding header"
+	}
 	var body io.Reader = resp.Body
 	switch enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); enc {
 	case "", "identity":
@@ -438,6 +445,29 @@ func fetchHash(ctx context.Context, hc *http.Client, u string, page bool) (sum s
 	return hex.EncodeToString(h.Sum(nil)), resp.StatusCode, resp.Header, ""
 }
 
+// CheckVerifyURL reports whether raw is a server address VerifyWebAssets
+// accepts: https (or http for .onion and loopback), and only scheme, host and
+// port. SafeShare's pages load their scripts from the site root (/assets/...),
+// so a path or query would check files browsers never load.
+func CheckVerifyURL(raw string) error {
+	_, err := verifyOrigin(raw)
+	return err
+}
+
+func verifyOrigin(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", &ValidationError{Field: "BaseURL", Message: "must be a URL such as https://share.example.com"}
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#") || u.User != nil || u.Opaque != "" {
+		return "", &ValidationError{Field: "BaseURL", Message: "must be just scheme://host[:port] to verify, with no path, query or user name (SafeShare runs at the site root)"}
+	}
+	if u.Scheme != "https" && !(u.Scheme == "http" && onionOrLoopback(u.Hostname())) {
+		return "", &ValidationError{Field: "BaseURL", Message: "must use https to verify (http is only accepted for .onion and loopback addresses)"}
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String(), nil
+}
+
 func onionOrLoopback(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	if strings.HasSuffix(host, ".onion") || host == "localhost" || strings.HasSuffix(host, ".localhost") {
@@ -448,10 +478,17 @@ func onionOrLoopback(host string) bool {
 }
 
 // githubClient talks to GitHub through the same proxy as c, without the API
-// token, following redirects only to GitHub's own https hosts (release files
+// token, with certificate checks on, following redirects only to GitHub's own https hosts (release files
 // are served from *.githubusercontent.com).
 func (c *Client) githubClient(follow bool) *http.Client {
 	hc := *c.httpClient
+	if t, ok := hc.Transport.(*http.Transport); ok {
+		// Always check GitHub's certificate, even if the client was made
+		// with InsecureSkipVerify for a self-signed SafeShare server.
+		t = t.Clone()
+		t.TLSClientConfig = nil
+		hc.Transport = t
+	}
 	hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		if !follow {
 			return http.ErrUseLastResponse

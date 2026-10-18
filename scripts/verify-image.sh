@@ -1,6 +1,7 @@
 #!/bin/sh
 # Rebuilds the server binaries from this checkout and checks they are
-# byte-identical to the ones in a SafeShare Docker image. Check out the tag of
+# byte-identical to the ones in a SafeShare Docker image, and that the image
+# starts them the way the Dockerfile says. Check out the tag of
 # the release first (git checkout vX.Y.Z), then:
 #
 #   scripts/verify-image.sh fjmerc/safeshare:1.17.0
@@ -65,6 +66,12 @@ else
 	hash() { shasum -a 256 "$1" | cut -d' ' -f1; } # macOS
 fi
 
+# What the image runs, as the Dockerfile sets it. Checked too: genuine
+# binaries don't help if the image starts something else. CI runs this script
+# on every pull request, so it fails if the Dockerfile changes without this.
+want_config='null ["./safeshare"] /app safeshare ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","PORT=8080","DB_PATH=/app/data/safeshare.db","UPLOAD_DIR=/app/uploads","MAX_FILE_SIZE=104857600","DEFAULT_EXPIRATION_HOURS=24","CLEANUP_INTERVAL_MINUTES=60","PUBLIC_URL="] ["CMD-SHELL","wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"] null null'
+config_format='{{json .Config.Entrypoint}} {{json .Config.Cmd}} {{.Config.WorkingDir}} {{.Config.User}} {{json .Config.Env}} {{json .Config.Healthcheck.Test}} {{json .Config.Shell}} {{json .Config.OnBuild}}'
+
 failed=0
 for plat in $platforms; do
 	arch=${plat#linux/}
@@ -72,14 +79,31 @@ for plat in $platforms; do
 	# A local-only image can't be pulled; docker create then uses it as is.
 	docker pull -q --platform "$plat" "$image" >/dev/null 2>&1 || true
 	id=$(docker create --platform "$plat" "$image")
-	got=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$(docker inspect --format '{{.Image}}' "$id")")
+	img_id=$(docker inspect --format '{{.Image}}' "$id")
+	got=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$img_id")
 	if [ "$got" != "$plat" ]; then
 		docker rm "$id" >/dev/null
 		echo "$image is $got here, not $plat; pull it for $plat first" >&2
 		exit 2
 	fi
+	config=$(docker image inspect --format "$config_format" "$img_id")
+	if [ "$config" = "$want_config" ]; then
+		echo "  identical  linux/$arch start command, user, working directory, environment and health check"
+	else
+		echo "  DIFFERENT  linux/$arch image settings:"
+		echo "             image:      $config"
+		echo "             Dockerfile: $want_config"
+		failed=1
+	fi
 	for b in $binaries; do
-		docker cp -q "$id:/app/$b" "$work/$arch/image/$b"
+		# -L: copy what a symlink points to, i.e. what actually runs; then
+		# refuse anything that still isn't a plain file.
+		docker cp -q -L "$id:/app/$b" "$work/$arch/image/$b"
+		if [ ! -f "$work/$arch/image/$b" ] || [ -L "$work/$arch/image/$b" ]; then
+			docker rm "$id" >/dev/null
+			echo "linux/$arch /app/$b in the image is not a regular file" >&2
+			exit 2
+		fi
 	done
 	docker rm "$id" >/dev/null
 
@@ -104,7 +128,7 @@ for plat in $platforms; do
 done
 
 if [ "$failed" = 1 ]; then
-	echo "NOT REPRODUCED: the image's binaries don't match this checkout ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo unknown))." >&2
+	echo "NOT REPRODUCED: the image doesn't match this checkout ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo unknown))." >&2
 	exit 1
 fi
-echo "REPRODUCED: the image's binaries match this checkout."
+echo "REPRODUCED: the image's binaries and start settings match this checkout. (Its Alpine packages, such as CA certificates, are not checked.)"

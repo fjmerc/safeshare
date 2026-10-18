@@ -25,6 +25,7 @@ func hexSum(s string) string {
 
 func TestRunVerifyExitStatus(t *testing.T) {
 	const page, script = "<html>page</html>", "console.log(1)"
+	const strict = "default-src 'self'; script-src 'self'"
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "web-assets.sha256")
 	content := fmt.Sprintf("%s  assets/app.js\n%s  assets/crypto.js\n%s  index.html\n", hexSum(script), hexSum(script), hexSum(page))
@@ -35,12 +36,15 @@ func TestRunVerifyExitStatus(t *testing.T) {
 	cases := map[string]struct {
 		script     string
 		status     int
+		csp        string
 		wantCode   int // 0: no error
 		wantOutput string
 	}{
-		"verified": {script, 200, 0, "VERIFIED"},
-		"tampered": {script + "evil()", 200, 2, "MISMATCH"},
-		"blocked":  {script, 403, 1, "fetch failed"},
+		"verified":  {script, 200, strict, 0, "VERIFIED"},
+		"tampered":  {script + "evil()", 200, strict, 2, "MISMATCH"},
+		"blocked":   {script, 403, strict, 1, "fetch failed"},
+		"loose csp": {script, 200, "default-src 'self'; script-src 'self' 'unsafe-inline'", 1, "allow-loose-csp"},
+		"no csp":    {script, 200, "", 1, "missing"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -49,6 +53,7 @@ func TestRunVerifyExitStatus(t *testing.T) {
 				case "/api/config":
 					_, _ = io.WriteString(w, `{"version":"1.17.0"}`)
 				case "/":
+					w.Header().Set("Content-Security-Policy", tc.csp)
 					_, _ = io.WriteString(w, page)
 				case "/assets/crypto.js":
 					_, _ = io.WriteString(w, script)
@@ -80,5 +85,15 @@ func TestRunVerifyExitStatus(t *testing.T) {
 				t.Errorf("version not shown:\n%s", out.String())
 			}
 		})
+	}
+}
+
+func TestVerifyRefusesURLWithPath(t *testing.T) {
+	for _, u := range []string{"https://h.example/share", "https://h.example/?x=", "https://h.example/#", "https://u@h.example"} {
+		cmd := verifyCmd()
+		cmd.SetArgs([]string{u})
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "scheme://host") {
+			t.Errorf("%s: %v", u, err)
+		}
 	}
 }

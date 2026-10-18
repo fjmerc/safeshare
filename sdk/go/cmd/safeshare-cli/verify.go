@@ -26,6 +26,7 @@ func verifyCmd() *cobra.Command {
 		version      string
 		repo         string
 		all          bool
+		looseCSP     bool
 	)
 
 	cmd := &cobra.Command{
@@ -48,6 +49,10 @@ obfuscation) shows up as a mismatch.
 Use --proxy (or ALL_PROXY) to check over Tor; the release download from
 GitHub goes through the same proxy.
 
+It also fails when the page's Content-Security-Policy lets scripts load from
+anywhere but the server itself (SafeShare sends script-src 'self'), since
+such scripts aren't covered; --allow-loose-csp turns that into a warning.
+
 Exit status: 0 verified, 2 a file differs, 1 could not verify.
 
 Examples:
@@ -63,13 +68,16 @@ Examples:
 			if server == "" {
 				return fmt.Errorf("server URL is required (argument, --url or SAFESHARE_URL)")
 			}
+			if err := safeshare.CheckVerifyURL(server); err != nil {
+				return err
+			}
 			// No token: verification uses only public pages.
-			client, err := newClient(server, "")
+			client, err := newClient(strings.TrimRight(server, "/"), "")
 			if err != nil {
 				return err
 			}
 			return runVerify(cmd.Context(), cmd.OutOrStdout(), client, verifyOptions{
-				manifestFile: manifestFile, version: version, repo: repo, all: all,
+				manifestFile: manifestFile, version: version, repo: repo, all: all, allowLooseCSP: looseCSP,
 			})
 		},
 	}
@@ -78,15 +86,17 @@ Examples:
 	cmd.Flags().StringVar(&version, "version", "", "Release to compare against, e.g. 1.17.0 (default: the version the server reports)")
 	cmd.Flags().StringVar(&repo, "repo", safeshare.DefaultReleaseRepo, "GitHub repository that publishes the releases")
 	cmd.Flags().BoolVar(&all, "all", false, "List every file, not only the ones that did not match")
+	cmd.Flags().BoolVar(&looseCSP, "allow-loose-csp", false, "Only warn, instead of failing, when the page's Content-Security-Policy lets scripts load from elsewhere")
 
 	return cmd
 }
 
 type verifyOptions struct {
-	manifestFile string
-	version      string
-	repo         string
-	all          bool
+	manifestFile  string
+	version       string
+	repo          string
+	all           bool
+	allowLooseCSP bool
 }
 
 func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opts verifyOptions) error {
@@ -164,7 +174,8 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 	}
 	fmt.Fprintln(out)
 
-	if extra := report.LooseScriptPolicy(); len(extra) > 0 {
+	extra := report.LooseScriptPolicy()
+	if len(extra) > 0 {
 		fmt.Fprintln(out, escapeControls(fmt.Sprintf("Warning: the page's Content-Security-Policy lets scripts run from more than the server's own files (%s); SafeShare sends \"script-src 'self'\". Scripts injected that way aren't covered by this check.", strings.Join(extra, " "))))
 	}
 	if opts.manifestFile == "" {
@@ -177,6 +188,8 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 	switch {
 	case report.Tampered():
 		return &exitError{2, fmt.Sprintf("NOT VERIFIED: %d file(s) differ from %s. The web app was changed on the server or on the way; don't trust this server's in-browser encryption.", report.Count(safeshare.AssetMismatch), against)}
+	case report.Verified() && len(extra) > 0 && !opts.allowLooseCSP:
+		return &exitError{1, "COULD NOT VERIFY: the files match, but the page's Content-Security-Policy allows scripts these hashes don't cover (see the warning). Fix the policy in front of SafeShare, or pass --allow-loose-csp to accept it."}
 	case report.Verified():
 		fmt.Fprintf(out, "VERIFIED: all %d files fetched match %s", report.Count(safeshare.AssetMatch), display(against))
 		if n := report.Count(safeshare.AssetNotChecked); n > 0 {
