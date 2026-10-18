@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"unicode"
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
@@ -57,7 +58,7 @@ Examples:
 	rootCmd.AddCommand(configCmd())
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, escapeControls(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -92,6 +93,22 @@ func display(name string) string {
 		}
 	}
 	return name
+}
+
+// escapeControls escapes control and invisible formatting characters
+// (except newlines) in text that may come from a server, such as API error
+// messages, so it can't drive the terminal.
+func escapeControls(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r)) {
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // checkConfig validates that required configuration is present.
