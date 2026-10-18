@@ -17,6 +17,13 @@ else
 fi
 
 cd "$(dirname "$0")/../internal/static/web"
-find . -type f | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do
-	sum "$f"
+# Like go:embed web/*, skip names starting with "." or "_" below the top level.
+# Collected first: sh has no pipefail, and a failure must not print a short list.
+list=$(find . \( -path './*/.*' -o -path './*/_*' \) -prune -o -type f -print | sed 's|^\./||' | LC_ALL=C sort)
+case "$list" in
+*index.html*) ;;
+*) echo "web-asset-hashes.sh: no index.html under internal/static/web" >&2; exit 1 ;;
+esac
+printf '%s\n' "$list" | while IFS= read -r f; do
+	sum "$f" || exit 1
 done

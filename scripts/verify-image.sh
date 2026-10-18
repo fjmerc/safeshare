@@ -10,7 +10,7 @@
 # (Docker needed), or with --local-go using the go on PATH (same version
 # required). --sums FILE also writes the SHA-256 of each verified binary.
 # Set TMPDIR if the Docker daemon cannot see /tmp.
-# Exits 1 if any binary differs.
+# Exits 1 if any binary differs, 2 if it couldn't check.
 set -eu
 
 usage="usage: $0 [--local-go] [--sums FILE] IMAGE [PLATFORM...]"
@@ -30,6 +30,14 @@ platforms=${*:-linux/amd64 linux/arm64}
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 gover=$(sed -n 's/^toolchain go//p' "$root/go.mod")
+if [ -z "$gover" ]; then
+	echo "no toolchain line in go.mod; can't tell which Go version built the image" >&2
+	exit 2
+fi
+if [ "$local_go" = 1 ] && [ "$(GOTOOLCHAIN=local go env GOVERSION)" != "go$gover" ]; then
+	echo "--local-go needs Go $gover (go.mod's toolchain), found $(GOTOOLCHAIN=local go env GOVERSION)" >&2
+	exit 2
+fi
 binaries="safeshare import-file migrate-encryption"
 work=$(mktemp -d "${TMPDIR:-/tmp}/verify-image.XXXXXX")
 trap 'rm -rf "$work"' EXIT
@@ -51,7 +59,11 @@ build() { # arch outdir
 	fi
 }
 
-hash() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$1" | cut -d' ' -f1; }
+if command -v sha256sum >/dev/null 2>&1; then
+	hash() { sha256sum "$1" | cut -d' ' -f1; }
+else
+	hash() { shasum -a 256 "$1" | cut -d' ' -f1; } # macOS
+fi
 
 failed=0
 for plat in $platforms; do
@@ -60,6 +72,12 @@ for plat in $platforms; do
 	# A local-only image can't be pulled; docker create then uses it as is.
 	docker pull -q --platform "$plat" "$image" >/dev/null 2>&1 || true
 	id=$(docker create --platform "$plat" "$image")
+	got=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$(docker inspect --format '{{.Image}}' "$id")")
+	if [ "$got" != "$plat" ]; then
+		docker rm "$id" >/dev/null
+		echo "$image is $got here, not $plat; pull it for $plat first" >&2
+		exit 2
+	fi
 	for b in $binaries; do
 		docker cp -q "$id:/app/$b" "$work/$arch/image/$b"
 	done
@@ -71,6 +89,10 @@ for plat in $platforms; do
 	for b in $binaries; do
 		img=$(hash "$work/$arch/image/$b")
 		src=$(hash "$work/$arch/source/$b")
+		if [ -z "$img" ] || [ -z "$src" ]; then
+			echo "could not hash linux/$arch $b" >&2
+			exit 2
+		fi
 		if [ "$img" = "$src" ]; then
 			echo "  identical  linux/$arch $b  $img"
 			[ -z "$sums" ] || echo "$img  linux-$arch/$b" >>"$sums"

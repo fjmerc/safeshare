@@ -54,6 +54,10 @@ const (
 	// AssetNotChecked: not compared, because it needs a login or is filled in
 	// for each request.
 	AssetNotChecked
+	// AssetUnknown: the release has a file this version of the SDK doesn't
+	// know the URL of (a newer release). It can't be checked, so the report
+	// isn't verified.
+	AssetUnknown
 )
 
 func (s AssetStatus) String() string {
@@ -70,6 +74,8 @@ func (s AssetStatus) String() string {
 		return "fetch failed"
 	case AssetNotChecked:
 		return "not checked"
+	case AssetUnknown:
+		return "unknown file"
 	}
 	return "unknown"
 }
@@ -97,8 +103,9 @@ type WebAssetReport struct {
 }
 
 // LooseScriptPolicy returns the script sources the page's Content Security
-// Policy allows beyond the released "script-src 'self'" (or "missing" when
-// the page has no policy limiting scripts). Extra sources mean injected or
+// Policy allows beyond the released "script-src 'self'", for script elements,
+// inline handlers and workers (or "missing" when the page has no policy
+// limiting scripts). Only the first policy header is read. Extra sources mean injected or
 // third-party scripts can run in the page; they aren't covered by the hashes.
 func (r *WebAssetReport) LooseScriptPolicy() []string {
 	directives := map[string][]string{}
@@ -111,17 +118,27 @@ func (r *WebAssetReport) LooseScriptPolicy() []string {
 			}
 		}
 	}
-	src, ok := directives["script-src"]
-	if !ok {
-		src, ok = directives["default-src"]
-	}
-	if !ok {
-		return []string{"missing"}
+	// Each kind of script falls back to script-src, then default-src.
+	effective := func(names ...string) []string {
+		for _, n := range append(names, "script-src", "default-src") {
+			if v, ok := directives[n]; ok {
+				return v
+			}
+		}
+		return nil
 	}
 	var extra []string
-	for _, v := range src {
-		if strings.ToLower(v) != "'self'" {
-			extra = append(extra, v)
+	seen := map[string]bool{}
+	for _, kind := range [][]string{{"script-src-elem"}, {"script-src-attr"}, {"worker-src", "child-src"}} {
+		src := effective(kind...)
+		if src == nil {
+			return []string{"missing"}
+		}
+		for _, v := range src {
+			if lv := strings.ToLower(v); lv != "'self'" && lv != "'none'" && !seen[v] {
+				seen[v] = true
+				extra = append(extra, v)
+			}
 		}
 	}
 	return extra
@@ -137,19 +154,40 @@ func (r *WebAssetReport) Tampered() bool {
 	return false
 }
 
-// Verified reports whether every file the server must serve matched, and
-// nothing differed or failed to load.
+// coreFiles must match for a report to be verified: the page and the
+// scripts that do the encryption.
+var coreFiles = []string{"index.html", "assets/app.js", "assets/crypto.js"}
+
+// Verified reports whether every file the server must serve matched,
+// including the main page and the encryption scripts, and nothing differed,
+// failed to load or was unknown.
 func (r *WebAssetReport) Verified() bool {
-	matched := false
+	matched := map[string]bool{}
 	for _, a := range r.Results {
 		switch a.Status {
-		case AssetMismatch, AssetMissing, AssetFetchFailed:
+		case AssetMismatch, AssetMissing, AssetFetchFailed, AssetUnknown:
 			return false
 		case AssetMatch:
-			matched = true
+			matched[a.File] = true
 		}
 	}
-	return matched
+	for _, f := range coreFiles {
+		if !matched[f] {
+			return false
+		}
+	}
+	return true
+}
+
+// Count returns how many files have status s.
+func (r *WebAssetReport) Count(s AssetStatus) int {
+	n := 0
+	for _, a := range r.Results {
+		if a.Status == s {
+			n++
+		}
+	}
+	return n
 }
 
 var (
@@ -204,7 +242,8 @@ func validManifestPath(p string) bool {
 
 // assetRoute maps a manifest path to the URL the server serves it at. It
 // mirrors the routes in cmd/safeshare/main.go; sdk/go's tests check every
-// embedded file is mapped.
+// embedded file is mapped. A file it doesn't know (from a newer release)
+// makes the report unverified rather than being skipped.
 func assetRoute(file string) (urlPath string, optional bool, skip string) {
 	switch {
 	case file == "index.html":
@@ -226,8 +265,11 @@ func assetRoute(file string) (urlPath string, optional bool, skip string) {
 	case file == "error.html":
 		return "", false, "filled in for each error, so it never matches"
 	}
-	return "", false, "no known URL"
+	return "", false, unknownRoute
 }
+
+// unknownRoute is assetRoute's skip reason for a file it has no URL for.
+const unknownRoute = "no known URL"
 
 // VerifyWebAssets fetches every web file listed in manifest (from
 // ParseWebAssetManifest) from the server and compares it with the published
@@ -261,6 +303,11 @@ func (c *Client) VerifyWebAssets(ctx context.Context, manifest map[string]string
 	for _, file := range files {
 		urlPath, optional, skip := assetRoute(file)
 		res := AssetResult{File: file, Expected: manifest[file]}
+		if skip == unknownRoute {
+			res.Status, res.Detail = AssetUnknown, "not known to this version of the SDK/CLI; update it"
+			report.Results = append(report.Results, res)
+			continue
+		}
 		if skip != "" {
 			res.Status, res.Detail = AssetNotChecked, skip
 			report.Results = append(report.Results, res)

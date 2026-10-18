@@ -609,6 +609,7 @@ jobs:
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
           scripts/web-asset-hashes.sh > web-assets.sha256
+          grep -q '  index.html$' web-assets.sha256 && grep -q '  assets/crypto.js$' web-assets.sha256
           scripts/verify-image.sh --local-go --sums binaries.sha256 "${IMAGE}:${GH_REF_NAME#v}" linux/amd64 linux/arm64
 
       - name: Create GitHub Release

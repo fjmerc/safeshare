@@ -27,7 +27,7 @@ func TestRunVerifyExitStatus(t *testing.T) {
 	const page, script = "<html>page</html>", "console.log(1)"
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "web-assets.sha256")
-	content := fmt.Sprintf("%s  assets/app.js\n%s  index.html\n", hexSum(script), hexSum(page))
+	content := fmt.Sprintf("%s  assets/app.js\n%s  assets/crypto.js\n%s  index.html\n", hexSum(script), hexSum(script), hexSum(page))
 	if err := os.WriteFile(manifest, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +50,8 @@ func TestRunVerifyExitStatus(t *testing.T) {
 					_, _ = io.WriteString(w, `{"version":"1.17.0"}`)
 				case "/":
 					_, _ = io.WriteString(w, page)
+				case "/assets/crypto.js":
+					_, _ = io.WriteString(w, script)
 				case "/assets/app.js":
 					w.WriteHeader(tc.status)
 					_, _ = io.WriteString(w, tc.script)

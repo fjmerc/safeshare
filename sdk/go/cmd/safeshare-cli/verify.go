@@ -142,9 +142,7 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 		return err
 	}
 
-	counts := map[safeshare.AssetStatus]int{}
 	for _, r := range report.Results {
-		counts[r.Status]++
 		if r.Status == safeshare.AssetMatch && !opts.all {
 			continue
 		}
@@ -161,8 +159,8 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 			fmt.Fprintf(out, "               expected %s\n               got      %s\n", r.Expected, r.Got)
 		}
 	}
-	if !opts.all && counts[safeshare.AssetMatch] > 0 {
-		fmt.Fprintf(out, "  %d files match (--all lists them)\n", counts[safeshare.AssetMatch])
+	if n := report.Count(safeshare.AssetMatch); !opts.all && n > 0 {
+		fmt.Fprintf(out, "  %d files match (--all lists them)\n", n)
 	}
 	fmt.Fprintln(out)
 
@@ -178,13 +176,21 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 
 	switch {
 	case report.Tampered():
-		return &exitError{2, fmt.Sprintf("NOT VERIFIED: %d file(s) differ from %s. The web app was changed on the server or on the way; don't trust this server's in-browser encryption.", counts[safeshare.AssetMismatch], against)}
+		return &exitError{2, fmt.Sprintf("NOT VERIFIED: %d file(s) differ from %s. The web app was changed on the server or on the way; don't trust this server's in-browser encryption.", report.Count(safeshare.AssetMismatch), against)}
 	case report.Verified():
-		fmt.Fprintf(out, "VERIFIED: every page and script the server sent matches %s.\n", display(against))
-		fmt.Fprintln(out, "This covers what it sent to this computer just now; it can't show what it sends to others.")
+		fmt.Fprintf(out, "VERIFIED: all %d files fetched match %s", report.Count(safeshare.AssetMatch), display(against))
+		if n := report.Count(safeshare.AssetNotChecked); n > 0 {
+			fmt.Fprintf(out, " (%d not checked, see above)", n)
+		}
+		fmt.Fprintln(out, ".")
+		fmt.Fprintln(out, "This covers what the server sent to this computer just now; it can't show what it sends to others.")
 		return nil
+	case report.Count(safeshare.AssetUnknown) > 0:
+		return &exitError{1, "COULD NOT VERIFY: the release has files this safeshare-cli doesn't know how to check. Update safeshare-cli."}
+	case report.Count(safeshare.AssetMissing) > 0:
+		return &exitError{1, "COULD NOT VERIFY: the server didn't serve some files the release has (see above). It may be another version; nothing that was served differed."}
 	default:
-		return &exitError{1, "COULD NOT VERIFY: some files could not be fetched (see above). Nothing differed, but the check is incomplete."}
+		return &exitError{1, "COULD NOT VERIFY: some files could not be fetched or checked (see above). Nothing differed, but the check is incomplete."}
 	}
 }
 
@@ -213,6 +219,6 @@ func warnIfNotLatest(ctx context.Context, out io.Writer, client *safeshare.Clien
 		return
 	}
 	if latest != version {
-		fmt.Fprintf(out, "Warning: v%s is not the latest release (v%s). Older releases may have fixed security problems.\n", display(version), latest)
+		fmt.Fprintf(out, "Warning: compared against v%s, but the latest release is v%s. Older releases may have since-fixed security problems.\n", display(version), latest)
 	}
 }

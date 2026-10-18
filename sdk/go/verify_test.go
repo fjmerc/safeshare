@@ -65,7 +65,7 @@ func manifestText(m map[string]string) []byte {
 func TestAssetRouteCoversEveryEmbeddedFile(t *testing.T) {
 	m, _ := repoManifest(t)
 	for f := range m {
-		if _, _, skip := assetRoute(f); skip == "no known URL" {
+		if _, _, skip := assetRoute(f); skip == unknownRoute {
 			t.Errorf("%s has no URL in assetRoute; add it (see cmd/safeshare/main.go routes)", f)
 		}
 	}
@@ -442,8 +442,12 @@ func TestLooseScriptPolicy(t *testing.T) {
 		"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net": "'unsafe-inline' https://cdn.jsdelivr.net",
 		"script-src 'SELF' 'unsafe-eval'":                                                "'unsafe-eval'",
 		"script-src 'self'; script-src *":                                                "",
-		"style-src 'self'":                                                               "missing",
-		"":                                                                               "missing",
+		"script-src 'self'; script-src-elem https://evil.example":                        "https://evil.example",
+		"default-src 'self'; script-src-attr 'unsafe-inline'":                            "'unsafe-inline'",
+		"script-src 'self'; worker-src blob:":                                            "blob:",
+		"default-src 'self'; script-src-attr 'none'":                                     "",
+		"style-src 'self'": "missing",
+		"":                 "missing",
 	}
 	for csp, want := range cases {
 		r := &WebAssetReport{PageCSP: csp}
@@ -465,5 +469,32 @@ func TestVerifyWebAssetsRecordsPageCSP(t *testing.T) {
 	r := verifyAgainst(t, s, m)
 	if r.PageCSP != csp || strings.Join(r.LooseScriptPolicy(), " ") != "https://cdn.example" {
 		t.Fatalf("PageCSP = %q, loose = %v", r.PageCSP, r.LooseScriptPolicy())
+	}
+}
+
+func TestVerifiedNeedsCoreFilesAndKnownRoutes(t *testing.T) {
+	m, files := repoManifest(t)
+
+	// A release file this SDK has no URL for (from a newer release).
+	withNew := map[string]string{"newdir/thing.js": strings.Repeat("0", 64)}
+	for k, v := range m {
+		withNew[k] = v
+	}
+	r := verifyAgainst(t, &assetServer{files: files}, withNew)
+	if a, _ := statusOf(r, "newdir/thing.js"); a.Status != AssetUnknown || r.Verified() {
+		t.Errorf("unknown file: %v, Verified() = %v", a.Status, r.Verified())
+	}
+
+	// Only minor files in the manifest: nothing that matters was checked.
+	minor := map[string]string{"index.html": m["index.html"], "assets/favicon.ico": m["assets/favicon.ico"]}
+	if r := verifyAgainst(t, &assetServer{files: files}, minor); r.Verified() {
+		t.Error("verified without the encryption scripts")
+	}
+
+	// The main page withheld.
+	s := &assetServer{files: files, override: map[string]func(http.ResponseWriter, *http.Request){"/": http.NotFound}}
+	r = verifyAgainst(t, s, m)
+	if a, _ := statusOf(r, "index.html"); a.Status != AssetMissing || r.Verified() {
+		t.Errorf("404 on /: %v, Verified() = %v", a.Status, r.Verified())
 	}
 }

@@ -1127,6 +1127,8 @@ func run() error {
 	}
 
 	// Register static file routes (embedded frontend)
+	// The URLs web files are served at are mirrored in sdk/go/verify.go
+	// (assetRoute) for `safeshare-cli verify`; update it when they change.
 	mux.Handle("/assets/", http.StripPrefix("/", static.Handler()))
 
 	// Anonymous mode offers no installable app (it needs the service worker it

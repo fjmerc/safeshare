@@ -70,7 +70,7 @@ grep ' index.html$' web-assets.sha256
 
 ## Checking a Docker image
 
-The server binaries are built with `-trimpath -buildvcs=false` and no timestamps, so the same source and Go version give identical bytes. Each release's CI rebuilds the binaries from the tag, outside Docker, and checks they match the pushed image for both linux/amd64 and linux/arm64 before publishing their hashes as `binaries.sha256`.
+The server binaries are built with `-trimpath -buildvcs=false` and no timestamps, so the same source and Go version give identical bytes. Each release's CI rebuilds the binaries from the tag, outside Docker, and checks they match the pushed image for both linux/amd64 and linux/arm64 before publishing their hashes as `binaries.sha256`. Every pull request checks linux/amd64 the same way; linux/arm64 is checked at release, after the image is pushed, so a release without `binaries.sha256` didn't pass the check.
 
 To check yourself (needs Docker):
 
