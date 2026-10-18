@@ -327,11 +327,43 @@ func TestStripOfficeBytes_CleansEmbeddedPhotos(t *testing.T) {
 		t.Errorf("document part changed: %q", got)
 	}
 
+	// Photos are recognised by content, not by name or folder.
+	var hidden bytes.Buffer
+	zw = zip.NewWriter(&hidden)
+	writeZipEntry(t, zw, "customUI/images/logo.bin", buildJPEG(true))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err = stripOfficeBytes(hidden.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if containsMarker(zipEntryContent(t, out, "customUI/images/logo.bin"), 0xE1) {
+		t.Error("a JPEG outside media/ keeps its EXIF")
+	}
+
+	// Photo formats that hold EXIF but can't be cleaned stop the file.
+	for name, head := range map[string][]byte{
+		"word/media/a.tiff": []byte("II*\x00rest-of-tiff"),
+		"word/media/a.wdp":  []byte("II\xbc\x01rest"),
+		"word/media/a.heic": append([]byte{0, 0, 0, 24}, []byte("ftypheic....")...),
+	} {
+		var b bytes.Buffer
+		zw = zip.NewWriter(&b)
+		writeZipEntry(t, zw, name, head)
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := stripOfficeBytes(b.Bytes()); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
 	// A broken embedded photo stops the whole file rather than passing
 	// through uncleaned.
 	var bad bytes.Buffer
 	zw = zip.NewWriter(&bad)
-	writeZipEntry(t, zw, "word/media/image1.jpeg", []byte("not a jpeg"))
+	// Starts like a JPEG, then an APP1 segment longer than the file.
+	writeZipEntry(t, zw, "word/media/image1.jpeg", []byte{0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xF0, 'E', 'x', 'i', 'f'})
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -396,15 +428,26 @@ func TestStripPDFBytes_RefusesTooManyObjects(t *testing.T) {
 }
 
 func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
-	ok := []byte("1 0 obj << /Type /ObjStm /N 50 /First 10 /Length 3 >> stream\nabc\nendstream endobj")
-	if err := checkPDFObjectCount(ok); err != nil {
-		t.Errorf("small object stream refused: %v", err)
+	for name, data := range map[string]string{
+		"small":            "1 0 obj << /Type /ObjStm /N 50 /First 10 /Length 3 >> stream\nabc\nendstream endobj",
+		"nested dict":      "1 0 obj << /DecodeParms << /Columns 5 >> /Type /ObjStm /N 50 /First 10 >> endobj",
+		"/N further along": "1 0 obj << /Type /ObjStm " + strings.Repeat(" ", 2000) + "/N 5 /First 3 >> endobj",
+		"/FirstChar font":  "1 0 obj << /Type /Font /FirstChar 32 /LastChar 126 >> endobj",
+	} {
+		if err := checkPDFObjectCount([]byte(data)); err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+		}
 	}
 	for name, data := range map[string]string{
-		"huge count":   "1 0 obj << /Type /ObjStm /N 900000 /First 10 >> endobj",
-		"indirect /N":  "1 0 obj << /Type /ObjStm /N 7 0 R /First 10 >> endobj",
-		"/N far away":  "1 0 obj << /Type /ObjStm " + strings.Repeat(" ", 2000) + "/N 5 >> endobj",
-		"no /N at all": "1 0 obj << /Type /ObjStm /First 10 >> endobj",
+		"huge count":           "1 0 obj << /Type /ObjStm /N 900000 /First 10 >> endobj",
+		"indirect /N":          "1 0 obj << /Type /ObjStm /N 7 0 R /First 10 >> endobj",
+		"no /N at all":         "1 0 obj << /Type /ObjStm /First 10 >> endobj",
+		"/N only nested":       "1 0 obj << /Type /ObjStm /First 10 /X << /N 5 >> >> endobj",
+		"two /N":               "1 0 obj << /Type /ObjStm /N 5 /N 900000 /First 10 >> endobj",
+		"escaped name":         "1 0 obj << /Type /Obj#53tm /N 900000 /First 10 >> endobj",
+		"no /Type, /First":     "1 0 obj << /N 900000 /First 10 >> endobj",
+		"no /Type, indirect":   "1 0 obj << /N 7 0 R /First 10 >> endobj",
+		"string in dictionary": "1 0 obj << /Type /ObjStm /X (<<) /N 5 /First 1 >> endobj",
 	} {
 		if err := checkPDFObjectCount([]byte(data)); err == nil {
 			t.Errorf("%s: accepted", name)

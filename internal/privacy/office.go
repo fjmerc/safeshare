@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -140,26 +141,51 @@ func stripOfficeBytes(data []byte) ([]byte, bool, error) {
 // file: the original times record when the document was last saved.
 var officeEntryTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// isOfficeImage reports whether a part is a photo embedded in the document
-// (word/media/, ppt/media/, xl/media/), whose EXIF/GPS data is stripped.
-func isOfficeImage(name string) (stripper func([]byte) ([]byte, bool, error), ok bool) {
-	lower := strings.ToLower(name)
-	if !strings.HasPrefix(lower, "word/media/") && !strings.HasPrefix(lower, "ppt/media/") && !strings.HasPrefix(lower, "xl/media/") {
-		return nil, false
+// errOfficeImageUncleanable is returned for a document containing a photo
+// in a format that can carry EXIF/GPS data but that the server can't clean.
+var errOfficeImageUncleanable = errors.New("embedded image in a format that can't be cleaned (TIFF, HEIC or JPEG XR)")
+
+// officeImageStripper looks at the first bytes of a part (whatever its name
+// or folder) and returns the stripper for a JPEG or PNG photo, nil for
+// anything else, or errOfficeImageUncleanable for a photo format that can
+// hold location data but has no stripper.
+func officeImageStripper(f *zip.File) (func([]byte) ([]byte, bool, error), error) {
+	if f.UncompressedSize64 < 4 {
+		return nil, nil
 	}
-	switch filepath.Ext(lower) {
-	case ".jpg", ".jpeg":
-		return stripJPEGBytes, true
-	case ".png":
-		return stripPNGBytes, true
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open ZIP entry: %w", err)
 	}
-	return nil, false
+	head := make([]byte, 12)
+	n, _ := io.ReadFull(rc, head)
+	rc.Close()
+	head = head[:n]
+	switch {
+	case bytes.HasPrefix(head, []byte{0xFF, 0xD8, 0xFF}):
+		return stripJPEGBytes, nil
+	case bytes.HasPrefix(head, pngSignature):
+		return stripPNGBytes, nil
+	case bytes.HasPrefix(head, []byte("II*\x00")), bytes.HasPrefix(head, []byte("MM\x00*")), // TIFF
+		bytes.HasPrefix(head, []byte("II\xbc")), // JPEG XR (.wdp, .jxr)
+		len(head) >= 12 && string(head[4:8]) == "ftyp" && isHEIFBrand(string(head[8:12])):
+		return nil, errOfficeImageUncleanable
+	}
+	return nil, nil
+}
+
+func isHEIFBrand(brand string) bool {
+	switch brand {
+	case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "msf1", "avif":
+		return true
+	}
+	return false
 }
 
 // rebuildOfficeZIP creates a new ZIP without metadata entries, from a file
 // of inputSize bytes. Entries it doesn't change are copied still
 // compressed; the ones it does change (the two structural XML files and
-// embedded photos) are inflated under maxDecompressedSize, photos also
+// JPEG/PNG photos, recognised by content wherever they are) are inflated under maxDecompressedSize, photos also
 // under twice the file's size (photos barely compress). The compressed
 // entries together can't exceed the file itself: zip readers don't notice
 // several directory records pointing at the same data, which would
@@ -199,7 +225,14 @@ func rebuildOfficeZIP(reader *zip.Reader, inputSize int64) ([]byte, error) {
 		case "_rels/.rels":
 			filter = filterRelationships
 		}
-		image, isImage := isOfficeImage(f.Name)
+		var image func([]byte) ([]byte, bool, error)
+		if filter == nil {
+			var err error
+			if image, err = officeImageStripper(f); err != nil {
+				return nil, err
+			}
+		}
+		isImage := image != nil
 
 		if filter == nil && !isImage {
 			if err := copyZipEntryRaw(writer, f); err != nil {

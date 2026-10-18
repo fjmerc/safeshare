@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -115,41 +116,146 @@ func checkPDFWrite(stripCtx context.Context, err error) error {
 const maxPDFObjects = 100_000
 
 var (
-	pdfObjStmMarker = []byte("/ObjStm")
-	pdfObjStmCount  = regexp.MustCompile(`/N\s+(\d+)(\s+\d+\s+R)?`)
+	// Only object streams have /First, so looking for it as well finds one
+	// even without its /Type.
+	pdfObjStmMarkers = [][]byte{[]byte("/ObjStm"), []byte("/First")}
+	pdfNameEscape    = regexp.MustCompile(`#[0-9A-Fa-f]{2}`)
 )
 
 // checkPDFObjectCount estimates the objects in data without parsing it:
 // each plain object has an "obj" and usually an "endobj" keyword, and each
-// object stream (/Type /ObjStm) says in its dictionary, as /N, how many it
-// holds. An object stream whose /N can't be read nearby, or is an indirect
-// reference, can't be checked and is refused.
+// object stream says in its dictionary, as /N, how many it holds. Name
+// escapes (/Obj#53tm) are decoded first. An object stream whose dictionary
+// can't be read plainly, or whose /N is missing or an indirect reference,
+// can't be checked and is refused.
 func checkPDFObjectCount(data []byte) error {
 	objects := int64(bytes.Count(data, []byte("obj")) / 2)
-	for rest, at := data, 0; ; {
-		i := bytes.Index(rest, pdfObjStmMarker)
-		if i < 0 {
-			break
+	if bytes.IndexByte(data, '#') >= 0 {
+		data = pdfNameEscape.ReplaceAllFunc(data, func(m []byte) []byte {
+			b, _ := strconv.ParseUint(string(m[1:]), 16, 8)
+			return []byte{byte(b)}
+		})
+	}
+	seen := map[int]bool{}
+	for _, marker := range pdfObjStmMarkers {
+		for at := 0; ; {
+			i := bytes.Index(data[at:], marker)
+			if i < 0 {
+				break
+			}
+			pos := at + i
+			at = pos + len(marker)
+			if at < len(data) && !isPDFDelimiter(data[at]) {
+				continue // a longer name, such as /FirstChar
+			}
+			start, end, ok := pdfEnclosingDict(data, pos)
+			if !ok {
+				return fmt.Errorf("PDF object stream dictionary can't be checked")
+			}
+			if seen[start] {
+				continue
+			}
+			seen[start] = true
+			n, ok := pdfDictDirectInt(data[start:end], "/N")
+			if !ok {
+				return fmt.Errorf("PDF object stream without a readable object count")
+			}
+			if n > maxPDFObjects {
+				return fmt.Errorf("PDF has too many objects")
+			}
+			objects += n
 		}
-		pos := at + i
-		lo, hi := max(pos-512, 0), min(pos+512, len(data))
-		m := pdfObjStmCount.FindSubmatch(data[lo:hi])
-		if m == nil || len(m[2]) > 0 {
-			return fmt.Errorf("PDF object stream without a readable object count")
-		}
-		n, err := strconv.ParseInt(string(m[1]), 10, 64)
-		if err != nil || n > maxPDFObjects {
-			return fmt.Errorf("PDF has too many objects")
-		}
-		objects += n
-		at = pos + len(pdfObjStmMarker)
-		rest = data[at:]
 	}
 	if objects > maxPDFObjects {
 		return fmt.Errorf("PDF has too many objects (about %d, max %d)", objects, maxPDFObjects)
 	}
 	return nil
 }
+
+func isPDFDelimiter(c byte) bool {
+	return strings.IndexByte(" \t\r\n\f\x00/<>[]()%", c) >= 0
+}
+
+// pdfEnclosingDict finds the dictionary around pos: the "<<" before it and
+// the matching ">>" after it, within 4 KB either way. A string anywhere in
+// it makes the nesting unreliable, so that is reported as not found.
+func pdfEnclosingDict(data []byte, pos int) (start, end int, ok bool) {
+	depth := 0
+	for i := pos - 1; i > 0 && i >= pos-4096; i-- {
+		switch {
+		case data[i] == '(' || data[i] == ')':
+			return 0, 0, false
+		case data[i-1] == '>' && data[i] == '>':
+			depth++
+			i--
+		case data[i-1] == '<' && data[i] == '<':
+			if depth == 0 {
+				start = i - 1
+				goto forward
+			}
+			depth--
+			i--
+		}
+	}
+	return 0, 0, false
+forward:
+	depth = 0
+	for i := pos; i+1 < len(data) && i <= pos+4096; i++ {
+		switch {
+		case data[i] == '(' || data[i] == ')':
+			return 0, 0, false
+		case data[i] == '<' && data[i+1] == '<':
+			depth++
+			i++
+		case data[i] == '>' && data[i+1] == '>':
+			if depth == 0 {
+				return start, i + 2, true
+			}
+			depth--
+			i++
+		}
+	}
+	return 0, 0, false
+}
+
+// pdfDictDirectInt returns the value of key in the top level of dict (the
+// bytes from "<<" to ">>"), if it is a plain non-negative integer and the
+// key appears there exactly once.
+func pdfDictDirectInt(dict []byte, key string) (int64, bool) {
+	found, value := 0, int64(-1)
+	depth := 0
+	for i := 2; i < len(dict)-2; i++ {
+		switch {
+		case dict[i] == '<' && dict[i+1] == '<':
+			depth++
+			i++
+		case dict[i] == '>' && dict[i+1] == '>':
+			depth--
+			i++
+		case dict[i] == '[':
+			depth++
+		case dict[i] == ']':
+			depth--
+		case depth == 0 && bytes.HasPrefix(dict[i:], []byte(key)) && i+len(key) < len(dict) && isPDFDelimiter(dict[i+len(key)]):
+			found++
+			rest := dict[i+len(key):]
+			m := pdfDirectInt.FindSubmatch(rest)
+			if m == nil {
+				return 0, false
+			}
+			n, err := strconv.ParseInt(string(m[1]), 10, 64)
+			if err != nil {
+				return 0, false
+			}
+			value = n
+		}
+	}
+	return value, found == 1 && value >= 0
+}
+
+// pdfDirectInt matches an integer that isn't the start of an indirect
+// reference ("7 0 R").
+var pdfDirectInt = regexp.MustCompile(`^\s*(\d+)(?:\s*/|\s*>>|\s+/|\s*$)`)
 
 // pdfAnnotationIdentityKeys are the entries in an annotation (comment,
 // highlight, note) that identify who made it and when.
