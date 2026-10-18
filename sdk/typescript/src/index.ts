@@ -49,10 +49,25 @@ export type {
   ExpirationResult,
   RegenerateResult,
   PublicConfig,
+  EncryptMode,
   CreateTokenRequest,
   TokenCreatedResponse,
   TokenInfo,
 } from "./types.js";
+
+// End-to-end encryption (web-app compatible)
+export * as e2e from "./e2e.js";
+export {
+  DecryptionError,
+  InvalidPayloadError,
+  PayloadTooLargeError,
+  MetadataNotRemovedError,
+  ClientEncryptionRequiredError,
+  parseShareUrl,
+  buildShareUrl,
+  safeFilename,
+} from "./e2e.js";
+export type { DecryptedFile, ShareLink } from "./e2e.js";
 
 // Errors
 export {

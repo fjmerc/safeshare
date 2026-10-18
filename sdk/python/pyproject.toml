@@ -29,7 +29,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "httpx>=0.25.0",
+    "httpx[socks]>=0.26.0",
+    "cryptography>=42.0.0",
     "pydantic>=2.0.0",
 ]
 

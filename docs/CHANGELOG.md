@@ -37,13 +37,18 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Added
 
-- **End-to-end encryption in the Go SDK and `safeshare-cli`**: the command-line tool can now upload to and download from Ghost-mode servers and servers that require client-side encryption. Files are encrypted on your machine in the same format as the web app, so a CLI upload opens from its share link in a browser and the other way round, with no need to trust JavaScript sent by the server. The filename is hidden and, in Ghost mode, the size padded, as in the browser. `download` accepts a share link (or `-` to read it from standard input).
+- **End-to-end encryption in the Go SDK and `safeshare-cli`**: the command-line tool can now upload to and download from Ghost-mode servers and servers that require client-side encryption. Files are encrypted on your machine in the same format as the web app, so a CLI upload opens from its share link in a browser and the other way round, with no need to trust JavaScript sent by the server. The filename is hidden and the size padded, as in Ghost-mode browser uploads. `download` accepts a share link (or `-` to read it from standard input).
+- **End-to-end encryption in the Python and TypeScript SDKs**, in the same format and with the same defaults: `upload(..., encrypt=...)` (`"auto"`, `"always"` or `"never"`) and `download_decrypted`/`downloadDecrypted`. The Python SDK also takes a `proxy` (`socks5h://` for Tor) and now depends on `cryptography` and `httpx[socks]`.
 - `safeshare-cli --proxy` (or `SAFESHARE_PROXY`) and the Go SDK's `ClientConfig.Proxy` send every request through a proxy, `socks5://` included, with host names resolved at the proxy, so they work over Tor and with `.onion` addresses. `ALL_PROXY`, `HTTPS_PROXY` and `HTTP_PROXY` are honoured as well.
 
 ### Changed
 
 - **Go SDK:** `Upload` now encrypts by default (`EncryptAuto`) on servers in Ghost mode or that require client-side encryption, instead of failing on them. On a Ghost server with `REQUIRE_CLIENT_ENCRYPTION=false` that used to accept plaintext, uploads are now encrypted, so they need the share link (not just the claim code) to download. Use `EncryptNever` for the old behaviour where the server allows it.
 - **Go SDK:** the client now honours proxy environment variables and refuses redirects to another host or scheme (`ClientConfig.DisableProxy` turns proxies off).
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -59,6 +64,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **Anonymous (Ghost) mode now stores times rounded to the hour.** A file's upload and scan times are rounded down to the UTC hour and its expiry is rounded up, so a seized database can't be matched to network logs by exact time. A file never expires earlier than requested; it may stay available up to 59 minutes longer, and the expiry shown after upload is the rounded one. No per-download timestamps are stored. Existing records are not rewritten, other modes are unchanged, and container request logs still carry exact times until they rotate.
 - **Anonymous mode no longer installs a service worker.** With `ANONYMOUS_MODE=true`, the site doesn't register a service worker or store its scripts and icons in the browser, so a visit leaves no cached trace on the visitor's device, and the app is no longer offered for install (the web app manifest isn't served). An app a visitor installed earlier stays installed until they remove it. Visitors who loaded the site before it was switched to anonymous mode get their old service worker and caches removed on their next visit. Upload and download work as before; the only thing lost is the offline fallback page. Other modes are unchanged.
 - **Anonymous mode hides the file size of encrypted uploads.** In the browser, files encrypted for upload to an `ANONYMOUS_MODE=true` server are now padded (inside the encryption) to a size bucket using PADME, so the stored size shows only a bucket, not the exact size. Padding adds at most about 12% (a 4 KB minimum for tiny files), counts toward the quota and `MAX_FILE_SIZE` as stored, and is capped just below the limit, so a file that fit before still uploads. The upload result still shows the real size. Existing share links keep working, and other modes are unchanged. See `docs/E2E_ENCRYPTION.md`.
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 - **PDF metadata stripping now has a 60-second time limit.** A crafted PDF could previously keep the stripper busy indefinitely. A PDF that takes longer is rejected in anonymous mode (`METADATA_STRIP_FAILED`: HTTP 422 for direct uploads, a failed upload status for chunked ones) and stored unstripped otherwise, as with other stripping failures.
@@ -88,10 +97,18 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **API token scopes wrapped onto two lines.** Three scopes now fit on one line in both dashboards.
 - **Admin dashboard tab bar showed a vertical scrollbar.** The row of tabs had a small up-and-down scrollbar at every screen width. It's gone; the tabs still scroll sideways when they don't all fit.
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 - **Go 1.27.2.** Rebuilt on Go 1.27.2, which fixes several `net/http` issues in the standard library, including unbounded `Range` header parsing (CVE-2026-78667), an HTTP/2 server crash (CVE-2026-97032) and HTTP/1 connection desynchronization after a `CONNECT` response (CVE-2026-94439).
 
 ## [1.13.0] - 2026-10-05
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 - **Anonymous (Ghost) mode now keeps the promises its documentation makes.** An audit found that several of them weren't true.
@@ -166,6 +183,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - **Large downloads no longer run the browser out of memory (T31).** The web UI used to download a file into page memory before saving it, needing about twice the file's size in RAM, so files over a gigabyte or two could fail or crash the tab. Downloads from the Pickup tab are now handed to the browser's own download manager, which saves them straight to disk with its usual progress, pause and resume (measured: a 600 MB download now peaks at 5 MB of page memory). The password of a password-protected file is sent in the request body, never in the URL, and a wrong password is still reported on the page before anything downloads. Trade-offs: the in-page progress bar and Pause/Cancel buttons are gone (the browser shows its own), the browser can't resume an interrupted password-protected download (start it again), and resuming a file with a download limit may be refused once its downloads are used up. End-to-end encrypted files are unchanged: they're still decrypted in the page, which needs the whole file in memory.
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - **Abandoned chunked uploads no longer hold storage quota for a day (T30).** Starting a chunked upload (`POST /api/upload/init`) reserves the file's full size against `QUOTA_LIMIT_GB` up front, so the upload can't run out of room halfway. That reservation used to last until the upload was cleaned up - 24 hours by default (`PARTIAL_UPLOAD_EXPIRY_HOURS`) - even if no data was ever sent, so a handful of upload starts that went nowhere could fill the quota and turn away everyone else's uploads with `507 QUOTA_EXCEEDED`. Now an upload that stores no new chunk for an hour stops reserving its full size and counts only the data it has actually sent. It can still be resumed: its next chunk reserves the rest again, or fails with `507 QUOTA_EXCEEDED` if the quota has filled in the meantime. Re-sending a chunk that's already stored doesn't count as progress. Uploads that keep sending data are unaffected, and so are servers without a quota.
@@ -175,6 +196,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - **The web uploader no longer gives up on a large upload just because its status checks were rate limited.** After a chunked upload, the browser polls `/api/upload/status` until the server finishes assembling the file - and that status response is the only place the claim code is returned. A `429 Too Many Requests` from it was treated like a network failure: after 30 in a row (about 5 minutes) the uploader reported the upload as failed, even though the server went on to finish it, so the claim code was lost. This could happen when many uploads share one IP address (a busy NAT, or a Tor hidden service, where every visitor appears as the same address). The uploader now treats a 429 as "poll more slowly": it waits 15-60 seconds between checks and keeps going for over an hour before giving up.
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -187,6 +212,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [1.8.1] - 2026-10-02
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - **Fixed an MFA bypass for accounts that use only a security key.** On servers without `ENCRYPTION_KEY`, an account whose only second factor was a security key (WebAuthn) - never set up an authenticator app, or turned it off later - could be logged into with just its password plus a two-factor code anyone can compute, skipping the security key entirely. The login code check now only accepts authenticator-app codes for accounts that actually have an authenticator app enabled. Servers with `ENCRYPTION_KEY` set were not affected, nor were accounts with an authenticator app enabled. If you run without `ENCRYPTION_KEY` and have security-key-only accounts, review their recent logins.
@@ -196,6 +225,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **In anonymous mode, the username typed at login is no longer written to logs (T46).** Login log lines in user, MFA-aware and admin login now record the submitted username as `redacted` when `ANONYMOUS_MODE` is on, matching how client IPs are already handled. This covers only the username a client submits at login (which may be mistyped, belong to no account, or even be a password typed into the wrong field); other log lines are unchanged.
 
 ## [1.8.0] - 2026-10-01
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -234,6 +267,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [1.7.1] - 2026-09-30
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - Fixed the login brute-force lockout for admin and user password logins never actually taking effect. The rate limiter was being created fresh on every login request instead of being shared across requests, so it always started with an empty attempt count and could never reach the lockout threshold — password logins for both admin and user accounts could be brute-forced with unlimited attempts from the same IP. The lockout (5 attempts per 15 minutes per IP) now applies correctly to `/admin/api/login` and `/api/auth/login` (including both the MFA and non-MFA login flows, which share one limiter so switching between them cannot be used to dodge the lockout).
@@ -242,6 +279,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Fixed a related bug in the same code path: the failed-attempt counter was incremented only after the login handler finished (including its deliberate ~500ms delay on bad credentials), so a burst of parallel requests from one IP could all pass the lockout check before any of them completed, bypassing the lockout under concurrency. Attempts are now reserved atomically before the handler runs.
 
 ## [1.7.0] - 2026-09-29
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -282,6 +323,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [1.6.0] - 2026-09-28
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - Malware scanning (when enabled via `FEATURE_MALWARE_SCAN`) now actually inspects file contents: previously, with server-side encryption enabled, files were scanned *after* being encrypted, so ClamAV was checking ciphertext and every upload was reported clean regardless of its real content. Scanning now runs on the original file before it's encrypted or stored, and before a download link is issued. An infected upload is now rejected outright (no claim code is ever created) instead of being uploaded, made downloadable, and quarantined only later. Downloads of a file still awaiting a scan verdict, or whose scan failed, are now blocked until the file is verified (previously they were served normally); set `MALWARE_SCAN_ALLOW_UNVERIFIED=true` to restore the previous permissive behavior. End-to-end encrypted uploads are still scanned (the server can't be sure they're really opaque ciphertext) but are labeled "not scanned" rather than "clean," since the server can't verify their real, decrypted content; set `MALWARE_SCAN_REJECT_UNSCANNABLE=true` to reject end-to-end encrypted or too-large-to-scan uploads outright instead. See ADR-015 for the full design.
@@ -313,6 +358,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Server logs no longer record the full download-session token issued to resumable-download clients; only a short, non-reversible prefix is logged for correlating log lines, since the token is a bearer credential that grants a download credit if replayed.
 
 ## [1.5.7] - 2026-07-27
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -366,6 +415,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Login and error pages now send `noindex, nofollow` robots hints to keep private deployment pages out of search engines.
 - Login pages no longer trigger iOS Safari's automatic page zoom when focusing an input (input font size raised to the 16px threshold); the login card and TOTP code input now fit small phone screens without clipping.
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - Bump Go toolchain from 1.25.10 to 1.25.11 to address Go standard library vulnerabilities GO-2026-5039 (unescaped arbitrary inputs in `net/textproto` MIME header errors, reachable via the S3 storage backend's HTTP responses) and GO-2026-5037 (`crypto/x509` certificate verification issue, reachable via WebAuthn login/registration and SSO account linking).
@@ -382,6 +435,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Fixed a latent corruption issue where a plaintext file whose first four bytes happened to match the SF01 wrapper magic could be silently truncated on E2E download. The decryptor now only attempts to unwrap a filename header when the server actually wrapped the upload.
 - Fixed sporadic "failed to decrypt chunk" / "chunk too small" errors on encrypted-at-rest downloads when the upload directory is backed by a filesystem that returns short reads (NFS, FUSE, CIFS, or any future non-local backend). The SFSE1 streaming decrypt path now uses `io.ReadFull` to reassemble each authenticated chunk before passing it to AES-GCM, matching what the encrypt side has always done. Affects three decrypt loops: `DecryptFileStreaming`, `DecryptFileStreamingRange`, and the storage-layer `EncryptedStorage` range and streaming readers.
 - Fixed a data race on webhook delivery where the shared `*http.Client`'s `Timeout` field was mutated on every call from concurrent worker goroutines. Each delivery now builds a fresh `*http.Client` wrapping a shared `*http.Transport`, so the connection pool and SSRF guards are reused but per-call fields cannot race. Previously, a webhook configured for a 5-second timeout could transiently inherit a 60-second timeout from another in-flight delivery (and vice versa), causing premature cancellation or hung deliveries that piled up retries.
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -411,6 +468,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **Deployment Modes Guide**: New `docs/DEPLOYMENT_MODES.md` documenting four named deployment profiles (Ghost, Standard, Hardened, Fortress) with complete docker-compose examples, decision flowchart, and feature matrix
 - **Admin Dashboard**: Malware scanning status is now visible in the Enterprise Features tab (read-only, configured via `FEATURE_MALWARE_SCAN` env var) and scan status column added to the files table with colored badges (clean/infected/pending/error/skipped)
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 
 - Hardened Content Security Policy: removed `unsafe-inline` from `script-src` and stale CDN allowance to prevent XSS-based key exfiltration
@@ -422,6 +483,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ---
 
 ## [1.5.3] - 2026-03-15
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 
@@ -914,6 +979,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
   - Added error handling for chunk count failures in upload status responses
   - Prevents resource leaks and improves reliability of large file uploads
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 - **Input Validation & Injection Prevention**: Fixed 4 input validation vulnerabilities identified by security audit
   - Fixed SQL LIKE wildcard injection in admin search allowing DoS via inefficient queries (P1)
@@ -1013,6 +1082,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
   - Now logs errors with `slog.Error()` for consistency with `UserAuth` middleware
   - Improves observability for database write failures
   - No security impact (session activity is informational, not used for authentication decisions)
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 - **Defense-in-Depth: Stored Filename Validation**: Added validation of stored filenames before file operations to prevent path traversal attacks in database corruption scenarios
@@ -1701,6 +1774,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Chunk integrity verification before assembly
 - Comprehensive error handling with detailed error codes
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 - Chunked upload endpoints respect `REQUIRE_AUTH_FOR_UPLOAD` setting
 - Rate limiting applied to upload initialization
@@ -1742,6 +1819,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - Fixed delete file modal button alignment
 - Fixed theme toggle consistency across pages
 
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
+
 ### Security
 - Added rate limiting to user login endpoint
 - Enabled secure cookie flag for HTTPS deployments
@@ -1760,6 +1841,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Fixed
 - Fixed CSRF token validation on admin endpoints
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 - Added CSRF protection for all admin state-changing operations
@@ -1783,6 +1868,10 @@ Initial production release.
 - Docker support with multi-stage builds
 - Health check endpoint
 - Graceful shutdown handling
+
+### Fixed
+
+- **Python SDK:** `get_config()` (and therefore every upload) failed against current servers, which don't send `default_expiration_hours`.
 
 ### Security
 - Encryption at rest with AES-256-GCM

@@ -88,7 +88,7 @@ The server can't verify that a file really is ciphertext; `client_encrypted` is 
 
 The requirement can't be combined with `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, which rejects every E2EE upload because ciphertext can't be scanned. The server logs an error at startup when both are set.
 
-The Go SDK and its command-line tool, `safeshare-cli`, encrypt client-side in the same format as the browser (see [Command-Line Tool and Go SDK](#command-line-tool-and-go-sdk)). The Python and TypeScript SDKs and the import tool (`cmd/import-file`) don't yet, so they can't upload to a server that requires it.
+The command-line tool, `safeshare-cli`, and the Go, Python and TypeScript SDKs encrypt client-side in the same format as the browser (see [Command-Line Tool and SDKs](#command-line-tool-and-sdks)). The import tool (`cmd/import-file`) doesn't, so it can't be used for these uploads.
 
 ### Metadata Stripping and E2EE
 
@@ -113,7 +113,7 @@ The server can't strip metadata from ciphertext. When `STRIP_METADATA=true`, the
 
 In anonymous mode the upload is stopped instead of sending the original when a JPEG, PNG, Office file or PDF can't be stripped: it can't be parsed, it's encrypted (PDF), an Office file or PDF is over 100 MB or contains parts that can't be cleaned, or the browser lacks compression streams.
 
-## Command-Line Tool and Go SDK
+## Command-Line Tool and SDKs
 
 `safeshare-cli` (built from `sdk/go/cmd/safeshare-cli`) and the Go SDK encrypt and decrypt on your own machine, in exactly the browser's format: a file uploaded from the command line opens from its share link in a browser, and a browser upload downloads and decrypts with the CLI. Because no JavaScript from the server is involved, you don't have to trust the server to send you honest code. That is the main reason to use it on a Ghost server. You do have to trust the CLI binary, so build it from source or check it against the release.
 
@@ -145,7 +145,7 @@ SAFESHARE_URL=http://xyz.onion safeshare-cli upload notes.txt
 
 **Memory.** As in the browser, the whole file is encrypted in memory, so you need free memory of about its size. The CLI warns above 500 MB.
 
-In Go code, `client.Upload` uses `UploadOptions.Encrypt` (`EncryptAuto` by default, which follows the server's settings, or `EncryptAlways`/`EncryptNever`); the result's `ShareURL` and `EncryptionKey` carry the key (they are left out of JSON encodings). `ClientConfig.Proxy` sets a proxy for every request. `client.DownloadDecrypted` (or `DownloadOptions.DecryptionKey`) decrypts, and `ParseShareURL` splits a share link. Test vectors generated from the browser's `crypto.js` (`sdk/testdata/e2e-vectors.json`, checked in CI by `tests/js/e2e-vectors.test.js`) keep the two implementations byte-for-byte the same.
+In Go code, `client.Upload` uses `UploadOptions.Encrypt` (`EncryptAuto` by default, which follows the server's settings, or `EncryptAlways`/`EncryptNever`); the result's `ShareURL` and `EncryptionKey` carry the key (they are left out of JSON encodings). `ClientConfig.Proxy` sets a proxy for every request. `client.DownloadDecrypted` (or `DownloadOptions.DecryptionKey`) decrypts, and `ParseShareURL` splits a share link. The Python and TypeScript SDKs work the same way (`encrypt="always"`, `download_decrypted`/`downloadDecrypted`, `parse_share_url`/`parseShareUrl`); see their READMEs. Test vectors generated from the browser's `crypto.js` (`sdk/testdata/e2e-vectors.json`, checked in CI by `tests/js/e2e-vectors.test.js`) keep all of them byte-for-byte the same as the browser.
 
 ## Technical Details
 
@@ -228,8 +228,8 @@ Keys are generated using `crypto.subtle.generateKey` with `{name: "AES-GCM", len
 | Download limits | Compatible | The server enforces download limits on the encrypted blob as normal. |
 | File expiration | Compatible | Expiration is enforced by the server as normal. |
 | Admin file inspection | Not applicable | Admins can see file metadata (size, upload time, claim code) but cannot read E2EE file contents. |
-| Go SDK and `safeshare-cli` | Compatible | Encrypt and decrypt on the user's machine in the browser's format. See [Command-Line Tool and Go SDK](#command-line-tool-and-go-sdk). |
-| Python and TypeScript SDKs | Not yet supported | They upload unencrypted, so they can't upload to a server that requires client-side encryption. |
+| Go SDK and `safeshare-cli` | Compatible | Encrypt and decrypt on the user's machine in the browser's format. See [Command-Line Tool and SDKs](#command-line-tool-and-sdks). |
+| Python and TypeScript SDKs | Compatible | Same format and defaults: `upload(..., encrypt="auto"/"always"/"never")`, `download_decrypted` / `downloadDecrypted`. The Python SDK takes a `proxy` for Tor; the TypeScript SDK needs a proxy-aware `fetch`. |
 | Import tool (`cmd/import-file`) | Not supported | The CLI import tool does not perform client-side encryption. Use standard server-side encryption at rest for imported files. |
 | Metadata stripping (`STRIP_METADATA`) | Browser-side only | The server can't strip ciphertext; the browser strips JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata before encrypting. See [Metadata Stripping and E2EE](#metadata-stripping-and-e2ee). |
 | Malware scanning | Not compatible | Ciphertext can't be scanned. With `MALWARE_SCAN_REJECT_UNSCANNABLE=true`, E2EE uploads are rejected and the toggle is hidden. |
