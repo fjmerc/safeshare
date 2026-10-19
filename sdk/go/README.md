@@ -4,7 +4,7 @@ Official Go SDK for the [SafeShare](https://github.com/fjmerc/safeshare) file sh
 
 ## Requirements
 
-- Go 1.25 or later
+- Go 1.26 or later
 
 ## Installation
 
@@ -360,9 +360,23 @@ if errors.As(err, &apiErr) {
 
 The SDK includes a command-line interface tool.
 
-### Building the CLI
+### Installing the CLI
+
+Each [release](https://github.com/fjmerc/safeshare/releases) (from v1.17.1) has `safeshare-cli` for Linux, macOS and Windows, on `amd64` (Intel/AMD) and `arm64` (ARM, including Apple silicon). Download yours and `safeshare-cli.sha256`, then check and install it:
 
 ```bash
+sha256sum --ignore-missing -c safeshare-cli.sha256   # macOS: shasum -a 256 --ignore-missing -c safeshare-cli.sha256
+chmod +x safeshare-cli-linux-amd64
+sudo mv safeshare-cli-linux-amd64 /usr/local/bin/safeshare-cli
+```
+
+The binaries rebuild byte-for-byte from the release's source: see [VERIFYING_RELEASES.md](../../docs/VERIFYING_RELEASES.md#checking-safeshare-cli).
+
+Or build it with Go 1.26 or later:
+
+```bash
+go install github.com/fjmerc/safeshare/sdk/go/cmd/safeshare-cli@main   # installs to ~/go/bin
+# or, from a checkout:
 cd sdk/go
 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
@@ -484,10 +498,10 @@ Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYI
 
 ```bash
 # Run tests (requires Docker)
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go test -v ./...
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.26 go test -v ./...
 
 # Build CLI
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go build -o safeshare-cli ./cmd/safeshare-cli
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.26 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
 ## Advanced Usage

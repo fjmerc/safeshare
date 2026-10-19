@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- **Ready-made `safeshare-cli` downloads**: releases now attach `safeshare-cli` for Linux, macOS and Windows (`amd64` and `arm64`) with their SHA-256 sums (`safeshare-cli.sha256`), so checking a server with `safeshare-cli verify` or encrypting on your own machine no longer needs Go. The binaries rebuild byte-for-byte from the release's source; check them with `scripts/build-cli.sh --check safeshare-cli.sha256` (see `docs/VERIFYING_RELEASES.md`).
+
 ## [1.17.0] - 2026-10-19
 
 ### Added
@@ -49,7 +53,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Changed
 
-- **Go SDK:** now needs Go 1.25 or later (was 1.21), for the age encryption library.
+- **Go SDK:** now needs Go 1.26 or later (was 1.21), for the age encryption library and `golang.org/x/crypto`.
 - **Go SDK:** `Upload` now encrypts by default (`EncryptAuto`) on servers in Ghost mode or that require client-side encryption, instead of failing on them. On a Ghost server with `REQUIRE_CLIENT_ENCRYPTION=false` that used to accept plaintext, uploads are now encrypted, so they need the share link (not just the claim code) to download. Use `EncryptNever` for the old behaviour where the server allows it.
 - **Python and TypeScript SDKs:** the same change: `upload()` encrypts by default (`encrypt="auto"`) on Ghost servers and servers that require client-side encryption, and on Ghost servers JPEG, PNG, PDF and Office uploads raise `MetadataNotRemovedError` unless `keep_metadata`/`keepMetadata` is set. Downloading such files needs the key (`decryption_key`/`decryptionKey`); without it you get the ciphertext.
 - **Python SDK:** when only one of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` is set, it is now used for every request (both http and https) except hosts listed in `NO_PROXY`. Python 3.8 still works, but the dev and test tools now need 3.9 or later.

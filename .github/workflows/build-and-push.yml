@@ -446,6 +446,13 @@ jobs:
       - name: Compare the image's binaries with a build from source
         run: scripts/verify-image.sh --local-go safeshare:reproducible-check linux/amd64
 
+      # safeshare-cli as releases ship it: built with this Go, then rebuilt in
+      # the official golang image (another Go install and path) to match.
+      - name: Check safeshare-cli builds reproducibly
+        run: |
+          scripts/build-cli.sh --local-go "$RUNNER_TEMP/cli"
+          scripts/build-cli.sh --check "$RUNNER_TEMP/cli/safeshare-cli.sha256"
+
   build-and-push:
     needs: [test, race, test-postgres, test-minio, security-scan, js-test, reproducible-build]
     runs-on: ubuntu-latest
@@ -612,6 +619,13 @@ jobs:
           grep -q '  index.html$' web-assets.sha256 && grep -q '  assets/crypto.js$' web-assets.sha256
           scripts/verify-image.sh --local-go --sums binaries.sha256 "${IMAGE}:${GH_REF_NAME#v}" linux/amd64 linux/arm64
 
+      # Build safeshare-cli for each platform, and check the binaries rebuild
+      # byte-for-byte in the official golang image before publishing them.
+      - name: Build safeshare-cli
+        run: |
+          scripts/build-cli.sh --local-go dist
+          scripts/build-cli.sh --check dist/safeshare-cli.sha256
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
         with:
@@ -619,6 +633,8 @@ jobs:
           files: |
             web-assets.sha256
             binaries.sha256
+            dist/safeshare-cli-*
+            dist/safeshare-cli.sha256
           body: |
             ## Docker Images
 
@@ -644,9 +660,19 @@ jobs:
 
             See [PRODUCTION.md](docs/PRODUCTION.md) for complete deployment guide.
 
+            ## Command-line tool
+
+            `safeshare-cli` for Linux, macOS and Windows (`amd64` = Intel/AMD, `arm64` = ARM, including Apple silicon) is attached below. Download yours, check it against `safeshare-cli.sha256`, and make it executable:
+
+            ```bash
+            sha256sum --ignore-missing -c safeshare-cli.sha256   # macOS: shasum -a 256 --ignore-missing -c safeshare-cli.sha256
+            chmod +x safeshare-cli-linux-amd64 && sudo mv safeshare-cli-linux-amd64 /usr/local/bin/safeshare-cli
+            ```
+
             ## Verify
 
             - `web-assets.sha256`: SHA-256 of every web page and script. Check a running server with `safeshare-cli verify <url>`.
             - `binaries.sha256`: SHA-256 of the server binaries in the image, checked in CI to rebuild byte-for-byte from this tag. Rebuild them yourself with `scripts/verify-image.sh`.
+            - `safeshare-cli.sha256`: SHA-256 of the `safeshare-cli` binaries, also checked to rebuild byte-for-byte. Rebuild them yourself with `scripts/build-cli.sh --check safeshare-cli.sha256`.
 
             See [VERIFYING_RELEASES.md](docs/VERIFYING_RELEASES.md).

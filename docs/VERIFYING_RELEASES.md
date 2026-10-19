@@ -43,7 +43,7 @@ Options:
 - **It checks what the server sent to you, then.** A compromised server that recognises the check (by address, timing, or the client) can send other visitors, or you on another visit, different code. Run it over the same network path as the browser (for a `.onion`, over Tor), and more than once.
 - **A CDN that rewrites pages fails the check.** Cloudflare Web Analytics (which adds its `beacon.min.js` script to pages), Rocket Loader, Email Address Obfuscation, Automatic HTTPS Rewrites and similar features change the HTML, so the check reports a mismatch. That is correct: the page visitors get is not the released one. Turn those features off for SafeShare to pass. Some of them only rewrite requests that look like a browser opening a page, so the check asks for pages the way a browser does. A Tor `.onion` address bypasses any CDN.
 - **It only partly checks response headers.** It fails (exit 1) when the page's Content Security Policy is missing or lets scripts load from anywhere other than the server itself (SafeShare sends `script-src 'self'`): a reverse proxy that replaces the policy with a looser one, such as one allowing `'unsafe-inline'` or a public CDN, lets injected scripts run that these hashes don't cover. `--allow-loose-csp` turns this into a warning. A page sent with a `Refresh` header (which moves the browser to another page) fails too. Other headers aren't checked.
-- **It trusts GitHub and the CLI.** The hashes come from the GitHub release over HTTPS. Build `safeshare-cli` yourself from source, or make the hash list from a checkout you reviewed:
+- **It trusts GitHub and the CLI.** The hashes come from the GitHub release over HTTPS. Check the downloaded `safeshare-cli` rebuilds from source (see [Checking safeshare-cli](#checking-safeshare-cli)) or build it yourself, and make the hash list from a checkout you reviewed:
 
 ```bash
 git clone https://github.com/fjmerc/safeshare && cd safeshare
@@ -82,3 +82,18 @@ scripts/verify-image.sh fjmerc/safeshare:1.17.0
 It pulls the image, copies out `safeshare`, `import-file` and `migrate-encryption` for each architecture, rebuilds them from your checkout in the official `golang` image for the Go version in `go.mod`, and prints `REPRODUCED` if they are identical. It also checks the image starts them the way the Dockerfile says (command, user, working directory, environment and health check), and refuses an image whose binaries aren't plain files. `--local-go` builds with the `go` on your PATH instead (it must be the same version), and `linux/amd64` or `linux/arm64` limits it to one architecture. If Docker can't see `/tmp`, set `TMPDIR` to a directory it can.
 
 Only the binaries and those settings are checked, not the whole image: its Alpine packages (CA certificates, time zone data) are installed at build time and change as Alpine updates them, so the image digest differs between builds.
+
+## Checking safeshare-cli
+
+From v1.17.1, each release attaches `safeshare-cli` for Linux, macOS and Windows (`amd64` and `arm64`) and their SHA-256 sums, `safeshare-cli.sha256`. They are built the same way as the server binaries, so they are reproducible too: each release's CI builds them, rebuilds them in the official `golang` image, and only publishes them if the two builds match. Every pull request checks this as well.
+
+To check yourself (needs Docker, or `--local-go` with the Go version in `go.mod`'s `toolchain` line):
+
+```bash
+git clone https://github.com/fjmerc/safeshare && cd safeshare
+git checkout v1.17.1
+curl -sLO https://github.com/fjmerc/safeshare/releases/download/v1.17.1/safeshare-cli.sha256
+scripts/build-cli.sh --check safeshare-cli.sha256
+```
+
+It builds every binary from your checkout and prints `OK` if each one matches the release's sums. Then check your download against the same file, with `sha256sum --ignore-missing -c safeshare-cli.sha256` (on macOS, `shasum -a 256 --ignore-missing -c safeshare-cli.sha256`).
