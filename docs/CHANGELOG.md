@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-10-19
+
 ### Added
 
 - **Ready-made `safeshare-cli` downloads**: releases now attach `safeshare-cli` for Linux, macOS and Windows (`amd64` and `arm64`) with their SHA-256 sums (`safeshare-cli.sha256`), so checking a server with `safeshare-cli verify` or encrypting on your own machine no longer needs Go. The binaries rebuild byte-for-byte from the release's source; check them with `scripts/build-cli.sh --check safeshare-cli.sha256` (see `docs/VERIFYING_RELEASES.md`).
