@@ -321,7 +321,7 @@ func copyZipEntryRaw(w *zip.Writer, f *zip.File) error {
 		// CreateRaw writes the MS-DOS date fields as given (unlike
 		// CreateHeader, it doesn't derive them from Modified): 1980-01-01.
 		Modified:           officeEntryTime,
-		ModifiedDate:       1<<5 | 1,
+		ModifiedDate:       1<<5 | 1, //nolint:staticcheck // SA1019: CreateRaw only writes these fields, not Modified
 		NonUTF8:            f.NonUTF8,
 		CRC32:              f.CRC32,
 		CompressedSize64:   f.CompressedSize64,
