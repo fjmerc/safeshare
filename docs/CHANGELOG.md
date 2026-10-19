@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-10-19
+
 ### Added
 
 - **End-to-end encryption in the Go SDK and `safeshare-cli`**: the command-line tool can now upload to and download from Ghost-mode servers and servers that require client-side encryption. Files are encrypted on your machine in the same format as the web app, so a CLI upload opens from its share link in a browser and the other way round, with no need to trust JavaScript sent by the server. The filename is hidden and the size padded, as in Ghost-mode browser uploads. `download` accepts a share link (or `-` to read it from standard input).
