@@ -91,12 +91,14 @@ chmod +x safeshare-linux-amd64
 - **Drag-and-drop uploads** with automatic expiration and download limits
 - **Password-protected files** for sensitive shares
 - **QR code generation** for easy mobile sharing
-- **End-to-end encryption** in the browser (server never sees your files)
+- **End-to-end encryption** in the browser, the CLI and the SDKs (the key never reaches the server)
 - **Resumable uploads and downloads** for large files
 - **AES-256 encryption at rest** for everything stored on disk
 - **Metadata stripping** removes EXIF, GPS, and author info from uploads
 - **Anonymous mode** redacts all IP addresses from logs and database
-- **Tor hidden service support** for maximum anonymity
+- **Tor onion service support**: visitors' IP addresses never reach the server (see [what Ghost mode protects against, and what it doesn't](docs/DEPLOYMENT_MODES.md#what-ghost-mode-protects-against))
+- **No-JavaScript drop page** for senders who can't run the server's code, encrypted on arrival to the recipient's [age](https://age-encryption.org) key
+- **`safeshare-cli verify`** checks that a server sends the web app published with its release
 - **Admin dashboard** for file management, user administration, and system config
 - **User accounts** with invite-only registration, MFA, and SSO (optional)
 - **API with tokens** for programmatic access and integrations
