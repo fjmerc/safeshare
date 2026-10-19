@@ -439,8 +439,12 @@ func isWindowsReserved(name string) bool {
 	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		return true
 	}
-	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '0' && stem[3] <= '9' {
-		return true
+	if strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT") {
+		// COM0-9 and LPT0-9, and the superscript ¹, ² and ³ Windows also reserves.
+		switch suffix := stem[3:]; suffix {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+			return true
+		}
 	}
 	return false
 }

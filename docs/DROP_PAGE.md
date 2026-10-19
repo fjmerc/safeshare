@@ -103,7 +103,20 @@ The main SafeShare page shows a pointer to `/drop` to visitors who have JavaScri
 
 ## Receiving
 
-With the code from the sender, download the file. Over Tor if the server is an onion service:
+With the code from the sender, the simplest way is `safeshare-cli` (see [the Go SDK's README](../sdk/go/README.md#cli-tool)). It downloads the drop, decrypts it with your key and puts the files in a new directory:
+
+```bash
+SAFESHARE_URL=https://share.example.com safeshare-cli download CODE --identity drop-key.txt
+# Decrypted the drop into drop-CODE:
+#   report.pdf (1.2 MB)
+#   message.txt (312 B)
+```
+
+Over Tor, add `--proxy socks5://127.0.0.1:9050` and use the onion address as the URL. Give a directory name after the code to choose where the files go; it must not exist yet. The CLI checks that the code is a drop before downloading it, only writes plain files, under safe names, with mode 0600, and if the download doesn't decrypt completely (a wrong key, a truncated or modified file) it removes the directory and writes nothing.
+
+### Without the CLI
+
+Download the file. Over Tor if the server is an onion service:
 
 ```bash
 curl -o drop.tar.age https://share.example.com/api/claim/CODE
@@ -126,7 +139,7 @@ tar -xvf drop.tar
 
 You get the file under the name the sender gave it, and `message.txt` if they wrote one. Archive entries have no owner and a 1970 date, so they don't reveal the sender's account or when they made the file. The zero-byte padding after the archive is ignored by tar.
 
-**Treat what you receive as untrusted.** Open documents in a disposable environment or offline (SecureDrop's guidance on [handling submissions](https://docs.securedrop.org/en/stable/journalist/journalist.html) applies). SafeShare's archive only contains plain files, but if the server was compromised it could have built a harmful one: unpack into an empty folder, and list it first with `tar -tvf` if in doubt.
+**Treat what you receive as untrusted.** Open documents in a disposable environment or offline (SecureDrop's guidance on [handling submissions](https://docs.securedrop.org/en/stable/journalist/journalist.html) applies). SafeShare's archive only contains plain files, but if the server was compromised it could have built a harmful one. `safeshare-cli` refuses anything else; with `tar`, unpack into an empty folder, and list it first with `tar -tvf` if in doubt.
 
 ## Checking the page
 

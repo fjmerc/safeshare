@@ -4,7 +4,7 @@ Official Go SDK for the [SafeShare](https://github.com/fjmerc/safeshare) file sh
 
 ## Requirements
 
-- Go 1.21 or later
+- Go 1.25 or later
 
 ## Installation
 
@@ -160,6 +160,33 @@ file, err := client.DownloadDecrypted(ctx, link.ClaimCode, link.Key, nil)
 ```
 
 Or set `DownloadOptions.DecryptionKey` with `Download`/`DownloadToWriter`.
+
+#### Download a Drop-Page Submission
+
+Files sent with a server's no-JavaScript drop page (`/drop`) are encrypted with [age](https://age-encryption.org) to the recipient's key. `DownloadDrop` decrypts the download as it streams and extracts it into a new directory: the sender's file, and `message.txt` if they wrote one.
+
+```go
+import "filippo.io/age"
+
+f, err := os.Open("drop-key.txt") // from age-keygen; keep it private
+if err != nil {
+    return err
+}
+identities, err := age.ParseIdentities(f)
+f.Close()
+if err != nil {
+    return err
+}
+files, err := client.DownloadDrop(ctx, "abc12345", "./drop-abc12345", identities, nil)
+if err != nil {
+    return err
+}
+for _, file := range files {
+    fmt.Println(file.Name, file.Size)
+}
+```
+
+The directory must not exist yet (its parent must). Only plain files are written, with mode 0600 and safe names; an archive with anything else, or a download that fails to decrypt to the last byte, is refused and the directory removed. `ExtractDrop` does the same for a drop already downloaded (`safeshare-drop.tar.age`).
 
 #### Download to Writer
 
@@ -389,6 +416,9 @@ safeshare-cli download abc12345 ./output.pdf --overwrite
 
 # Encrypted file: read the share link from stdin (keeps the key out of shell history)
 safeshare-cli download - < link.txt
+
+# Drop-page submission: decrypt with your age key into a new directory (default drop-CODE)
+safeshare-cli download abc12345 --identity drop-key.txt
 ```
 
 #### File Info
@@ -454,10 +484,10 @@ Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYI
 
 ```bash
 # Run tests (requires Docker)
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.24 go test -v ./...
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go test -v ./...
 
 # Build CLI
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.24 go build -o safeshare-cli ./cmd/safeshare-cli
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
 ## Advanced Usage
