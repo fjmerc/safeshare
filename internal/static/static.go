@@ -23,3 +23,18 @@ func FileSystem() http.FileSystem {
 func Handler() http.Handler {
 	return http.FileServer(FileSystem())
 }
+
+//go:embed templates/*
+var templates embed.FS
+
+// Templates returns the server-rendered page templates. They live outside
+// web/ on purpose: web/ is served verbatim and its files are hashed for
+// each release (scripts/web-asset-hashes.sh), and these pages differ on
+// every request.
+func Templates() fs.FS {
+	fsys, err := fs.Sub(templates, "templates")
+	if err != nil {
+		panic(err)
+	}
+	return fsys
+}

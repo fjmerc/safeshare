@@ -233,7 +233,8 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			var limit int
 			var limitType string
 
-			if r.URL.Path == "/api/upload" || r.URL.Path == "/api/upload/init" {
+			// A drop (POST /drop) is an upload too; GET is just the form.
+			if r.URL.Path == "/api/upload" || r.URL.Path == "/api/upload/init" || (r.URL.Path == "/drop" && r.Method == http.MethodPost) {
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/chunk/") {

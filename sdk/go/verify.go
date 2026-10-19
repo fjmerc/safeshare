@@ -262,6 +262,8 @@ func assetRoute(file string) (urlPath string, optional bool, skip string) {
 		return "/" + file, true, ""
 	case file == "dashboard.html", file == "admin/dashboard.html":
 		return "", false, "needs a login"
+	case file == "drop.html":
+		return "/drop", true, "" // drop page off (no DROP_RECIPIENT)
 	case file == "error.html":
 		return "", false, "filled in for each error, so it never matches"
 	}

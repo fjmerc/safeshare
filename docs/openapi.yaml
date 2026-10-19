@@ -2969,6 +2969,9 @@ components:
         strip_metadata:
           type: boolean
           description: Metadata stripping is on; clients that encrypt should strip metadata before encrypting
+        drop_enabled:
+          type: boolean
+          description: The no-JavaScript drop page is on at /drop (DROP_RECIPIENT; see docs/DROP_PAGE.md)
 
     # ==================== Authentication Schemas ====================
     LoginRequest:

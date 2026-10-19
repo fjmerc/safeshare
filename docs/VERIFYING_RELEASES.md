@@ -27,8 +27,8 @@ The command reads the version the server reports, downloads that release's `web-
 
 Per file you may also see:
 
-- `not served`: a 404 for something the server only serves with some settings (the admin pages when there is no admin, the app manifest in Ghost mode). Visitors can't load it either, so it is fine.
-- `not checked`: pages that need a login (`/dashboard`, `/admin/dashboard`) and the error page, which is filled in for each error. The scripts in the release are checked, but a tampered version of one of these pages could load a script that isn't in the release, and that wouldn't show up.
+- `not served`: a 404 for something the server only serves with some settings (the admin pages when there is no admin, the app manifest in Ghost mode, the [drop page](DROP_PAGE.md) when it is off). Visitors can't load it either, so it is fine.
+- `not checked`: pages that need a login (`/dashboard`, `/admin/dashboard`) and the error page, which is filled in for each error. The drop page's result page isn't in the release at all, since it differs on every drop. The scripts in the release are checked, but a tampered version of one of these pages could load a script that isn't in the release, and that wouldn't show up.
 
 The service worker has two genuine versions: the normal one and, in Ghost mode, a small script that removes it. Either matches.
 
