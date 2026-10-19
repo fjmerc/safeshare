@@ -185,8 +185,9 @@ func checkPDFObjectCount(data []byte) error {
 }
 
 // pdfNextKeyword returns which of the keywords "stream" and "endobj"
-// comes first after pos, skipping literal strings (with nested parentheses
-// and backslash escapes) and comments, or "" if neither does within 1 MB.
+// comes first after pos as a whole token, skipping names (/Xendobj), literal
+// strings (with nested parentheses and backslash escapes), hex strings and
+// comments, or "" if neither does within 1 MB.
 func pdfNextKeyword(data []byte, pos int) string {
 	limit := min(len(data), pos+1<<20)
 	for i := pos; i < limit; i++ {
@@ -208,13 +209,30 @@ func pdfNextKeyword(data []byte, pos int) string {
 			for i < limit && data[i] != '\n' && data[i] != '\r' {
 				i++
 			}
-		case c == 's' && bytes.HasPrefix(data[i:], []byte("stream")) && (i == 0 || isPDFDelimiter(data[i-1])):
+		case c == '/':
+			for i+1 < limit && !isPDFDelimiter(data[i+1]) {
+				i++
+			}
+		case c == '<' && i+1 < limit && data[i+1] == '<':
+			i++
+		case c == '<':
+			for i < limit && data[i] != '>' {
+				i++
+			}
+		case (i == 0 || isPDFDelimiter(data[i-1])) && pdfKeywordAt(data, i, "stream"):
 			return "stream"
-		case c == 'e' && bytes.HasPrefix(data[i:], []byte("endobj")):
+		case (i == 0 || isPDFDelimiter(data[i-1])) && pdfKeywordAt(data, i, "endobj"):
 			return "endobj"
 		}
 	}
 	return ""
+}
+
+// pdfKeywordAt reports whether kw starts at i and ends at a delimiter or
+// the end of data.
+func pdfKeywordAt(data []byte, i int, kw string) bool {
+	end := i + len(kw)
+	return bytes.HasPrefix(data[i:], []byte(kw)) && (end == len(data) || isPDFDelimiter(data[end]))
 }
 
 // pdfStreamFollows reports whether the "stream" keyword follows a

@@ -453,6 +453,8 @@ func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
 		"string in dictionary":  "1 0 obj << /Type /ObjStm /X (<<) /N 5 /First 1 >> stream\nx\nendstream endobj",
 		"comment hiding /N":     "1 0 obj << /Type /ObjStm /N 900000 %>> /N 5\n /First 1 >> stream\nx\nendstream endobj",
 		"comment faking /N":     "1 0 obj << /Type /ObjStm %\n/N 5\n /First 1 >> stream\nx\nendstream endobj",
+		"keyword in a name":     "1 0 obj << /Type /ObjStm /Xendobj 1 /N 900000 /First 1 >> stream\nx\nendstream endobj",
+		"keyword in hex string": "1 0 obj << /Type /ObjStm /X <656e646f626a> endobjx /N 900000 /First 1 >> stream\nx\nendstream endobj",
 		"keyword in a string":   "1 0 obj << /Type /ObjStm /X (endobj) /N 900000 /First 1 >> stream\nx\nendstream endobj",
 		"comment before stream": "1 0 obj << /Type /ObjStm /N 900000 /First 1 >> %c\nstream\nx\nendstream endobj",
 	} {
