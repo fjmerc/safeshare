@@ -55,7 +55,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - Server-side PDF metadata stripping no longer adds its own `Producer` (pdfcpu) and the time of cleaning as `CreationDate`/`ModDate`: the document information dictionary is now written empty, custom keys included.
-- Server-side Office metadata stripping now also clears the save times of the parts inside the file and the metadata of JPEG and PNG photos embedded in it (recognised by content); documents with embedded TIFF, HEIC or JPEG XR photos, which it can't clean, are refused. It copies the parts it doesn't change without decompressing them, refuses files whose parts overlap or number more than 10,000, so a crafted document can no longer make the server use hundreds of MB of memory.
+- Server-side Office metadata stripping now also clears the save times of the parts inside the file and the metadata of JPEG and PNG photos and MP4-family clips embedded in it (recognised by content); documents with embedded TIFF, HEIC or JPEG XR photos, which it can't clean, are refused. It copies the parts it doesn't change without decompressing them, refuses files whose parts overlap or number more than 10,000, so a crafted document can no longer make the server use hundreds of MB of memory.
 - Server-side PDF metadata stripping now also removes XMP metadata attached to pages, images and other objects, PieceInfo, and the author, dates and ID of annotations, and refuses PDFs with more than 100,000 objects (which take too much memory to parse) or whose object streams it can't count.
 - Server-side metadata stripping now covers the rest of the MP4 family (M4V, M4A, 3GP, 3G2), which previously kept location and device tags.
 

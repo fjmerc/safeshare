@@ -146,9 +146,9 @@ var officeEntryTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 var errOfficeImageUncleanable = errors.New("embedded image in a format that can't be cleaned (TIFF, HEIC or JPEG XR)")
 
 // officeImageStripper looks at the first bytes of a part (whatever its name
-// or folder) and returns the stripper for a JPEG or PNG photo, nil for
-// anything else, or errOfficeImageUncleanable for a photo format that can
-// hold location data but has no stripper.
+// or folder) and returns the stripper for a JPEG or PNG photo or an MP4-
+// family clip, nil for anything else, or errOfficeImageUncleanable for a
+// photo format that can hold location data but has no stripper.
 func officeImageStripper(f *zip.File) (func([]byte) ([]byte, bool, error), error) {
 	if f.UncompressedSize64 < 4 {
 		return nil, nil
@@ -170,6 +170,10 @@ func officeImageStripper(f *zip.File) (func([]byte) ([]byte, bool, error), error
 		bytes.HasPrefix(head, []byte("II\xbc")), // JPEG XR (.wdp, .jxr)
 		len(head) >= 12 && string(head[4:8]) == "ftyp" && isHEIFBrand(string(head[8:12])):
 		return nil, errOfficeImageUncleanable
+	case len(head) >= 8 && string(head[4:8]) == "ftyp":
+		// Any other ISO media file: a video or audio clip in a
+		// presentation, which can carry GPS and device tags.
+		return stripMP4Bytes, nil
 	}
 	return nil, nil
 }

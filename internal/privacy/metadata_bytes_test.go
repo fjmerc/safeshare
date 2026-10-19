@@ -430,6 +430,9 @@ func TestStripPDFBytes_RefusesTooManyObjects(t *testing.T) {
 func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
 	for name, data := range map[string]string{
 		"small":            "1 0 obj << /Type /ObjStm /N 50 /First 10 /Length 3 >> stream\nabc\nendstream endobj",
+		"outlines":         "1 0 obj << /Type /Outlines /First 5 0 R /Last 9 0 R /Count 3 >> endobj",
+		"outline item":     "5 0 obj << /Title (Chapter 1) /Parent 1 0 R /First 6 0 R /Last 7 0 R /Dest [3 0 R /Fit] >> endobj",
+		"tricky title":     "5 0 obj << /Title (a \\) stream \\( (nested) title) /First 6 0 R >> endobj 6 0 obj << /Length 1 >> stream\nx\nendstream endobj",
 		"nested dict":      "1 0 obj << /DecodeParms << /Columns 5 >> /Type /ObjStm /N 50 /First 10 >> endobj",
 		"/N further along": "1 0 obj << /Type /ObjStm " + strings.Repeat(" ", 2000) + "/N 5 /First 3 >> endobj",
 		"/FirstChar font":  "1 0 obj << /Type /Font /FirstChar 32 /LastChar 126 >> endobj",
@@ -439,17 +442,19 @@ func TestCheckPDFObjectCount_ObjectStreams(t *testing.T) {
 		}
 	}
 	for name, data := range map[string]string{
-		"huge count":           "1 0 obj << /Type /ObjStm /N 900000 /First 10 >> endobj",
-		"indirect /N":          "1 0 obj << /Type /ObjStm /N 7 0 R /First 10 >> endobj",
-		"no /N at all":         "1 0 obj << /Type /ObjStm /First 10 >> endobj",
-		"/N only nested":       "1 0 obj << /Type /ObjStm /First 10 /X << /N 5 >> >> endobj",
-		"two /N":               "1 0 obj << /Type /ObjStm /N 5 /N 900000 /First 10 >> endobj",
-		"escaped name":         "1 0 obj << /Type /Obj#53tm /N 900000 /First 10 >> endobj",
-		"no /Type, /First":     "1 0 obj << /N 900000 /First 10 >> endobj",
-		"no /Type, indirect":   "1 0 obj << /N 7 0 R /First 10 >> endobj",
-		"string in dictionary": "1 0 obj << /Type /ObjStm /X (<<) /N 5 /First 1 >> endobj",
-		"comment hiding /N":    "1 0 obj << /Type /ObjStm /N 900000 %>> /N 5\n /First 1 >> endobj",
-		"comment faking /N":    "1 0 obj << /Type /ObjStm %\n/N 5\n /First 1 >> endobj",
+		"huge count":            "1 0 obj << /Type /ObjStm /N 900000 /First 10 >> stream\nx\nendstream endobj",
+		"indirect /N":           "1 0 obj << /Type /ObjStm /N 7 0 R /First 10 >> stream\nx\nendstream endobj",
+		"no /N at all":          "1 0 obj << /Type /ObjStm /First 10 >> stream\nx\nendstream endobj",
+		"/N only nested":        "1 0 obj << /Type /ObjStm /First 10 /X << /N 5 >> >> stream\nx\nendstream endobj",
+		"two /N":                "1 0 obj << /Type /ObjStm /N 5 /N 900000 /First 10 >> stream\nx\nendstream endobj",
+		"escaped name":          "1 0 obj << /Type /Obj#53tm /N 900000 /First 10 >> stream\nx\nendstream endobj",
+		"no /Type, /First":      "1 0 obj << /N 900000 /First 10 >> stream\nx\nendstream endobj",
+		"no /Type, indirect":    "1 0 obj << /N 7 0 R /First 10 >>\nstream\nx\nendstream endobj",
+		"string in dictionary":  "1 0 obj << /Type /ObjStm /X (<<) /N 5 /First 1 >> stream\nx\nendstream endobj",
+		"comment hiding /N":     "1 0 obj << /Type /ObjStm /N 900000 %>> /N 5\n /First 1 >> stream\nx\nendstream endobj",
+		"comment faking /N":     "1 0 obj << /Type /ObjStm %\n/N 5\n /First 1 >> stream\nx\nendstream endobj",
+		"keyword in a string":   "1 0 obj << /Type /ObjStm /X (endobj) /N 900000 /First 1 >> stream\nx\nendstream endobj",
+		"comment before stream": "1 0 obj << /Type /ObjStm /N 900000 /First 1 >> %c\nstream\nx\nendstream endobj",
 	} {
 		if err := checkPDFObjectCount([]byte(data)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -498,4 +503,50 @@ func pdfObjectsText(t *testing.T, data []byte) string {
 		}
 	}
 	return sb.String()
+}
+
+// A PDF with a table of contents (an outline tree, which uses /First too)
+// still cleans.
+func TestStripPDFBytes_WithBookmarks(t *testing.T) {
+	data := buildPDF([]string{
+		"<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+		"<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>",
+		"<< /Title (Chapter 1) /Parent 4 0 R /Dest [3 0 R /Fit] >>",
+	})
+	out, err := StripMetadataBytes(data, "application/pdf")
+	if err != nil {
+		t.Fatalf("a PDF with bookmarks was refused: %v", err)
+	}
+	if !strings.Contains(pdfObjectsText(t, out), "Chapter 1") {
+		t.Error("bookmark lost")
+	}
+}
+
+func TestStripOfficeBytes_CleansEmbeddedVideo(t *testing.T) {
+	box := func(typ string, payload ...[]byte) []byte {
+		body := bytes.Join(payload, nil)
+		out := binary.BigEndian.AppendUint32(nil, uint32(8+len(body)))
+		return append(append(out, typ...), body...)
+	}
+	gps := "+40.7128-074.0060/"
+	clip := bytes.Join([][]byte{
+		box("ftyp", []byte("mp42\x00\x00\x00\x00mp42isom")),
+		box("moov", box("mvhd", make([]byte, 100)), box("udta", box("\xa9xyz", []byte{0, byte(len(gps)), 0x15, 0xc7}, []byte(gps)))),
+		box("mdat", []byte("frames")),
+	}, nil)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	writeZipEntry(t, zw, "ppt/media/media1.mp4", clip)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := stripOfficeBytes(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(zipEntryContent(t, out, "ppt/media/media1.mp4"), []byte(gps)) {
+		t.Error("a video in a presentation keeps its location tag")
+	}
 }

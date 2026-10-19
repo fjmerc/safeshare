@@ -148,12 +148,24 @@ func checkPDFObjectCount(data []byte) error {
 			if at < len(data) && !isPDFDelimiter(data[at]) {
 				continue // a longer name, such as /FirstChar
 			}
+			// An object stream is a stream. Outline (bookmark) dictionaries
+			// also have /First, often with a string title, but their object
+			// ends without a stream.
+			switch pdfNextKeyword(data, at) {
+			case "endobj":
+				continue
+			case "":
+				return fmt.Errorf("PDF object stream dictionary can't be checked")
+			}
 			start, end, ok := pdfEnclosingDict(data, pos)
 			if !ok {
 				return fmt.Errorf("PDF object stream dictionary can't be checked")
 			}
 			if seen[start] {
 				continue
+			}
+			if isStream, ok := pdfStreamFollows(data, end); !ok || !isStream {
+				return fmt.Errorf("PDF object stream dictionary can't be checked")
 			}
 			seen[start] = true
 			n, ok := pdfDictDirectInt(data[start:end], "/N")
@@ -170,6 +182,53 @@ func checkPDFObjectCount(data []byte) error {
 		return fmt.Errorf("PDF has too many objects (about %d, max %d)", objects, maxPDFObjects)
 	}
 	return nil
+}
+
+// pdfNextKeyword returns which of the keywords "stream" and "endobj"
+// comes first after pos, skipping literal strings (with nested parentheses
+// and backslash escapes) and comments, or "" if neither does within 1 MB.
+func pdfNextKeyword(data []byte, pos int) string {
+	limit := min(len(data), pos+1<<20)
+	for i := pos; i < limit; i++ {
+		switch c := data[i]; {
+		case c == '(':
+			depth := 1
+			for i++; i < limit && depth > 0; i++ {
+				switch data[i] {
+				case '\\':
+					i++
+				case '(':
+					depth++
+				case ')':
+					depth--
+				}
+			}
+			i--
+		case c == '%':
+			for i < limit && data[i] != '\n' && data[i] != '\r' {
+				i++
+			}
+		case c == 's' && bytes.HasPrefix(data[i:], []byte("stream")) && (i == 0 || isPDFDelimiter(data[i-1])):
+			return "stream"
+		case c == 'e' && bytes.HasPrefix(data[i:], []byte("endobj")):
+			return "endobj"
+		}
+	}
+	return ""
+}
+
+// pdfStreamFollows reports whether the "stream" keyword follows a
+// dictionary ending at end. A comment there makes it unclear, reported as
+// not ok.
+func pdfStreamFollows(data []byte, end int) (isStream, ok bool) {
+	i := end
+	for i < len(data) && strings.IndexByte(" \t\r\n\f\x00", data[i]) >= 0 {
+		i++
+	}
+	if i < len(data) && data[i] == '%' {
+		return false, false
+	}
+	return bytes.HasPrefix(data[i:], []byte("stream")), true
 }
 
 func isPDFDelimiter(c byte) bool {
