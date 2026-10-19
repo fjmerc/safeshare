@@ -20,7 +20,16 @@ Example usage:
     client.download("claim_code_here", "downloaded_file.pdf")
 """
 
+from safeshare import e2e
 from safeshare.client import SafeShareClient
+from safeshare.e2e import (
+    ClientEncryptionRequiredError,
+    DecryptedFile,
+    DecryptionError,
+    InvalidPayloadError,
+    MetadataNotRemovedError,
+    PayloadTooLargeError,
+)
 from safeshare.exceptions import (
     SafeShareError,
     AuthenticationError,
@@ -53,6 +62,13 @@ from safeshare.models import (
 __version__ = "0.1.0"
 __all__ = [
     "SafeShareClient",
+    "e2e",
+    "DecryptedFile",
+    "DecryptionError",
+    "InvalidPayloadError",
+    "MetadataNotRemovedError",
+    "PayloadTooLargeError",
+    "ClientEncryptionRequiredError",
     "SafeShareError",
     "AuthenticationError",
     "NotFoundError",

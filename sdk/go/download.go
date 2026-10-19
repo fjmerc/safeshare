@@ -41,15 +41,13 @@ func (c *Client) Download(ctx context.Context, claimCode, destination string, op
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
 
-	// Security: Check if destination exists and is a symlink (prevent symlink attacks)
-	if info, err := os.Lstat(destPath); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("destination is a symbolic link, refusing to overwrite for security")
-		}
-		// File exists - check if overwrite is allowed
-		if !opts.Overwrite {
-			return fmt.Errorf("destination file already exists, set Overwrite option to true to replace")
-		}
+	// Security: refuse symlinks, and existing files unless Overwrite
+	if err := CheckDestination(destPath, opts.Overwrite); err != nil {
+		return err
+	}
+
+	if opts.DecryptionKey != "" {
+		return c.downloadDecryptedTo(ctx, claimCode, destPath, opts)
 	}
 
 	downloadURL := fmt.Sprintf("/api/claim/%s", claimCode)
@@ -116,6 +114,17 @@ func (c *Client) DownloadToWriter(ctx context.Context, claimCode string, w io.Wr
 
 	if opts == nil {
 		opts = &DownloadOptions{}
+	}
+
+	if opts.DecryptionKey != "" {
+		f, err := c.DownloadDecrypted(ctx, claimCode, opts.DecryptionKey, opts)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(f.Data); err != nil {
+			return fmt.Errorf("writing file: %w", err)
+		}
+		return nil
 	}
 
 	downloadURL := fmt.Sprintf("/api/claim/%s", claimCode)
@@ -197,6 +206,7 @@ func (c *Client) GetFileInfo(ctx context.Context, claimCode string) (*FileInfo, 
 		DownloadsRemaining: downloadsRemaining,
 		ScanStatus:         apiResp.ScanStatus,
 		DownloadAvailable:  apiResp.DownloadAvailable,
+		ClientEncrypted:    apiResp.ClientEncrypted,
 	}, nil
 }
 

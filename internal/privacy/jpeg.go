@@ -44,11 +44,7 @@ func stripJPEGMetadata(filePath string) error {
 		return fmt.Errorf("failed to read JPEG file: %w", err)
 	}
 
-	if len(data) < 2 || data[0] != markerPrefix || data[1] != markerSOI {
-		return fmt.Errorf("not a valid JPEG file: missing SOI marker")
-	}
-
-	result, stripped, err := removeMetadataSegments(data)
+	result, stripped, err := stripJPEGBytes(data)
 	if err != nil {
 		return err
 	}
@@ -58,6 +54,15 @@ func stripJPEGMetadata(filePath string) error {
 	}
 
 	return os.WriteFile(filePath, result, info.Mode().Perm())
+}
+
+// stripJPEGBytes is stripJPEGMetadata on an in-memory file. It reports
+// whether anything was removed; when nothing was, it returns data itself.
+func stripJPEGBytes(data []byte) ([]byte, bool, error) {
+	if len(data) < 2 || data[0] != markerPrefix || data[1] != markerSOI {
+		return nil, false, fmt.Errorf("not a valid JPEG file: missing SOI marker")
+	}
+	return removeMetadataSegments(data)
 }
 
 // removeMetadataSegments walks JPEG markers and removes all metadata segments.

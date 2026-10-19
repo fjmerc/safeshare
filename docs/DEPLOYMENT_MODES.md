@@ -28,7 +28,7 @@ flowchart TD
     A --> C{The system<br/>from users?}
 
     B --> D{Do users need<br/>network anonymity?}
-    D -->|Yes - Tor, no logs| E["<b>Ghost Mode</b><br/>Maximum anonymity"]
+    D -->|Yes - Tor, no logs| E["<b>Ghost Mode</b><br/>Anonymity for users"]
     D -->|No - just privacy| F["<b>Standard Mode</b><br/>Balanced defaults"]
 
     C --> G{Regulatory or<br/>compliance requirements?}
@@ -40,10 +40,10 @@ flowchart TD
 
 | Dimension | Ghost | Standard | Hardened | Fortress |
 |-----------|-------|----------|----------|----------|
-| **Trust model** | Operator trusts no one (including themselves) | Moderate trust | Operator controls access | Zero trust, full audit |
+| **Trust model** | Operator limits what they can see and keep | Moderate trust | Operator controls access | Zero trust, full audit |
 | **User authentication** | None | Optional | Required | Required; MFA and SSO available (MFA enrollment not yet enforced) |
 | **IP logging** | Never received (Tor); not stored or logged | Logged | Logged | Logged + tamper-evident |
-| **File content visibility** | None: browser encryption required | Server-side encrypted | Server-side encrypted | Server-side encrypted |
+| **File content visibility** | None once stored: encryption in the browser or CLI required (the optional drop page sees files while they arrive) | Server-side encrypted | Server-side encrypted | Server-side encrypted |
 | **Metadata stripping** | In browser before upload (JPEG, PNG, Office, PDF) | Off by default | Off by default | Off by default |
 | **Network access** | Tor only | Clearnet | Clearnet + proxy | Clearnet + proxy |
 | **Abuse prevention** | Minimal | Basic rate limits | Full controls | Full controls + audit |
@@ -55,7 +55,7 @@ flowchart TD
 
 ## Ghost Mode
 
-**Maximum Anonymity**: the operator can't identify users, can't read what they upload, and keeps as little as possible that could be handed over if compelled.
+**Anonymity for users**: the operator can't identify users, can't read what they upload, and keeps as little as possible that could be handed over if compelled. It is built for a seized server, a legal demand or a curious operator, not for an attacker who takes over the running server or can watch both ends of the Tor connection. Read [what it protects against](#what-ghost-mode-protects-against) before relying on it.
 
 ### Who it's for
 
@@ -65,7 +65,7 @@ Whistleblower drops, journalist source protection, human rights organizations, a
 
 The operator deliberately limits what they can see and keep:
 - **Cannot see who uploaded or downloaded a file.** Visitors arrive over Tor, so the server never receives their IP address. With `ANONYMOUS_MODE=true` the server also doesn't store or log IP addresses or user agents. Filenames are kept out of logs, and claim codes are removed from request paths in logs.
-- **Cannot read file contents.** `REQUIRE_CLIENT_ENCRYPTION` defaults to on in anonymous mode. Every upload must be encrypted in the visitor's browser, and the key travels only in the share link's `#` fragment, which never reaches the server. The server refuses uploads that aren't marked as browser-encrypted. The `ENCRYPTION_KEY` the operator holds only adds a second layer around ciphertext it can't open.
+- **Cannot read file contents.** `REQUIRE_CLIENT_ENCRYPTION` defaults to on in anonymous mode. Every upload must be encrypted in the visitor's browser, and the key travels only in the share link's `#` fragment, which never reaches the server. The server refuses uploads that aren't marked as browser-encrypted. The `ENCRYPTION_KEY` the operator holds only adds a second layer around ciphertext it can't open. The exception is the optional [no-JavaScript drop page](DROP_PAGE.md) (`DROP_RECIPIENT`): there the server receives the file unencrypted and encrypts it to the recipient's key on arrival, so it can read files while they arrive, though not once they are stored.
 - **Strips identifying metadata before upload.** With `STRIP_METADATA=true`, the browser removes EXIF/GPS/XMP data from JPEGs, text, EXIF and timestamp chunks from PNGs, author details from Office (docx/xlsx/pptx) files, and document information, XMP, comment authors and signer details from PDFs before encrypting them. Files with parts that can't be cleaned (macros, attachments, embedded objects and the like) are refused rather than uploaded. The server can't strip ciphertext, so other formats (video, audio, OpenDocument) are uploaded as is, with a warning. See [What Ghost mode doesn't do](#what-ghost-mode-doesnt-do).
 - **Keeps little that could be handed over.** No hash of uploaded content is stored, so a compelled operator can't confirm that a known document passed through. Deleted rows are overwritten in the database (`secure_delete`), and the write-ahead log is truncated after each cleanup. The audit log is off. Webhooks and SSO can't be turned on, and `/metrics` isn't served.
 - **Reachable only as a Tor onion service.** The app has no published port and sits on an internal network that only the Tor container can reach.
@@ -137,12 +137,32 @@ networks:
 
 Until an admin saves a setting in the dashboard, these environment variables are authoritative. The first save stores every setting (quota, file size, expiration, rate limits, blocked extensions, feature flags), taking the values that are in effect at the time. From then on the stored settings take precedence over the environment on restart. Saving one setting no longer resets the others to built-in defaults.
 
+### What Ghost mode protects against
+
+**It protects against:**
+
+- **A seized server, its disks or its backups.** Stored files are encrypted in the visitor's browser (or by `safeshare-cli`), with a key the server never gets. No IP addresses, user agents or content hashes are kept, and times are rounded to the hour.
+- **An operator asked, or forced, to identify uploaders or confirm that a document passed through.** They don't have that information.
+- **Someone watching the network** learning who uses the server or where it is. Tor hides both.
+
+**It does not protect against:**
+
+- **Someone who controls the server while it runs.** They can change the JavaScript it sends, so that later visitors' files or keys leak. `safeshare-cli verify` (see [VERIFYING_RELEASES.md](VERIFYING_RELEASES.md)) detects a changed web app, but only when someone runs it. `safeshare-cli` and the SDKs encrypt without running the server's code. On the [drop page](DROP_PAGE.md), the server sees each file while it arrives.
+- **An adversary who can watch both ends of a Tor connection**, or who controls the visitor's device.
+- **What the server still sees** about each file: its rough size, rounded times, download counts and, unless hidden, its name. See the list below.
+- **What the file itself gives away.** Metadata in formats SafeShare can't clean, a name in the text, a face in a photo.
+- **Mistakes outside SafeShare**, such as uploading from an ordinary browser instead of Tor Browser.
+
+SafeShare has **not had an independent security audit**. ([SECURITY_AUDIT.md](SECURITY_AUDIT.md) is an automated review.)
+
+**For sources facing a government or another well-resourced adversary, use [SecureDrop](https://securedrop.org).** It is built, audited and run for that threat, with a hardened, monitored server, and submissions decrypted on an offline computer. SafeShare is much easier to run, and its guarantees are weaker.
+
 ### What Ghost mode doesn't do
 
 These limits are inherent to the design. Plan around them rather than assuming they're covered:
 
 - **Browser encryption is checked by flag, not proven.** The server can't tell ciphertext from plaintext. Requiring the flag protects honest uploaders from sending plaintext by mistake. It doesn't stop someone who deliberately uploads plaintext with the flag set.
-- **Uploading needs Tor Browser or another browser with Web Crypto.** Tor Browser treats `.onion` pages as secure contexts, so encryption works over `http://`. Browsers that don't (for example Chromium behind a Tor proxy) are shown a message and can't upload. The SDKs and the import tool don't encrypt client-side, so they can't upload to a Ghost server.
+- **Uploading needs Tor Browser or another browser with Web Crypto.** Tor Browser treats `.onion` pages as secure contexts, so encryption works over `http://`. Browsers that don't (for example Chromium behind a Tor proxy) are shown a message and can't upload. `safeshare-cli` and the Go, Python and TypeScript SDKs encrypt in the same format without running the server's JavaScript (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#command-line-tool-and-sdks)). The import tool stores files without client-side encryption, so don't use it on a Ghost server.
 - **Files are encrypted in browser memory.** Very large files (warned above 500 MB) can exhaust the tab's memory. Padding adds up to about 12% to the stored size, which counts toward the quota and `MAX_FILE_SIZE`.
 - **Metadata stripping covers JPEG, PNG, Office (docx/xlsx/pptx) and PDF files only.** Other formats keep their metadata. Tell sources to scrub them first, for example with [mat2](https://0xacab.org/jvoisin/mat2). If one of the supported files can't be stripped, the upload is stopped rather than sent unstripped (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#metadata-stripping-and-e2ee)). For uploads the server can strip (only when `REQUIRE_CLIENT_ENCRYPTION=false`), a failure, a file over 100 MB, or an encrypted PDF is rejected with `422 METADATA_STRIP_FAILED`.
 - **The server still knows some things about each file.** It knows the size bucket of the ciphertext (the browser pads each upload to a PADME bucket, so it sees the bucket, not the exact size; the bucket still narrows the size to within about 12%), upload and expiry times (stored rounded to the hour, so a file can outlive its requested expiry by up to 59 minutes), download counts and the claim code. It also knows the filename unless **Hide filename** is checked, which is the default in Ghost mode. The admin dashboard shows these. They are deleted when the file expires. Rounding covers the database only: container and reverse-proxy request logs still carry exact times until they rotate, and the database outlives them. The stored files on disk also keep their operating-system modification times.

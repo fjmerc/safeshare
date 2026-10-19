@@ -188,18 +188,11 @@ func TestStripPDFMetadata_RemovesInfoXMPAndID(t *testing.T) {
 
 	after := readPDFContext(t, path)
 
-	// pdfcpu's writer may synthesise a fresh Info dict (its own Producer and
-	// current dates); what matters is that none of the original values survive.
-	afterInfo := pdfInfoValues(t, after)
-	for _, key := range pdfInfoKeys {
-		if got, ok := afterInfo[key]; ok && got == pdfFixtureInfo[key] {
-			t.Errorf("Info[%s] still holds original value %q", key, got)
-		}
-	}
-	for _, key := range []string{"Author", "Creator", "Subject", "Keywords", "Title"} {
-		if got, ok := afterInfo[key]; ok {
-			t.Errorf("Info[%s] present after stripping: %q", key, got)
-		}
+	// The Info dict must be empty: no original values, and none that
+	// pdfcpu's writer would add (its Producer, and the time of cleaning as
+	// CreationDate/ModDate).
+	if afterInfo := pdfInfoValues(t, after); len(afterInfo) != 0 {
+		t.Errorf("Info dict not empty after stripping: %v", afterInfo)
 	}
 
 	if pdfHasCatalogMetadata(t, after) {
@@ -215,7 +208,7 @@ func TestStripPDFMetadata_RemovesInfoXMPAndID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	needles := []string{pdfFixtureXMPMarker, pdfFixtureID}
+	needles := []string{pdfFixtureXMPMarker, pdfFixtureID, "pdfcpu"}
 	for _, key := range []string{"Author", "Creator", "Producer", "Subject", "Keywords", "Title"} {
 		needles = append(needles, pdfFixtureInfo[key])
 	}

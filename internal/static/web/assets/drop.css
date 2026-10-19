@@ -1,0 +1,148 @@
+/* No-JavaScript drop page (drop.html and its result page). */
+.drop-page {
+    max-width: 44rem;
+}
+
+.drop-page h2 {
+    font-size: 1.15rem;
+    margin: 0 0 0.75rem;
+    color: var(--text-primary);
+}
+
+.drop-page p,
+.drop-page li {
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+.drop-page .card p {
+    margin: 0 0 0.75rem;
+}
+
+.drop-page .card p:last-child {
+    margin-bottom: 0;
+}
+
+.drop-page .card + .card {
+    margin-top: 1.25rem;
+}
+
+.drop-page ul,
+.drop-page ol {
+    padding-left: 1.25rem;
+    margin: 0 0 0.75rem;
+}
+
+.drop-steps li + li,
+.drop-page ul li + li {
+    margin-top: 0.4rem;
+}
+
+.drop-notice {
+    margin: 1rem 0 0;
+    padding: 0.75rem 1rem;
+    border-left: 4px solid var(--warning-color);
+    background: var(--warning-tint);
+    border-radius: var(--radius);
+}
+
+.drop-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.drop-form label {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-top: 0.5rem;
+}
+
+.drop-optional {
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.drop-form input[type="file"],
+.drop-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.drop-form textarea {
+    resize: vertical;
+}
+
+.drop-submit {
+    align-self: flex-start;
+    margin-top: 1rem;
+    padding: 0.7rem 1.4rem;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--primary-color);
+    color: var(--on-accent);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.drop-submit:hover {
+    background: var(--primary-hover);
+}
+
+.drop-form :focus-visible,
+.drop-page a:focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.drop-hint {
+    font-size: 0.9rem;
+    margin: 0.25rem 0 0;
+}
+
+.drop-page a {
+    color: var(--primary-text);
+}
+
+.drop-code {
+    display: block;
+    margin: 0.5rem 0 1rem;
+    padding: 0.75rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1.25rem;
+    letter-spacing: 0.04em;
+    word-break: break-all;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-radius: var(--radius);
+    user-select: all;
+}
+
+.drop-details {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1rem;
+    margin: 0 0 1rem;
+}
+
+.drop-details dt {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.drop-details dd {
+    margin: 0;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+.drop-error h2 {
+    color: var(--danger-text);
+}

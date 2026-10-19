@@ -368,14 +368,6 @@ func applyTimeoutBounds(timeout, minTimeout, maxTimeout int) int {
 	return timeout
 }
 
-// min returns the smaller of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // calculateChunkedUploadSettings determines chunked upload threshold and partial expiry hours
 func calculateChunkedUploadSettings(req ConfigAssistantRequest, uploadSpeedMBps float64) (threshold int64, expiryHours int) {
 	// Lower threshold = more files use chunked upload = better reliability

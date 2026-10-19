@@ -7,9 +7,11 @@ import "time"
 type UploadResult struct {
 	// ClaimCode is the unique code for downloading the file.
 	ClaimCode string `json:"claim_code"`
-	// Filename is the original filename.
+	// Filename is the original filename (for encrypted uploads with a hidden
+	// name, the local name; the server stores "encrypted.bin").
 	Filename string `json:"filename"`
-	// Size is the file size in bytes.
+	// Size is the stored size in bytes (for encrypted uploads, the
+	// ciphertext, padding included).
 	Size int64 `json:"size"`
 	// MimeType is the MIME type of the file.
 	MimeType string `json:"mime_type"`
@@ -21,7 +23,34 @@ type UploadResult struct {
 	PasswordProtected bool `json:"password_protected"`
 	// UserID is the uploader's user ID (if authenticated).
 	UserID *int `json:"user_id,omitempty"`
+	// Encrypted is true when the file was encrypted before upload.
+	Encrypted bool `json:"encrypted"`
+	// EncryptionKey is the base64url decryption key (encrypted uploads only).
+	// The server never sees it; anyone with it and the claim code can read the
+	// file. It and ShareURL are left out of JSON encodings on purpose.
+	EncryptionKey string `json:"-"`
+	// ShareURL is the link that downloads and decrypts the file in a browser,
+	// with the key in the fragment (encrypted uploads only). Treat it as a secret.
+	ShareURL string `json:"-"`
+	// MetadataKept names the file type when the file was encrypted and may
+	// still contain metadata (photo location, author names) that the server
+	// would otherwise have removed, e.g. "JPEG image". Empty otherwise.
+	MetadataKept string `json:"metadata_kept,omitempty"`
 }
+
+// EncryptMode selects whether Upload encrypts the file before upload.
+type EncryptMode int
+
+const (
+	// EncryptAuto encrypts when the server is in Ghost (anonymous) mode or
+	// requires client-side encryption, and uploads unencrypted otherwise.
+	EncryptAuto EncryptMode = iota
+	// EncryptAlways always encrypts.
+	EncryptAlways
+	// EncryptNever never encrypts; uploads to a server that requires
+	// encryption fail with ErrClientEncryptionRequired.
+	EncryptNever
+)
 
 // UploadOptions configures a file upload.
 type UploadOptions struct {
@@ -33,6 +62,22 @@ type UploadOptions struct {
 	Password string
 	// OnProgress is called with upload progress updates.
 	OnProgress func(UploadProgress)
+
+	// Encrypt selects end-to-end encryption (default EncryptAuto). Encrypted
+	// files are read into memory whole, as in the browser.
+	Encrypt EncryptMode
+	// ShowFilename leaves the filename visible to the server on encrypted
+	// uploads. By default it is hidden inside the encrypted payload and the
+	// file is stored as "encrypted.bin".
+	ShowFilename bool
+	// KeepMetadata allows an encrypted upload to a Ghost-mode server of a file
+	// type the web app would have cleaned (JPEG, PNG, PDF, Office documents).
+	// The SDK cannot remove metadata, so by default such uploads fail with
+	// ErrMetadataNotRemoved; scrub the file first (for example with mat2).
+	// On other servers that strip metadata, the upload goes ahead and
+	// UploadResult.MetadataKept says the metadata was kept (the web app warns
+	// rather than refusing there too).
+	KeepMetadata bool
 }
 
 // UploadProgress provides information about upload progress.
@@ -129,6 +174,9 @@ type FileInfo struct {
 	// "error", "not_scanned", or "" for scanning-disabled/legacy files).
 	// See ADR-015.
 	ScanStatus string `json:"scan_status,omitempty"`
+	// ClientEncrypted is true when the uploader said the file was encrypted
+	// before upload; downloading it needs the key from its share link.
+	ClientEncrypted bool `json:"client_encrypted"`
 	// DownloadAvailable is false when the scan gate currently blocks
 	// downloading this file (infected, pending, or errored — see ADR-015);
 	// Download() will return an APIError wrapping one of ErrFileQuarantined,
@@ -184,6 +232,10 @@ type DownloadOptions struct {
 	// Overwrite allows replacing an existing file at the destination.
 	// If false (default), downloading to an existing file returns an error.
 	Overwrite bool
+	// DecryptionKey is the base64url key of an end-to-end encrypted file (the
+	// part after "/key/" in its share link). When set, the file is downloaded
+	// into memory, decrypted, and written decrypted.
+	DecryptionKey string
 }
 
 // DownloadProgress provides information about download progress.
@@ -208,6 +260,18 @@ type PublicConfig struct {
 	MaxExpirationHours int `json:"max_expiration_hours"`
 	// RegistrationEnabled indicates if user registration is open.
 	RegistrationEnabled bool `json:"registration_enabled"`
+	// AnonymousMode is true on Ghost-mode servers. Encrypted uploads are then
+	// padded so the stored size reveals only a size range.
+	AnonymousMode bool `json:"anonymous_mode"`
+	// ClientEncryptionRequired is true when the server only accepts uploads
+	// encrypted before upload (REQUIRE_CLIENT_ENCRYPTION).
+	ClientEncryptionRequired bool `json:"client_encryption_required"`
+	// StripMetadata is true when the server removes metadata from uploads. It
+	// cannot do that for encrypted uploads.
+	StripMetadata bool `json:"strip_metadata"`
+	// Version is the SafeShare version the server reports. The operator can
+	// set it to anything (APP_VERSION), so treat it as a hint.
+	Version string `json:"version"`
 }
 
 // CreateTokenRequest contains parameters for creating an API token.
@@ -260,6 +324,13 @@ type ClientConfig struct {
 	Timeout time.Duration
 	// InsecureSkipVerify disables TLS certificate verification (dangerous!).
 	InsecureSkipVerify bool
+	// Proxy sends every request through this proxy, e.g.
+	// "socks5://127.0.0.1:9050" for Tor; host names are resolved by the proxy.
+	Proxy string
+	// DisableProxy ignores the proxy environment variables. By default
+	// HTTPS_PROXY/HTTP_PROXY/ALL_PROXY are honoured (see NewClient);
+	// requests, with the API token, then go through that proxy.
+	DisableProxy bool
 }
 
 // apiUploadResponse is the raw API response for uploads.
@@ -293,23 +364,24 @@ type apiFileInfoResponse struct {
 	SHA256Hash           string  `json:"sha256_hash"`
 	ScanStatus           string  `json:"scan_status,omitempty"`
 	DownloadAvailable    bool    `json:"download_available"`
+	ClientEncrypted      bool    `json:"client_encrypted"`
 }
 
 // apiUserFileResponse is the raw API response for user files.
 type apiUserFileResponse struct {
-	ID                 int     `json:"id"`
-	ClaimCode          string  `json:"claim_code"`
-	OriginalFilename   string  `json:"original_filename"`
-	FileSize           int64   `json:"file_size"`
-	MimeType           string  `json:"mime_type"`
-	CreatedAt          string  `json:"created_at"`
-	ExpiresAt          string  `json:"expires_at"`
-	DownloadCount      int     `json:"download_count"`
-	CompletedDownloads int     `json:"completed_downloads"`
-	MaxDownloads       *int    `json:"max_downloads"`
-	PasswordProtected  bool    `json:"is_password_protected"`
-	DownloadURL        string  `json:"download_url"`
-	IsExpired          bool    `json:"is_expired"`
+	ID                 int    `json:"id"`
+	ClaimCode          string `json:"claim_code"`
+	OriginalFilename   string `json:"original_filename"`
+	FileSize           int64  `json:"file_size"`
+	MimeType           string `json:"mime_type"`
+	CreatedAt          string `json:"created_at"`
+	ExpiresAt          string `json:"expires_at"`
+	DownloadCount      int    `json:"download_count"`
+	CompletedDownloads int    `json:"completed_downloads"`
+	MaxDownloads       *int   `json:"max_downloads"`
+	PasswordProtected  bool   `json:"is_password_protected"`
+	DownloadURL        string `json:"download_url"`
+	IsExpired          bool   `json:"is_expired"`
 }
 
 // apiUserFilesResponse is the raw API response for listing user files.
@@ -322,11 +394,15 @@ type apiUserFilesResponse struct {
 
 // apiConfigResponse is the raw API response for server config.
 type apiConfigResponse struct {
-	MaxFileSize          int64 `json:"max_file_size"`
-	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
-	ChunkSize            int64 `json:"chunk_size"`
-	MaxExpirationHours   int   `json:"max_expiration_hours"`
-	RegistrationEnabled  bool  `json:"registration_enabled"`
+	MaxFileSize              int64  `json:"max_file_size"`
+	ChunkUploadThreshold     int64  `json:"chunked_upload_threshold"`
+	ChunkSize                int64  `json:"chunk_size"`
+	MaxExpirationHours       int    `json:"max_expiration_hours"`
+	RegistrationEnabled      bool   `json:"registration_enabled"`
+	AnonymousMode            bool   `json:"anonymous_mode"`
+	ClientEncryptionRequired bool   `json:"client_encryption_required"`
+	StripMetadata            bool   `json:"strip_metadata"`
+	Version                  string `json:"version"`
 }
 
 // apiChunkedUploadInitResponse is the raw API response for chunked upload init.

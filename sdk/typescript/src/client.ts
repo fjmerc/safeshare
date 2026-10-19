@@ -5,8 +5,11 @@
  */
 
 import { createReadStream, statSync } from "node:fs";
-import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, resolve, basename } from "node:path";
+import { writeFile, mkdir, open as openFile, readFile, rename, unlink, lstat } from "node:fs/promises";
+import { dirname, resolve, basename, join } from "node:path";
+import { randomBytes } from "node:crypto";
+
+import * as e2e from "./e2e.js";
 
 import type {
   ClientOptions,
@@ -23,6 +26,7 @@ import type {
   ExpirationResult,
   RegenerateResult,
   PublicConfig,
+  EncryptMode,
   CreateTokenRequest,
   TokenCreatedResponse,
   TokenInfo,
@@ -33,6 +37,7 @@ import {
   ValidationError,
   DownloadError,
   ChunkedUploadError,
+  UploadError,
   RateLimitError,
   handleErrorResponse,
 } from "./errors.js";
@@ -83,6 +88,60 @@ export function rateLimitPollDelay(error: RateLimitError): number {
  * Normalize a server download limit. Chunked-upload responses encode
  * "unlimited" as 0 rather than null.
  */
+/** What is sent as the uploaded file: a file on disk or an encrypted blob in memory. */
+interface UploadSource {
+  name: string;
+  size: number;
+  path?: string;
+  data?: Buffer;
+}
+
+/** Iterate a source in chunks (the stream's own chunks for files). */
+async function* sourceChunks(src: UploadSource, chunkSize?: number): AsyncGenerator<Buffer> {
+  if (src.data) {
+    const step = chunkSize ?? (src.data.length || 1);
+    for (let i = 0; i < src.data.length; i += step) yield src.data.subarray(i, i + step);
+    return;
+  }
+  for await (const chunk of createReadStream(src.path!, chunkSize ? { highWaterMark: chunkSize } : {})) {
+    yield Buffer.from(chunk);
+  }
+}
+
+/**
+ * Write data with mode 0600. Without overwrite the file must not exist
+ * ("wx" also refuses a symlink); with it, a temp file is renamed over the
+ * destination so a symlink there is replaced, not followed.
+ */
+async function writePrivate(path: string, data: Buffer, overwrite: boolean): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  if (!overwrite) {
+    const fh = await openFile(path, "wx", 0o600);
+    try {
+      await fh.writeFile(data);
+    } catch (err) {
+      await fh.close().catch(() => undefined);
+      await unlink(path).catch(() => undefined); // don't leave a partial file behind
+      throw err;
+    }
+    await fh.close();
+    return;
+  }
+  const tmp = join(dirname(path), `.safeshare-${randomBytes(6).toString("hex")}.tmp`);
+  try {
+    const fh = await openFile(tmp, "wx", 0o600);
+    try {
+      await fh.writeFile(data);
+    } finally {
+      await fh.close();
+    }
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
+}
+
 function positiveOrNull(limit: number | null | undefined): number | null {
   return limit !== null && limit !== undefined && limit > 0 ? limit : null;
 }
@@ -221,6 +280,11 @@ export class SafeShareClient {
           ...options.headers,
         },
         body: options.body,
+        // The API has no redirects. Following one (a 307/308 resends the body)
+        // could send the token, a file password in an upload form, or the
+        // upload itself to another host, so refuse them all. Point baseUrl at
+        // the final https:// address instead.
+        redirect: "error",
         signal: controller.signal,
       });
 
@@ -259,6 +323,9 @@ export class SafeShareClient {
       chunk_size: number;
       max_expiration_hours: number;
       registration_enabled: boolean;
+      anonymous_mode?: boolean;
+      client_encryption_required?: boolean;
+      strip_metadata?: boolean;
     }>("GET", "/api/config");
 
     this.configCache = {
@@ -267,6 +334,9 @@ export class SafeShareClient {
       chunkSize: response.chunk_size,
       maxExpirationHours: response.max_expiration_hours,
       registrationEnabled: response.registration_enabled,
+      anonymousMode: !!response.anonymous_mode,
+      clientEncryptionRequired: !!response.client_encryption_required,
+      stripMetadata: !!response.strip_metadata,
     };
 
     return this.configCache;
@@ -280,6 +350,10 @@ export class SafeShareClient {
    * Upload a file to SafeShare
    *
    * Automatically uses chunked upload for large files based on server config.
+   *
+   * With `encrypt` "auto" (the default) the file is encrypted on this machine
+   * when the server is in Ghost mode or requires client-side encryption; the
+   * result's `shareUrl` then carries the key. See UploadOptions.encrypt.
    *
    * @param filePath - Path to the file to upload
    * @param options - Upload options (expiration, download limit, password, progress callback)
@@ -295,33 +369,109 @@ export class SafeShareClient {
     // Get config to determine if chunked upload is needed
     const config = await this.getConfig();
 
-    if (stats.size >= config.chunkUploadThreshold) {
-      return this.uploadChunked(resolvedPath, options);
+    if (await this.willEncrypt(options.encrypt)) {
+      return this.uploadEncrypted(resolvedPath, filename, stats.size, config, options);
     }
 
-    return this.uploadSimple(resolvedPath, options);
+    const src: UploadSource = { name: filename, size: stats.size, path: resolvedPath };
+    if (stats.size >= config.chunkUploadThreshold) {
+      return this.uploadChunked(src, options, false);
+    }
+
+    return this.uploadSimple(src, options, false);
+  }
+
+  /**
+   * Whether upload() with this encrypt mode encrypts on this server. Throws
+   * ClientEncryptionRequiredError for "never" on a server that requires it.
+   */
+  async willEncrypt(mode: EncryptMode = "auto"): Promise<boolean> {
+    if (mode !== "auto" && mode !== "always" && mode !== "never") {
+      throw new ValidationError('encrypt must be "auto", "always" or "never"');
+    }
+    const config = await this.getConfig();
+    if (mode === "always") return true;
+    if (mode === "never") {
+      if (config.clientEncryptionRequired) throw new e2e.ClientEncryptionRequiredError();
+      return false;
+    }
+    return config.anonymousMode || config.clientEncryptionRequired;
+  }
+
+  /** Encrypt in memory in the web app's format, then upload the ciphertext. */
+  private async uploadEncrypted(
+    path: string,
+    filename: string,
+    size: number,
+    config: PublicConfig,
+    options: UploadOptions
+  ): Promise<UploadResult> {
+    if (size > e2e.MAX_ENCRYPTED_PAYLOAD) {
+      throw new e2e.PayloadTooLargeError(
+        `Encrypting holds the whole file in memory, and the limit is ${e2e.MAX_ENCRYPTED_PAYLOAD} bytes`
+      );
+    }
+    const data = await readFile(path);
+    if (data.length !== size) throw new UploadError("The file changed while it was being read");
+
+    const kind = e2e.metadataFileType(data);
+    if (kind && config.anonymousMode && config.stripMetadata && !options.keepMetadata) {
+      throw new e2e.MetadataNotRemovedError(
+        `This ${kind} may contain metadata (author, location, dates) and the server cannot remove it from an ` +
+          "encrypted file; scrub it first, for example with mat2, or set keepMetadata"
+      );
+    }
+
+    // Always padded (SF02), whatever the server says about its mode.
+    const payload = e2e.wrapPayload(options.showFilename ? "" : filename, data, true, config.maxFileSize);
+    data.fill(0);
+    const key = e2e.generateKey();
+    const rawKey = e2e.decodeKey(key);
+    const blob = e2e.encryptBlob(rawKey, payload);
+    payload.fill(0);
+    rawKey.fill(0);
+
+    const src: UploadSource = {
+      name: options.showFilename ? filename : e2e.ENCRYPTED_FILENAME,
+      size: blob.length,
+      data: blob,
+    };
+    const result = blob.length >= config.chunkUploadThreshold
+      ? await this.uploadChunked(src, options, true)
+      : await this.uploadSimple(src, options, true);
+    const out: UploadResult = {
+      ...result,
+      filename,
+      encrypted: true,
+      metadataKept: kind && config.stripMetadata ? kind : undefined,
+    };
+    // Non-enumerable, so JSON.stringify, console.log and spreads leave the key out.
+    Object.defineProperties(out, {
+      encryptionKey: { value: key, enumerable: false },
+      shareUrl: { value: e2e.buildShareUrl(this.baseUrl, result.claimCode, key), enumerable: false },
+    });
+    return out;
   }
 
   /**
    * Simple (non-chunked) file upload
    */
   private async uploadSimple(
-    filePath: string,
-    options: UploadOptions
+    src: UploadSource,
+    options: UploadOptions,
+    encrypted: boolean
   ): Promise<UploadResult> {
-    const resolvedPath = resolve(filePath);
-    const stats = statSync(resolvedPath);
-    const filename = basename(resolvedPath);
+    const filename = src.name;
+    const stats = { size: src.size };
 
     // Create form data
     const formData = new FormData();
 
     // Read file as buffer for FormData
     const chunks: Buffer[] = [];
-    const stream = createReadStream(resolvedPath);
 
-    for await (const chunk of stream) {
-      chunks.push(Buffer.from(chunk));
+    for await (const chunk of sourceChunks(src)) {
+      chunks.push(chunk);
       if (options.onProgress) {
         const bytesUploaded = chunks.reduce((sum, c) => sum + c.length, 0);
         options.onProgress({
@@ -345,6 +495,9 @@ export class SafeShareClient {
     if (options.password) {
       formData.append("password", options.password);
     }
+    if (encrypted) {
+      formData.append("client_encrypted", "true");
+    }
 
     const response = await this.request<{
       claim_code: string;
@@ -356,6 +509,7 @@ export class SafeShareClient {
       user_id?: number;
     }>("POST", "/api/upload", {
       body: formData,
+      headers: encrypted ? { "X-SafeShare-Client-Encrypted": "true" } : undefined,
     });
 
     return {
@@ -374,12 +528,12 @@ export class SafeShareClient {
    * Chunked file upload for large files
    */
   private async uploadChunked(
-    filePath: string,
-    options: UploadOptions
+    src: UploadSource,
+    options: UploadOptions,
+    encrypted: boolean
   ): Promise<UploadResult> {
-    const resolvedPath = resolve(filePath);
-    const stats = statSync(resolvedPath);
-    const filename = basename(resolvedPath);
+    const filename = src.name;
+    const stats = { size: src.size };
 
     // Initialize chunked upload
     const initBody: Record<string, unknown> = {
@@ -395,6 +549,9 @@ export class SafeShareClient {
     if (options.password) {
       initBody.password = options.password;
     }
+    if (encrypted) {
+      initBody.client_encrypted = true;
+    }
 
     const session = await this.request<{
       upload_id: string;
@@ -403,7 +560,10 @@ export class SafeShareClient {
       expires_at: string;
     }>("POST", "/api/upload/init", {
       body: JSON.stringify(initBody),
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(encrypted ? { "X-SafeShare-Client-Encrypted": "true" } : {}),
+      },
     });
 
     const uploadId = session.upload_id;
@@ -413,13 +573,11 @@ export class SafeShareClient {
     try {
       // Upload chunks
       let bytesUploaded = 0;
-      const stream = createReadStream(resolvedPath, { highWaterMark: chunkSize });
       let chunkNumber = 0;
 
-      for await (const chunk of stream) {
-        const chunkBuffer = Buffer.from(chunk);
+      for await (const chunkBuffer of sourceChunks(src, chunkSize)) {
         const chunkFormData = new FormData();
-        chunkFormData.append("chunk", new Blob([chunkBuffer]));
+        chunkFormData.append("chunk", new Blob([new Uint8Array(chunkBuffer)]));
 
         await this.request<ChunkUploadResult>(
           "POST",
@@ -480,6 +638,7 @@ export class SafeShareClient {
       const response = await this.fetchImpl(url, {
         method: "POST",
         headers: this.getHeaders(),
+        redirect: "error",
         signal: controller.signal,
       });
 
@@ -774,6 +933,27 @@ export class SafeShareClient {
     // Resolve and sanitize destination path
     const resolvedDest = resolve(destination);
 
+    if (options.decryptionKey !== undefined) {
+      // Check the destination first, so a limited download isn't used up.
+      const existing = await lstat(resolvedDest).catch(() => null);
+      if (existing?.isSymbolicLink()) {
+        throw new DownloadError(`Destination is a symbolic link, refusing to write to it: ${resolvedDest}`);
+      }
+      if (existing && !options.overwrite) {
+        throw new DownloadError(`Destination already exists: ${resolvedDest}`);
+      }
+      const file = await this.downloadDecrypted(claimCode, options.decryptionKey, options);
+      try {
+        await writePrivate(resolvedDest, file.data, !!options.overwrite);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        throw new DownloadError(
+          code === "EEXIST" ? `Destination already exists: ${resolvedDest}` : `Writing the file failed: ${String(err)}`
+        );
+      }
+      return resolvedDest;
+    }
+
     const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
@@ -783,9 +963,9 @@ export class SafeShareClient {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
         headers: this.downloadHeaders(options.password),
-        // A file password travels in a header, which fetch would forward on a
-        // redirect; refuse redirects rather than risk sending it elsewhere.
-        redirect: options.password ? "error" : "follow",
+        // A file password or token travels in a header, which fetch may
+        // forward on a redirect; refuse redirects rather than risk that.
+        redirect: options.password || this.apiToken ? "error" : "follow",
         signal: controller.signal,
       });
 
@@ -837,6 +1017,74 @@ export class SafeShareClient {
   }
 
   /**
+   * Download an end-to-end encrypted file into memory and decrypt it.
+   *
+   * `key` is the base64url key from the share link (see e2e.parseShareUrl).
+   * Handles every format the web app writes. The returned filename comes from
+   * the uploader; pass it through e2e.safeFilename() before saving under it.
+   */
+  async downloadDecrypted(
+    claimCode: string,
+    key: string,
+    options: Pick<DownloadOptions, "password" | "onProgress"> = {}
+  ): Promise<e2e.DecryptedFile> {
+    this.validateClaimCode(claimCode);
+    const rawKey = e2e.decodeKey(key);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const info = await this.getFileInfo(claimCode);
+      const limit = info.size;
+      if (!Number.isSafeInteger(limit) || limit < 0 || limit > e2e.MAX_ENCRYPTED_PAYLOAD + e2e.CIPHERTEXT_OVERHEAD) {
+        throw new DownloadError(`The server reports ${limit} bytes; decrypting holds the whole file in memory`);
+      }
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), this.timeout);
+      const response = await this.fetchImpl(`${this.baseUrl}/api/claim/${claimCode}`, {
+        method: "GET",
+        headers: this.downloadHeaders(options.password),
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        await handleErrorResponse(response);
+      }
+      const declared = parseInt(response.headers.get("content-length") || "0", 10);
+      if (declared > limit) {
+        throw new DownloadError(`The server sent ${declared} bytes but reported ${limit}`);
+      }
+      const chunks: Buffer[] = [];
+      let received = 0;
+      if (response.body) {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.length;
+          if (received > limit) {
+            await reader.cancel();
+            throw new DownloadError(`The server sent more than the ${limit} bytes it reported`);
+          }
+          chunks.push(Buffer.from(value));
+          options.onProgress?.({
+            bytesDownloaded: received,
+            totalBytes: limit,
+            percentage: limit > 0 ? Math.round((received / limit) * 100) : -1,
+          });
+        }
+      } else {
+        const ab = Buffer.from(await response.arrayBuffer());
+        if (ab.length > limit) throw new DownloadError(`The server sent more than the ${limit} bytes it reported`);
+        chunks.push(ab);
+      }
+      const plaintext = e2e.decryptBlob(rawKey, Buffer.concat(chunks));
+      return e2e.unwrapDownload(plaintext, info.filename);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      rawKey.fill(0);
+    }
+  }
+
+  /**
    * Download a file and return as Buffer
    *
    * @param claimCode - File claim code
@@ -849,6 +1097,10 @@ export class SafeShareClient {
   ): Promise<Buffer> {
     this.validateClaimCode(claimCode);
 
+    if (options.decryptionKey !== undefined) {
+      return (await this.downloadDecrypted(claimCode, options.decryptionKey, options)).data;
+    }
+
     const url = `/api/claim/${claimCode}`;
 
     const controller = new AbortController();
@@ -858,9 +1110,9 @@ export class SafeShareClient {
       const response = await this.fetchImpl(`${this.baseUrl}${url}`, {
         method: "GET",
         headers: this.downloadHeaders(options.password),
-        // A file password travels in a header, which fetch would forward on a
-        // redirect; refuse redirects rather than risk sending it elsewhere.
-        redirect: options.password ? "error" : "follow",
+        // A file password or token travels in a header, which fetch may
+        // forward on a redirect; refuse redirects rather than risk that.
+        redirect: options.password || this.apiToken ? "error" : "follow",
         signal: controller.signal,
       });
 
@@ -904,6 +1156,7 @@ export class SafeShareClient {
       download_url: string;
       sha256_hash: string;
       scan_status?: ScanStatus;
+      client_encrypted?: boolean;
       download_available?: boolean;
     }>("GET", `/api/claim/${claimCode}/info`);
 
@@ -922,6 +1175,7 @@ export class SafeShareClient {
       passwordProtected: response.password_required,
       downloadsRemaining: downloadsRemaining,
       scanStatus: response.scan_status,
+      clientEncrypted: !!response.client_encrypted,
       downloadAvailable: response.download_available,
     };
   }

@@ -4,7 +4,7 @@ Official Go SDK for the [SafeShare](https://github.com/fjmerc/safeshare) file sh
 
 ## Requirements
 
-- Go 1.21 or later
+- Go 1.25 or later
 
 ## Installation
 
@@ -110,6 +110,19 @@ fmt.Println(result.ExpiresAt)  // Expiration time (nil if none)
 
 The SDK automatically uses chunked upload for large files based on server configuration.
 
+#### End-to-End Encrypted Upload
+
+On servers in Ghost (anonymous) mode or that require client-side encryption, `Upload` encrypts the file before it leaves your machine, in the web app's format; set `Encrypt: safeshare.EncryptAlways` to encrypt on any server. The share link carries the key in its fragment and opens in a browser.
+
+```go
+result, err := client.Upload(ctx, "./report.pdf", &safeshare.UploadOptions{
+    Encrypt: safeshare.EncryptAlways, // default EncryptAuto: only when the server needs it
+})
+fmt.Println(result.ShareURL) // https://host/#/claim/CODE/key/KEY - keep it secret
+```
+
+The filename is hidden inside the encrypted payload unless `ShowFilename` is set, and encrypted uploads are always padded to a size bucket. `EncryptAuto` follows the server's settings; use `EncryptAlways` if the server itself isn't trusted to report them. The SDK cannot remove metadata: on Ghost servers, JPEG, PNG, PDF and Office files fail with `ErrMetadataNotRemoved` unless `KeepMetadata` is set. Encrypted files are held in memory whole.
+
 #### Chunked Upload Progress
 
 For large files, the progress callback includes chunk information:
@@ -136,6 +149,44 @@ err := client.Download(ctx, "abc12345", "./output.pdf", &safeshare.DownloadOptio
     },
 })
 ```
+
+#### Download and Decrypt
+
+```go
+link, err := safeshare.ParseShareURL(shareURL)
+client, _ := safeshare.NewClient(safeshare.ClientConfig{BaseURL: link.BaseURL})
+file, err := client.DownloadDecrypted(ctx, link.ClaimCode, link.Key, nil)
+// file.Filename comes from the uploader: use safeshare.SafeFilename before saving
+```
+
+Or set `DownloadOptions.DecryptionKey` with `Download`/`DownloadToWriter`.
+
+#### Download a Drop-Page Submission
+
+Files sent with a server's no-JavaScript drop page (`/drop`) are encrypted with [age](https://age-encryption.org) to the recipient's key. `DownloadDrop` decrypts the download as it streams and extracts it into a new directory: the sender's file, and `message.txt` if they wrote one.
+
+```go
+import "filippo.io/age"
+
+f, err := os.Open("drop-key.txt") // from age-keygen; keep it private
+if err != nil {
+    return err
+}
+identities, err := age.ParseIdentities(f)
+f.Close()
+if err != nil {
+    return err
+}
+files, err := client.DownloadDrop(ctx, "abc12345", "./drop-abc12345", identities, nil)
+if err != nil {
+    return err
+}
+for _, file := range files {
+    fmt.Println(file.Name, file.Size)
+}
+```
+
+The directory must not exist yet (its parent must). Only plain files are written, with mode 0600 and safe names; an archive with anything else, or a download that fails to decrypt to the last byte, is refused and the directory removed. `ExtractDrop` does the same for a drop already downloaded (`safeshare-drop.tar.age`).
 
 #### Download to Writer
 
@@ -341,7 +392,15 @@ safeshare-cli upload ./myfile.txt
 
 # With options
 safeshare-cli upload ./myfile.txt --expires 24 --limit 10 --password secret
+
+# Encrypt on this machine (automatic on Ghost servers); prints a share link with the key
+safeshare-cli upload ./myfile.txt --encrypt
+
+# Over Tor (always encrypts; every request goes through the proxy)
+safeshare-cli --proxy socks5h://127.0.0.1:9050 upload ./myfile.txt
 ```
+
+Flags for encrypted uploads: `--encrypt`, `--no-encrypt`, `--show-filename` (let the server see the name), `--keep-metadata` (allow JPEG/PNG/PDF/Office files on Ghost servers; the CLI can't remove their metadata).
 
 #### Download
 
@@ -354,6 +413,12 @@ safeshare-cli download abc12345 ./output.pdf --password secret
 
 # Overwrite existing file
 safeshare-cli download abc12345 ./output.pdf --overwrite
+
+# Encrypted file: read the share link from stdin (keeps the key out of shell history)
+safeshare-cli download - < link.txt
+
+# Drop-page submission: decrypt with your age key into a new directory (default drop-CODE)
+safeshare-cli download abc12345 --identity drop-key.txt
 ```
 
 #### File Info
@@ -390,6 +455,19 @@ safeshare-cli rename abc12345 "new-name.pdf"
 safeshare-cli config
 ```
 
+#### Verify a Server's Web App
+
+```bash
+# Compare every page and script with the hashes published for the server's release
+safeshare-cli verify https://share.example.com
+
+# Over Tor, or against a hash list you made from a checkout
+safeshare-cli verify --proxy socks5://127.0.0.1:9050 http://example.onion
+safeshare-cli verify https://share.example.com --manifest web-assets.sha256
+```
+
+Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYING_RELEASES.md](../../docs/VERIFYING_RELEASES.md) for what it can and can't show. From Go: `ParseWebAssetManifest`, `Client.FetchReleaseManifest` and `Client.VerifyWebAssets`.
+
 ## Security
 
 - **Token Redaction**: API tokens are redacted in `String()` output to prevent accidental logging
@@ -398,15 +476,18 @@ safeshare-cli config
 - **Symlink Protection**: Downloads refuse to overwrite symbolic links
 - **File Overwrite Protection**: By default, downloading to an existing file returns an error
 - **CLI Token Warning**: Warning displayed when token is passed via command line (visible in process list)
+- **End-to-End Encryption**: AES-256-GCM in the web app's format; keys never sent to the server; decrypted files written with mode 0600
+- **Proxy Support**: `ClientConfig.Proxy` (CLI `--proxy`) sends every request through a proxy, including `socks5://` with remote DNS (Tor); `ALL_PROXY`/`HTTPS_PROXY`/`HTTP_PROXY` are honoured too
+- **Redirects**: redirects to another host or scheme are refused, so the token and file passwords stay with the server
 
 ## Development
 
 ```bash
 # Run tests (requires Docker)
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.24 go test -v ./...
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go test -v ./...
 
 # Build CLI
-docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.24 go build -o safeshare-cli ./cmd/safeshare-cli
+docker run --rm -v "$PWD":/app -w /app/sdk/go golang:1.25 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
 ## Advanced Usage

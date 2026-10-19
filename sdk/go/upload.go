@@ -18,6 +18,11 @@ import (
 // Upload uploads a file to SafeShare.
 // It automatically uses chunked upload for large files based on server configuration.
 //
+// By default (EncryptAuto) the file is encrypted on this machine, in the web
+// app's format, when the server is in Ghost (anonymous) mode or requires
+// client-side encryption; the result's ShareURL then carries the key. See
+// UploadOptions.Encrypt.
+//
 // Example:
 //
 //	result, err := client.Upload(ctx, "/path/to/file.txt", &safeshare.UploadOptions{
@@ -55,21 +60,64 @@ func (c *Client) Upload(ctx context.Context, filePath string, opts *UploadOption
 		return nil, fmt.Errorf("getting config: %w", err)
 	}
 
-	if fileInfo.Size() >= config.ChunkUploadThreshold {
-		return c.uploadChunked(ctx, absPath, fileInfo.Size(), opts)
+	encrypt, err := shouldEncrypt(opts.Encrypt, config)
+	if err != nil {
+		return nil, err
+	}
+	if encrypt {
+		return c.uploadEncrypted(ctx, absPath, filename, fileInfo.Size(), config, opts)
 	}
 
-	return c.uploadSimple(ctx, absPath, fileInfo.Size(), opts)
+	src := fileSource(absPath, filename, fileInfo.Size())
+	if fileInfo.Size() >= config.ChunkUploadThreshold {
+		return c.uploadChunked(ctx, src, opts, false)
+	}
+
+	return c.uploadSimple(ctx, src, opts, false)
+}
+
+// uploadSource is the data sent as the uploaded file: a file on disk, or an
+// encrypted blob in memory.
+type uploadSource struct {
+	name string
+	size int64
+	open func() (io.ReadCloser, error)
+}
+
+func fileSource(path, name string, size int64) uploadSource {
+	return uploadSource{name: name, size: size, open: func() (io.ReadCloser, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("opening file: %w", err)
+		}
+		return f, nil
+	}}
+}
+
+func memorySource(name string, data []byte) uploadSource {
+	return uploadSource{name: name, size: int64(len(data)), open: func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}}
+}
+
+// clientEncryptedHeader marks upload requests whose content was encrypted
+// before upload; servers that require client-side encryption check it.
+func clientEncryptedHeader(encrypted bool) http.Header {
+	if !encrypted {
+		return nil
+	}
+	return http.Header{"X-Safeshare-Client-Encrypted": []string{"true"}}
 }
 
 // uploadSimple performs a simple (non-chunked) file upload.
-func (c *Client) uploadSimple(ctx context.Context, filePath string, fileSize int64, opts *UploadOptions) (*UploadResult, error) {
-	filename := filepath.Base(filePath)
+func (c *Client) uploadSimple(ctx context.Context, src uploadSource, opts *UploadOptions, encrypted bool) (*UploadResult, error) {
+	filename := src.name
+	fileSize := src.size
 
 	// Open file
-	file, err := os.Open(filePath)
+	file, err := src.open()
 	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
+		return nil, err
 	}
 	defer file.Close()
 
@@ -114,13 +162,16 @@ func (c *Client) uploadSimple(ctx context.Context, filePath string, fileSize int
 	if opts.Password != "" {
 		writer.WriteField("password", opts.Password)
 	}
+	if encrypted {
+		writer.WriteField("client_encrypted", "true")
+	}
 
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("closing multipart writer: %w", err)
 	}
 
 	// Make request
-	resp, err := c.request(ctx, http.MethodPost, "/api/upload", &buf, writer.FormDataContentType())
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload", &buf, writer.FormDataContentType(), "", clientEncryptedHeader(encrypted))
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +194,9 @@ func (c *Client) uploadSimple(ctx context.Context, filePath string, fileSize int
 }
 
 // uploadChunked performs a chunked file upload for large files.
-func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize int64, opts *UploadOptions) (*UploadResult, error) {
-	filename := filepath.Base(filePath)
+func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *UploadOptions, encrypted bool) (*UploadResult, error) {
+	filename := src.name
+	fileSize := src.size
 
 	// Initialize chunked upload
 	initBody := map[string]interface{}{
@@ -160,13 +212,16 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 	if opts.Password != "" {
 		initBody["password"] = opts.Password
 	}
+	if encrypted {
+		initBody["client_encrypted"] = true
+	}
 
 	initJSON, err := json.Marshal(initBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling init body: %w", err)
 	}
 
-	resp, err := c.request(ctx, http.MethodPost, "/api/upload/init", bytes.NewReader(initJSON), "application/json")
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload/init", bytes.NewReader(initJSON), "application/json", "", clientEncryptedHeader(encrypted))
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +240,10 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 	totalChunks := session.TotalChunks
 
 	// Open file
-	file, err := os.Open(filePath)
+	file, err := src.open()
 	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
+		c.cancelUpload(ctx, uploadID)
+		return nil, err
 	}
 	defer file.Close()
 
@@ -243,7 +299,7 @@ func (c *Client) uploadChunked(ctx context.Context, filePath string, fileSize in
 
 		// Upload chunk
 		path := fmt.Sprintf("/api/upload/chunk/%s/%d", uploadID, chunkNum)
-		chunkResp, err := c.request(ctx, http.MethodPost, path, &buf, writer.FormDataContentType())
+		chunkResp, err := c.doRequest(ctx, http.MethodPost, path, &buf, writer.FormDataContentType(), "", clientEncryptedHeader(encrypted))
 		if err != nil {
 			c.cancelUpload(ctx, uploadID)
 			return nil, &ChunkedUploadError{

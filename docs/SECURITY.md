@@ -180,7 +180,7 @@ X-CSRF-Token: <token>
 ## 🕵️ Anonymous Mode
 
 ### Overview
-Anonymous mode keeps SafeShare from storing or logging anything that identifies the people using it, and from keeping records that could confirm what passed through. It is the core of [Ghost mode](DEPLOYMENT_MODES.md#ghost-mode). It protects uploaders even from the server's own administrators, which matters for whistleblower drops and other privacy-sensitive deployments.
+Anonymous mode keeps SafeShare from storing or logging anything that identifies the people using it, and from keeping records that could confirm what passed through. It is the core of [Ghost mode](DEPLOYMENT_MODES.md#ghost-mode). It keeps uploaders' identities from the server's own administrators too, which matters for whistleblower drops and other privacy-sensitive deployments.
 
 ### Setup
 
@@ -361,7 +361,7 @@ docker run -d \
 ### Security Properties
 ✅ **Authenticated encryption** - Detects tampering
 ✅ **Unique nonce per file** - Prevents replay attacks
-✅ **Zero-knowledge server** - Server cannot read encrypted files
+✅ **Unreadable at rest** - Stored files can't be read from the disk without `ENCRYPTION_KEY`. The server holds that key, so it can read them; for files the server can't read, use [client-side encryption](E2E_ENCRYPTION.md)
 ✅ **Backward compatible** - Works with existing plain files
 
 **Plaintext while an upload is in progress:** files are encrypted as they're stored, so their unencrypted bytes exist briefly on the uploads volume while an upload is being processed - a simple upload in the spool directory (`.spool/`, unlinked as soon as it's created, so no file is left once processing ends, even if the server crashes), a chunked upload's chunks in `.partial/` until it's assembled, and - when metadata stripping is on with `ENCRYPTION_KEY` - a short-lived temp file in the system temp directory. Deleting a file frees its blocks but doesn't overwrite them, so the data can stay recoverable from the disk until it's reused. Put the uploads volume (and the container's temp directory) on encrypted storage if unencrypted data must never reach disk at all. The uploads volume should be a local filesystem: on NFS, unlinking an open file leaves a visible `.nfs*` placeholder behind instead.

@@ -4,7 +4,10 @@ SafeShare Client
 Main client class for interacting with SafeShare API.
 """
 
+import io
+import os
 import re
+import tempfile
 import time
 import uuid
 import warnings
@@ -13,8 +16,13 @@ from typing import BinaryIO, Optional, Union
 
 import httpx
 
+from safeshare import e2e
+from safeshare.e2e import DecryptedFile
 from safeshare.exceptions import (
     AuthenticationError,
+    ClientEncryptionRequiredError,
+    MetadataNotRemovedError,
+    PayloadTooLargeError,
     ChunkedUploadError,
     DownloadError,
     RateLimitError,
@@ -51,10 +59,118 @@ RATE_LIMIT_POLL_MIN_WAIT = 15.0
 RATE_LIMIT_POLL_MAX_WAIT = 60.0
 
 
+def _write_private(path: Path, data: bytes, overwrite: bool) -> None:
+    """Write data with mode 0600. Without overwrite the file must not exist
+    (O_EXCL also refuses a symlink); with it, a temp file is renamed over the
+    destination so a symlink there is replaced, not followed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not overwrite:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            raise DownloadError(f"Destination already exists: {path}") from None
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+        except BaseException:
+            try:
+                os.unlink(path)  # don't leave a partial file behind
+            except OSError:
+                pass
+            raise
+        return
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".safeshare-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _rate_limit_poll_delay(error: RateLimitError) -> float:
     """Seconds to wait after a 429 from the status endpoint (T52)."""
     wait = max(RATE_LIMIT_POLL_MIN_WAIT, float(error.retry_after or 0))
     return min(wait, RATE_LIMIT_POLL_MAX_WAIT)
+
+_ENCRYPT_MODES = ("auto", "always", "never")
+
+
+def _env_proxy(scheme: str) -> str:
+    """The proxy environment variable for scheme ("http", "https", "all" or
+    "no"), lowercase first as urllib does. Under CGI (REQUEST_METHOD set) the
+    uppercase HTTP_PROXY can come from a client's Proxy: header (httpoxy,
+    CVE-2016-1000110), so it is ignored there."""
+    v = os.environ.get(f"{scheme}_proxy")
+    if v:
+        return v
+    if scheme == "http" and "REQUEST_METHOD" in os.environ:
+        return ""
+    return os.environ.get(f"{scheme.upper()}_PROXY", "")
+
+
+def _normalize_proxy(url: str, source: str = "proxy") -> str:
+    url = url.strip()
+    if source != "proxy" and "://" not in url and url:
+        url = "http://" + url  # as httpx does for environment values
+    scheme, sep, rest = url.partition("://")
+    if not sep or scheme.lower() not in ("socks5", "socks5h", "http", "https") or not rest:
+        raise ValidationError(f"{source} must be a URL such as socks5://127.0.0.1:9050")
+    return url
+
+
+def _no_proxy_patterns(no_proxy: str) -> list:
+    """httpx mount patterns for NO_PROXY entries (as httpx itself builds them)."""
+    import ipaddress
+
+    out = []
+    for host in (h.strip() for h in no_proxy.split(",")):
+        if not host:
+            continue
+        if "://" in host:
+            out.append(host)
+            continue
+        try:
+            ip = ipaddress.ip_address(host)
+            out.append(f"all://{host}" if ip.version == 4 else f"all://[{host}]")
+            continue
+        except ValueError:
+            pass
+        out.append("all://localhost" if host.lower() == "localhost" else f"all://*{host}")
+    return out
+
+
+def _proxy_options(proxy: Optional[str], disable_proxy: bool, verify: bool = True) -> dict:
+    """httpx options for the proxy rules in SafeShareClient.__init__."""
+    if proxy:
+        return {"proxy": _normalize_proxy(proxy), "trust_env": False}
+    if disable_proxy:
+        return {"trust_env": False}
+    https_p = _env_proxy("https")
+    http_p = _env_proxy("http")
+    if https_p and http_p:
+        return {}  # httpx's usual per-scheme and NO_PROXY rules
+    single = https_p or http_p or _env_proxy("all")
+    if not single:
+        return {}
+    single = _normalize_proxy(single, "The proxy environment variable")
+    no_proxy = _env_proxy("no")
+    if not no_proxy:
+        return {"proxy": single}
+    if no_proxy.strip() == "*":
+        return {}  # NO_PROXY=* means no proxy at all; httpx applies it
+    # The one proxy covers both schemes; only hosts NO_PROXY names go direct.
+    # trust_env stays on (SSL_CERT_FILE etc.); httpx's own env mounts for the
+    # same proxy and NO_PROXY hosts merge with these.
+    mounts: dict = {"all://": httpx.HTTPTransport(proxy=single, verify=verify)}
+    for pattern in _no_proxy_patterns(no_proxy):
+        mounts[pattern] = None
+    return {"mounts": mounts}
+
 
 class SafeShareClient:
     """
@@ -78,6 +194,8 @@ class SafeShareClient:
         api_token: Optional[str] = None,
         timeout: float = 300.0,
         verify_ssl: bool = True,
+        proxy: Optional[str] = None,
+        disable_proxy: bool = False,
     ) -> None:
         """
         Initialize SafeShare client.
@@ -89,6 +207,12 @@ class SafeShareClient:
             verify_ssl: Whether to verify SSL certificates (default: True).
                         WARNING: Setting this to False is a security risk and should
                         only be used for local development with self-signed certificates.
+            proxy: Send every request through this proxy, e.g.
+                   "socks5://127.0.0.1:9050" for Tor (host names are resolved
+                   by the proxy). By default ALL_PROXY/HTTPS_PROXY/HTTP_PROXY
+                   are honoured; when only one of them is set it covers every
+                   request, so an http:// URL can't bypass it.
+            disable_proxy: Ignore the proxy environment variables.
         """
         self.base_url = base_url.rstrip("/")
         self._api_token = api_token  # Use private attribute for security
@@ -107,12 +231,14 @@ class SafeShareClient:
         # Server configuration (fetched on first use)
         self._config: Optional[PublicConfig] = None
 
-        # Create HTTP client
+        # Create HTTP client. Redirects are not followed (httpx default), so
+        # the token, file passwords and requests never go to another origin.
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=timeout,
             verify=verify_ssl,
             headers=self._build_headers(),
+            **_proxy_options(proxy, disable_proxy, verify_ssl),
         )
 
     @property
@@ -243,11 +369,24 @@ class SafeShareClient:
         max_downloads: Optional[int] = None,
         password: Optional[str] = None,
         progress_callback: Optional[ProgressCallback] = None,
+        encrypt: str = "auto",
+        show_filename: bool = False,
+        keep_metadata: bool = False,
     ) -> UploadResult:
         """
         Upload a file to SafeShare.
 
         Automatically uses chunked upload for large files (above server threshold).
+
+        End-to-end encryption (``encrypt``): "auto" (default) encrypts on
+        servers in Ghost (anonymous) mode or that require client-side
+        encryption; "always" encrypts on any server (use it if the server
+        itself isn't trusted to report its mode); "never" never does. The file
+        is encrypted on this machine in the web app's format and padded to a
+        size bucket, its name is hidden unless ``show_filename``, and the
+        result's ``share_url`` carries the key. The file is held in memory.
+        The SDK can't remove metadata: on Ghost servers JPEG, PNG, PDF and
+        Office files raise MetadataNotRemovedError unless ``keep_metadata``.
 
         Args:
             file: File path or file-like object to upload
@@ -281,7 +420,7 @@ class SafeShareClient:
             # Try to get file size
             current_pos = file_obj.tell()
             file_obj.seek(0, 2)  # Seek to end
-            file_size = file_obj.tell()
+            file_size = file_obj.tell() - current_pos  # what is left to read
             file_obj.seek(current_pos)  # Restore position
             if filename is None:
                 filename = getattr(file_obj, "name", "upload")
@@ -294,6 +433,19 @@ class SafeShareClient:
         try:
             # Check if chunked upload is needed
             config = self.config
+            if self.will_encrypt(encrypt):
+                return self._upload_encrypted(
+                    file_obj,
+                    filename,
+                    file_size,
+                    config,
+                    expires_in_hours=expires_in_hours,
+                    max_downloads=max_downloads,
+                    password=password,
+                    progress_callback=progress_callback,
+                    show_filename=show_filename,
+                    keep_metadata=keep_metadata,
+                )
             if config.chunked_upload_enabled and file_size >= config.chunked_upload_threshold:
                 return self._chunked_upload(
                     file_obj,
@@ -318,6 +470,97 @@ class SafeShareClient:
             if should_close:
                 file_obj.close()
 
+    def will_encrypt(self, encrypt: str = "auto") -> bool:
+        """Whether upload() with this ``encrypt`` mode encrypts on this server.
+
+        Raises ClientEncryptionRequiredError for "never" on a server that
+        requires encryption.
+        """
+        if encrypt not in _ENCRYPT_MODES:
+            raise ValidationError(f"encrypt must be one of {', '.join(_ENCRYPT_MODES)}")
+        config = self.config
+        if encrypt == "always":
+            return True
+        if encrypt == "never":
+            if config.client_encryption_required:
+                raise ClientEncryptionRequiredError("This server only accepts files encrypted before upload")
+            return False
+        return config.anonymous_mode or config.client_encryption_required
+
+    def _upload_encrypted(
+        self,
+        file_obj: BinaryIO,
+        filename: str,
+        file_size: int,
+        config: PublicConfig,
+        expires_in_hours: Optional[float],
+        max_downloads: Optional[int],
+        password: Optional[str],
+        progress_callback: Optional[ProgressCallback],
+        show_filename: bool,
+        keep_metadata: bool,
+    ) -> UploadResult:
+        """Encrypt in memory in the web app's format, then upload the ciphertext."""
+        if file_size > e2e.MAX_ENCRYPTED_PAYLOAD:
+            raise PayloadTooLargeError(
+                f"Encrypting holds the whole file in memory, and the limit is {e2e.MAX_ENCRYPTED_PAYLOAD} bytes"
+            )
+        parts = []
+        remaining = file_size + 1
+        while remaining > 0:
+            chunk = file_obj.read(min(remaining, 1 << 24))
+            if not chunk:
+                break
+            if not isinstance(chunk, (bytes, bytearray)):
+                raise UploadError("The file must be opened in binary mode")
+            parts.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(parts)
+        del parts
+        if len(data) != file_size:
+            raise UploadError("The file changed while it was being read")
+
+        kind = e2e.metadata_file_type(data)
+        if kind and config.anonymous_mode and config.strip_metadata and not keep_metadata:
+            raise MetadataNotRemovedError(
+                f"This {kind} may contain metadata (author, location, dates) and the server cannot remove it "
+                "from an encrypted file; scrub it first, for example with mat2, or pass keep_metadata=True"
+            )
+
+        # Always padded (SF02), whatever the server says about its mode.
+        payload = e2e.wrap_payload("" if show_filename else filename, data, True, config.max_file_size)
+        del data
+        key_str = e2e.generate_key()
+        blob = e2e.encrypt_blob(e2e.decode_key(key_str), payload)
+        del payload
+
+        upload_name = filename if show_filename else e2e.ENCRYPTED_FILENAME
+        src = io.BytesIO(blob)
+        upload = (
+            self._chunked_upload
+            if config.chunked_upload_enabled and len(blob) >= config.chunked_upload_threshold
+            else self._simple_upload
+        )
+        result = upload(
+            src,
+            upload_name,
+            len(blob),
+            expires_in_hours=expires_in_hours,
+            max_downloads=max_downloads,
+            password=password,
+            progress_callback=progress_callback,
+            client_encrypted=True,
+        )
+        result.encrypted = True
+        result.original_filename = filename
+        if not result.file_size:  # async chunked completion doesn't report it
+            result.file_size = len(blob)
+        result.encryption_key = key_str
+        result.share_url = e2e.build_share_url(self.base_url, result.claim_code, key_str)
+        if kind and config.strip_metadata:
+            result.metadata_kept = kind
+        return result
+
     def _simple_upload(
         self,
         file_obj: BinaryIO,
@@ -327,6 +570,7 @@ class SafeShareClient:
         max_downloads: Optional[int] = None,
         password: Optional[str] = None,
         progress_callback: Optional[ProgressCallback] = None,
+        client_encrypted: bool = False,
     ) -> UploadResult:
         """Perform simple (non-chunked) upload."""
         # Build form data
@@ -338,13 +582,17 @@ class SafeShareClient:
             data["max_downloads"] = str(max_downloads)
         if password is not None:
             data["password"] = password
+        headers = {}
+        if client_encrypted:
+            data["client_encrypted"] = "true"
+            headers["X-SafeShare-Client-Encrypted"] = "true"
 
         # Report initial progress
         if progress_callback:
             progress_callback(UploadProgress.from_bytes(0, file_size))
 
         try:
-            response = self._client.post("/api/upload", files=files, data=data)
+            response = self._client.post("/api/upload", files=files, data=data, headers=headers)
             result_data = self._handle_response(response)
 
             # Report completion
@@ -366,6 +614,7 @@ class SafeShareClient:
         max_downloads: Optional[int] = None,
         password: Optional[str] = None,
         progress_callback: Optional[ProgressCallback] = None,
+        client_encrypted: bool = False,
     ) -> UploadResult:
         """Perform chunked upload for large files."""
         # Initialize upload session
@@ -375,6 +624,7 @@ class SafeShareClient:
             expires_in_hours=expires_in_hours,
             max_downloads=max_downloads,
             password=password,
+            client_encrypted=client_encrypted,
         )
 
         chunk_size = session.chunk_size
@@ -415,6 +665,7 @@ class SafeShareClient:
         expires_in_hours: Optional[float] = None,
         max_downloads: Optional[int] = None,
         password: Optional[str] = None,
+        client_encrypted: bool = False,
     ) -> ChunkedUploadSession:
         """
         Initialize a chunked upload session.
@@ -442,8 +693,12 @@ class SafeShareClient:
             data["max_downloads"] = max_downloads
         if password is not None:
             data["password"] = password
+        headers = {}
+        if client_encrypted:
+            data["client_encrypted"] = True
+            headers["X-SafeShare-Client-Encrypted"] = "true"
 
-        response = self._client.post("/api/upload/init", json=data)
+        response = self._client.post("/api/upload/init", json=data, headers=headers)
         result = self._handle_response(response)
         return ChunkedUploadSession(**result)
 
@@ -597,9 +852,18 @@ class SafeShareClient:
         destination: Union[str, Path, BinaryIO],
         password: Optional[str] = None,
         progress_callback: Optional[DownloadProgressCallback] = None,
+        decryption_key: Optional[str] = None,
+        overwrite: Optional[bool] = None,
     ) -> Path:
         """
         Download a file by claim code.
+
+        With ``decryption_key`` (the part after "/key/" in an encrypted share
+        link) the file is downloaded into memory, decrypted, and written
+        decrypted (mode 0600); an existing destination is then refused unless
+        ``overwrite=True``, and checked before downloading so a limited
+        download isn't used up. (Plain downloads keep their old behaviour of
+        replacing the destination unless ``overwrite=False``.)
 
         Args:
             claim_code: File claim code
@@ -617,6 +881,26 @@ class SafeShareClient:
         """
         # Validate claim code
         self._validate_claim_code(claim_code)
+
+        if decryption_key is not None:
+            if isinstance(destination, (str, Path)):
+                dest_path = Path(destination)
+                if dest_path.is_symlink():
+                    raise DownloadError(f"Destination is a symbolic link, refusing to write to it: {dest_path}")
+                if dest_path.exists() and not overwrite:
+                    raise DownloadError(f"Destination already exists: {dest_path}")
+                f = self.download_decrypted(claim_code, decryption_key, password, progress_callback)
+                try:
+                    _write_private(dest_path, f.data, bool(overwrite))
+                except OSError as err:
+                    raise DownloadError(f"Writing the file failed: {err}") from err
+                return dest_path.resolve()
+            f = self.download_decrypted(claim_code, decryption_key, password, progress_callback)
+            destination.write(f.data)
+            return Path(getattr(destination, "name", "download"))
+
+        if overwrite is False and isinstance(destination, (str, Path)) and Path(destination).exists():
+            raise DownloadError(f"Destination already exists: {destination}")
 
         # The password goes in the X-File-Password header; the ?password=
         # query parameter is deprecated server-side because URLs end up in
@@ -684,6 +968,62 @@ class SafeShareClient:
             raise
         except Exception as e:
             raise DownloadError(f"Download failed: {e}") from e
+
+    def download_decrypted(
+        self,
+        claim_code: str,
+        key: str,
+        password: Optional[str] = None,
+        progress_callback: Optional[DownloadProgressCallback] = None,
+    ) -> DecryptedFile:
+        """Download an end-to-end encrypted file into memory and decrypt it.
+
+        ``key`` is the base64url key from the share link (see
+        safeshare.e2e.parse_share_url). Handles every format the web app
+        writes. The returned filename comes from the uploader; use
+        safeshare.e2e.safe_filename() before saving under it.
+        """
+        self._validate_claim_code(claim_code)
+        raw_key = e2e.decode_key(key)
+        info = self.get_file_info(claim_code)
+        limit = info.file_size
+        if limit < 0 or limit > e2e.MAX_ENCRYPTED_PAYLOAD + e2e.CIPHERTEXT_OVERHEAD:
+            raise DownloadError(f"The server reports {limit} bytes; decrypting holds the whole file in memory")
+        headers = {"X-File-Password": password} if password else {}
+        try:
+            data = self._download_bounded(claim_code, headers, limit, progress_callback)
+        except httpx.HTTPError as err:
+            raise DownloadError(f"Download failed: {err}") from err
+        plaintext = e2e.decrypt_blob(raw_key, data)
+        return e2e.unwrap_download(plaintext, info.original_filename)
+
+    def _download_bounded(
+        self,
+        claim_code: str,
+        headers: dict,
+        limit: int,
+        progress_callback: Optional[DownloadProgressCallback],
+    ) -> bytes:
+        """Download a claim into memory, refusing more than ``limit`` bytes."""
+        buf = bytearray()
+        with self._client.stream("GET", f"/api/claim/{claim_code}", headers=headers) as response:
+            if response.status_code >= 400:
+                response.read()
+                self._handle_response(response)
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > limit:
+                raise DownloadError(f"The server sent {declared} bytes but reported {limit}")
+            start = time.time()
+            for chunk in response.iter_bytes(chunk_size=65536):
+                buf += chunk
+                if len(buf) > limit:
+                    raise DownloadError(f"The server sent more than the {limit} bytes it reported")
+                if progress_callback:
+                    elapsed = time.time() - start
+                    progress_callback(
+                        DownloadProgress.from_bytes(len(buf), limit, len(buf) / elapsed if elapsed > 0 else None)
+                    )
+        return bytes(buf)
 
     def get_file_info(self, claim_code: str, password: Optional[str] = None) -> FileInfo:
         """

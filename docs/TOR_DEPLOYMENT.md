@@ -1,6 +1,6 @@
 # Tor Hidden Service Deployment
 
-Deploy SafeShare as a Tor hidden service (.onion address) for maximum anonymity. Neither the operator nor users can be identified by network analysis.
+Deploy SafeShare as a Tor onion service (.onion address). Tor hides the server's location from its visitors, and the visitors' IP addresses from the server and from anyone watching the network. It doesn't protect against someone who can watch both ends of a connection, or who takes over the running server; see the [threat model](#threat-model).
 
 ## Prerequisites
 
@@ -131,6 +131,10 @@ These environment variables are recommended for Tor deployments:
 | `RATE_LIMIT_UPLOAD` / `RATE_LIMIT_DOWNLOAD` | Sized for the whole service | Per-IP limits are shared by every Tor visitor (see below) |
 | `MAX_INFLIGHT_PER_IP_PER_FILE` | `0` (disabled), or sized to expected concurrent visitors | The default of 3 concurrent downloads of one file applies to all Tor visitors combined |
 | `MAX_ENCRYPTED_DOWNLOADS_PER_IP` | `0` (disabled), or a value sized to expected concurrent visitors | See below — the default of 8 applies per *apparent* IP, and every Tor visitor shares the same one |
+
+### Sources with JavaScript turned off
+
+Tor Browser's **Safest** setting turns JavaScript off, and the normal upload page can't encrypt without it. Setting `DROP_RECIPIENT` to an age public key turns on a [no-JavaScript drop page](DROP_PAGE.md) at `/drop`: the server encrypts each upload to that key on arrival, and only the private key's holder, off the server, can open it. Read its trade-off first: the server sees each file unencrypted while it arrives.
 
 ### `MAX_ENCRYPTED_DOWNLOADS_PER_IP` and hidden services
 
@@ -301,11 +305,15 @@ environment:
 | Network observer sees server IP | Yes | Tor hides the server's real IP |
 | Network observer sees user IP | Yes | Tor hides the user's real IP |
 | Server operator identifies uploaders | Yes | Tor hides IPs from the server; `ANONYMOUS_MODE` keeps IPs and user agents out of storage and logs |
-| Server operator reads uploaded files | Yes (with `REQUIRE_CLIENT_ENCRYPTION`, default in anonymous mode) | Files are encrypted in the browser and the key never reaches the server. The server can't verify the client's claim, so it only protects uploaders who use the web page as intended |
+| Server operator reads uploaded files | Yes (with `REQUIRE_CLIENT_ENCRYPTION`, default in anonymous mode) | Files are encrypted in the browser or by `safeshare-cli`, and the key never reaches the server. The server can't verify the client's claim, so it only protects uploaders who use the web page or CLI as intended. The [drop page](DROP_PAGE.md) is the exception: the server sees each file while it arrives |
 | Operator compelled to confirm a known document was shared | Yes (with `ANONYMOUS_MODE`) | No content hash is stored, and deleted rows are overwritten |
 | File metadata reveals identity | Partial (with `STRIP_METADATA`) | JPEG, PNG, Office (docx/xlsx/pptx) and PDF metadata stripped in the browser. Other formats keep theirs; scrub before uploading |
-| Server compromise reveals file contents | Yes for files already uploaded (with required client-side encryption) | An attacker who controls the server could serve modified JavaScript to future visitors |
-| Correlation attacks (timing) | Partial | Tor provides some protection; high-traffic services are harder to correlate |
+| Server compromise reveals file contents | Yes for files already uploaded (with required client-side encryption) | See the next row for later uploads |
+| Attacker controls the running server | No | They can serve modified JavaScript that leaks later visitors' files or keys. `safeshare-cli verify` detects a changed web app when someone runs it; `safeshare-cli` and the SDKs don't run the server's code |
+| Correlation attacks (timing) | Partial | Tor provides some protection; high-traffic services are harder to correlate. Stored times are rounded to the hour |
+| Adversary watching both ends of a Tor connection | No | A limit of Tor itself |
+
+SafeShare has not had an independent security audit. Sources facing a government or another well-resourced adversary should use [SecureDrop](https://securedrop.org), which is built, audited and run for that threat.
 
 ## Troubleshooting
 

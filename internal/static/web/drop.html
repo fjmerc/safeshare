@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Send a file without JavaScript - SafeShare</title>
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/drop.css">
+</head>
+<body>
+    <div class="container drop-page">
+        <header>
+            <div class="logo-container">
+                <img src="/assets/logo.svg" alt="" class="logo">
+            </div>
+            <h1>Send a file</h1>
+            <p class="subtitle">This page works with JavaScript turned off, for example in Tor Browser on its Safest setting.</p>
+        </header>
+
+        <main id="main">
+            <section class="card" aria-labelledby="howHeading">
+                <h2 id="howHeading">How it works</h2>
+                <ol class="drop-steps">
+                    <li>You choose a file, and can add a message.</li>
+                    <li>The server removes hidden information from the file, then locks the file and the message with the recipient's key, before storing anything.</li>
+                    <li>You get a code. Give it to the recipient the way you agreed. Only the person with the matching private key can open what you sent, not the server or anyone who later gets hold of it.</li>
+                </ol>
+                <p class="drop-notice"><strong>What the server can see.</strong> Your browser doesn't encrypt anything here, so the server handles your file unencrypted for the moment it takes to lock it. Someone who controls the server while you upload could read it. If you can use JavaScript you trust, or the <code>safeshare-cli</code> tool, those encrypt on your own device instead.</p>
+            </section>
+
+            <section class="card" aria-labelledby="sendHeading">
+                <h2 id="sendHeading">Send</h2>
+                <form class="drop-form" method="post" action="/drop" enctype="multipart/form-data">
+                    <label for="dropFile">File</label>
+                    <input id="dropFile" name="file" type="file">
+
+                    <label for="dropMessage">Message <span class="drop-optional">(optional)</span></label>
+                    <textarea id="dropMessage" name="message" rows="6" maxlength="32768"></textarea>
+
+                    <button type="submit" class="drop-submit">Encrypt and send</button>
+                    <p class="drop-hint">Send a file, a message, or both. Large files may be refused; if yours is, you'll be told the limit.</p>
+                </form>
+            </section>
+
+            <section class="card" aria-labelledby="cleanHeading">
+                <h2 id="cleanHeading">Hidden information</h2>
+                <p>Before locking it, the server removes:</p>
+                <ul>
+                    <li><strong>JPEG and PNG photos:</strong> location, camera details, dates and other EXIF/XMP data.</li>
+                    <li><strong>PDF:</strong> author, title, dates, the software used, the document IDs, XMP data on pages and images, and the names and dates on comments. <em>Photos inside a PDF keep their own data.</em></li>
+                    <li><strong>Videos and audio (MP4, MOV, M4V, M4A, 3GP, MP3):</strong> the metadata tags (location, dates, device, titles).</li>
+                    <li><strong>Word, Excel and PowerPoint (.docx, .xlsx, .pptx):</strong> the document properties (author, company, dates), the save times inside the file, and the data in JPEG and PNG photos and in videos inside it (documents with TIFF or HEIC photos are refused). <em>Comments and tracked changes keep the names of whoever wrote them, and an Excel file can keep the folder it was saved in, which may include a user name</em>: remove comments, accept changes, and save a copy in a new folder before sending.</li>
+                </ul>
+                <p>If that fails, nothing is sent. Other kinds of file are sent as they are. Nothing can remove what is visible in the file itself, such as a name in the text or a face in a photo.</p>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

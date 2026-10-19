@@ -116,6 +116,31 @@ with open("document.pdf", "rb") as f:
     result = client.upload(f, filename="custom_name.pdf")
 ```
 
+## End-to-End Encryption
+
+On servers in Ghost (anonymous) mode or that require client-side encryption, `upload()` encrypts the file on your machine before it is sent, in the web app's format, so the share link opens in a browser. Pass `encrypt="always"` to encrypt on any server, including one you don't trust to report its own mode.
+
+```python
+result = client.upload("report.pdf", encrypt="always")
+print(result.share_url)  # https://host/#/claim/CODE/key/KEY - keep it secret
+
+from safeshare import e2e
+link = e2e.parse_share_url(result.share_url)
+with SafeShareClient(link.base_url) as recipient:
+    f = recipient.download_decrypted(link.claim_code, link.key)  # in memory
+    # or save it: decrypted, mode 0600, never overwriting by default
+    recipient.download(link.claim_code, e2e.safe_filename(f.filename), decryption_key=link.key)
+```
+
+`f.filename` comes from the uploader, so always pass it through `e2e.safe_filename()` before using it as a path.
+
+- The filename is hidden inside the encrypted file unless `show_filename=True`, and encrypted uploads are padded to a size bucket.
+- The SDK can't remove metadata: on Ghost servers, JPEG, PNG, PDF and Office files raise `MetadataNotRemovedError` unless `keep_metadata=True`. Scrub them first, for example with mat2.
+- Files are encrypted and decrypted in memory.
+- `encryption_key` and `share_url` are left out of `model_dump()`/JSON on purpose.
+- Over Tor: `SafeShareClient(url, proxy="socks5h://127.0.0.1:9050")` sends every request through the proxy, and host names are resolved there. Redirects are never followed.
+- With only one of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set, that proxy is used for every request except hosts listed in `NO_PROXY`.
+
 ## Download Files
 
 ### Simple Download

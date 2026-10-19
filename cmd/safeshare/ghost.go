@@ -129,26 +129,14 @@ func newServerErrorLog(anonymous bool) *log.Logger {
 	return log.New(slogWriter{anonymous: anonymous}, "", 0)
 }
 
-// killSwitchServiceWorker is what /service-worker.js returns in anonymous
+// killSwitchServiceWorker is the file /service-worker.js returns in anonymous
 // mode. Visitors who loaded the site before it was switched to anonymous mode
 // still have the real worker installed and controlling their pages; browsers
 // check the worker script on navigation, so this stub replaces it, deletes
 // every cache and unregisters itself. It has no handler for network requests,
-// so it never intercepts anything while it is running.
-const killSwitchServiceWorker = `// SafeShare service worker removal (anonymous mode).
-// Installs at once, deletes all caches and unregisters; never handles requests.
-self.addEventListener('install', () => {
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys.map((key) => caches.delete(key)));
-    await self.registration.unregister();
-  })());
-});
-`
+// so it never intercepts anything while it is running. It is an embedded file,
+// not a Go string, so it is covered by the published web asset hashes.
+const killSwitchServiceWorker = "service-worker-anonymous.js"
 
 // manifestHandler serves the web app manifest from assets, except in anonymous
 // mode, where it answers 404 so no browser offers to install the app.
@@ -160,4 +148,26 @@ func manifestHandler(cfg *config.Config, assets http.Handler) http.Handler {
 		}
 		http.StripPrefix("/", assets).ServeHTTP(w, r)
 	})
+}
+
+// logDropPage reports at startup whether the no-JavaScript drop page is on,
+// and warns about settings that undercut it.
+func logDropPage(cfg *config.Config) {
+	if !cfg.Drop.Enabled() {
+		return
+	}
+	slog.Info("drop page enabled at /drop: uploads are encrypted to DROP_RECIPIENT on arrival",
+		"recipient", cfg.Drop.RecipientKey,
+		"max_size", cfg.Drop.MaxSize,
+		"max_concurrent", cfg.Drop.MaxConcurrent,
+		"expiration_hours", cfg.Drop.ExpirationHours)
+	if !cfg.IsAnonymousMode() {
+		slog.Warn("drop page enabled without ANONYMOUS_MODE: senders' IP addresses, exact times and file hashes are recorded and logged as for any upload; set ANONYMOUS_MODE=true for sources who need anonymity (docs/DROP_PAGE.md)")
+	}
+	if cfg.RequireAuthForUpload {
+		slog.Warn("drop page enabled with REQUIRE_AUTH_FOR_UPLOAD (DROP_ALLOW_WITHOUT_LOGIN=true): /drop accepts files from anyone, without a login")
+	}
+	if cfg.Drop.MaxSize > cfg.GetMaxFileSize() {
+		slog.Warn("DROP_MAX_SIZE is larger than MAX_FILE_SIZE; drops are limited to MAX_FILE_SIZE")
+	}
 }
