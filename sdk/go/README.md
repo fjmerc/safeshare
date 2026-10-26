@@ -381,6 +381,8 @@ cd sdk/go
 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
+`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Builds that didn't go through `scripts/build-cli.sh` or `go install` report `dev`. The server's version is in `safeshare-cli config`.
+
 ### Configuration
 
 Set environment variables:
@@ -448,7 +450,7 @@ safeshare-cli info abc12345
 safeshare-cli list
 
 # With pagination
-safeshare-cli list --page 2 --per-page 50
+safeshare-cli list --limit 50 --offset 50
 ```
 
 #### Delete File
@@ -481,6 +483,39 @@ safeshare-cli verify https://share.example.com --manifest web-assets.sha256
 ```
 
 Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYING_RELEASES.md](../../docs/VERIFYING_RELEASES.md) for what it can and can't show. From Go: `ParseWebAssetManifest`, `Client.FetchReleaseManifest` and `Client.VerifyWebAssets`.
+
+### Scripting with `--json`
+
+With `--json`, any command prints one line of JSON on stdout and nothing else (no progress bar, no banners). Notes and warnings still go to stderr. When a command fails, the exit status is non-zero and stderr gets `{"error": "...", "code": "...", "status": 404}`; `code` (the server's error code) and `status` (HTTP) are there only for errors from the server.
+
+```bash
+url=$(safeshare-cli upload video.mp4 --expires 24 --json | jq -r .url)
+```
+
+`upload` prints:
+
+```json
+{"schema":1,"file":"video.mp4","claim_code":"Xk3pQ9aB","filename":"video.mp4","size":1048576,"mime_type":"video/mp4","expires_at":"2026-10-27T12:00:00Z","download_limit":null,"password_protected":false,"encrypted":false,"url":"https://share.example.com/claim/Xk3pQ9aB"}
+```
+
+`url` is the link to open: the claim page, or for an encrypted upload, the share link.
+
+> **Warning: the JSON of an encrypted upload is a secret.** Its `url` holds the decryption key after the `#`, and anyone who sees it can read the file. Don't write it to logs, CI output, shared files or anywhere else you wouldn't put a password. (The Go SDK leaves the key and the link out of `UploadResult`'s JSON for this reason; the CLI adds the link because it is what the command is for.)
+
+The other commands print:
+
+| Command | Fields |
+|---|---|
+| `info` | `claim_code` and the file's details: `filename`, `size`, `mime_type`, `expires_at`, `password_protected`, `downloads_remaining`, `client_encrypted`, `download_available`, `scan_status` |
+| `list` | `files` (each with `claim_code`, `filename`, `size`, `uploaded_at`, `expires_at`, `completed_downloads`, `download_limit`, ...), `total` |
+| `config` | `url` and the server's settings, including `version` |
+| `download` | `claim_code`, `filename`, `size`, `path` (where it was saved), `decrypted`; for a drop, `path` (the directory) and `files` |
+| `delete` | `claim_code`, `deleted`. Needs `--force`, since it can't ask |
+| `rename` | `claim_code`, `filename` |
+| `version` | `version`, `go`, `os`, `arch` |
+| `verify` | `result` (`verified`, `tampered` or `could_not_verify`), `server_version`, `version`, `compared_against`, `files` (each with `file`, `url_path`, `status`, `expected`, `got`, `detail`), `loose_csp`. Printed whenever the comparison ran; the exit status still says the result |
+
+Every document has `"schema": 1`. Within a schema, fields may be added but are never renamed or removed. Times are RFC 3339; a missing limit or expiry is `null`. Strings are as the server sent them: unlike the text output, control characters in names are not escaped for the terminal, so take care when printing them.
 
 ## Security
 

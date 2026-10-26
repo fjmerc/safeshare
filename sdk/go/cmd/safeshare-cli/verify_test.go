@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -39,12 +40,13 @@ func TestRunVerifyExitStatus(t *testing.T) {
 		csp        string
 		wantCode   int // 0: no error
 		wantOutput string
+		wantResult string // --json "result"
 	}{
-		"verified":  {script, 200, strict, 0, "VERIFIED"},
-		"tampered":  {script + "evil()", 200, strict, 2, "MISMATCH"},
-		"blocked":   {script, 403, strict, 1, "fetch failed"},
-		"loose csp": {script, 200, "default-src 'self'; script-src 'self' 'unsafe-inline'", 1, "allow-loose-csp"},
-		"no csp":    {script, 200, "", 1, "missing"},
+		"verified":  {script, 200, strict, 0, "VERIFIED", "verified"},
+		"tampered":  {script + "evil()", 200, strict, 2, "MISMATCH", "tampered"},
+		"blocked":   {script, 403, strict, 1, "fetch failed", "could_not_verify"},
+		"loose csp": {script, 200, "default-src 'self'; script-src 'self' 'unsafe-inline'", 1, "allow-loose-csp", "could_not_verify"},
+		"no csp":    {script, 200, "", 1, "missing", "could_not_verify"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -69,8 +71,8 @@ func TestRunVerifyExitStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var out bytes.Buffer
-			err = runVerify(context.Background(), &out, client, verifyOptions{manifestFile: manifest})
+			var out, doc bytes.Buffer
+			err = runVerify(context.Background(), &out, client, verifyOptions{manifestFile: manifest, jsonTo: &doc})
 			var ee *exitError
 			switch {
 			case tc.wantCode == 0 && err != nil:
@@ -83,6 +85,16 @@ func TestRunVerifyExitStatus(t *testing.T) {
 			}
 			if !strings.Contains(out.String(), "Server reports version 1.17.0") {
 				t.Errorf("version not shown:\n%s", out.String())
+			}
+			var report verifyJSON
+			if err := json.Unmarshal(doc.Bytes(), &report); err != nil {
+				t.Fatalf("--json report: %v: %q", err, doc.String())
+			}
+			if report.Result != tc.wantResult || report.ServerVersion != "1.17.0" || report.Version != "" || len(report.Files) != 3 {
+				t.Errorf("--json report: %s", doc.String())
+			}
+			if tc.wantResult == "tampered" && !strings.Contains(doc.String(), `"status":"mismatch"`) {
+				t.Errorf("--json report lacks the mismatch: %s", doc.String())
 			}
 		})
 	}

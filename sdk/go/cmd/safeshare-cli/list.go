@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +38,15 @@ Examples:
 			files, err := client.ListFiles(ctx, limit, offset)
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				if files.Files == nil {
+					files.Files = []safeshare.UserFile{} // [] rather than null
+				}
+				return printJSON(cmd.OutOrStdout(), struct {
+					Schema int `json:"schema"`
+					*safeshare.UserFilesResponse
+				}{jsonSchema, files})
 			}
 
 			if len(files.Files) == 0 {
@@ -96,6 +106,9 @@ Example:
 			}
 
 			claimCode := args[0]
+			if jsonOut && !force {
+				return fmt.Errorf("--json needs --force: delete cannot ask for confirmation")
+			}
 
 			// Create client
 			client, err := newClient(baseURL, apiToken)
@@ -125,6 +138,9 @@ Example:
 
 			if err := client.DeleteFile(ctx, claimCode); err != nil {
 				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), map[string]any{"schema": jsonSchema, "claim_code": claimCode, "deleted": true})
 			}
 
 			fmt.Println("File deleted successfully.")
@@ -164,6 +180,9 @@ Example:
 			result, err := client.RenameFile(ctx, claimCode, newFilename)
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), map[string]any{"schema": jsonSchema, "claim_code": claimCode, "filename": result.NewFilename})
 			}
 
 			fmt.Printf("File renamed to: %s\n", display(result.NewFilename))

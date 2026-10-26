@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -48,7 +49,11 @@ Examples:
   safeshare-cli upload document.pdf
   safeshare-cli upload large-file.zip --expires 48 --limit 5
   safeshare-cli upload secret.txt --password mysecret
-  safeshare-cli upload notes.txt --encrypt`,
+  safeshare-cli upload notes.txt --encrypt
+  safeshare-cli upload notes.txt --json | jq -r .url
+
+With --json, the "url" field is the link to open. For an encrypted upload it
+is the share link with the key, so the output is a secret: don't log it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
@@ -96,7 +101,7 @@ Examples:
 			opts.KeepMetadata = keepMetadata
 
 			// Progress callback
-			if !noProgress {
+			if !noProgress && !jsonOut {
 				opts.OnProgress = func(p safeshare.UploadProgress) {
 					bar := progressBar(p.Percentage)
 					status := fmt.Sprintf("\r%s %3d%% (%s/%s)",
@@ -112,7 +117,13 @@ Examples:
 				}
 			}
 
-			fmt.Printf("Uploading: %s (%s)\n", filePath, formatBytes(info.Size()))
+			// Human output goes nowhere with --json; stdout is the document.
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				out = io.Discard
+			}
+
+			fmt.Fprintf(out, "Uploading: %s (%s)\n", filePath, formatBytes(info.Size()))
 
 			ctx := context.Background()
 
@@ -121,7 +132,7 @@ Examples:
 				return err
 			}
 			if willEncrypt {
-				fmt.Println("Encrypting on this machine before upload.")
+				fmt.Fprintln(out, "Encrypting on this machine before upload.")
 				if info.Size() > largeEncryptedFile {
 					fmt.Fprintf(os.Stderr, "[WARNING] Encryption holds the whole file in memory (%s).\n", formatBytes(info.Size()))
 				}
@@ -131,46 +142,23 @@ Examples:
 
 			// Upload
 			result, err := client.Upload(ctx, filePath, opts)
-			if err != nil {
+			if opts.OnProgress != nil {
 				fmt.Println() // Clear progress line
+			}
+			if err != nil {
 				if errors.Is(err, safeshare.ErrMetadataNotRemoved) {
 					return fmt.Errorf("%w\nPass --keep-metadata to upload it anyway", err)
 				}
 				return err
 			}
-
-			fmt.Println() // Clear progress line
-			fmt.Println()
-			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("Upload successful!\n")
-			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("Claim Code:  %s\n", result.ClaimCode)
-			fmt.Printf("Filename:    %s\n", result.Filename)
-			fmt.Printf("Size:        %s\n", formatBytes(result.Size))
-			fmt.Printf("MIME Type:   %s\n", result.MimeType)
-			if result.ExpiresAt != nil {
-				fmt.Printf("Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
-			} else {
-				fmt.Printf("Expires:     Never\n")
-			}
-			if result.DownloadLimit != nil {
-				fmt.Printf("Downloads:   %d\n", *result.DownloadLimit)
-			} else {
-				fmt.Printf("Downloads:   Unlimited\n")
-			}
-			fmt.Printf("Password:    %v\n", result.PasswordProtected)
-			fmt.Printf("Encrypted:   %v\n", result.Encrypted)
-			fmt.Println(strings.Repeat("─", 50))
 			if result.MetadataKept != "" {
 				fmt.Fprintf(os.Stderr, "[WARNING] This %s was uploaded encrypted, so its metadata was not removed.\n", result.MetadataKept)
 			}
-			if result.Encrypted {
-				fmt.Println("\nShare link (contains the decryption key; anyone with it can read the file):")
-				fmt.Println(result.ShareURL)
-				return nil
-			}
-			fmt.Printf("\nDownload URL: %s/claim/%s\n", strings.TrimRight(baseURL, "/"), result.ClaimCode)
 
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), newUploadJSON(filePath, baseURL, result))
+			}
+			printUploadResult(out, result)
 			return nil
 		},
 	}
@@ -185,6 +173,46 @@ Examples:
 	cmd.Flags().BoolVar(&keepMetadata, "keep-metadata", false, "Allow encrypted uploads of files whose metadata the CLI cannot remove")
 
 	return cmd
+}
+
+// printUploadResult prints the summary of an upload and the link to open.
+func printUploadResult(out io.Writer, result *safeshare.UploadResult) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	fmt.Fprintf(out, "Upload successful!\n")
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	fmt.Fprintf(out, "Claim Code:  %s\n", result.ClaimCode)
+	fmt.Fprintf(out, "Filename:    %s\n", result.Filename)
+	fmt.Fprintf(out, "Size:        %s\n", formatBytes(result.Size))
+	fmt.Fprintf(out, "MIME Type:   %s\n", result.MimeType)
+	if result.ExpiresAt != nil {
+		fmt.Fprintf(out, "Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Fprintf(out, "Expires:     Never\n")
+	}
+	if result.DownloadLimit != nil {
+		fmt.Fprintf(out, "Downloads:   %d\n", *result.DownloadLimit)
+	} else {
+		fmt.Fprintf(out, "Downloads:   Unlimited\n")
+	}
+	fmt.Fprintf(out, "Password:    %v\n", result.PasswordProtected)
+	fmt.Fprintf(out, "Encrypted:   %v\n", result.Encrypted)
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	if result.Encrypted {
+		fmt.Fprintln(out, "\nShare link (contains the decryption key; anyone with it can read the file):")
+		fmt.Fprintln(out, result.ShareURL)
+		return
+	}
+	fmt.Fprintf(out, "\nDownload URL: %s\n", uploadURL(baseURL, result))
+}
+
+// uploadURL is the link to open for an upload: the share link (with the
+// key) for an encrypted one, else the claim page.
+func uploadURL(server string, result *safeshare.UploadResult) string {
+	if result.Encrypted {
+		return result.ShareURL
+	}
+	return strings.TrimRight(server, "/") + "/claim/" + result.ClaimCode
 }
 
 // isOnion reports whether the server URL is a Tor onion service.

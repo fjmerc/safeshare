@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +32,13 @@ Example:
 			config, err := client.GetConfig(ctx)
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), struct {
+					Schema int    `json:"schema"`
+					URL    string `json:"url"`
+					*safeshare.PublicConfig
+				}{jsonSchema, baseURL, config})
 			}
 
 			fmt.Printf("SafeShare Server Configuration\n")

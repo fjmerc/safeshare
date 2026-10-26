@@ -30,7 +30,7 @@ var (
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, escapeControls(err.Error()))
+		printError(err)
 		var ee *exitError
 		if errors.As(err, &ee) {
 			os.Exit(ee.code)
@@ -50,6 +50,12 @@ Upload, download, and manage files from your terminal.
 Configuration:
   Set SAFESHARE_URL and SAFESHARE_TOKEN environment variables, or use --url and --token flags.
 
+Scripts:
+  --json prints one JSON document on stdout (no progress bars), with a
+  "schema" field; errors go to stderr as {"error", "code", "status"} and the
+  exit status is non-zero. The JSON of an encrypted upload includes the share
+  link with its key: treat that output as a secret.
+
 Examples:
   safeshare-cli upload myfile.txt --expires 24
   safeshare-cli download abc12345 ./output.pdf
@@ -68,6 +74,7 @@ Examples:
 	rootCmd.PersistentFlags().StringVar(&apiToken, "token", os.Getenv("SAFESHARE_TOKEN"), "API token (or SAFESHARE_TOKEN env)")
 	rootCmd.PersistentFlags().StringVar(&proxyURL, "proxy", os.Getenv("SAFESHARE_PROXY"), "Send every request through this proxy, e.g. socks5://127.0.0.1:9050 for Tor (or SAFESHARE_PROXY env; ALL_PROXY/HTTPS_PROXY/HTTP_PROXY also work)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "Print one JSON document on stdout instead of text, and errors as JSON on stderr (for scripts)")
 
 	// Add subcommands
 	rootCmd.AddCommand(uploadCmd())
@@ -106,6 +113,11 @@ platform it was built for. "dev" means it was not built by scripts/build-cli.sh
 The server's version is in "safeshare-cli config".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), map[string]any{
+					"schema": jsonSchema, "version": cliVersion(), "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
+				})
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "safeshare-cli %s\n%s %s/%s\n", cliVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 			return nil
 		},
