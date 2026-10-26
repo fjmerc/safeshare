@@ -669,6 +669,8 @@ jobs:
             chmod +x safeshare-cli-linux-amd64 && sudo mv safeshare-cli-linux-amd64 /usr/local/bin/safeshare-cli
             ```
 
+            `safeshare-cli --version` then shows the release it was built from. For scripts, `--json` prints JSON instead of text; see the CLI section of `sdk/go/README.md`.
+
             ## Verify
 
             - `web-assets.sha256`: SHA-256 of every web page and script. Check a running server with `safeshare-cli verify <url>`.

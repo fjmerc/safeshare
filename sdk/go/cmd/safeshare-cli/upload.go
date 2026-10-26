@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
@@ -74,7 +76,7 @@ log of it, can read the file.`,
 				return err
 			}
 			if showQR && jsonOut {
-				return fmt.Errorf("--qr and --json cannot be used together")
+				return errQRWithJSON
 			}
 
 			// Check every file before uploading any, so a typo in the last
@@ -82,8 +84,10 @@ log of it, can read the file.`,
 			sizes := make([]int64, len(args))
 			for i, filePath := range args {
 				info, err := os.Stat(filePath)
-				if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
 					return fmt.Errorf("file not found: %s", filePath)
+				} else if err != nil {
+					return err
 				}
 				if !info.Mode().IsRegular() {
 					return fmt.Errorf("not a regular file: %s", filePath)
@@ -140,30 +144,39 @@ log of it, can read the file.`,
 				}
 			}
 
-			// Human output goes nowhere with --json; stdout is the document.
-			out := cmd.OutOrStdout()
-			if jsonOut {
-				out = io.Discard
-			}
+			out := humanOut(cmd)
 
-			ctx := context.Background()
+			// Ctrl-C stops after the current file and still reports the ones
+			// already uploaded: their links (and keys) exist nowhere else.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer stop()
 
 			willEncrypt, err := client.WillEncrypt(ctx, opts.Encrypt)
 			if err != nil {
 				return err
 			}
 			if willEncrypt {
-				fmt.Fprintln(out, "Encrypting on this machine before upload.")
+				if jsonOut {
+					fmt.Fprintln(os.Stderr, "[NOTE] Encrypting on this machine before upload.")
+				} else {
+					fmt.Fprintln(out, "Encrypting on this machine before upload.")
+				}
 			} else {
 				fmt.Fprintln(os.Stderr, "[NOTE] Not encrypting: this server doesn't require it. Use --encrypt to encrypt anyway.")
 			}
 
 			results := make([]*safeshare.UploadResult, len(args))
 			errs := make([]error, len(args))
-			failed := 0
+			failed, skipped := 0, 0
 			for i, filePath := range args {
-				if failFast && failed > 0 {
+				switch {
+				case ctx.Err() != nil:
+					errs[i] = errInterrupted
+				case failFast && failed > 0:
 					errs[i] = errSkipped
+				}
+				if errs[i] != nil {
+					skipped++
 					continue
 				}
 				fmt.Fprintf(out, "Uploading: %s (%s)\n", filePath, formatBytes(sizes[i]))
@@ -171,6 +184,11 @@ log of it, can read the file.`,
 					fmt.Fprintf(os.Stderr, "[WARNING] Encryption holds the whole file in memory (%s).\n", formatBytes(sizes[i]))
 				}
 				results[i], errs[i] = uploadOne(ctx, client, filePath, opts)
+				if errs[i] != nil && ctx.Err() != nil {
+					errs[i] = errInterrupted
+					skipped++
+					continue
+				}
 				if errs[i] != nil {
 					failed++
 					if len(args) > 1 {
@@ -197,7 +215,7 @@ log of it, can read the file.`,
 				docs := make([]any, len(args))
 				for i, filePath := range args {
 					if errs[i] != nil {
-						docs[i] = uploadErrorJSON{jsonSchema, filePath, newJSONError(errs[i])}
+						docs[i] = uploadErrorJSON{Schema: jsonSchema, File: filePath, jsonError: newJSONError(errs[i])}
 					} else {
 						docs[i] = newUploadJSON(filePath, baseURL, results[i])
 					}
@@ -213,8 +231,15 @@ log of it, can read the file.`,
 					}
 				}
 			}
-			if failed > 0 {
+			switch {
+			case ctx.Err() != nil:
+				return fmt.Errorf("interrupted: %d of %d files not uploaded", failed+skipped, len(args))
+			case failed > 0 && skipped > 0:
+				return fmt.Errorf("%d of %d uploads failed, %d not attempted", failed, len(args), skipped)
+			case failed > 0:
 				return fmt.Errorf("%d of %d uploads failed", failed, len(args))
+			case skipped > 0:
+				return fmt.Errorf("%d of %d files not uploaded", skipped, len(args))
 			}
 			return nil
 		},
@@ -234,8 +259,11 @@ log of it, can read the file.`,
 	return cmd
 }
 
-// errSkipped is the error of a file not uploaded because of --fail-fast.
-var errSkipped = errors.New("not uploaded: an earlier upload failed (--fail-fast)")
+// Errors of files not uploaded: because of --fail-fast, or Ctrl-C.
+var (
+	errSkipped     = errors.New("not uploaded: an earlier upload failed (--fail-fast)")
+	errInterrupted = errors.New("not uploaded: interrupted")
+)
 
 // uploadOne uploads one file, clearing the progress line afterwards.
 func uploadOne(ctx context.Context, client *safeshare.Client, filePath string, opts *safeshare.UploadOptions) (*safeshare.UploadResult, error) {

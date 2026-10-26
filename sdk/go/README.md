@@ -381,7 +381,7 @@ cd sdk/go
 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
-`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Builds that didn't go through `scripts/build-cli.sh` or `go install` report `dev`. The server's version is in `safeshare-cli config`.
+`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Other builds report what Go recorded instead: for a build from a git checkout, a pseudo-version with the commit (`v0.0.0-20261026133635-d82927633a6a`, `+dirty` with uncommitted changes), or `dev` when there is nothing to go on. The server's version is in `safeshare-cli config`.
 
 ### Configuration
 
@@ -419,7 +419,7 @@ safeshare-cli --proxy socks5h://127.0.0.1:9050 upload ./myfile.txt
 safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
 ```
 
-With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1.
+With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1. Ctrl-C stops after the current file and still prints the links of the files already uploaded.
 
 To open a link on a phone, add `--qr`: each link is also drawn as a QR code in the terminal, to scan with the phone's camera. It is drawn for a terminal with a dark background. `safeshare-cli info CODE --qr` does the same for a file you uploaded earlier (not for end-to-end encrypted files: their link needs the key). `--qr` can't be combined with `--json`.
 
@@ -507,7 +507,7 @@ url=$(safeshare-cli upload video.mp4 --expires 24 --json | jq -r .url)
 {"schema":1,"file":"video.mp4","claim_code":"Xk3pQ9aB","filename":"video.mp4","size":1048576,"mime_type":"video/mp4","expires_at":"2026-10-27T12:00:00Z","download_limit":null,"password_protected":false,"encrypted":false,"url":"https://share.example.com/claim/Xk3pQ9aB"}
 ```
 
-`url` is the link to open: the claim page, or for an encrypted upload, the share link. With several files, `upload` prints an array with one object per file, in the order given. A file that wasn't uploaded has `file`, `error` and possibly `code`/`status` instead of the upload's fields:
+`url` is the link to open: the claim page, or for an encrypted upload, the share link. With several files, `upload` prints an array with one object per file, in the order given (with one file, the object on its own; a script that passes a varying number of files can use `jq 'if type == "array" then .[] else . end'`). A file that wasn't uploaded has `file`, `error` and possibly `code`/`status` instead of the upload's fields:
 
 ```bash
 safeshare-cli upload a.mp4 b.txt --json | jq -r '.[] | .url // "FAILED \(.file): \(.error)"'
@@ -520,13 +520,15 @@ The other commands print:
 | Command | Fields |
 |---|---|
 | `info` | `claim_code` and the file's details: `filename`, `size`, `mime_type`, `expires_at`, `password_protected`, `downloads_remaining`, `client_encrypted`, `download_available`, `scan_status` |
-| `list` | `files` (each with `claim_code`, `filename`, `size`, `uploaded_at`, `expires_at`, `completed_downloads`, `download_limit`, ...), `total` |
+| `list` | `files` (each with `claim_code`, `filename`, `size`, `uploaded_at`, `expires_at`, `completed_downloads`, `download_limit`, ...), `total`, `page`, `per_page` |
 | `config` | `url` and the server's settings, including `version` |
 | `download` | `claim_code`, `filename`, `size`, `path` (where it was saved), `decrypted`; for a drop, `path` (the directory) and `files` |
 | `delete` | `claim_code`, `deleted`. Needs `--force`, since it can't ask |
 | `rename` | `claim_code`, `filename` |
 | `version` | `version`, `go`, `os`, `arch` |
 | `verify` | `result` (`verified`, `tampered` or `could_not_verify`), `server_version`, `version`, `compared_against`, `files` (each with `file`, `url_path`, `status`, `expected`, `got`, `detail`), `loose_csp`. Printed whenever the comparison ran; the exit status still says the result |
+
+The `--version` flag always prints text; use the `version` command for JSON. An error in the command line itself (an unknown flag or command) is also reported as JSON when `--json` is among the arguments.
 
 Every document has `"schema": 1`. Within a schema, fields may be added but are never renamed or removed. Times are RFC 3339; a missing limit or expiry is `null`. Strings are as the server sent them: unlike the text output, control characters in names are not escaped for the terminal, so take care when printing them.
 

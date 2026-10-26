@@ -116,11 +116,7 @@ Examples:
 				opts.OnProgress = printDownloadProgress
 			}
 
-			// Human output goes nowhere with --json; stdout is the document.
-			out := cmd.OutOrStdout()
-			if jsonOut {
-				out = io.Discard
-			}
+			out := humanOut(cmd)
 
 			if key != "" && !keyFromEnv {
 				return downloadEncrypted(ctx, cmd.OutOrStdout(), client, claimCode, key, args[1:], opts)
@@ -177,7 +173,9 @@ Examples:
 				return err
 			}
 			if jsonOut {
-				return printJSON(cmd.OutOrStdout(), downloadJSON{jsonSchema, claimCode, info.Filename, info.Size, destination, false})
+				return printJSON(cmd.OutOrStdout(), downloadJSON{
+					Schema: jsonSchema, ClaimCode: claimCode, Filename: info.Filename, Size: info.Size, Path: destination,
+				})
 			}
 			fmt.Fprintln(out, "\nDownload complete!")
 
@@ -221,7 +219,9 @@ func downloadEncrypted(ctx context.Context, out io.Writer, client *safeshare.Cli
 		return friendlyExists(err)
 	}
 	if jsonOut {
-		return printJSON(out, downloadJSON{jsonSchema, claimCode, file.Filename, int64(len(file.Data)), destination, true})
+		return printJSON(out, downloadJSON{
+			Schema: jsonSchema, ClaimCode: claimCode, Filename: file.Filename, Size: int64(len(file.Data)), Path: destination, Decrypted: true,
+		})
 	}
 	fmt.Fprintf(out, "Decrypted %s (%s) to %s\n", display(file.Filename), formatBytes(int64(len(file.Data))), destination)
 	return nil
@@ -302,9 +302,9 @@ func downloadDrop(out io.Writer, claimCode, identityPath string, dest []string, 
 			ClaimCode string     `json:"claim_code"`
 			Path      string     `json:"path"`
 			Files     []dropFile `json:"files"`
-		}{jsonSchema, claimCode, dir, []dropFile{}}
+		}{Schema: jsonSchema, ClaimCode: claimCode, Path: dir, Files: []dropFile{}}
 		for _, f := range files {
-			doc.Files = append(doc.Files, dropFile{f.Name, f.Size})
+			doc.Files = append(doc.Files, dropFile{Name: f.Name, Size: f.Size})
 		}
 		return printJSON(out, doc)
 	}
@@ -398,7 +398,7 @@ Example:
 
 			claimCode := args[0]
 			if showQR && jsonOut {
-				return fmt.Errorf("--qr and --json cannot be used together")
+				return errQRWithJSON
 			}
 
 			// Create client
@@ -417,34 +417,35 @@ Example:
 					Schema    int    `json:"schema"`
 					ClaimCode string `json:"claim_code"`
 					*safeshare.FileInfo
-				}{jsonSchema, claimCode, info})
+				}{Schema: jsonSchema, ClaimCode: claimCode, FileInfo: info})
 			}
 
-			fmt.Println("File Information:")
-			fmt.Println(strings.Repeat("─", 40))
-			fmt.Printf("Filename:    %s\n", display(info.Filename))
-			fmt.Printf("Size:        %s\n", formatBytes(info.Size))
-			fmt.Printf("MIME Type:   %s\n", info.MimeType)
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, "File Information:")
+			fmt.Fprintln(out, strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Filename:    %s\n", display(info.Filename))
+			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
+			fmt.Fprintf(out, "MIME Type:   %s\n", info.MimeType)
 			if info.ExpiresAt != nil {
-				fmt.Printf("Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
 			} else {
-				fmt.Printf("Expires:     Never\n")
+				fmt.Fprintf(out, "Expires:     Never\n")
 			}
 			if info.DownloadsRemaining != nil {
-				fmt.Printf("Downloads:   %d remaining\n", *info.DownloadsRemaining)
+				fmt.Fprintf(out, "Downloads:   %d remaining\n", *info.DownloadsRemaining)
 			} else {
-				fmt.Printf("Downloads:   Unlimited\n")
+				fmt.Fprintf(out, "Downloads:   Unlimited\n")
 			}
-			fmt.Printf("Password:    %v\n", info.PasswordProtected)
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Password:    %v\n", info.PasswordProtected)
+			fmt.Fprintln(out, strings.Repeat("─", 40))
 
 			if showQR {
 				if info.ClientEncrypted {
 					return fmt.Errorf("no QR code: this file is end-to-end encrypted, and its link needs the key from the uploader's share link")
 				}
 				link := claimURL(baseURL, claimCode)
-				fmt.Printf("\n%s\n", link)
-				return printQR(cmd.OutOrStdout(), link)
+				fmt.Fprintf(out, "\n%s\n", link)
+				return printQR(out, link)
 			}
 			return nil
 		},

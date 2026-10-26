@@ -68,18 +68,40 @@ func TestUploadQR(t *testing.T) {
 	srv := fakeServer(t, &uploads)
 	file := writeTemp(t, "a.txt", "hello")
 
-	if _, err := runCLI(t, "--url", srv.URL, "--json", "upload", "--qr", file); err == nil || !strings.Contains(err.Error(), "--qr") {
+	if _, _, err := runCLI(t, "--url", srv.URL, "--json", "upload", "--qr", file); err == nil || !strings.Contains(err.Error(), "--qr") {
 		t.Errorf("--qr with --json: %v", err)
 	}
 	if uploads.Load() != 0 {
 		t.Fatal("uploaded despite the bad flags")
 	}
 
-	out, err := runCLI(t, "--url", srv.URL, "upload", "--no-progress", "--qr", file)
+	out, _, err := runCLI(t, "--url", srv.URL, "upload", "--no-progress", "--qr", file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, srv.URL+"/claim/code0001") || !strings.Contains(out, "█") {
 		t.Errorf("no link or QR code:\n%s", out)
+	}
+}
+
+func TestQRWarningsAndInfo(t *testing.T) {
+	var uploads atomic.Int32
+	srv := fakeServer(t, &uploads)
+	a, b := writeTemp(t, "a.txt", "hello"), writeTemp(t, "b.txt", "hello")
+
+	out, stderr, err := runCLI(t, "--url", srv.URL, "upload", "--encrypt", "--no-progress", "--qr", a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(stderr, "QR code holds the share link") != 1 || !strings.Contains(out, a+":\n") || !strings.Contains(out, b+":\n") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", out, stderr)
+	}
+
+	out, _, err = runCLI(t, "--url", srv.URL, "info", "--qr", "plain0001")
+	if err != nil || !strings.Contains(out, srv.URL+"/claim/plain0001\n") || !strings.Contains(out, "█") {
+		t.Errorf("info --qr (%v):\n%s", err, out)
+	}
+	if out, _, err = runCLI(t, "--url", srv.URL, "info", "--qr", "encr0001"); err == nil || strings.Contains(out, "█") {
+		t.Errorf("info --qr of an encrypted file: %v\n%s", err, out)
 	}
 }

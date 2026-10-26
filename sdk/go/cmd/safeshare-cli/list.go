@@ -46,7 +46,7 @@ Examples:
 				return printJSON(cmd.OutOrStdout(), struct {
 					Schema int `json:"schema"`
 					*safeshare.UserFilesResponse
-				}{jsonSchema, files})
+				}{Schema: jsonSchema, UserFilesResponse: files})
 			}
 
 			if len(files.Files) == 0 {

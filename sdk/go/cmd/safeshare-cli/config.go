@@ -38,7 +38,7 @@ Example:
 					Schema int    `json:"schema"`
 					URL    string `json:"url"`
 					*safeshare.PublicConfig
-				}{jsonSchema, baseURL, config})
+				}{Schema: jsonSchema, URL: baseURL, PublicConfig: config})
 			}
 
 			fmt.Printf("SafeShare Server Configuration\n")

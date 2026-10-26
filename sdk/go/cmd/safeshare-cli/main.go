@@ -107,8 +107,9 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Show the CLI's version",
 		Long: `Show the release this safeshare-cli was built from, and the Go version and
-platform it was built for. "dev" means it was not built by scripts/build-cli.sh
-(or go install).
+platform it was built for. Builds not made by scripts/build-cli.sh show the
+module version Go recorded (for a git checkout, a pseudo-version with the
+commit), or "dev".
 
 The server's version is in "safeshare-cli config".`,
 		Args: cobra.NoArgs,

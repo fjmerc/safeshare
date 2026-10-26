@@ -8,6 +8,7 @@ import (
 	"time"
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
+	"github.com/spf13/cobra"
 )
 
 // jsonOut is the global --json flag: each command writes one JSON document
@@ -46,13 +47,39 @@ func newJSONError(err error) jsonError {
 	return je
 }
 
-// printError reports a command's error on stderr, as JSON with --json.
-func printError(err error) {
+// humanOut is where a command writes its text output: nowhere with --json,
+// where stdout carries only the JSON document.
+func humanOut(cmd *cobra.Command) io.Writer {
 	if jsonOut {
+		return io.Discard
+	}
+	return cmd.OutOrStdout()
+}
+
+// errQRWithJSON refuses --qr with --json, which keeps stdout pure JSON.
+var errQRWithJSON = errors.New("--qr and --json cannot be used together")
+
+// printError reports a command's error on stderr, as JSON with --json
+// (also when the error came before --json was parsed, e.g. a bad flag).
+func printError(err error) {
+	if jsonOut || jsonRequested(os.Args[1:]) {
 		_ = printJSON(os.Stderr, newJSONError(err))
 		return
 	}
 	_, _ = io.WriteString(os.Stderr, escapeControls(err.Error())+"\n")
+}
+
+// jsonRequested reports whether args hold --json before any "--".
+func jsonRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--json" || a == "--json=true" {
+			return true
+		}
+	}
+	return false
 }
 
 // uploadJSON is the --json document for an uploaded file.
