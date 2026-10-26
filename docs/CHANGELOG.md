@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Go 1.27.3** (from 1.27.2) fixes GO-2026-6809 in `crypto/x509`, which the server reaches through passkey (WebAuthn) login.
+
 ## [1.17.1] - 2026-10-19
 
 ### Added
