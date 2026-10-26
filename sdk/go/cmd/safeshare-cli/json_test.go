@@ -17,7 +17,8 @@ import (
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
 )
 
-// fakeServer answers the API calls the CLI makes, counting uploads.
+// fakeServer answers the API calls the CLI makes, counting uploads. It
+// refuses files named reject*.
 func fakeServer(t *testing.T, uploads *atomic.Int32) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,13 +26,18 @@ func fakeServer(t *testing.T, uploads *atomic.Int32) *httptest.Server {
 		case r.URL.Path == "/api/config":
 			_, _ = io.WriteString(w, `{"max_file_size":1048576,"chunked_upload_threshold":1048576,"chunk_size":65536,"version":"1.17.1"}`)
 		case r.URL.Path == "/api/upload":
-			n := uploads.Add(1)
 			_ = r.ParseMultipartForm(1 << 20)
 			_, hdr, _ := r.FormFile("file")
 			name := "?"
 			if hdr != nil {
 				name = hdr.Filename
 			}
+			if strings.HasPrefix(name, "reject") {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = io.WriteString(w, `{"error":"File too large","code":"FILE_TOO_LARGE"}`)
+				return
+			}
+			n := uploads.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"claim_code": fmt.Sprintf("code%04d", n), "original_filename": name, "file_size": 5,
 				"mime_type": "text/plain", "expires_at": nil, "max_downloads": nil, "user_id": 7,
@@ -185,5 +191,66 @@ func TestListAndVersionJSON(t *testing.T) {
 	decodeOne(t, out, &cfg)
 	if cfg["version"] != "1.17.1" || cfg["url"] != srv.URL || cfg["max_file_size"] != 1048576.0 {
 		t.Errorf("config: %s", out)
+	}
+}
+
+func TestUploadSeveralFiles(t *testing.T) {
+	var uploads atomic.Int32
+	srv := fakeServer(t, &uploads)
+	a, b := writeTemp(t, "a.txt", "hello"), writeTemp(t, "b.txt", "hello")
+	dir := t.TempDir()
+
+	// A missing file or a directory stops everything before any upload.
+	for _, bad := range []string{filepath.Join(dir, "nope"), dir} {
+		if _, err := runCLI(t, "--url", srv.URL, "upload", a, bad); err == nil {
+			t.Errorf("%s: no error", bad)
+		}
+	}
+	if n := uploads.Load(); n != 0 {
+		t.Fatalf("%d uploads before a bad argument was refused", n)
+	}
+
+	out, err := runCLI(t, "--url", srv.URL, "--json", "upload", a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs []uploadJSON
+	decodeOne(t, out, &docs)
+	if len(docs) != 2 || docs[0].File != a || docs[1].File != b || docs[0].ClaimCode == docs[1].ClaimCode ||
+		docs[1].URL != srv.URL+"/claim/"+docs[1].ClaimCode {
+		t.Errorf("got %s", out)
+	}
+
+	out, err = runCLI(t, "--url", srv.URL, "upload", a, b)
+	if err != nil || strings.Count(out, srv.URL+"/claim/") != 2 || !strings.Contains(out, "Uploaded 2 of 2 files") {
+		t.Errorf("text summary (%v):\n%s", err, out)
+	}
+}
+
+func TestUploadSeveralFilesWithFailure(t *testing.T) {
+	var uploads atomic.Int32
+	srv := fakeServer(t, &uploads)
+	ok := writeTemp(t, "ok.txt", "hello")
+	bad := writeTemp(t, "reject.txt", "hello")
+
+	out, err := runCLI(t, "--url", srv.URL, "--json", "upload", bad, ok)
+	if err == nil || !strings.Contains(err.Error(), "1 of 2") {
+		t.Fatalf("err = %v", err)
+	}
+	var docs []map[string]any
+	decodeOne(t, out, &docs)
+	if len(docs) != 2 || docs[0]["code"] != "FILE_TOO_LARGE" || docs[0]["status"] != 413.0 || docs[0]["claim_code"] != nil ||
+		docs[1]["error"] != nil || docs[1]["url"] == nil || uploads.Load() != 1 {
+		t.Errorf("got %s", out)
+	}
+
+	uploads.Store(0)
+	out, err = runCLI(t, "--url", srv.URL, "--json", "upload", "--fail-fast", bad, ok)
+	if err == nil {
+		t.Fatal("no error")
+	}
+	decodeOne(t, out, &docs)
+	if uploads.Load() != 0 || len(docs) != 2 || !strings.Contains(docs[1]["error"].(string), "fail-fast") {
+		t.Errorf("--fail-fast uploaded %d: %s", uploads.Load(), out)
 	}
 }

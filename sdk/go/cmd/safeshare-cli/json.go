@@ -75,6 +75,14 @@ type uploadJSON struct {
 	URL string `json:"url"`
 }
 
+// uploadErrorJSON stands for a file that wasn't uploaded in the --json array
+// of a several-file upload.
+type uploadErrorJSON struct {
+	Schema int    `json:"schema"`
+	File   string `json:"file"`
+	jsonError
+}
+
 func newUploadJSON(file, server string, r *safeshare.UploadResult) uploadJSON {
 	return uploadJSON{
 		Schema:            jsonSchema,

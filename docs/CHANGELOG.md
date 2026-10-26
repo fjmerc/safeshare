@@ -39,6 +39,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - **`safeshare-cli --version`** (and a `version` command, which also shows the Go version and platform). Release binaries report the release they were built from; they still rebuild byte-for-byte with `scripts/build-cli.sh --check`. `safeshare-cli config` now shows the server's version.
 - **`safeshare-cli --json`** for scripts: every command prints one line of JSON on stdout (no progress bar), and errors as JSON on stderr with a non-zero exit status. `upload` includes `url`, the link to open. For an encrypted upload that is the share link with the decryption key, so treat the output as a secret. See the CLI section of `sdk/go/README.md`.
+- **`safeshare-cli upload` takes several files**, uploads them one after another with the same options and prints one summary (or, with `--json`, an array). Every path is checked before anything is uploaded; a failed upload doesn't stop the rest unless `--fail-fast` is given, and the exit status is 1 if any failed.
 
 ## [1.17.1] - 2026-10-19
 

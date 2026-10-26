@@ -414,7 +414,12 @@ safeshare-cli upload ./myfile.txt --encrypt
 
 # Over Tor (always encrypts; every request goes through the proxy)
 safeshare-cli --proxy socks5h://127.0.0.1:9050 upload ./myfile.txt
+
+# Several files: same options for each, one claim code and link per file
+safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
 ```
+
+With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1.
 
 Flags for encrypted uploads: `--encrypt`, `--no-encrypt`, `--show-filename` (let the server see the name), `--keep-metadata` (allow JPEG/PNG/PDF/Office files on Ghost servers; the CLI can't remove their metadata).
 
@@ -498,7 +503,11 @@ url=$(safeshare-cli upload video.mp4 --expires 24 --json | jq -r .url)
 {"schema":1,"file":"video.mp4","claim_code":"Xk3pQ9aB","filename":"video.mp4","size":1048576,"mime_type":"video/mp4","expires_at":"2026-10-27T12:00:00Z","download_limit":null,"password_protected":false,"encrypted":false,"url":"https://share.example.com/claim/Xk3pQ9aB"}
 ```
 
-`url` is the link to open: the claim page, or for an encrypted upload, the share link.
+`url` is the link to open: the claim page, or for an encrypted upload, the share link. With several files, `upload` prints an array with one object per file, in the order given. A file that wasn't uploaded has `file`, `error` and possibly `code`/`status` instead of the upload's fields:
+
+```bash
+safeshare-cli upload a.mp4 b.txt --json | jq -r '.[] | .url // "FAILED \(.file): \(.error)"'
+```
 
 > **Warning: the JSON of an encrypted upload is a secret.** Its `url` holds the decryption key after the `#`, and anyone who sees it can read the file. Don't write it to logs, CI output, shared files or anywhere else you wouldn't put a password. (The Go SDK leaves the key and the link out of `UploadResult`'s JSON for this reason; the CLI adds the link because it is what the command is for.)
 
