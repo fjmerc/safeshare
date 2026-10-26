@@ -419,7 +419,7 @@ safeshare-cli --proxy socks5h://127.0.0.1:9050 upload ./myfile.txt
 safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
 ```
 
-With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1. Ctrl-C stops after the current file and still prints the links of the files already uploaded.
+With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1. Ctrl-C aborts the file being uploaded, skips the rest and still prints the links of the files already uploaded (a second Ctrl-C exits at once). The server can tell that files uploaded in one call came from the same person (by their order and timing); upload them separately, some time apart, if that matters.
 
 To open a link on a phone, add `--qr`: each link is also drawn as a QR code in the terminal, to scan with the phone's camera. It is drawn for a terminal with a dark background. `safeshare-cli info CODE --qr` does the same for a file you uploaded earlier (not for end-to-end encrypted files: their link needs the key). `--qr` can't be combined with `--json`.
 

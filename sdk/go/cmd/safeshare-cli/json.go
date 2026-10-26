@@ -38,8 +38,11 @@ type jsonError struct {
 	Status int `json:"status,omitempty"`
 }
 
+// newJSONError describes err for --json. The message is escaped like the
+// text output (escapeControls): it is read on a terminal, and encoding/json
+// leaves C1 controls and bidi overrides from a server's message as they are.
 func newJSONError(err error) jsonError {
-	je := jsonError{Error: err.Error()}
+	je := jsonError{Error: escapeControls(err.Error())}
 	var apiErr *safeshare.APIError
 	if errors.As(err, &apiErr) {
 		je.Code, je.Status = apiErr.Code, apiErr.StatusCode

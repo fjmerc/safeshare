@@ -144,7 +144,7 @@ Examples:
 			fmt.Fprintln(out, strings.Repeat("─", 40))
 			fmt.Fprintf(out, "Filename:    %s\n", display(info.Filename))
 			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
-			fmt.Fprintf(out, "MIME Type:   %s\n", info.MimeType)
+			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
 				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
 			} else {
@@ -425,7 +425,7 @@ Example:
 			fmt.Fprintln(out, strings.Repeat("─", 40))
 			fmt.Fprintf(out, "Filename:    %s\n", display(info.Filename))
 			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
-			fmt.Fprintf(out, "MIME Type:   %s\n", info.MimeType)
+			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
 				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
 			} else {

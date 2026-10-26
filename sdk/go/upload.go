@@ -180,6 +180,9 @@ func (c *Client) uploadSimple(ctx context.Context, src uploadSource, opts *Uploa
 	if err := handleResponse(resp, &apiResp); err != nil {
 		return nil, err
 	}
+	if err := checkServerClaimCode(apiResp.ClaimCode); err != nil {
+		return nil, err
+	}
 
 	return &UploadResult{
 		ClaimCode:         apiResp.ClaimCode,
@@ -357,6 +360,9 @@ func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *Uplo
 			Err:      err,
 		}
 	}
+	if err := checkServerClaimCode(apiResp.ClaimCode); err != nil {
+		return nil, &ChunkedUploadError{UploadID: uploadID, Err: err}
+	}
 
 	return &UploadResult{
 		ClaimCode:         apiResp.ClaimCode,
@@ -372,11 +378,24 @@ func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *Uplo
 
 // cancelUpload attempts to cancel a chunked upload session.
 func (c *Client) cancelUpload(ctx context.Context, uploadID string) {
-	// Best effort - ignore errors
+	// Best effort - ignore errors. Sent even when ctx was cancelled (that is
+	// often why the upload stopped), so the server can drop the session now.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	resp, err := c.request(ctx, http.MethodDelete, fmt.Sprintf("/api/upload/cancel/%s", uploadID), nil, "")
 	if err == nil {
 		resp.Body.Close()
 	}
+}
+
+// checkServerClaimCode rejects a claim code from the server that isn't one:
+// it ends up in links, QR codes and terminal output, so a malicious server
+// must not be able to put escape sequences or URL syntax in it.
+func checkServerClaimCode(code string) error {
+	if err := validateClaimCode(code); err != nil {
+		return fmt.Errorf("server returned an invalid claim code: %w", err)
+	}
+	return nil
 }
 
 // Bounds on the wait after a rate-limited status poll (variables so tests can
@@ -468,6 +487,9 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 					UploadID: uploadID,
 					Err:      fmt.Errorf("upload completed but no claim code returned"),
 				}
+			}
+			if err := checkServerClaimCode(*status.ClaimCode); err != nil {
+				return nil, &ChunkedUploadError{UploadID: uploadID, Err: err}
 			}
 			return &UploadResult{
 				ClaimCode:         *status.ClaimCode,

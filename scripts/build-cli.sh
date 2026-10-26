@@ -36,10 +36,12 @@ if [ -z "$gover" ]; then
 	exit 2
 fi
 ver=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' "$root/internal/handlers/version.go")
-if [ -z "$ver" ]; then
-	echo "no Version in internal/handlers/version.go; can't tell which version to stamp" >&2
+case "$ver" in
+"" | *[!0-9A-Za-z.+-]*)
+	echo "no usable Version in internal/handlers/version.go (found '$ver'); can't tell which version to stamp" >&2
 	exit 2
-fi
+	;;
+esac
 ldflags="-w -s -X main.version=$ver"
 if [ "$local_go" = 1 ] && [ "$(GOTOOLCHAIN=local go env GOVERSION)" != "go$gover" ]; then
 	echo "--local-go needs Go $gover (go.mod's toolchain), found $(GOTOOLCHAIN=local go env GOVERSION)" >&2

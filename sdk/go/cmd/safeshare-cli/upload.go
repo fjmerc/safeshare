@@ -146,10 +146,12 @@ log of it, can read the file.`,
 
 			out := humanOut(cmd)
 
-			// Ctrl-C stops after the current file and still reports the ones
-			// already uploaded: their links (and keys) exist nowhere else.
+			// Ctrl-C aborts the current file, skips the rest and still reports
+			// the ones already uploaded: their links (and keys) exist nowhere
+			// else. A second Ctrl-C exits at once.
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
+			context.AfterFunc(ctx, stop)
 
 			willEncrypt, err := client.WillEncrypt(ctx, opts.Encrypt)
 			if err != nil {
@@ -185,7 +187,7 @@ log of it, can read the file.`,
 				}
 				results[i], errs[i] = uploadOne(ctx, client, filePath, opts)
 				if errs[i] != nil && ctx.Err() != nil {
-					errs[i] = errInterrupted
+					errs[i] = errInterruptedDuring
 					skipped++
 					continue
 				}
@@ -232,7 +234,7 @@ log of it, can read the file.`,
 				}
 			}
 			switch {
-			case ctx.Err() != nil:
+			case ctx.Err() != nil && failed+skipped > 0:
 				return fmt.Errorf("interrupted: %d of %d files not uploaded", failed+skipped, len(args))
 			case failed > 0 && skipped > 0:
 				return fmt.Errorf("%d of %d uploads failed, %d not attempted", failed, len(args), skipped)
@@ -263,6 +265,9 @@ log of it, can read the file.`,
 var (
 	errSkipped     = errors.New("not uploaded: an earlier upload failed (--fail-fast)")
 	errInterrupted = errors.New("not uploaded: interrupted")
+	// The file being uploaded at Ctrl-C: if the server was already putting
+	// it together, it can still appear there, with no link to it.
+	errInterruptedDuring = errors.New("interrupted while uploading; if it was nearly done it may still appear on the server, without its link")
 )
 
 // uploadOne uploads one file, clearing the progress line afterwards.
@@ -299,11 +304,11 @@ func printUploadSummary(out io.Writer, files []string, results []*safeshare.Uplo
 	fmt.Fprintln(out, strings.Repeat("─", 50))
 	for i, f := range files {
 		if errs[i] != nil {
-			fmt.Fprintf(out, "%s  FAILED: %s\n", f, escapeControls(strings.SplitN(errs[i].Error(), "\n", 2)[0]))
+			fmt.Fprintf(out, "%s  FAILED: %s\n", display(f), escapeControls(strings.SplitN(errs[i].Error(), "\n", 2)[0]))
 			continue
 		}
 		r := results[i]
-		fmt.Fprintf(out, "%s  (%s, claim code %s)\n  %s\n", f, formatBytes(r.Size), r.ClaimCode, uploadURL(baseURL, r))
+		fmt.Fprintf(out, "%s  (%s, claim code %s)\n  %s\n", display(f), formatBytes(r.Size), r.ClaimCode, uploadURL(baseURL, r))
 	}
 	fmt.Fprintln(out, strings.Repeat("─", 50))
 	if encrypted {
@@ -325,7 +330,7 @@ func printUploadQRs(out io.Writer, files []string, results []*safeshare.UploadRe
 		}
 		fmt.Fprintln(out)
 		if len(files) > 1 {
-			fmt.Fprintf(out, "%s:\n", files[i])
+			fmt.Fprintf(out, "%s:\n", display(files[i]))
 		}
 		if err := printQR(out, uploadURL(baseURL, r)); err != nil {
 			return err
@@ -341,9 +346,9 @@ func printUploadResult(out io.Writer, result *safeshare.UploadResult) {
 	fmt.Fprintf(out, "Upload successful!\n")
 	fmt.Fprintln(out, strings.Repeat("─", 50))
 	fmt.Fprintf(out, "Claim Code:  %s\n", result.ClaimCode)
-	fmt.Fprintf(out, "Filename:    %s\n", result.Filename)
+	fmt.Fprintf(out, "Filename:    %s\n", display(result.Filename))
 	fmt.Fprintf(out, "Size:        %s\n", formatBytes(result.Size))
-	fmt.Fprintf(out, "MIME Type:   %s\n", result.MimeType)
+	fmt.Fprintf(out, "MIME Type:   %s\n", display(result.MimeType))
 	if result.ExpiresAt != nil {
 		fmt.Fprintf(out, "Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
 	} else {

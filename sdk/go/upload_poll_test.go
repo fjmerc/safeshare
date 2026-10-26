@@ -3,8 +3,12 @@ package safeshare
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -64,6 +68,35 @@ func TestRateLimitPollDelay(t *testing.T) {
 		err := &APIError{StatusCode: 429, Err: ErrRateLimit, RetryAfter: tc.retryAfter}
 		if got := rateLimitPollDelay(err); got != tc.want {
 			t.Errorf("RetryAfter %v: delay = %v, want %v", tc.retryAfter, got, tc.want)
+		}
+	}
+}
+
+// A claim code from the server ends up in links and on the terminal, so one
+// that isn't a claim code is refused.
+func TestUploadRejectsBadClaimCodeFromServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/config":
+			_, _ = io.WriteString(w, `{"max_file_size":1048576,"chunked_upload_threshold":1048576,"chunk_size":65536}`)
+		case "/api/upload":
+			_, _ = io.WriteString(w, `{"claim_code":"abcd1234\u001b]52;c;ZXZpbA==\u0007","original_filename":"a.txt","file_size":5}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client, err := NewClient(ClientConfig{BaseURL: srv.URL, DisableProxy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []EncryptMode{EncryptNever, EncryptAlways} {
+		if _, err := client.Upload(context.Background(), path, &UploadOptions{Encrypt: mode}); err == nil || !strings.Contains(err.Error(), "invalid claim code") {
+			t.Errorf("mode %v: err = %v", mode, err)
 		}
 	}
 }

@@ -58,7 +58,7 @@ Examples:
 			fmt.Println(strings.Repeat("═", 80))
 
 			for _, f := range files.Files {
-				fmt.Printf("\n%-12s %s\n", "Claim Code:", f.ClaimCode)
+				fmt.Printf("\n%-12s %s\n", "Claim Code:", display(f.ClaimCode))
 				fmt.Printf("%-12s %s\n", "Filename:", display(f.Filename))
 				fmt.Printf("%-12s %s\n", "Size:", formatBytes(f.Size))
 				fmt.Printf("%-12s %s\n", "Uploaded:", f.UploadedAt.Format("2006-01-02 15:04:05"))
