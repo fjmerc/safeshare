@@ -23,7 +23,7 @@ func (e *exitError) Error() string { return e.msg }
 func verifyCmd() *cobra.Command {
 	var (
 		manifestFile string
-		version      string
+		release      string
 		repo         string
 		all          bool
 		looseCSP     bool
@@ -55,6 +55,10 @@ such scripts aren't covered; --allow-loose-csp turns that into a warning.
 
 Exit status: 0 verified, 2 a file differs, 1 could not verify.
 
+With --json, the report (every file, with "result": "verified", "tampered"
+or "could_not_verify") is printed on stdout whenever the comparison ran,
+whatever the exit status; the text goes to stderr.
+
 Examples:
   safeshare-cli verify https://share.example.com
   safeshare-cli verify --proxy socks5://127.0.0.1:9050 http://example.onion
@@ -76,14 +80,20 @@ Examples:
 			if err != nil {
 				return err
 			}
-			return runVerify(cmd.Context(), cmd.OutOrStdout(), client, verifyOptions{
-				manifestFile: manifestFile, version: version, repo: repo, all: all, allowLooseCSP: looseCSP,
-			})
+			opts := verifyOptions{
+				manifestFile: manifestFile, version: release, repo: repo, all: all, allowLooseCSP: looseCSP,
+			}
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				// The report is the document; the text goes to stderr.
+				out, opts.jsonTo = cmd.ErrOrStderr(), cmd.OutOrStdout()
+			}
+			return runVerify(cmd.Context(), out, client, opts)
 		},
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "manifest", "", "Compare against this web-assets.sha256 file instead of downloading it from the release")
-	cmd.Flags().StringVar(&version, "version", "", "Release to compare against, e.g. 1.17.0 (default: the version the server reports)")
+	cmd.Flags().StringVar(&release, "version", "", "Release to compare against, e.g. 1.17.0 (default: the version the server reports)")
 	cmd.Flags().StringVar(&repo, "repo", safeshare.DefaultReleaseRepo, "GitHub repository that publishes the releases")
 	cmd.Flags().BoolVar(&all, "all", false, "List every file, not only the ones that did not match")
 	cmd.Flags().BoolVar(&looseCSP, "allow-loose-csp", false, "Only warn, instead of failing, when the page's Content-Security-Policy lets scripts load from elsewhere")
@@ -97,6 +107,8 @@ type verifyOptions struct {
 	repo          string
 	all           bool
 	allowLooseCSP bool
+	// jsonTo, when set, gets the report as JSON once the comparison ran.
+	jsonTo io.Writer
 }
 
 func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opts verifyOptions) error {
@@ -114,9 +126,9 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 		fmt.Fprintf(out, "Server reports version %s\n", display(reported))
 	}
 
-	version := opts.version
-	if version == "" {
-		version = reported
+	release := opts.version
+	if release == "" {
+		release = reported
 	}
 
 	var data []byte
@@ -128,18 +140,18 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 		}
 		against = opts.manifestFile
 	} else {
-		if version == "" {
+		if release == "" {
 			return fmt.Errorf("the server doesn't report its version; use --version or --manifest")
 		}
 		var err error
-		data, err = client.FetchReleaseManifest(ctx, opts.repo, version)
+		data, err = client.FetchReleaseManifest(ctx, opts.repo, release)
 		if safeshare.IsNoManifest(err) {
-			return fmt.Errorf("release v%s on github.com/%s has no %s (releases before 1.17.0 don't publish one). Make one with scripts/web-asset-hashes.sh in a checkout of that release and pass --manifest", display(version), opts.repo, safeshare.WebAssetManifestName)
+			return fmt.Errorf("release v%s on github.com/%s has no %s (releases before 1.17.0 don't publish one). Make one with scripts/web-asset-hashes.sh in a checkout of that release and pass --manifest", display(release), opts.repo, safeshare.WebAssetManifestName)
 		}
 		if err != nil {
 			return err
 		}
-		against = fmt.Sprintf("the v%s release (github.com/%s)", version, opts.repo)
+		against = fmt.Sprintf("the v%s release (github.com/%s)", release, opts.repo)
 	}
 	manifest, err := safeshare.ParseWebAssetManifest(data)
 	if err != nil {
@@ -179,32 +191,105 @@ func runVerify(ctx context.Context, out io.Writer, client *safeshare.Client, opt
 		fmt.Fprintln(out, escapeControls(fmt.Sprintf("Warning: the page's Content-Security-Policy lets scripts run from more than the server's own files (%s); SafeShare sends \"script-src 'self'\". Scripts injected that way aren't covered by this check.", strings.Join(extra, " "))))
 	}
 	if opts.manifestFile == "" {
-		warnIfNotLatest(ctx, out, client, opts.repo, version)
+		warnIfNotLatest(ctx, out, client, opts.repo, release)
 	}
-	if reported != "" && version != reported {
-		fmt.Fprintf(out, "Note: the server reports %s but was compared against %s.\n", display(reported), display(version))
+	if reported != "" && release != reported {
+		fmt.Fprintf(out, "Note: the server reports %s but was compared against %s.\n", display(reported), display(release))
 	}
 
+	var verdict error
+	result := "could_not_verify"
 	switch {
 	case report.Tampered():
-		return &exitError{2, fmt.Sprintf("NOT VERIFIED: %d file(s) differ from %s. The web app was changed on the server or on the way; don't trust this server's in-browser encryption.", report.Count(safeshare.AssetMismatch), against)}
+		result = "tampered"
+		verdict = &exitError{2, fmt.Sprintf("NOT VERIFIED: %d file(s) differ from %s. The web app was changed on the server or on the way; don't trust this server's in-browser encryption.", report.Count(safeshare.AssetMismatch), against)}
 	case report.Verified() && len(extra) > 0 && !opts.allowLooseCSP:
-		return &exitError{1, "COULD NOT VERIFY: the files match, but the page's Content-Security-Policy allows scripts these hashes don't cover (see the warning). Fix the policy in front of SafeShare, or pass --allow-loose-csp to accept it."}
+		verdict = &exitError{1, "COULD NOT VERIFY: the files match, but the page's Content-Security-Policy allows scripts these hashes don't cover (see the warning). Fix the policy in front of SafeShare, or pass --allow-loose-csp to accept it."}
 	case report.Verified():
+		result = "verified"
 		fmt.Fprintf(out, "VERIFIED: all %d files fetched match %s", report.Count(safeshare.AssetMatch), display(against))
 		if n := report.Count(safeshare.AssetNotChecked); n > 0 {
 			fmt.Fprintf(out, " (%d not checked, see above)", n)
 		}
 		fmt.Fprintln(out, ".")
 		fmt.Fprintln(out, "This covers what the server sent to this computer just now; it can't show what it sends to others.")
-		return nil
 	case report.Count(safeshare.AssetUnknown) > 0:
-		return &exitError{1, "COULD NOT VERIFY: the release has files this safeshare-cli doesn't know how to check. Update safeshare-cli."}
+		verdict = &exitError{1, "COULD NOT VERIFY: the release has files this safeshare-cli doesn't know how to check. Update safeshare-cli."}
 	case report.Count(safeshare.AssetMissing) > 0:
-		return &exitError{1, "COULD NOT VERIFY: the server didn't serve some files the release has (see above). It may be another version; nothing that was served differed."}
+		verdict = &exitError{1, "COULD NOT VERIFY: the server didn't serve some files the release has (see above). It may be another version; nothing that was served differed."}
 	default:
-		return &exitError{1, "COULD NOT VERIFY: some files could not be fetched or checked (see above). Nothing differed, but the check is incomplete."}
+		verdict = &exitError{1, "COULD NOT VERIFY: some files could not be fetched or checked (see above). Nothing differed, but the check is incomplete."}
 	}
+	if opts.jsonTo != nil {
+		compared := release
+		if opts.manifestFile != "" {
+			compared = ""
+		}
+		if err := printJSON(opts.jsonTo, newVerifyJSON(reported, compared, against, result, report, extra)); err != nil {
+			return err
+		}
+	}
+	return verdict
+}
+
+// verifyJSON is the --json report of verify.
+type verifyJSON struct {
+	Schema        int    `json:"schema"`
+	ServerVersion string `json:"server_version"`
+	// Version is the release compared against ("" with --manifest).
+	Version string           `json:"version"`
+	Against string           `json:"compared_against"`
+	Result  string           `json:"result"`
+	Files   []verifyFileJSON `json:"files"`
+	// LooseCSP lists what the page's Content-Security-Policy lets scripts
+	// load from besides the server itself.
+	LooseCSP []string `json:"loose_csp"`
+}
+
+type verifyFileJSON struct {
+	File     string `json:"file"`
+	URLPath  string `json:"url_path"`
+	Status   string `json:"status"`
+	Expected string `json:"expected"`
+	Got      string `json:"got"`
+	Detail   string `json:"detail"`
+}
+
+func newVerifyJSON(reported, version, against, result string, report *safeshare.WebAssetReport, extra []string) verifyJSON {
+	doc := verifyJSON{
+		Schema: jsonSchema, ServerVersion: reported, Version: version, Against: against,
+		Result: result, Files: []verifyFileJSON{}, LooseCSP: extra,
+	}
+	if doc.LooseCSP == nil {
+		doc.LooseCSP = []string{}
+	}
+	for _, r := range report.Results {
+		doc.Files = append(doc.Files, verifyFileJSON{
+			File: r.File, URLPath: r.URLPath, Status: assetStatusJSON(r.Status), Expected: r.Expected, Got: r.Got, Detail: r.Detail,
+		})
+	}
+	return doc
+}
+
+// assetStatusJSON names a file's status in --json output.
+func assetStatusJSON(s safeshare.AssetStatus) string {
+	switch s {
+	case safeshare.AssetMatch:
+		return "match"
+	case safeshare.AssetMismatch:
+		return "mismatch"
+	case safeshare.AssetMissing:
+		return "missing"
+	case safeshare.AssetNotServed:
+		return "not_served"
+	case safeshare.AssetFetchFailed:
+		return "fetch_failed"
+	case safeshare.AssetNotChecked:
+		return "not_checked"
+	case safeshare.AssetUnknown:
+		return "unknown_file"
+	}
+	return "unknown"
 }
 
 func readManifestFile(path string) ([]byte, error) {

@@ -73,7 +73,7 @@ Examples:
 				if overwrite {
 					fmt.Fprintln(os.Stderr, "[WARNING] --overwrite does not apply to drops: they are put in a new directory.")
 				}
-				return downloadDrop(target, identity, args[1:], password, noProgress)
+				return downloadDrop(cmd.OutOrStdout(), target, identity, args[1:], password, noProgress || jsonOut)
 			}
 
 			claimCode, key := target, os.Getenv("SAFESHARE_KEY")
@@ -112,12 +112,14 @@ Examples:
 				opts.Password = password
 			}
 
-			if !noProgress {
+			if !noProgress && !jsonOut {
 				opts.OnProgress = printDownloadProgress
 			}
 
+			out := humanOut(cmd)
+
 			if key != "" && !keyFromEnv {
-				return downloadEncrypted(ctx, client, claimCode, key, args[1:], opts)
+				return downloadEncrypted(ctx, cmd.OutOrStdout(), client, claimCode, key, args[1:], opts)
 			}
 
 			// Get file info first
@@ -127,7 +129,7 @@ Examples:
 			}
 			if keyFromEnv {
 				if info.ClientEncrypted {
-					return downloadEncrypted(ctx, client, claimCode, key, args[1:], opts)
+					return downloadEncrypted(ctx, cmd.OutOrStdout(), client, claimCode, key, args[1:], opts)
 				}
 				fmt.Fprintln(os.Stderr, "[WARNING] SAFESHARE_KEY is set but this file is not end-to-end encrypted; downloading it as is.")
 			}
@@ -138,38 +140,44 @@ Examples:
 				destination = args[1]
 			}
 
-			fmt.Println("File Information:")
-			fmt.Println(strings.Repeat("─", 40))
-			fmt.Printf("Filename:    %s\n", display(info.Filename))
-			fmt.Printf("Size:        %s\n", formatBytes(info.Size))
-			fmt.Printf("MIME Type:   %s\n", info.MimeType)
+			fmt.Fprintln(out, "File Information:")
+			fmt.Fprintln(out, strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Filename:    %s\n", display(info.Filename))
+			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
+			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
-				fmt.Printf("Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
 			} else {
-				fmt.Printf("Expires:     Never\n")
+				fmt.Fprintf(out, "Expires:     Never\n")
 			}
 			if info.DownloadsRemaining != nil {
-				fmt.Printf("Downloads:   %d remaining\n", *info.DownloadsRemaining)
+				fmt.Fprintf(out, "Downloads:   %d remaining\n", *info.DownloadsRemaining)
 			} else {
-				fmt.Printf("Downloads:   Unlimited\n")
+				fmt.Fprintf(out, "Downloads:   Unlimited\n")
 			}
-			fmt.Printf("Password:    %v\n", info.PasswordProtected)
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Password:    %v\n", info.PasswordProtected)
+			fmt.Fprintln(out, strings.Repeat("─", 40))
 			if info.Filename == safeshare.DropFilename {
 				fmt.Fprintln(os.Stderr, "[WARNING] This is a drop-page submission, encrypted to the recipient's age key. Use --identity <key file> to decrypt it; without it, it is saved still encrypted.")
 			} else if info.ClientEncrypted || info.Filename == safeshare.EncryptedFilename {
 				fmt.Fprintln(os.Stderr, "[WARNING] This looks like an end-to-end encrypted file. Without its share link it is saved still encrypted.")
 			}
-			fmt.Printf("\nDownloading to: %s\n", destination)
+			fmt.Fprintf(out, "\nDownloading to: %s\n", destination)
 
 			// Download
-			if err := client.Download(ctx, claimCode, destination, opts); err != nil {
+			err = client.Download(ctx, claimCode, destination, opts)
+			if opts.OnProgress != nil {
 				fmt.Println() // Clear progress line
+			}
+			if err != nil {
 				return err
 			}
-
-			fmt.Println() // Clear progress line
-			fmt.Println("\nDownload complete!")
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), downloadJSON{
+					Schema: jsonSchema, ClaimCode: claimCode, Filename: info.Filename, Size: info.Size, Path: destination,
+				})
+			}
+			fmt.Fprintln(out, "\nDownload complete!")
 
 			return nil
 		},
@@ -188,14 +196,16 @@ Examples:
 // to its original name in the current directory. A destination given
 // explicitly is checked before downloading, so a limited download is not
 // used up for nothing; a default name that is taken gets a " (n)" suffix.
-func downloadEncrypted(ctx context.Context, client *safeshare.Client, claimCode, key string, dest []string, opts *safeshare.DownloadOptions) error {
+func downloadEncrypted(ctx context.Context, out io.Writer, client *safeshare.Client, claimCode, key string, dest []string, opts *safeshare.DownloadOptions) error {
 	if len(dest) > 0 {
 		if err := safeshare.CheckDestination(dest[0], opts.Overwrite); err != nil {
 			return friendlyExists(err)
 		}
 	}
 	file, err := client.DownloadDecrypted(ctx, claimCode, key, opts)
-	fmt.Println() // Clear progress line
+	if opts.OnProgress != nil {
+		fmt.Println() // Clear progress line
+	}
 	if err != nil {
 		return err
 	}
@@ -208,14 +218,31 @@ func downloadEncrypted(ctx context.Context, client *safeshare.Client, claimCode,
 	if err := file.Save(destination, opts.Overwrite); err != nil {
 		return friendlyExists(err)
 	}
-	fmt.Printf("Decrypted %s (%s) to %s\n", display(file.Filename), formatBytes(int64(len(file.Data))), destination)
+	if jsonOut {
+		return printJSON(out, downloadJSON{
+			Schema: jsonSchema, ClaimCode: claimCode, Filename: file.Filename, Size: int64(len(file.Data)), Path: destination, Decrypted: true,
+		})
+	}
+	fmt.Fprintf(out, "Decrypted %s (%s) to %s\n", display(file.Filename), formatBytes(int64(len(file.Data))), destination)
 	return nil
+}
+
+// downloadJSON is the --json document for a downloaded file.
+type downloadJSON struct {
+	Schema    int    `json:"schema"`
+	ClaimCode string `json:"claim_code"`
+	// Filename is the name the uploader gave; Path is where it was saved.
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	Path     string `json:"path"`
+	// Decrypted is true for an end-to-end encrypted file decrypted here.
+	Decrypted bool `json:"decrypted"`
 }
 
 // downloadDrop downloads a drop-page submission, decrypts it with the age
 // identities in identityPath and extracts it into a new directory: dest[0],
 // or drop-CODE by default.
-func downloadDrop(claimCode, identityPath string, dest []string, password string, noProgress bool) error {
+func downloadDrop(out io.Writer, claimCode, identityPath string, dest []string, password string, noProgress bool) error {
 	if err := checkConfig(); err != nil {
 		return err
 	}
@@ -263,11 +290,29 @@ func downloadDrop(claimCode, identityPath string, dest []string, password string
 	if err != nil {
 		return friendlyDropExists(err, dir)
 	}
-	fmt.Printf("Decrypted the drop into %s:\n", dir)
-	for _, f := range files {
-		fmt.Printf("  %s (%s)\n", display(f.Name), formatBytes(f.Size))
+	const untrusted = "Treat these files as untrusted: open them offline or in a disposable environment."
+	if jsonOut {
+		fmt.Fprintln(os.Stderr, "[NOTE] "+untrusted)
+		type dropFile struct {
+			Name string `json:"name"`
+			Size int64  `json:"size"`
+		}
+		doc := struct {
+			Schema    int        `json:"schema"`
+			ClaimCode string     `json:"claim_code"`
+			Path      string     `json:"path"`
+			Files     []dropFile `json:"files"`
+		}{Schema: jsonSchema, ClaimCode: claimCode, Path: dir, Files: []dropFile{}}
+		for _, f := range files {
+			doc.Files = append(doc.Files, dropFile{Name: f.Name, Size: f.Size})
+		}
+		return printJSON(out, doc)
 	}
-	fmt.Println("Treat these files as untrusted: open them offline or in a disposable environment.")
+	fmt.Fprintf(out, "Decrypted the drop into %s:\n", dir)
+	for _, f := range files {
+		fmt.Fprintf(out, "  %s (%s)\n", display(f.Name), formatBytes(f.Size))
+	}
+	fmt.Fprintln(out, untrusted)
 	return nil
 }
 
@@ -331,13 +376,20 @@ func freeName(name string, overwrite bool) string {
 }
 
 func infoCmd() *cobra.Command {
+	var showQR bool
+
 	cmd := &cobra.Command{
 		Use:   "info <claim-code>",
 		Short: "Get information about a file",
 		Long: `Get information about a file without downloading it.
 
+--qr also draws the file's download page link as a QR code to scan with a
+phone. End-to-end encrypted files have none: their link needs the key, which
+only the uploader has.
+
 Example:
-  safeshare-cli info abc12345`,
+  safeshare-cli info abc12345
+  safeshare-cli info abc12345 --qr`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
@@ -345,6 +397,9 @@ Example:
 			}
 
 			claimCode := args[0]
+			if showQR && jsonOut {
+				return errQRWithJSON
+			}
 
 			// Create client
 			client, err := newClient(baseURL, apiToken)
@@ -357,28 +412,46 @@ Example:
 			if err != nil {
 				return err
 			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), struct {
+					Schema    int    `json:"schema"`
+					ClaimCode string `json:"claim_code"`
+					*safeshare.FileInfo
+				}{Schema: jsonSchema, ClaimCode: claimCode, FileInfo: info})
+			}
 
-			fmt.Println("File Information:")
-			fmt.Println(strings.Repeat("─", 40))
-			fmt.Printf("Filename:    %s\n", display(info.Filename))
-			fmt.Printf("Size:        %s\n", formatBytes(info.Size))
-			fmt.Printf("MIME Type:   %s\n", info.MimeType)
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, "File Information:")
+			fmt.Fprintln(out, strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Filename:    %s\n", display(info.Filename))
+			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
+			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
-				fmt.Printf("Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
 			} else {
-				fmt.Printf("Expires:     Never\n")
+				fmt.Fprintf(out, "Expires:     Never\n")
 			}
 			if info.DownloadsRemaining != nil {
-				fmt.Printf("Downloads:   %d remaining\n", *info.DownloadsRemaining)
+				fmt.Fprintf(out, "Downloads:   %d remaining\n", *info.DownloadsRemaining)
 			} else {
-				fmt.Printf("Downloads:   Unlimited\n")
+				fmt.Fprintf(out, "Downloads:   Unlimited\n")
 			}
-			fmt.Printf("Password:    %v\n", info.PasswordProtected)
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Fprintf(out, "Password:    %v\n", info.PasswordProtected)
+			fmt.Fprintln(out, strings.Repeat("─", 40))
 
+			if showQR {
+				if info.ClientEncrypted {
+					return fmt.Errorf("no QR code: this file is end-to-end encrypted, and its link needs the key from the uploader's share link")
+				}
+				link := claimURL(baseURL, claimCode)
+				fmt.Fprintf(out, "\n%s\n", link)
+				return printQR(out, link)
+			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&showQR, "qr", false, "Also show the file's link as a QR code to scan with a phone")
 
 	return cmd
 }

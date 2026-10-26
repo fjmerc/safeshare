@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -32,10 +33,20 @@ Example:
 			if err != nil {
 				return err
 			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), struct {
+					Schema int    `json:"schema"`
+					URL    string `json:"url"`
+					*safeshare.PublicConfig
+				}{Schema: jsonSchema, URL: baseURL, PublicConfig: config})
+			}
 
 			fmt.Printf("SafeShare Server Configuration\n")
 			fmt.Printf("URL: %s\n", baseURL)
 			fmt.Println(strings.Repeat("─", 40))
+			if config.Version != "" {
+				fmt.Printf("%-25s %s\n", "Server Version:", display(config.Version))
+			}
 			fmt.Printf("%-25s %s\n", "Max File Size:", formatBytes(config.MaxFileSize))
 			fmt.Printf("%-25s %s\n", "Chunked Upload Threshold:", formatBytes(config.ChunkUploadThreshold))
 			fmt.Printf("%-25s %s\n", "Chunk Size:", formatBytes(config.ChunkSize))
