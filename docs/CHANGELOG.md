@@ -42,6 +42,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 - **`safeshare-cli upload` takes several files**, uploads them one after another with the same options and prints one summary (or, with `--json`, an array). Every path is checked before anything is uploaded; a failed upload doesn't stop the rest unless `--fail-fast` is given, and the exit status is 1 if any failed.
 - **`safeshare-cli upload --qr`** (and `info --qr`) also draws each link as a QR code in the terminal, to open it on a phone by scanning it. Opt-in only; for an encrypted upload the code holds the decryption key, and the CLI warns about that.
 
+### Security
+
+- **The Go SDK and `safeshare-cli` refuse a claim code from the server that isn't a valid one.** A malicious server could otherwise put terminal escape sequences or stray characters into the claim code, which ends up in printed links, share links and QR codes. The CLI also escapes control characters in server-supplied names, MIME types and JSON error messages.
+
 ## [1.17.1] - 2026-10-19
 
 ### Added
