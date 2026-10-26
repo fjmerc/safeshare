@@ -44,6 +44,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Security
 
+- **Go 1.27.3** (from 1.27.2) fixes GO-2026-6809 in `crypto/x509`, which the server reaches through passkey (WebAuthn) login.
 - **The Go SDK and `safeshare-cli` refuse a claim code from the server that isn't a valid one.** A malicious server could otherwise put terminal escape sequences or stray characters into the claim code, which ends up in printed links, share links and QR codes. The CLI also escapes control characters in server-supplied names, MIME types and JSON error messages.
 
 ## [1.17.1] - 2026-10-19
