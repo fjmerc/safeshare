@@ -24,6 +24,7 @@ func uploadCmd() *cobra.Command {
 		showFilename   bool
 		keepMetadata   bool
 		failFast       bool
+		showQR         bool
 	)
 
 	cmd := &cobra.Command{
@@ -57,15 +58,23 @@ Examples:
   safeshare-cli upload notes.txt --encrypt
   safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
   safeshare-cli upload notes.txt --json | jq -r .url
+  safeshare-cli upload video.mp4 --qr
 
 With --json, the "url" field is the link to open. For an encrypted upload it
 is the share link with the key, so the output is a secret: don't log it.
 With several files, --json prints an array with one object per file, in
-order; a file that failed has "error" instead of the upload's fields.`,
+order; a file that failed has "error" instead of the upload's fields.
+
+--qr also draws each link as a QR code to scan with a phone. For an encrypted
+upload the code holds the key: anyone who sees the screen, or a recording or
+log of it, can read the file.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
 				return err
+			}
+			if showQR && jsonOut {
+				return fmt.Errorf("--qr and --json cannot be used together")
 			}
 
 			// Check every file before uploading any, so a typo in the last
@@ -178,6 +187,9 @@ order; a file that failed has "error" instead of the upload's fields.`,
 					return printJSON(cmd.OutOrStdout(), newUploadJSON(args[0], baseURL, results[0]))
 				}
 				printUploadResult(out, results[0])
+				if showQR {
+					return printUploadQRs(out, args, results)
+				}
 				return nil
 			}
 
@@ -195,6 +207,11 @@ order; a file that failed has "error" instead of the upload's fields.`,
 				}
 			} else {
 				printUploadSummary(out, args, results, errs)
+				if showQR {
+					if err := printUploadQRs(out, args, results); err != nil {
+						return err
+					}
+				}
 			}
 			if failed > 0 {
 				return fmt.Errorf("%d of %d uploads failed", failed, len(args))
@@ -212,6 +229,7 @@ order; a file that failed has "error" instead of the upload's fields.`,
 	cmd.Flags().BoolVar(&showFilename, "show-filename", false, "Let the server see the filename of an encrypted upload")
 	cmd.Flags().BoolVar(&keepMetadata, "keep-metadata", false, "Allow encrypted uploads of files whose metadata the CLI cannot remove")
 	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "With several files, stop at the first failed upload")
+	cmd.Flags().BoolVar(&showQR, "qr", false, "Also show each link as a QR code to scan with a phone")
 
 	return cmd
 }
@@ -265,6 +283,29 @@ func printUploadSummary(out io.Writer, files []string, results []*safeshare.Uplo
 	}
 }
 
+// printUploadQRs draws the link of each upload that succeeded (results[i]
+// not nil) as a QR code, labelled with its file when there are several.
+func printUploadQRs(out io.Writer, files []string, results []*safeshare.UploadResult) error {
+	warned := false
+	for i, r := range results {
+		if r == nil {
+			continue
+		}
+		if r.Encrypted && !warned {
+			fmt.Fprintln(os.Stderr, "[WARNING] The QR code holds the share link with its decryption key: anyone who sees your screen, or a recording or log of it, can read the file.")
+			warned = true
+		}
+		fmt.Fprintln(out)
+		if len(files) > 1 {
+			fmt.Fprintf(out, "%s:\n", files[i])
+		}
+		if err := printQR(out, uploadURL(baseURL, r)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // printUploadResult prints the summary of an upload and the link to open.
 func printUploadResult(out io.Writer, result *safeshare.UploadResult) {
 	fmt.Fprintln(out)
@@ -302,7 +343,12 @@ func uploadURL(server string, result *safeshare.UploadResult) string {
 	if result.Encrypted {
 		return result.ShareURL
 	}
-	return strings.TrimRight(server, "/") + "/claim/" + result.ClaimCode
+	return claimURL(server, result.ClaimCode)
+}
+
+// claimURL is the page that downloads a file that isn't end-to-end encrypted.
+func claimURL(server, claimCode string) string {
+	return strings.TrimRight(server, "/") + "/claim/" + claimCode
 }
 
 // isOnion reports whether the server URL is a Tor onion service.

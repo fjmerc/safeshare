@@ -421,6 +421,10 @@ safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
 
 With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1.
 
+To open a link on a phone, add `--qr`: each link is also drawn as a QR code in the terminal, to scan with the phone's camera. It is drawn for a terminal with a dark background. `safeshare-cli info CODE --qr` does the same for a file you uploaded earlier (not for end-to-end encrypted files: their link needs the key). `--qr` can't be combined with `--json`.
+
+> **Warning:** for an encrypted upload, the QR code holds the share link with its key. Anyone who can see your screen, a screen recording or a shared terminal log can read the file. The CLI warns on stderr when this is the case.
+
 Flags for encrypted uploads: `--encrypt`, `--no-encrypt`, `--show-filename` (let the server see the name), `--keep-metadata` (allow JPEG/PNG/PDF/Office files on Ghost servers; the CLI can't remove their metadata).
 
 #### Download

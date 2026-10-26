@@ -376,13 +376,20 @@ func freeName(name string, overwrite bool) string {
 }
 
 func infoCmd() *cobra.Command {
+	var showQR bool
+
 	cmd := &cobra.Command{
 		Use:   "info <claim-code>",
 		Short: "Get information about a file",
 		Long: `Get information about a file without downloading it.
 
+--qr also draws the file's download page link as a QR code to scan with a
+phone. End-to-end encrypted files have none: their link needs the key, which
+only the uploader has.
+
 Example:
-  safeshare-cli info abc12345`,
+  safeshare-cli info abc12345
+  safeshare-cli info abc12345 --qr`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
@@ -390,6 +397,9 @@ Example:
 			}
 
 			claimCode := args[0]
+			if showQR && jsonOut {
+				return fmt.Errorf("--qr and --json cannot be used together")
+			}
 
 			// Create client
 			client, err := newClient(baseURL, apiToken)
@@ -428,9 +438,19 @@ Example:
 			fmt.Printf("Password:    %v\n", info.PasswordProtected)
 			fmt.Println(strings.Repeat("─", 40))
 
+			if showQR {
+				if info.ClientEncrypted {
+					return fmt.Errorf("no QR code: this file is end-to-end encrypted, and its link needs the key from the uploader's share link")
+				}
+				link := claimURL(baseURL, claimCode)
+				fmt.Printf("\n%s\n", link)
+				return printQR(cmd.OutOrStdout(), link)
+			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&showQR, "qr", false, "Also show the file's link as a QR code to scan with a phone")
 
 	return cmd
 }

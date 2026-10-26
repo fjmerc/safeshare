@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	filippo.io/age v1.3.2
 	github.com/spf13/cobra v1.10.2
+	rsc.io/qr v0.2.0
 )
 
 require (
