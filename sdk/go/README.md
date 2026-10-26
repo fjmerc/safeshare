@@ -381,6 +381,8 @@ cd sdk/go
 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
+`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Other builds report what Go recorded instead: for a build from a git checkout, a pseudo-version with the commit (`v0.0.0-<date>-<commit>`, with `+dirty` for uncommitted changes), or `dev` when there is nothing to go on. The server's version is in `safeshare-cli config`.
+
 ### Configuration
 
 Set environment variables:
@@ -412,7 +414,16 @@ safeshare-cli upload ./myfile.txt --encrypt
 
 # Over Tor (always encrypts; every request goes through the proxy)
 safeshare-cli --proxy socks5h://127.0.0.1:9050 upload ./myfile.txt
+
+# Several files: same options for each, one claim code and link per file
+safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
 ```
+
+With several files, every path is checked before anything is uploaded. If an upload fails, the others still go (`--fail-fast` stops at the first failure), the summary says which failed, and the exit status is 1. Ctrl-C aborts the file being uploaded, skips the rest and still prints the links of the files already uploaded (a second Ctrl-C exits at once). The server can tell that files uploaded in one call came from the same person (by their order and timing); upload them separately, some time apart, if that matters.
+
+To open a link on a phone, add `--qr`: each link is also drawn as a QR code in the terminal, to scan with the phone's camera. It is drawn for a terminal with a dark background. `safeshare-cli info CODE --qr` does the same for a file you uploaded earlier (not for end-to-end encrypted files: their link needs the key). `--qr` can't be combined with `--json`.
+
+> **Warning:** for an encrypted upload, the QR code holds the share link with its key. Anyone who can see your screen, a screen recording or a shared terminal log can read the file. The CLI warns on stderr when this is the case.
 
 Flags for encrypted uploads: `--encrypt`, `--no-encrypt`, `--show-filename` (let the server see the name), `--keep-metadata` (allow JPEG/PNG/PDF/Office files on Ghost servers; the CLI can't remove their metadata).
 
@@ -448,7 +459,7 @@ safeshare-cli info abc12345
 safeshare-cli list
 
 # With pagination
-safeshare-cli list --page 2 --per-page 50
+safeshare-cli list --limit 50 --offset 50
 ```
 
 #### Delete File
@@ -481,6 +492,45 @@ safeshare-cli verify https://share.example.com --manifest web-assets.sha256
 ```
 
 Exit status: 0 verified, 2 a file differs, 1 could not verify. See [docs/VERIFYING_RELEASES.md](../../docs/VERIFYING_RELEASES.md) for what it can and can't show. From Go: `ParseWebAssetManifest`, `Client.FetchReleaseManifest` and `Client.VerifyWebAssets`.
+
+### Scripting with `--json`
+
+With `--json`, any command prints one line of JSON on stdout and nothing else (no progress bar, no banners). Notes and warnings still go to stderr. When a command fails, the exit status is non-zero and stderr gets `{"error": "...", "code": "...", "status": 404}`; `code` (the server's error code) and `status` (HTTP) are there only for errors from the server.
+
+```bash
+url=$(safeshare-cli upload video.mp4 --expires 24 --json | jq -r .url)
+```
+
+`upload` prints:
+
+```json
+{"schema":1,"file":"video.mp4","claim_code":"Xk3pQ9aB","filename":"video.mp4","size":1048576,"mime_type":"video/mp4","expires_at":"2026-10-27T12:00:00Z","download_limit":null,"password_protected":false,"encrypted":false,"url":"https://share.example.com/claim/Xk3pQ9aB"}
+```
+
+`url` is the link to open: the claim page, or for an encrypted upload, the share link. With several files, `upload` prints an array with one object per file, in the order given (with one file, the object on its own; a script that passes a varying number of files can use `jq 'if type == "array" then .[] else . end'`). A file that wasn't uploaded has `file`, `error` and possibly `code`/`status` instead of the upload's fields:
+
+```bash
+safeshare-cli upload a.mp4 b.txt --json | jq -r '.[] | .url // "FAILED \(.file): \(.error)"'
+```
+
+> **Warning: the JSON of an encrypted upload is a secret.** Its `url` holds the decryption key after the `#`, and anyone who sees it can read the file. Don't write it to logs, CI output, shared files or anywhere else you wouldn't put a password. (The Go SDK leaves the key and the link out of `UploadResult`'s JSON for this reason; the CLI adds the link because it is what the command is for.)
+
+The other commands print:
+
+| Command | Fields |
+|---|---|
+| `info` | `claim_code` and the file's details: `filename`, `size`, `mime_type`, `expires_at`, `password_protected`, `downloads_remaining`, `client_encrypted`, `download_available`, `scan_status` |
+| `list` | `files` (each with `claim_code`, `filename`, `size`, `uploaded_at`, `expires_at`, `completed_downloads`, `download_limit`, ...), `total`, `page`, `per_page` |
+| `config` | `url` and the server's settings, including `version` |
+| `download` | `claim_code`, `filename`, `size`, `path` (where it was saved), `decrypted`; for a drop, `path` (the directory) and `files` |
+| `delete` | `claim_code`, `deleted`. Needs `--force`, since it can't ask |
+| `rename` | `claim_code`, `filename` |
+| `version` | `version`, `go`, `os`, `arch` |
+| `verify` | `result` (`verified`, `tampered` or `could_not_verify`), `server_version`, `version`, `compared_against`, `files` (each with `file`, `url_path`, `status`, `expected`, `got`, `detail`), `loose_csp`. Printed whenever the comparison ran; the exit status still says the result |
+
+The `--version` flag always prints text; use the `version` command for JSON. An error in the command line itself (an unknown flag or command) is also reported as JSON when `--json` is among the arguments.
+
+Every document has `"schema": 1`. Within a schema, fields may be added but are never renamed or removed. Times are RFC 3339; a missing limit or expiry is `null`. Strings are as the server sent them: unlike the text output, control characters in names are not escaped for the terminal, so take care when printing them.
 
 ## Security
 

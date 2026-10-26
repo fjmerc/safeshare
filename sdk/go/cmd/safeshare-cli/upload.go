@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
@@ -22,12 +25,18 @@ func uploadCmd() *cobra.Command {
 		noEncrypt      bool
 		showFilename   bool
 		keepMetadata   bool
+		failFast       bool
+		showQR         bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "upload <file>",
-		Short: "Upload a file to SafeShare",
-		Long: `Upload a file to SafeShare and get a claim code for downloading.
+		Use:   "upload <file>...",
+		Short: "Upload files to SafeShare",
+		Long: `Upload files to SafeShare and get a claim code for each.
+
+Several files get the same options and are uploaded one after another, each
+with its own claim code and link. If one fails, the rest are still uploaded
+(unless --fail-fast) and the exit status is 1.
 
 Encryption:
   On servers in Ghost (anonymous) mode or that require client-side encryption,
@@ -48,19 +57,42 @@ Examples:
   safeshare-cli upload document.pdf
   safeshare-cli upload large-file.zip --expires 48 --limit 5
   safeshare-cli upload secret.txt --password mysecret
-  safeshare-cli upload notes.txt --encrypt`,
-		Args: cobra.ExactArgs(1),
+  safeshare-cli upload notes.txt --encrypt
+  safeshare-cli upload video.mp4 cover.png caption.txt --expires 24
+  safeshare-cli upload notes.txt --json | jq -r .url
+  safeshare-cli upload video.mp4 --qr
+
+With --json, the "url" field is the link to open. For an encrypted upload it
+is the share link with the key, so the output is a secret: don't log it.
+With several files, --json prints an array with one object per file, in
+order; a file that failed has "error" instead of the upload's fields.
+
+--qr also draws each link as a QR code to scan with a phone. For an encrypted
+upload the code holds the key: anyone who sees the screen, or a recording or
+log of it, can read the file.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
 				return err
 			}
+			if showQR && jsonOut {
+				return errQRWithJSON
+			}
 
-			filePath := args[0]
-
-			// Verify file exists
-			info, err := os.Stat(filePath)
-			if err != nil {
-				return fmt.Errorf("file not found: %s", filePath)
+			// Check every file before uploading any, so a typo in the last
+			// one doesn't leave the others uploaded.
+			sizes := make([]int64, len(args))
+			for i, filePath := range args {
+				info, err := os.Stat(filePath)
+				if errors.Is(err, fs.ErrNotExist) {
+					return fmt.Errorf("file not found: %s", filePath)
+				} else if err != nil {
+					return err
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("not a regular file: %s", filePath)
+				}
+				sizes[i] = info.Size()
 			}
 
 			// Create client
@@ -96,7 +128,7 @@ Examples:
 			opts.KeepMetadata = keepMetadata
 
 			// Progress callback
-			if !noProgress {
+			if !noProgress && !jsonOut {
 				opts.OnProgress = func(p safeshare.UploadProgress) {
 					bar := progressBar(p.Percentage)
 					status := fmt.Sprintf("\r%s %3d%% (%s/%s)",
@@ -112,65 +144,105 @@ Examples:
 				}
 			}
 
-			fmt.Printf("Uploading: %s (%s)\n", filePath, formatBytes(info.Size()))
+			out := humanOut(cmd)
 
-			ctx := context.Background()
+			// Ctrl-C aborts the current file, skips the rest and still reports
+			// the ones already uploaded: their links (and keys) exist nowhere
+			// else. A second Ctrl-C exits at once.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer stop()
+			context.AfterFunc(ctx, stop)
 
 			willEncrypt, err := client.WillEncrypt(ctx, opts.Encrypt)
 			if err != nil {
 				return err
 			}
 			if willEncrypt {
-				fmt.Println("Encrypting on this machine before upload.")
-				if info.Size() > largeEncryptedFile {
-					fmt.Fprintf(os.Stderr, "[WARNING] Encryption holds the whole file in memory (%s).\n", formatBytes(info.Size()))
+				if jsonOut {
+					fmt.Fprintln(os.Stderr, "[NOTE] Encrypting on this machine before upload.")
+				} else {
+					fmt.Fprintln(out, "Encrypting on this machine before upload.")
 				}
 			} else {
 				fmt.Fprintln(os.Stderr, "[NOTE] Not encrypting: this server doesn't require it. Use --encrypt to encrypt anyway.")
 			}
 
-			// Upload
-			result, err := client.Upload(ctx, filePath, opts)
-			if err != nil {
-				fmt.Println() // Clear progress line
-				if errors.Is(err, safeshare.ErrMetadataNotRemoved) {
-					return fmt.Errorf("%w\nPass --keep-metadata to upload it anyway", err)
+			results := make([]*safeshare.UploadResult, len(args))
+			errs := make([]error, len(args))
+			failed, skipped := 0, 0
+			for i, filePath := range args {
+				switch {
+				case ctx.Err() != nil:
+					errs[i] = errInterrupted
+				case failFast && failed > 0:
+					errs[i] = errSkipped
 				}
-				return err
+				if errs[i] != nil {
+					skipped++
+					continue
+				}
+				fmt.Fprintf(out, "Uploading: %s (%s)\n", filePath, formatBytes(sizes[i]))
+				if willEncrypt && sizes[i] > largeEncryptedFile {
+					fmt.Fprintf(os.Stderr, "[WARNING] Encryption holds the whole file in memory (%s).\n", formatBytes(sizes[i]))
+				}
+				results[i], errs[i] = uploadOne(ctx, client, filePath, opts)
+				if errs[i] != nil && ctx.Err() != nil {
+					errs[i] = errInterruptedDuring
+					skipped++
+					continue
+				}
+				if errs[i] != nil {
+					failed++
+					if len(args) > 1 {
+						fmt.Fprintf(os.Stderr, "Upload of %s failed: %s\n", filePath, escapeControls(errs[i].Error()))
+					}
+				}
 			}
 
-			fmt.Println() // Clear progress line
-			fmt.Println()
-			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("Upload successful!\n")
-			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("Claim Code:  %s\n", result.ClaimCode)
-			fmt.Printf("Filename:    %s\n", result.Filename)
-			fmt.Printf("Size:        %s\n", formatBytes(result.Size))
-			fmt.Printf("MIME Type:   %s\n", result.MimeType)
-			if result.ExpiresAt != nil {
-				fmt.Printf("Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
-			} else {
-				fmt.Printf("Expires:     Never\n")
-			}
-			if result.DownloadLimit != nil {
-				fmt.Printf("Downloads:   %d\n", *result.DownloadLimit)
-			} else {
-				fmt.Printf("Downloads:   Unlimited\n")
-			}
-			fmt.Printf("Password:    %v\n", result.PasswordProtected)
-			fmt.Printf("Encrypted:   %v\n", result.Encrypted)
-			fmt.Println(strings.Repeat("─", 50))
-			if result.MetadataKept != "" {
-				fmt.Fprintf(os.Stderr, "[WARNING] This %s was uploaded encrypted, so its metadata was not removed.\n", result.MetadataKept)
-			}
-			if result.Encrypted {
-				fmt.Println("\nShare link (contains the decryption key; anyone with it can read the file):")
-				fmt.Println(result.ShareURL)
+			if len(args) == 1 {
+				if errs[0] != nil {
+					return errs[0]
+				}
+				if jsonOut {
+					return printJSON(cmd.OutOrStdout(), newUploadJSON(args[0], baseURL, results[0]))
+				}
+				printUploadResult(out, results[0])
+				if showQR {
+					return printUploadQRs(out, args, results)
+				}
 				return nil
 			}
-			fmt.Printf("\nDownload URL: %s/claim/%s\n", strings.TrimRight(baseURL, "/"), result.ClaimCode)
 
+			if jsonOut {
+				docs := make([]any, len(args))
+				for i, filePath := range args {
+					if errs[i] != nil {
+						docs[i] = uploadErrorJSON{Schema: jsonSchema, File: filePath, jsonError: newJSONError(errs[i])}
+					} else {
+						docs[i] = newUploadJSON(filePath, baseURL, results[i])
+					}
+				}
+				if err := printJSON(cmd.OutOrStdout(), docs); err != nil {
+					return err
+				}
+			} else {
+				printUploadSummary(out, args, results, errs)
+				if showQR {
+					if err := printUploadQRs(out, args, results); err != nil {
+						return err
+					}
+				}
+			}
+			switch {
+			case ctx.Err() != nil && failed+skipped > 0:
+				return fmt.Errorf("interrupted: %d of %d files not uploaded", failed+skipped, len(args))
+			case failed > 0 && skipped > 0:
+				return fmt.Errorf("%d of %d uploads failed, %d not attempted", failed, len(args), skipped)
+			case failed > 0:
+				return fmt.Errorf("%d of %d uploads failed", failed, len(args))
+			case skipped > 0:
+				return fmt.Errorf("%d of %d files not uploaded", skipped, len(args))
+			}
 			return nil
 		},
 	}
@@ -183,8 +255,133 @@ Examples:
 	cmd.Flags().BoolVar(&noEncrypt, "no-encrypt", false, "Do not encrypt (fails on servers that require encryption)")
 	cmd.Flags().BoolVar(&showFilename, "show-filename", false, "Let the server see the filename of an encrypted upload")
 	cmd.Flags().BoolVar(&keepMetadata, "keep-metadata", false, "Allow encrypted uploads of files whose metadata the CLI cannot remove")
+	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "With several files, stop at the first failed upload")
+	cmd.Flags().BoolVar(&showQR, "qr", false, "Also show each link as a QR code to scan with a phone")
 
 	return cmd
+}
+
+// Errors of files not uploaded: because of --fail-fast, or Ctrl-C.
+var (
+	errSkipped     = errors.New("not uploaded: an earlier upload failed (--fail-fast)")
+	errInterrupted = errors.New("not uploaded: interrupted")
+	// The file being uploaded at Ctrl-C: if the server was already putting
+	// it together, it can still appear there, with no link to it.
+	errInterruptedDuring = errors.New("interrupted while uploading; if it was nearly done it may still appear on the server, without its link")
+)
+
+// uploadOne uploads one file, clearing the progress line afterwards.
+func uploadOne(ctx context.Context, client *safeshare.Client, filePath string, opts *safeshare.UploadOptions) (*safeshare.UploadResult, error) {
+	result, err := client.Upload(ctx, filePath, opts)
+	if opts.OnProgress != nil {
+		fmt.Println() // Clear progress line
+	}
+	if err != nil {
+		if errors.Is(err, safeshare.ErrMetadataNotRemoved) {
+			return nil, fmt.Errorf("%w\nPass --keep-metadata to upload it anyway", err)
+		}
+		return nil, err
+	}
+	if result.MetadataKept != "" {
+		fmt.Fprintf(os.Stderr, "[WARNING] %s: this %s was uploaded encrypted, so its metadata was not removed.\n", filePath, result.MetadataKept)
+	}
+	return result, nil
+}
+
+// printUploadSummary prints the outcome of uploading several files: each
+// file's claim code and link, or why it failed.
+func printUploadSummary(out io.Writer, files []string, results []*safeshare.UploadResult, errs []error) {
+	uploaded, encrypted := 0, false
+	for i := range files {
+		if errs[i] == nil {
+			uploaded++
+			encrypted = encrypted || results[i].Encrypted
+		}
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	fmt.Fprintf(out, "Uploaded %d of %d files\n", uploaded, len(files))
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	for i, f := range files {
+		if errs[i] != nil {
+			fmt.Fprintf(out, "%s  FAILED: %s\n", display(f), escapeControls(strings.SplitN(errs[i].Error(), "\n", 2)[0]))
+			continue
+		}
+		r := results[i]
+		fmt.Fprintf(out, "%s  (%s, claim code %s)\n  %s\n", display(f), formatBytes(r.Size), r.ClaimCode, uploadURL(baseURL, r))
+	}
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	if encrypted {
+		fmt.Fprintln(out, "Share links contain the decryption key; anyone with one can read its file.")
+	}
+}
+
+// printUploadQRs draws the link of each upload that succeeded (results[i]
+// not nil) as a QR code, labelled with its file when there are several.
+func printUploadQRs(out io.Writer, files []string, results []*safeshare.UploadResult) error {
+	warned := false
+	for i, r := range results {
+		if r == nil {
+			continue
+		}
+		if r.Encrypted && !warned {
+			fmt.Fprintln(os.Stderr, "[WARNING] The QR code holds the share link with its decryption key: anyone who sees your screen, or a recording or log of it, can read the file.")
+			warned = true
+		}
+		fmt.Fprintln(out)
+		if len(files) > 1 {
+			fmt.Fprintf(out, "%s:\n", display(files[i]))
+		}
+		if err := printQR(out, uploadURL(baseURL, r)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printUploadResult prints the summary of an upload and the link to open.
+func printUploadResult(out io.Writer, result *safeshare.UploadResult) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	fmt.Fprintf(out, "Upload successful!\n")
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	fmt.Fprintf(out, "Claim Code:  %s\n", result.ClaimCode)
+	fmt.Fprintf(out, "Filename:    %s\n", display(result.Filename))
+	fmt.Fprintf(out, "Size:        %s\n", formatBytes(result.Size))
+	fmt.Fprintf(out, "MIME Type:   %s\n", display(result.MimeType))
+	if result.ExpiresAt != nil {
+		fmt.Fprintf(out, "Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Fprintf(out, "Expires:     Never\n")
+	}
+	if result.DownloadLimit != nil {
+		fmt.Fprintf(out, "Downloads:   %d\n", *result.DownloadLimit)
+	} else {
+		fmt.Fprintf(out, "Downloads:   Unlimited\n")
+	}
+	fmt.Fprintf(out, "Password:    %v\n", result.PasswordProtected)
+	fmt.Fprintf(out, "Encrypted:   %v\n", result.Encrypted)
+	fmt.Fprintln(out, strings.Repeat("─", 50))
+	if result.Encrypted {
+		fmt.Fprintln(out, "\nShare link (contains the decryption key; anyone with it can read the file):")
+		fmt.Fprintln(out, result.ShareURL)
+		return
+	}
+	fmt.Fprintf(out, "\nDownload URL: %s\n", uploadURL(baseURL, result))
+}
+
+// uploadURL is the link to open for an upload: the share link (with the
+// key) for an encrypted one, else the claim page.
+func uploadURL(server string, result *safeshare.UploadResult) string {
+	if result.Encrypted {
+		return result.ShareURL
+	}
+	return claimURL(server, result.ClaimCode)
+}
+
+// claimURL is the page that downloads a file that isn't end-to-end encrypted.
+func claimURL(server, claimCode string) string {
+	return strings.TrimRight(server, "/") + "/claim/" + claimCode
 }
 
 // isOnion reports whether the server URL is a Tor onion service.

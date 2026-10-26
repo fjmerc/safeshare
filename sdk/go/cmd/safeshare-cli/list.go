@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +39,15 @@ Examples:
 			if err != nil {
 				return err
 			}
+			if jsonOut {
+				if files.Files == nil {
+					files.Files = []safeshare.UserFile{} // [] rather than null
+				}
+				return printJSON(cmd.OutOrStdout(), struct {
+					Schema int `json:"schema"`
+					*safeshare.UserFilesResponse
+				}{Schema: jsonSchema, UserFilesResponse: files})
+			}
 
 			if len(files.Files) == 0 {
 				fmt.Println("No files found.")
@@ -48,7 +58,7 @@ Examples:
 			fmt.Println(strings.Repeat("═", 80))
 
 			for _, f := range files.Files {
-				fmt.Printf("\n%-12s %s\n", "Claim Code:", f.ClaimCode)
+				fmt.Printf("\n%-12s %s\n", "Claim Code:", display(f.ClaimCode))
 				fmt.Printf("%-12s %s\n", "Filename:", display(f.Filename))
 				fmt.Printf("%-12s %s\n", "Size:", formatBytes(f.Size))
 				fmt.Printf("%-12s %s\n", "Uploaded:", f.UploadedAt.Format("2006-01-02 15:04:05"))
@@ -96,6 +106,9 @@ Example:
 			}
 
 			claimCode := args[0]
+			if jsonOut && !force {
+				return fmt.Errorf("--json needs --force: delete cannot ask for confirmation")
+			}
 
 			// Create client
 			client, err := newClient(baseURL, apiToken)
@@ -125,6 +138,9 @@ Example:
 
 			if err := client.DeleteFile(ctx, claimCode); err != nil {
 				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), map[string]any{"schema": jsonSchema, "claim_code": claimCode, "deleted": true})
 			}
 
 			fmt.Println("File deleted successfully.")
@@ -164,6 +180,9 @@ Example:
 			result, err := client.RenameFile(ctx, claimCode, newFilename)
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				return printJSON(cmd.OutOrStdout(), map[string]any{"schema": jsonSchema, "claim_code": claimCode, "filename": result.NewFilename})
 			}
 
 			fmt.Printf("File renamed to: %s\n", display(result.NewFilename))
