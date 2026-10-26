@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"unicode"
@@ -13,6 +15,10 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+// version is set at build time (scripts/build-cli.sh passes
+// -X main.version=<release>); plain go builds report "dev".
+var version = "dev"
 
 var (
 	// Global flags
@@ -23,6 +29,17 @@ var (
 )
 
 func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, escapeControls(err.Error()))
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "safeshare-cli",
 		Short: "SafeShare CLI - File sharing from the command line",
@@ -39,10 +56,12 @@ Examples:
   safeshare-cli list
   safeshare-cli delete abc12345
   safeshare-cli verify https://share.example.com`,
+		Version: cliVersion(),
 		// Errors are printed once by main; usage only on request.
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	rootCmd.SetVersionTemplate("safeshare-cli {{.Version}}\n")
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&baseURL, "url", os.Getenv("SAFESHARE_URL"), "SafeShare server URL (or SAFESHARE_URL env)")
@@ -59,14 +78,37 @@ Examples:
 	rootCmd.AddCommand(renameCmd())
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(verifyCmd())
+	rootCmd.AddCommand(versionCmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, escapeControls(err.Error()))
-		var ee *exitError
-		if errors.As(err, &ee) {
-			os.Exit(ee.code)
-		}
-		os.Exit(1)
+	return rootCmd
+}
+
+// cliVersion returns the release this binary was built from: the stamped
+// version, else the module version go install records, else "dev".
+func cliVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show the CLI's version",
+		Long: `Show the release this safeshare-cli was built from, and the Go version and
+platform it was built for. "dev" means it was not built by scripts/build-cli.sh
+(or go install).
+
+The server's version is in "safeshare-cli config".`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "safeshare-cli %s\n%s %s/%s\n", cliVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
+			return nil
+		},
 	}
 }
 

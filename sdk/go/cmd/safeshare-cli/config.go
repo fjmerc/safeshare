@@ -36,6 +36,9 @@ Example:
 			fmt.Printf("SafeShare Server Configuration\n")
 			fmt.Printf("URL: %s\n", baseURL)
 			fmt.Println(strings.Repeat("─", 40))
+			if config.Version != "" {
+				fmt.Printf("%-25s %s\n", "Server Version:", display(config.Version))
+			}
 			fmt.Printf("%-25s %s\n", "Max File Size:", formatBytes(config.MaxFileSize))
 			fmt.Printf("%-25s %s\n", "Chunked Upload Threshold:", formatBytes(config.ChunkUploadThreshold))
 			fmt.Printf("%-25s %s\n", "Chunk Size:", formatBytes(config.ChunkSize))

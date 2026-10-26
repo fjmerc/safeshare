@@ -11,6 +11,8 @@
 # toolchain line (Docker needed), or with --local-go using the go on PATH
 # (same version required). Without --check, binaries are written to OUTDIR
 # (default dist/) with their sums in OUTDIR/safeshare-cli.sha256.
+# The binaries report the version in internal/handlers/version.go (the
+# server's), read from the checkout so a rebuild of a tag stamps the same one.
 # Set TMPDIR if the Docker daemon cannot see /tmp.
 # Exits 1 if any binary differs from the sums, 2 if it couldn't build.
 set -eu
@@ -33,6 +35,12 @@ if [ -z "$gover" ]; then
 	echo "no toolchain line in go.mod; can't tell which Go version to build with" >&2
 	exit 2
 fi
+ver=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' "$root/internal/handlers/version.go")
+if [ -z "$ver" ]; then
+	echo "no Version in internal/handlers/version.go; can't tell which version to stamp" >&2
+	exit 2
+fi
+ldflags="-w -s -X main.version=$ver"
 if [ "$local_go" = 1 ] && [ "$(GOTOOLCHAIN=local go env GOVERSION)" != "go$gover" ]; then
 	echo "--local-go needs Go $gover (go.mod's toolchain), found $(GOTOOLCHAIN=local go env GOVERSION)" >&2
 	exit 2
@@ -48,7 +56,7 @@ else
 fi
 
 # GOOS/GOARCH pairs; each binary is safeshare-cli-GOOS-GOARCH(.exe). Same
-# flags as the Dockerfile's server build.
+# flags as the Dockerfile's server build, plus the version.
 targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 
 if [ "$local_go" = 1 ]; then
@@ -56,15 +64,15 @@ if [ "$local_go" = 1 ]; then
 		os=${t%/*} arch=${t#*/} ext=""
 		[ "$os" = windows ] && ext=.exe
 		(cd "$root/sdk/go" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" GOTOOLCHAIN=local GOFLAGS=-mod=readonly \
-			go build -trimpath -buildvcs=false -ldflags="-w -s" -o "$out/safeshare-cli-$os-$arch$ext" ./cmd/safeshare-cli)
+			go build -trimpath -buildvcs=false -ldflags="$ldflags" -o "$out/safeshare-cli-$os-$arch$ext" ./cmd/safeshare-cli)
 	done
 else
 	docker pull -q "golang:$gover" >/dev/null
 	docker run --rm -v "$root":/src:ro -v "$out":/out -w /src/sdk/go \
-		-e CGO_ENABLED=0 -e GOTOOLCHAIN=local -e GOFLAGS=-mod=readonly -e TARGETS="$targets" \
+		-e CGO_ENABLED=0 -e GOTOOLCHAIN=local -e GOFLAGS=-mod=readonly -e TARGETS="$targets" -e LDFLAGS="$ldflags" \
 		--user "$(id -u):$(id -g)" -e HOME=/tmp -e GOCACHE=/tmp/cache -e GOPATH=/tmp/go \
 		"golang:$gover" sh -c 'for t in $TARGETS; do os=${t%/*}; arch=${t#*/}; ext=""; [ "$os" = windows ] && ext=.exe;
-			GOOS=$os GOARCH=$arch go build -trimpath -buildvcs=false -ldflags="-w -s" -o "/out/safeshare-cli-$os-$arch$ext" ./cmd/safeshare-cli || exit 1; done'
+			GOOS=$os GOARCH=$arch go build -trimpath -buildvcs=false -ldflags="$LDFLAGS" -o "/out/safeshare-cli-$os-$arch$ext" ./cmd/safeshare-cli || exit 1; done'
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then
