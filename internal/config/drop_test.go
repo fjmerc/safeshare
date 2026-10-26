@@ -48,13 +48,20 @@ func TestLoadDropConfig_RejectsBadRecipients(t *testing.T) {
 	x, _ := age.GenerateX25519Identity()
 	y, _ := age.GenerateX25519Identity()
 	secret := x.String()
+	// Change the last character so the checksum breaks; "q" unless the key
+	// already ends in it (which would leave the key valid).
+	pub := x.Recipient().String()
+	last := "q"
+	if strings.HasSuffix(pub, last) {
+		last = "p"
+	}
 	cases := map[string]string{
 		"private key":       secret,
 		"lowercase private": strings.ToLower(secret),
 		"two keys":          x.Recipient().String() + "," + y.Recipient().String(),
 		"two keys spaced":   x.Recipient().String() + " " + y.Recipient().String(),
 		"garbage":           "not-a-key",
-		"broken checksum":   x.Recipient().String()[:len(x.Recipient().String())-1] + "q",
+		"broken checksum":   pub[:len(pub)-1] + last,
 		"ssh key":           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
 		"plugin":            "age1yubikey1qwerty",
 	}
