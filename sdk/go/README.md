@@ -381,7 +381,7 @@ cd sdk/go
 go build -o safeshare-cli ./cmd/safeshare-cli
 ```
 
-`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Other builds report what Go recorded instead: for a build from a git checkout, a pseudo-version with the commit (`v0.0.0-20261026133635-d82927633a6a`, `+dirty` with uncommitted changes), or `dev` when there is nothing to go on. The server's version is in `safeshare-cli config`.
+`safeshare-cli --version` shows which release a binary was built from (`version` also shows the Go version and platform). Other builds report what Go recorded instead: for a build from a git checkout, a pseudo-version with the commit (`v0.0.0-<date>-<commit>`, with `+dirty` for uncommitted changes), or `dev` when there is nothing to go on. The server's version is in `safeshare-cli config`.
 
 ### Configuration
 
