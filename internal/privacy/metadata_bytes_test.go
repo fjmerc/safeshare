@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/filter"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -498,7 +499,7 @@ func pdfObjectsText(t *testing.T, data []byte) string {
 		}
 		fmt.Fprintf(&sb, "%d: %v\n", nr, entry.Object)
 		if sd, ok := entry.Object.(types.StreamDict); ok {
-			if err := sd.Decode(); err == nil {
+			if err := sd.DecodeWithLimit(filter.DefaultMaxDecodeBytes); err == nil {
 				sb.Write(sd.Content)
 				sb.WriteByte('\n')
 			}
