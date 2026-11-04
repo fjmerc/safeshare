@@ -35,6 +35,21 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-11-04
+
+### Security
+
+- **`go-jose` 4.1.7** (from 4.1.4). SafeShare uses this library, through `go-oidc`, to check the tokens an identity provider signs during SSO sign-in. The update fixes GHSA-mgcc-cww5-fp2q (an oversized RSA key in a JWK set could tie up the server) and the five advisories published 2026-10-30: GHSA-p9j4-2j95-j4rv, GHSA-c67m-wr4h-2ccg, GHSA-v6h2-qj3f-2h6v, GHSA-r39w-98wm-9pp6 and GHSA-27pc-rm86-68pq (denial of service, header handling and panics). Servers without SSO don't call this code. JWK sets with RSA keys larger than 4096 bits are now refused; common identity providers use 2048-bit keys.
+- **`golang.org/x/net` 0.62.0** (from 0.61.0).
+
+### Changed
+
+- Dependency updates: AWS SDK, `pdfcpu` 0.16.4, `mimetype` 1.4.16, `modernc.org/sqlite` 1.61.0, and CI actions.
+
+### Fixed
+
+- A drop-mode test failed about 1 run in 32 when a random key happened to end in "q". The tests also stop using `pdfcpu`'s deprecated `StreamDict.Decode`.
+
 ## [1.18.0] - 2026-10-26
 
 ### Added
