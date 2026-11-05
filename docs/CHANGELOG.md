@@ -37,7 +37,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ### Changed
 
-- **Calmer dashboard header buttons.** The buttons at the top of My Dashboard are now soft tinted chips instead of outlined boxes with one bright blue button: blue for Upload and Download, grey for Admin Dashboard and Change Password, red for Logout. Hovering a button adds a thin ring. Works in both light and dark themes, and every label keeps at least 5:1 contrast.
+- **Calmer dashboard header buttons.** The buttons at the top of My Dashboard are now soft tinted chips instead of outlined boxes with one bright blue button: blue for Upload and Download, grey for Admin Dashboard and Change Password, red for Logout. Hovering a button adds a thin ring. The Admin Dashboard header (Home, theme toggle, Logout) uses the same style. Works in both light and dark themes, and every label keeps at least 5:1 contrast.
 
 ## [1.18.1] - 2026-11-04
 
