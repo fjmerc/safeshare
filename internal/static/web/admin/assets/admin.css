@@ -29,6 +29,7 @@
     --focus-ring: #2563eb;
     --bg-light: #f9fafb;
     --bg-white: #ffffff;
+    --bg-tertiary: #f3f4f6;        /* tinted chips; same as style.css */
     --text-primary: #111827;
     --text-secondary: #4b5563;
     --text-muted: #4b5563;
@@ -56,6 +57,7 @@
     color-scheme: dark;
     --bg-light: #1f2937;
     --bg-white: #111827;
+    --bg-tertiary: #374151;
     --text-primary: #f9fafb;
     --text-secondary: #b0b7c3;
     --text-muted: #b0b7c3;
@@ -548,14 +550,36 @@ button:disabled {
     align-items: center;
 }
 
-/* Logout is outlined, not a red slab (matches the user dashboard) */
-.header-actions .btn-danger {
-    background: transparent;
-    color: var(--danger-text);
-    border-color: var(--danger-text);
+/* Soft tinted chips, matching the user dashboard header: grey for Home and
+   the theme toggle, red for Logout. No outlines; hover adds a thin ring in
+   the label colour. Prefixed with .admin-header to outrank .btn-icon.btn-secondary. */
+.admin-header .header-actions .btn-secondary,
+.admin-header .header-actions .btn-danger {
+    border-color: transparent;
 }
 
-.header-actions .btn-danger:hover:not(:disabled) {
+.admin-header .header-actions .btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.admin-header .header-actions .btn-danger {
+    background: var(--danger-light);
+    color: var(--danger-text);
+}
+
+.admin-header .header-actions .btn-secondary:hover:not(:disabled),
+.admin-header .header-actions .btn-danger:hover:not(:disabled) {
+    border-color: transparent;
+    box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.admin-header .header-actions .btn-secondary:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.admin-header .header-actions .btn-danger:hover:not(:disabled) {
     background: var(--danger-light);
 }
 

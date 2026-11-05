@@ -122,11 +122,43 @@
             flex: 0 0 auto;
         }
 
-        /* One filled action (Upload); Logout is outlined, not a red slab */
+        /* Soft tinted chips, no outlines and no solid fill: colour says what a
+           button does (blue = files, grey = account, red = logout). Hover adds
+           a thin ring in the label colour instead of changing the fill. */
+        .header-actions .btn-primary,
+        .header-actions .btn-secondary,
         .header-actions .btn-danger {
-            background: transparent;
+            border-color: transparent;
+        }
+
+        .header-actions .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .header-actions .btn-file {
+            background: var(--primary-tint);
+            color: var(--primary-text);
+        }
+
+        .header-actions .btn-danger {
+            background: var(--danger-tint);
             color: var(--danger-text);
-            border-color: var(--danger-text);
+        }
+
+        .header-actions .btn-primary:hover:not(:disabled),
+        .header-actions .btn-secondary:hover:not(:disabled),
+        .header-actions .btn-danger:hover:not(:disabled) {
+            border-color: transparent;
+            box-shadow: inset 0 0 0 1px currentColor;
+        }
+
+        .header-actions .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-tertiary);
+        }
+
+        .header-actions .btn-file:hover:not(:disabled) {
+            background: var(--primary-tint);
         }
 
         .header-actions .btn-danger:hover:not(:disabled) {
@@ -2555,13 +2587,13 @@
                         </svg>
                         Change Password
                     </button>
-                    <button type="button" id="uploadFilesBtn" class="btn-primary">
+                    <button type="button" id="uploadFilesBtn" class="btn-primary btn-file">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                         </svg>
                         Upload File
                     </button>
-                    <button type="button" id="downloadFileBtn" class="btn-secondary">
+                    <button type="button" id="downloadFileBtn" class="btn-secondary btn-file">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
