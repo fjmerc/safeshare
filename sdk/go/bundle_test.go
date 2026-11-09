@@ -33,12 +33,14 @@ type bundleFake struct {
 	swap        bool // serve members 0 and 1 swapped
 	drop        bool // list one member fewer in info
 	encrypted   bool
+	fileGets    int
+	missingAt   int // member position that answers 404 on download (-1: none)
 }
 
 const fakeBundleCode = "BundleCode01"
 
 func newBundleFake(t *testing.T, cfg map[string]any) (*bundleFake, *httptest.Server) {
-	f := &bundleFake{members: map[int][]byte{}, names: map[int]string{}, failAt: -1}
+	f := &bundleFake{members: map[int][]byte{}, names: map[int]string{}, failAt: -1, missingAt: -1}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(cfg) })
 	mux.HandleFunc("/api/bundles", func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +125,11 @@ func newBundleFake(t *testing.T, cfg map[string]any) (*bundleFake, *httptest.Ser
 		pos, _ := strconv.Atoi(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.fileGets++
+		if pos == f.missingAt {
+			http.Error(w, `{"error":"gone","code":"NOT_FOUND"}`, 404)
+			return
+		}
 		if f.swap && pos < 2 {
 			pos = 1 - pos
 		}
@@ -370,5 +377,47 @@ func TestDownloadBundle_VisibleNameWithSpecialCharacters(t *testing.T) {
 	saved, err := c.DownloadBundle(context.Background(), link, out, nil)
 	if err != nil || len(saved) != 1 || filepath.Base(saved[0]) != "photo (1)&co.txt" {
 		t.Fatalf("saved %v, err %v", saved, err)
+	}
+}
+
+// TestDownloadBundle_ChecksDirBeforeDownloading: a destination that can't be
+// used is reported before any file is fetched (fetching may spend downloads).
+func TestDownloadBundle_ChecksDirBeforeDownloading(t *testing.T) {
+	f, srv := newBundleFake(t, bundleTestConfig)
+	c := bundleClient(t, srv)
+	res, err := c.UploadBundle(context.Background(), writeBundleFiles(t, "a"), &UploadOptions{Encrypt: EncryptNever})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notADir := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(notADir, []byte("x"), 0o600)
+	link, _ := ParseBundleURL(res.BundleURL)
+	if _, err := c.DownloadBundle(context.Background(), link, notADir, nil); err == nil {
+		t.Fatal("downloading into a regular file succeeded")
+	}
+	if f.fileGets != 0 {
+		t.Fatalf("%d files fetched before the destination was checked", f.fileGets)
+	}
+}
+
+// TestDownloadBundle_PlainFailureLeavesNothing: a plain bundle is streamed
+// to disk; if a later file fails, nothing (not even a partial file) is left.
+func TestDownloadBundle_PlainFailureLeavesNothing(t *testing.T) {
+	f, srv := newBundleFake(t, bundleTestConfig)
+	c := bundleClient(t, srv)
+	res, err := c.UploadBundle(context.Background(), writeBundleFiles(t, "first", "second"), &UploadOptions{Encrypt: EncryptNever})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.missingAt = 1
+	f.mu.Unlock()
+	link, _ := ParseBundleURL(res.BundleURL)
+	dir := filepath.Join(t.TempDir(), "out")
+	if _, err := c.DownloadBundle(context.Background(), link, dir, nil); err == nil {
+		t.Fatal("download with a missing file succeeded")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("left behind: %v", entries)
 	}
 }

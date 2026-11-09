@@ -344,15 +344,26 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 		}
 	}
 
+	// Check the destination before fetching anything: a fetch may spend a
+	// download. Files are written to a staging directory inside dir as they
+	// arrive and moved into place only once every file is here and checked.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", dir, err)
+	}
+	staging, err := os.MkdirTemp(dir, ".safeshare-bundle-")
+	if err != nil {
+		return nil, fmt.Errorf("preparing %s: %w", dir, err)
+	}
+	defer os.RemoveAll(staging)
+
 	type fetched struct {
-		name string
-		data []byte
+		name, path string
 	}
 	got := make([]fetched, 0, len(info.Files))
 	for i, f := range info.Files {
 		limit := f.Size
-		if limit > maxEncryptedPayload+CiphertextOverhead {
-			return nil, fmt.Errorf("%w: file %d is %d bytes; bundle downloads hold each file in memory", ErrFileTooLarge, i, f.Size)
+		if manifest != nil && limit > maxEncryptedPayload+CiphertextOverhead {
+			return nil, fmt.Errorf("%w: file %d is %d bytes; decrypting holds each file in memory", ErrFileTooLarge, i, f.Size)
 		}
 		resp, err := c.requestWithPassword(ctx, http.MethodGet, "/api/bundle/"+link.BundleCode+"/files/"+strconv.Itoa(i), nil, "", opts.Password)
 		if err != nil {
@@ -361,20 +372,31 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 		if resp.StatusCode >= 400 {
 			return nil, handleResponse(resp, nil)
 		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		stagePath := filepath.Join(staging, strconv.Itoa(i))
+
+		if manifest == nil {
+			// Plain file: stream it to disk, never more than the reported size.
+			n, err := writeLimited(stagePath, resp.Body, limit)
+			resp.Body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("downloading file %d: %w", i, err)
+			}
+			if n != limit {
+				return nil, fmt.Errorf("%w: file %d is %d bytes but the server reported %d", ErrManifestMismatch, i, n, limit)
+			}
+			got = append(got, fetched{name: f.Name, path: stagePath})
+			continue
+		}
+
+		blob, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("downloading file %d: %w", i, err)
 		}
-		if int64(len(data)) != limit {
-			return nil, fmt.Errorf("%w: file %d is %d bytes but the server reported %d", ErrManifestMismatch, i, len(data), limit)
+		if int64(len(blob)) != limit {
+			return nil, fmt.Errorf("%w: file %d is %d bytes but the server reported %d", ErrManifestMismatch, i, len(blob), limit)
 		}
-
-		if manifest == nil {
-			got = append(got, fetched{name: f.Name, data: data})
-			continue
-		}
-		pt, err := decryptBlob(rawKey, data)
+		pt, err := decryptBlob(rawKey, blob)
 		if err != nil {
 			return nil, fmt.Errorf("%w: file %d does not decrypt with the bundle key", ErrManifestMismatch, i)
 		}
@@ -395,12 +417,12 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 		if (payloadName != "" && payloadName != want.Name) || int64(len(data)) != want.Size || hex.EncodeToString(sum[:]) != want.SHA256 {
 			return nil, fmt.Errorf("%w: file %d is not the file the sender put there", ErrManifestMismatch, i)
 		}
-		got = append(got, fetched{name: want.Name, data: data})
+		if err := writeNewFile(stagePath, data, false); err != nil {
+			return nil, fmt.Errorf("saving file %d: %w", i, err)
+		}
+		got = append(got, fetched{name: want.Name, path: stagePath})
 	}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("creating %s: %w", dir, err)
-	}
 	used := map[string]bool{}
 	saved := make([]string, 0, len(got))
 	for i, f := range got {
@@ -410,12 +432,29 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 			path = freeBundleName(dir, name, used)
 		}
 		used[filepath.Base(path)] = true
-		if err := (&DecryptedFile{Filename: name, Data: f.data}).Save(path, opts.Overwrite); err != nil {
+		if err := CheckDestination(path, opts.Overwrite); err != nil {
 			return saved, err
+		}
+		if err := os.Rename(f.path, path); err != nil {
+			return saved, fmt.Errorf("saving %s: %w", path, err)
 		}
 		saved = append(saved, path)
 	}
 	return saved, nil
+}
+
+// writeLimited copies at most limit+1 bytes of r to a new file at path
+// (mode 0600) and returns how many bytes it wrote.
+func writeLimited(path string, r io.Reader, limit int64) (int64, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(f, io.LimitReader(r, limit+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return n, err
 }
 
 // freeBundleName returns dir/name, or dir/"name (n).ext" for the first n
