@@ -222,3 +222,24 @@ func TestAdminDashboard_ShowsBundleID(t *testing.T) {
 		t.Fatalf("admin list bundle_id: %s", rr.Body.String())
 	}
 }
+
+// TestUserBundles_RejectsNonCanonicalPaths: only the exact route forms are
+// served, so a trailing slash or extra segment can't reach an action while
+// dodging the path-matched rate limits.
+func TestUserBundles_RejectsNonCanonicalPaths(t *testing.T) {
+	e := newGhostEnv(t, nil)
+	alice := ownerUser(t, e, "alice")
+	b := ownedBundle(t, e, alice, "x")
+	for _, p := range []string{
+		fmt.Sprintf("/api/user/bundles/%d/regenerate-code/", b.BundleID),
+		fmt.Sprintf("/api/user/bundles/%d/regenerate-code/x", b.BundleID),
+		fmt.Sprintf("/api/user/bundles/%d//regenerate-code", b.BundleID),
+	} {
+		if rr := userBundlesReq(e, alice, http.MethodPut, p, nil); rr.Code != http.StatusNotFound {
+			t.Errorf("PUT %s: %d, want 404", p, rr.Code)
+		}
+	}
+	if rr := userBundlesReq(e, alice, http.MethodDelete, fmt.Sprintf("/api/user/bundles/%d/", b.BundleID), nil); rr.Code != http.StatusNotFound {
+		t.Errorf("DELETE with trailing slash: %d, want 404", rr.Code)
+	}
+}

@@ -55,8 +55,10 @@ func UserBundlesHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/user/bundles"), "/")
-		if rest == "" {
+		// Only the exact route forms are served (no trailing slash, no extra
+		// segments): the rate limiter matches these paths literally.
+		rest := strings.TrimPrefix(r.URL.Path, "/api/user/bundles")
+		if rest == "" || rest == "/" {
 			if r.Method != http.MethodGet {
 				sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
 				return
@@ -65,9 +67,9 @@ func UserBundlesHandler(repos *repository.Repositories, cfg *config.Config) http
 			return
 		}
 
-		idPart, action, _ := strings.Cut(rest, "/")
+		idPart, action, hasAction := strings.Cut(strings.TrimPrefix(rest, "/"), "/")
 		bundleID, err := strconv.ParseInt(idPart, 10, 64)
-		if err != nil || bundleID <= 0 {
+		if err != nil || bundleID <= 0 || (hasAction && action == "") || strings.Contains(action, "/") {
 			sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
 			return
 		}
