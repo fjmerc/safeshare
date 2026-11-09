@@ -185,7 +185,7 @@ func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit succeeds
 
 		var status string
 		var fileCount int
@@ -227,7 +227,7 @@ func (r *BundleRepository) DeleteWithMembers(ctx context.Context, bundleID int64
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit succeeds
 
 		var exists int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM bundles WHERE id = $1 FOR UPDATE`, bundleID).Scan(&exists); err != nil {
@@ -298,7 +298,7 @@ func (r *BundleRepository) UpdateExpiration(ctx context.Context, bundleID, userI
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback(ctx)
+		defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit succeeds
 
 		tag, err := tx.Exec(ctx, `UPDATE bundles SET expires_at = $1 WHERE id = $2 AND user_id = $3 AND status = $4`,
 			expiresAt, bundleID, userID, models.BundleStatusPublished)
