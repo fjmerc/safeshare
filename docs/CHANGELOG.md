@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-09
+
 ### Added
 
 - **Several files under one link (bundles).** Choose two or more files on the upload page, or run `safeshare-cli upload --bundle a.png b.png c.png`, and get one link and one QR code for all of them. The link opens a page listing every file with previews and a **Save all** button: on a phone it opens the share sheet, so one more tap saves them all to Photos; on a computer it downloads each file. Expiry, download limit and password apply to the whole bundle, and the download limit counts per file. A bundle is created whole or not at all: if any file fails, nothing is kept and no link is shown.
