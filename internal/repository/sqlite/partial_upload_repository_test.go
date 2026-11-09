@@ -49,7 +49,9 @@ func setupPartialUploadTestDB(t *testing.T) *sql.DB {
 			lease_expires_at TEXT,
 			assembly_attempts INTEGER NOT NULL DEFAULT 0,
 			error_retryable INTEGER NOT NULL DEFAULT 0,
-			uploader_ip TEXT
+			uploader_ip TEXT,
+			bundle_id INTEGER,
+			bundle_position INTEGER
 		)
 	`)
 	if err != nil {
@@ -79,7 +81,9 @@ func setupPartialUploadTestDB(t *testing.T) *sql.DB {
 			scan_status TEXT,
 			scan_result TEXT,
 			scanned_at TEXT,
-			partial_upload_id TEXT
+			partial_upload_id TEXT,
+			bundle_id INTEGER,
+			bundle_position INTEGER
 		)
 	`)
 	if err != nil {

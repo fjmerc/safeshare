@@ -241,6 +241,11 @@ func GetDatabaseStats(dbPath string) (*BackupStats, error) {
 		stats.BlockedIPsCount = 0
 	}
 
+	// Count bundles (the table does not exist in databases from before bundles)
+	if err := db.QueryRow("SELECT COUNT(*) FROM bundles").Scan(&stats.BundlesCount); err != nil {
+		stats.BundlesCount = 0
+	}
+
 	return stats, nil
 }
 

@@ -330,8 +330,8 @@ func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
 			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id,
-			created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18::timestamptz, CURRENT_TIMESTAMP))
+			bundle_id, bundle_position, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, COALESCE($20::timestamptz, CURRENT_TIMESTAMP))
 		RETURNING id, created_at
 	`
 
@@ -380,6 +380,8 @@ func insertFile(ctx context.Context, execer pgExecer, file *models.File) error {
 		scanResult,
 		file.ScannedAt,
 		file.PartialUploadID,
+		file.BundleID,
+		file.BundlePosition,
 		createdAtArg,
 	).Scan(&file.ID, &file.CreatedAt)
 
@@ -405,4 +407,17 @@ func parseBlockedExtensions(s string) []string {
 		}
 	}
 	return result
+}
+
+// applyBundleColumns copies nullable files.bundle_id / bundle_position scan
+// results onto file (nil for a standalone file).
+func applyBundleColumns(file *models.File, bundleID, bundlePosition sql.NullInt64) {
+	if bundleID.Valid {
+		id := bundleID.Int64
+		file.BundleID = &id
+	}
+	if bundlePosition.Valid {
+		pos := int(bundlePosition.Int64)
+		file.BundlePosition = &pos
+	}
 }

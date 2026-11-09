@@ -81,11 +81,16 @@ func (c *Client) uploadEncrypted(ctx context.Context, path, filename string, siz
 			ErrMetadataNotRemoved, metadataKind)
 	}
 
-	encodedKey, err := GenerateEncryptionKey()
+	encodedKey := opts.bundleKey // every file in a bundle shares the bundle key
+	if encodedKey == "" {
+		if encodedKey, err = GenerateEncryptionKey(); err != nil {
+			return nil, err
+		}
+	}
+	key, err := decodeKey(encodedKey)
 	if err != nil {
 		return nil, err
 	}
-	key, _ := decodeKey(encodedKey)
 	defer clear(key)
 	iv := make([]byte, e2eIVLength)
 	if _, err := rand.Read(iv); err != nil {
@@ -114,7 +119,9 @@ func (c *Client) uploadEncrypted(ctx context.Context, path, filename string, siz
 	result.Encrypted = true
 	result.Filename = filename // the server stored "encrypted.bin" when it was hidden
 	result.EncryptionKey = encodedKey
-	result.ShareURL = BuildShareURL(c.baseURL, result.ClaimCode, encodedKey)
+	if opts.member == nil {
+		result.ShareURL = BuildShareURL(c.baseURL, result.ClaimCode, encodedKey)
+	}
 	if metadataKind != "" && cfg.StripMetadata {
 		result.MetadataKept = metadataKind
 	}

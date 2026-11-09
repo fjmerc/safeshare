@@ -145,6 +145,101 @@
         return `${base}/#/claim/${claimCode}/key/${base64urlKey}`;
     }
 
+    // === Bundle links (several files behind one link) ===
+
+    var BUNDLE_FRAGMENT = /^#\/bundle\/([A-Za-z0-9_-]{8,32})(?:\/key\/([A-Za-z0-9_-]{43}))?$/;
+
+    /**
+     * Parse a bundle link fragment: #/bundle/CODE or, for an end-to-end
+     * encrypted bundle, #/bundle/CODE/key/KEY.
+     * @param {string} hash - window.location.hash
+     * @returns {{ bundleCode: string, encryptionKey: string|null } | null}
+     */
+    function parseBundleFragment(hash) {
+        var match = BUNDLE_FRAGMENT.exec(hash || '');
+        if (!match) {
+            return null;
+        }
+        return { bundleCode: match[1], encryptionKey: match[2] || null };
+    }
+
+    /**
+     * Build a bundle link.
+     * @param {string} baseUrl - e.g. "https://host"
+     * @param {string} bundleCode
+     * @param {string|null} base64urlKey - the bundle key for E2E bundles, else null
+     * @returns {string}
+     */
+    function buildBundleUrl(baseUrl, bundleCode, base64urlKey) {
+        var base = baseUrl.replace(/\/$/, '');
+        var url = base + '/#/bundle/' + bundleCode;
+        return base64urlKey ? url + '/key/' + base64urlKey : url;
+    }
+
+    /**
+     * Lowercase hex SHA-256 of some bytes.
+     * @param {ArrayBuffer} arrayBuffer
+     * @returns {Promise<string>}
+     */
+    async function sha256Hex(arrayBuffer) {
+        var digest = new Uint8Array(await window.crypto.subtle.digest('SHA-256', arrayBuffer));
+        var out = '';
+        for (var i = 0; i < digest.length; i++) {
+            out += (digest[i] < 16 ? '0' : '') + digest[i].toString(16);
+        }
+        return out;
+    }
+
+    /**
+     * Encrypt an E2E bundle's file list under the bundle key. The server
+     * stores it without being able to read it; recipients use it to show
+     * names before downloading and to check nothing was dropped or swapped.
+     * Plaintext: JSON {v: 1, files: [{position, name, size, sha256}]} in an
+     * SF02 payload with no name, padded like a file.
+     * @param {CryptoKey} cryptoKey - the bundle key (encrypt usage)
+     * @param {{v: number, files: Array}} manifest
+     * @returns {Promise<ArrayBuffer>} [IV][ciphertext + tag]
+     */
+    async function sealManifest(cryptoKey, manifest) {
+        var normalized = {
+            v: 1,
+            files: manifest.files.map(function (f) {
+                return { position: f.position, name: f.name, size: f.size, sha256: f.sha256 };
+            })
+        };
+        var json = new TextEncoder().encode(JSON.stringify(normalized));
+        return encryptFile(cryptoKey, wrapPayloadPadded('', json.buffer, 0));
+    }
+
+    /**
+     * Decrypt and validate an E2E bundle's file list.
+     * @param {CryptoKey} cryptoKey - the bundle key (decrypt usage)
+     * @param {ArrayBuffer} sealed
+     * @returns {Promise<{v: number, files: Array<{position: number, name: string, size: number, sha256: string}>}>}
+     * @throws {Error} if it does not decrypt or is malformed
+     */
+    async function openManifest(cryptoKey, sealed) {
+        var unwrapped = unwrapPayload(await decryptFile(cryptoKey, sealed));
+        var manifest;
+        try {
+            manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unwrapped.data));
+        } catch (e) {
+            throw new Error('The bundle file list is malformed');
+        }
+        var files = manifest && manifest.files;
+        if (!manifest || manifest.v !== 1 || !Array.isArray(files) || files.length === 0) {
+            throw new Error('The bundle file list is malformed');
+        }
+        for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            if (!f || f.position !== i || typeof f.name !== 'string' || !Number.isSafeInteger(f.size) || f.size < 0 ||
+                typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256)) {
+                throw new Error('The bundle file list is malformed');
+            }
+        }
+        return { v: 1, files: files.map(function (f) { return { position: f.position, name: f.name, size: f.size, sha256: f.sha256 }; }) };
+    }
+
     // === Payload wrapping ===
     //
     // Framed payload versions (the magic is "SF" + two-digit format version):
@@ -403,6 +498,11 @@
         isFileTooLargeForClientEncryption,
         parseFragment,
         buildEncryptedUrl,
+        parseBundleFragment,
+        buildBundleUrl,
+        sha256Hex,
+        sealManifest,
+        openManifest,
         wrapPayload,
         wrapPayloadPadded,
         unwrapPayload,

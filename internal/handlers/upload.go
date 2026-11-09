@@ -40,6 +40,10 @@ type uploadParams struct {
 	maxDownloads     *int
 	passwordHash     string
 	clientEncrypted  bool
+	// bundle is set for a file uploaded into a draft bundle; its expiry,
+	// limit, password and owner then apply instead of the request's.
+	bundle         *models.Bundle
+	bundlePosition int
 }
 
 // fileProcessingResult holds the result of file processing and storage
@@ -100,8 +104,16 @@ func UploadHandler(repos *repository.Repositories, cfg *config.Config) http.Hand
 		}
 
 		// Parse request parameters
-		params, err := parseUploadParameters(w, r, cfg)
-		if err != nil {
+		bundle, bundlePosition, ok := bundleMemberFromForm(ctx, w, r, repos)
+		if !ok {
+			return // Error already sent to client
+		}
+		var params *uploadParams
+		if bundle != nil {
+			if params, ok = memberUploadParams(w, r, bundle, *bundlePosition); !ok {
+				return // Error already sent to client
+			}
+		} else if params, err = parseUploadParameters(w, r, cfg); err != nil {
 			return // Error already sent to client
 		}
 
@@ -756,6 +768,11 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		expiresAt = time.Now().Add(time.Duration(params.expiresInMinutes) * time.Minute)
 	}
 	expiresAt = storeExpiry(expiresAt, cfg)
+	if params.bundle != nil {
+		// A member expires with its bundle and belongs to the bundle's owner.
+		expiresAt = params.bundle.ExpiresAt
+		userID = params.bundle.UserID
+	}
 
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
@@ -772,6 +789,11 @@ func createRecordAndRespond(ctx context.Context, w http.ResponseWriter, r *http.
 		SHA256Hash:       storeSHA256(result.sha256Hash, cfg),
 		ClientEncrypted:  params.clientEncrypted,
 		EncFileID:        result.encFileID,
+	}
+	if params.bundle != nil {
+		bundleID, position := params.bundle.ID, params.bundlePosition
+		fileRecord.BundleID = &bundleID
+		fileRecord.BundlePosition = &position
 	}
 	if verdict.status != "" {
 		now := storeScannedAt(time.Now(), cfg)
@@ -823,16 +845,25 @@ func createFileRecord(ctx context.Context, w http.ResponseWriter, repos *reposit
 // The malware scan already ran synchronously (ADR-015) before this is
 // called; fileRecord.ScanStatus already reflects its outcome.
 func sendSuccessResponse(w http.ResponseWriter, r *http.Request, cfg *config.Config, fileRecord *models.File, claimCode string, result *fileProcessingResult, sanitizedFilename string, header *multipart.FileHeader, passwordHash string, clientIP string) {
-	downloadURL := buildShareURL(r, cfg, claimCode)
-
-	response := models.UploadResponse{
-		ClaimCode:          claimCode,
-		ExpiresAt:          fileRecord.ExpiresAt,
-		DownloadURL:        downloadURL,
-		MaxDownloads:       fileRecord.MaxDownloads,
-		CompletedDownloads: 0,
-		FileSize:           result.written,
-		OriginalFilename:   sanitizedFilename,
+	var response any
+	if fileRecord.BundleID != nil {
+		// A bundle member is reachable only through its bundle: no claim code or link.
+		response = models.BundleMemberUploadResponse{
+			BundleID:         *fileRecord.BundleID,
+			BundlePosition:   *fileRecord.BundlePosition,
+			OriginalFilename: sanitizedFilename,
+			FileSize:         result.written,
+		}
+	} else {
+		response = models.UploadResponse{
+			ClaimCode:          claimCode,
+			ExpiresAt:          fileRecord.ExpiresAt,
+			DownloadURL:        buildShareURL(r, cfg, claimCode),
+			MaxDownloads:       fileRecord.MaxDownloads,
+			CompletedDownloads: 0,
+			FileSize:           result.written,
+			OriginalFilename:   sanitizedFilename,
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

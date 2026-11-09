@@ -157,6 +157,9 @@ type BackupStats struct {
 	// BlockedIPsCount is the number of blocked IP entries
 	BlockedIPsCount int `json:"blocked_ips_count"`
 
+	// BundlesCount is the number of bundles (sets of files shared under one link)
+	BundlesCount int `json:"bundles_count"`
+
 	// TotalSizeBytes is the total size of the backup in bytes
 	TotalSizeBytes int64 `json:"total_size_bytes"`
 
@@ -429,6 +432,7 @@ var ConfigTables = []string{
 // FullDatabaseTables lists all tables included in database/full backups
 var FullDatabaseTables = []string{
 	"files",
+	"bundles",
 	"users",
 	"settings",
 	"admin_credentials",

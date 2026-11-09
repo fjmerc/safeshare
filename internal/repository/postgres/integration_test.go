@@ -119,6 +119,7 @@ func setupTestRepos(t *testing.T) *repository.Repositories {
 		"audit_logs",
 		"partial_uploads",
 		"files",
+		"bundles",
 		"users",
 		"admin_sessions",
 		"admin_credentials",

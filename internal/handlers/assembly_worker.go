@@ -195,6 +195,9 @@ var (
 	// an upload that could never recover; the uploader must start over
 	// with a fresh /api/upload/init instead.
 	errChunkMissing = assemblyFailure{code: "ASSEMBLY_FAILED", retryable: false}
+	// errBundleGone: terminal — the draft bundle this upload belongs to was
+	// deleted or published meanwhile, so the file has nowhere to go.
+	errBundleGone = assemblyFailure{code: "BUNDLE_GONE", retryable: false}
 )
 
 // assemblyWorker holds the state for a single assembly attempt: the lease
@@ -535,6 +538,23 @@ func (w *assemblyWorker) run() {
 		"total_size", partialUpload.TotalSize,
 		"attempt", partialUpload.AssemblyAttempts,
 	)
+
+	// A bundle member takes its bundle's expiry, limit, password and owner,
+	// and can only be published into a bundle that is still a draft.
+	var bundle *models.Bundle
+	if partialUpload.BundleID != nil {
+		b, err := w.repos.Bundles.GetByID(w.ctx, *partialUpload.BundleID)
+		if err != nil {
+			slog.Error("failed to load bundle for assembly", "error", err, "upload_id", uploadID)
+			w.fail(errAssemblyFailed, genericAssemblyFailureMessage)
+			return
+		}
+		if b == nil || b.Status != models.BundleStatusDraft {
+			w.fail(errBundleGone, "The bundle this file belongs to no longer accepts files")
+			return
+		}
+		bundle = b
+	}
 
 	// Generate unique claim code
 	var claimCode string
@@ -913,6 +933,10 @@ func (w *assemblyWorker) run() {
 
 	// Always set maxDownloads (0 = unlimited, not "unset")
 	maxDownloads := &partialUpload.MaxDownloads
+	if bundle != nil {
+		expiresAt = bundle.ExpiresAt
+		maxDownloads = bundle.MaxDownloads
+	}
 
 	fileRecord := &models.File{
 		ClaimCode:        claimCode,
@@ -929,6 +953,8 @@ func (w *assemblyWorker) run() {
 		SHA256Hash:       storeSHA256(sha256Hash, cfg),
 		ClientEncrypted:  partialUpload.ClientEncrypted,
 		EncFileID:        encFileID,
+		BundleID:         partialUpload.BundleID,
+		BundlePosition:   partialUpload.BundlePosition,
 	}
 	if verdict.status != "" {
 		scannedAt := storeScannedAt(time.Now(), cfg)

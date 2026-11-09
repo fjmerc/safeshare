@@ -152,15 +152,20 @@ func (c *Client) uploadSimple(ctx context.Context, src uploadSource, opts *Uploa
 		return nil, fmt.Errorf("copying file: %w", err)
 	}
 
-	// Add optional fields
-	if opts.ExpiresInHours != nil {
-		writer.WriteField("expires_in_hours", strconv.Itoa(*opts.ExpiresInHours))
-	}
-	if opts.DownloadLimit != nil {
-		writer.WriteField("max_downloads", strconv.Itoa(*opts.DownloadLimit))
-	}
-	if opts.Password != "" {
-		writer.WriteField("password", opts.Password)
+	// Add optional fields. A bundle member takes its settings from the bundle.
+	if m := opts.member; m != nil {
+		writer.WriteField("bundle_id", strconv.FormatInt(m.id, 10))
+		writer.WriteField("bundle_position", strconv.Itoa(m.position))
+	} else {
+		if opts.ExpiresInHours != nil {
+			writer.WriteField("expires_in_hours", strconv.Itoa(*opts.ExpiresInHours))
+		}
+		if opts.DownloadLimit != nil {
+			writer.WriteField("max_downloads", strconv.Itoa(*opts.DownloadLimit))
+		}
+		if opts.Password != "" {
+			writer.WriteField("password", opts.Password)
+		}
 	}
 	if encrypted {
 		writer.WriteField("client_encrypted", "true")
@@ -171,7 +176,7 @@ func (c *Client) uploadSimple(ctx context.Context, src uploadSource, opts *Uploa
 	}
 
 	// Make request
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload", &buf, writer.FormDataContentType(), "", clientEncryptedHeader(encrypted))
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload", &buf, writer.FormDataContentType(), "", opts.member.withHeader(clientEncryptedHeader(encrypted)))
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +184,10 @@ func (c *Client) uploadSimple(ctx context.Context, src uploadSource, opts *Uploa
 	var apiResp apiUploadResponse
 	if err := handleResponse(resp, &apiResp); err != nil {
 		return nil, err
+	}
+	if opts.member != nil {
+		// A bundle member has no claim code of its own.
+		return &UploadResult{Filename: apiResp.Filename, Size: apiResp.Size}, nil
 	}
 	if err := checkServerClaimCode(apiResp.ClaimCode); err != nil {
 		return nil, err
@@ -206,14 +215,19 @@ func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *Uplo
 		"filename":   filename,
 		"total_size": fileSize,
 	}
-	if opts.ExpiresInHours != nil {
-		initBody["expires_in_hours"] = *opts.ExpiresInHours
-	}
-	if opts.DownloadLimit != nil {
-		initBody["max_downloads"] = *opts.DownloadLimit
-	}
-	if opts.Password != "" {
-		initBody["password"] = opts.Password
+	if m := opts.member; m != nil {
+		initBody["bundle_id"] = m.id
+		initBody["bundle_position"] = m.position
+	} else {
+		if opts.ExpiresInHours != nil {
+			initBody["expires_in_hours"] = *opts.ExpiresInHours
+		}
+		if opts.DownloadLimit != nil {
+			initBody["max_downloads"] = *opts.DownloadLimit
+		}
+		if opts.Password != "" {
+			initBody["password"] = opts.Password
+		}
 	}
 	if encrypted {
 		initBody["client_encrypted"] = true
@@ -224,7 +238,7 @@ func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *Uplo
 		return nil, fmt.Errorf("marshaling init body: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload/init", bytes.NewReader(initJSON), "application/json", "", clientEncryptedHeader(encrypted))
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/upload/init", bytes.NewReader(initJSON), "application/json", "", opts.member.withHeader(clientEncryptedHeader(encrypted)))
 	if err != nil {
 		return nil, err
 	}
@@ -360,6 +374,9 @@ func (c *Client) uploadChunked(ctx context.Context, src uploadSource, opts *Uplo
 			Err:      err,
 		}
 	}
+	if opts.member != nil {
+		return &UploadResult{Filename: filename, Size: fileSize}, nil
+	}
 	if err := checkServerClaimCode(apiResp.ClaimCode); err != nil {
 		return nil, &ChunkedUploadError{UploadID: uploadID, Err: err}
 	}
@@ -481,7 +498,11 @@ func (c *Client) pollForCompletion(ctx context.Context, uploadID, filename strin
 
 		switch status.Status {
 		case "completed":
-			// Assembly complete - return result
+			// Assembly complete - return result. A bundle member has no
+			// claim code of its own.
+			if opts.member != nil {
+				return &UploadResult{Filename: filename, Size: fileSize}, nil
+			}
 			if status.ClaimCode == nil || *status.ClaimCode == "" {
 				return nil, &ChunkedUploadError{
 					UploadID: uploadID,

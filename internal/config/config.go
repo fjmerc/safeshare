@@ -123,10 +123,12 @@ type Config struct {
 	SessionExpiryHours          int
 	HTTPSEnabled                bool
 	RequireAuthForUpload        bool
+	EnforceAPITokenScopes       bool // ENFORCE_API_TOKEN_SCOPES (default true): API tokens may only use routes their scopes allow. false skips the scope checks; account-security routes stay browser-session only either way
 	ChunkedUploadEnabled        bool
 	ChunkedUploadThreshold      int64
 	ChunkSize                   int64
 	PartialUploadExpiryHours    int
+	MaxFilesPerBundle           int // most files one bundle may hold (MAX_FILES_PER_BUNDLE, 1-100)
 	ReadTimeoutSeconds          int
 	WriteTimeoutSeconds         int
 	TrustProxyHeaders           string // "auto", "true", "false" - controls proxy header trust
@@ -180,10 +182,12 @@ func Load() (*Config, error) {
 		SessionExpiryHours:          getEnvInt("SESSION_EXPIRY_HOURS", 24),
 		HTTPSEnabled:                getEnvBool("HTTPS_ENABLED", false),
 		RequireAuthForUpload:        getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
+		EnforceAPITokenScopes:       getEnvBool("ENFORCE_API_TOKEN_SCOPES", true),
 		ChunkedUploadEnabled:        getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
 		ChunkedUploadThreshold:      getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
 		ChunkSize:                   getEnvInt64("CHUNK_SIZE", 10485760),                // 10MB (was 5MB)
 		PartialUploadExpiryHours:    getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
+		MaxFilesPerBundle:           getEnvInt("MAX_FILES_PER_BUNDLE", 10),
 		ReadTimeoutSeconds:          getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
 		WriteTimeoutSeconds:         getEnvInt("WRITE_TIMEOUT", 120), // 2 minutes (was 15s)
 		TrustProxyHeaders:           getEnv("TRUST_PROXY_HEADERS", "auto"),
@@ -282,6 +286,9 @@ func Load() (*Config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
+	if cfg.MaxFilesPerBundle < 1 || cfg.MaxFilesPerBundle > 100 {
+		return nil, fmt.Errorf("configuration validation failed: MAX_FILES_PER_BUNDLE must be between 1 and 100, got %d", cfg.MaxFilesPerBundle)
+	}
 
 	if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.AllowUnverified {
 		slog.Warn("MALWARE_SCAN_ALLOW_UNVERIFIED is enabled: uploads/downloads proceed even when clamd is unreachable or a scan fails, instead of blocking (see ADR-015)")
@@ -302,6 +309,11 @@ func (c *Config) GetDefaultExpirationHours() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.defaultExpirationHours
+}
+
+// GetMaxFilesPerBundle returns the most files a single bundle may hold.
+func (c *Config) GetMaxFilesPerBundle() int {
+	return c.MaxFilesPerBundle
 }
 
 func (c *Config) GetMaxExpirationHours() int {

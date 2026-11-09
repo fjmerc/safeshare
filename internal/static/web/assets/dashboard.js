@@ -53,6 +53,7 @@
             return sessionStorage.getItem('csrf_token') || '';
         }
         let fileToDelete = null;
+        let bundleToDelete = null;
         let fileToRename = { id: null, currentName: '' };
         let fileToEditExpiration = { id: null, currentExpiration: '' };
         let maxExpirationHours = 168; // Default, will be loaded from config
@@ -82,6 +83,7 @@
 
                     loadConfig();
                     loadFiles();
+                    loadBundles();
                     loadTokens();
                     loadMFAStatus();
                     initSSOLinkedAccounts();
@@ -133,6 +135,126 @@
             } catch (error) {
                 console.error('Failed to load files:', error);
                 showToast('Network error loading files', 'error');
+            }
+        }
+
+        // Load bundles (several files under one link)
+        async function loadBundles() {
+            try {
+                const response = await fetch('/api/user/bundles?limit=100&offset=0', { credentials: 'include' });
+                if (!response.ok) return;
+                const data = await response.json();
+                displayBundles(data.bundles || []);
+            } catch (error) {
+                console.error('Failed to load bundles:', error);
+            }
+        }
+
+        function bundleButton(label, action, bundle, extra) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-secondary btn-small';
+            btn.textContent = label;
+            btn.setAttribute('data-action', action);
+            btn.setAttribute('data-bundle-id', String(bundle.id));
+            btn.setAttribute('data-bundle-code', bundle.bundle_code);
+            btn.setAttribute('data-expires-at', bundle.expires_at);
+            if (extra) extra(btn);
+            return btn;
+        }
+
+        // One expandable row per bundle. Built with DOM methods: names come from uploaders.
+        function displayBundles(bundles) {
+            const section = document.getElementById('bundlesSection');
+            const container = document.getElementById('bundlesContainer');
+            container.innerHTML = '';
+            section.classList.toggle('hidden', bundles.length === 0);
+            const list = document.createElement('div');
+            list.className = 'bundle-rows';
+            bundles.forEach((bundle) => {
+                const row = document.createElement('details');
+                row.className = 'bundle-row';
+                const summary = document.createElement('summary');
+                const code = document.createElement('code');
+                code.textContent = bundle.bundle_code;
+                const meta = document.createElement('span');
+                meta.className = 'bundle-row-meta';
+                const expires = new Date(bundle.expires_at).getFullYear() === 9999 ? 'never expires' : 'expires ' + formatCompactDate(bundle.expires_at);
+                meta.textContent = `${bundle.file_count} ${bundle.file_count === 1 ? 'file' : 'files'} • ${formatFileSize(bundle.total_size)} • ${expires}` +
+                    (bundle.client_encrypted ? ' • encrypted' : '') + (bundle.password_protected ? ' • password' : '');
+                summary.append(code, meta);
+                row.appendChild(summary);
+
+                const files = document.createElement('ul');
+                files.className = 'bundle-row-files';
+                bundle.files.forEach((f) => {
+                    const li = document.createElement('li');
+                    const limit = bundle.max_downloads ? bundle.max_downloads : '∞';
+                    li.textContent = `${f.name} — ${formatFileSize(f.size)} — ${f.completed_downloads}/${limit} downloads`;
+                    files.appendChild(li);
+                });
+                row.appendChild(files);
+
+                const actions = document.createElement('div');
+                actions.className = 'bundle-row-actions';
+                actions.append(
+                    bundleButton('Copy link', 'copyBundleLink', bundle, (btn) => {
+                        if (bundle.client_encrypted) {
+                            btn.disabled = true;
+                            btn.title = 'The link of an encrypted bundle holds its key, which the server never stores';
+                        }
+                    }),
+                    bundleButton('Change expiration', 'editBundleExpiration', bundle),
+                    bundleButton('New code', 'regenerateBundleCode', bundle),
+                    bundleButton('Delete', 'deleteBundle', bundle, (btn) => { btn.className = 'btn btn-danger btn-small'; })
+                );
+                row.appendChild(actions);
+                list.appendChild(row);
+            });
+            container.appendChild(list);
+        }
+
+        function deleteBundle(bundleId) {
+            bundleToDelete = bundleId;
+            fileToDelete = null;
+            document.getElementById('deleteModalTitle').textContent = 'Delete Bundle';
+            document.getElementById('deleteModalText').textContent = 'Delete this bundle and every file in it? Its link will stop working. This cannot be undone.';
+            document.getElementById('deleteModal').classList.add('show');
+        }
+
+        async function confirmDeleteBundle() {
+            const id = bundleToDelete;
+            try {
+                const response = await fetch(`/api/user/bundles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' });
+                if (response.ok) {
+                    showToast('Bundle deleted', 'success');
+                    hideDeleteModal();
+                    await loadBundles();
+                    focusSectionHeading('bundlesHeading');
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    showToast(data.error || 'Failed to delete bundle', 'error');
+                }
+            } catch (error) {
+                console.error('Delete bundle failed:', error);
+                showToast('Network error deleting bundle', 'error');
+            }
+        }
+
+        async function regenerateBundleCode(bundleId) {
+            if (!window.confirm('Give this bundle a new link? The old link stops working at once.')) return;
+            try {
+                const response = await fetch(`/api/user/bundles/${encodeURIComponent(bundleId)}/regenerate-code`, { method: 'PUT', credentials: 'include' });
+                const data = await response.json().catch(() => ({}));
+                if (response.ok) {
+                    showToast('New link created. The old link no longer works.', 'success');
+                    await loadBundles();
+                } else {
+                    showToast(data.error || 'Failed to create a new link', 'error');
+                }
+            } catch (error) {
+                console.error('Regenerate bundle code failed:', error);
+                showToast('Network error creating a new link', 'error');
             }
         }
 
@@ -258,10 +380,17 @@
         // Delete file
         function deleteFile(fileId) {
             fileToDelete = fileId;
+            bundleToDelete = null;
+            document.getElementById('deleteModalTitle').textContent = 'Delete File';
+            document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this file? This action cannot be undone.';
             document.getElementById('deleteModal').classList.add('show');
         }
 
         async function confirmDelete() {
+            if (bundleToDelete) {
+                await confirmDeleteBundle();
+                return;
+            }
             if (!fileToDelete) return;
 
             try {
@@ -294,6 +423,7 @@
         function hideDeleteModal() {
             document.getElementById('deleteModal').classList.remove('show');
             fileToDelete = null;
+            bundleToDelete = null;
         }
 
         // Rename file
@@ -494,16 +624,18 @@
             }
 
             try {
-                const response = await fetch('/api/user/files/update-expiration', {
+                const isBundle = !!fileToEditExpiration.bundle;
+                const response = await fetch(isBundle
+                    ? `/api/user/bundles/${encodeURIComponent(fileToEditExpiration.id)}/expiration`
+                    : '/api/user/files/update-expiration', {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     credentials: 'include',
-                    body: JSON.stringify({
-                        file_id: fileToEditExpiration.id,
-                        new_expiration: isoExpiration,
-                    }),
+                    body: JSON.stringify(isBundle
+                        ? { new_expiration: isoExpiration }
+                        : { file_id: fileToEditExpiration.id, new_expiration: isoExpiration }),
                 });
 
                 const data = await response.json();
@@ -511,7 +643,11 @@
                 if (response.ok) {
                     showToast('Expiration updated successfully', 'success');
                     hideExpirationModal();
-                    await loadFiles(true);
+                    if (isBundle) {
+                        await loadBundles();
+                    } else {
+                        await loadFiles(true);
+                    }
                 } else {
                     showToast(data.error || 'Failed to update expiration', 'error');
                 }
@@ -702,6 +838,7 @@
             btn.classList.add('btn-refreshing');
             setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
             loadFiles();
+            loadBundles();
         }
 
         // Toggle theme
@@ -3317,6 +3454,19 @@ you may be locked out of your account.
                             download_count: parseInt(btn.getAttribute('data-download-count')),
                             claim_code: btn.getAttribute('data-claim-code')
                         });
+                        break;
+                    case 'copyBundleLink':
+                        copyToClipboard(window.location.origin + '/#/bundle/' + btn.getAttribute('data-bundle-code'), 'Bundle link copied');
+                        break;
+                    case 'deleteBundle':
+                        deleteBundle(parseInt(btn.getAttribute('data-bundle-id')));
+                        break;
+                    case 'editBundleExpiration':
+                        editExpiration(parseInt(btn.getAttribute('data-bundle-id')), btn.getAttribute('data-expires-at'));
+                        fileToEditExpiration.bundle = true;
+                        break;
+                    case 'regenerateBundleCode':
+                        regenerateBundleCode(parseInt(btn.getAttribute('data-bundle-id')));
                         break;
                     case 'copyClaimCode':
                         copyToClipboard(btn.getAttribute('data-claim-code'), 'Claim code copied');

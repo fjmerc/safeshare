@@ -11,8 +11,9 @@ import (
 
 func listCmd() *cobra.Command {
 	var (
-		limit  int
-		offset int
+		limit   int
+		offset  int
+		bundles bool
 	)
 
 	cmd := &cobra.Command{
@@ -20,9 +21,13 @@ func listCmd() *cobra.Command {
 		Short: "List your uploaded files",
 		Long: `List all files you have uploaded (requires authentication).
 
+Files in bundles are not listed here; use --bundles to list your bundles
+(sets of files shared under one link) instead.
+
 Examples:
   safeshare-cli list
-  safeshare-cli list --limit 50 --offset 0`,
+  safeshare-cli list --limit 50 --offset 0
+  safeshare-cli list --bundles`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkAuth(); err != nil {
 				return err
@@ -35,6 +40,9 @@ Examples:
 			}
 
 			ctx := context.Background()
+			if bundles {
+				return listBundles(ctx, cmd, client, limit, offset)
+			}
 			files, err := client.ListFiles(ctx, limit, offset)
 			if err != nil {
 				return err
@@ -84,6 +92,7 @@ Examples:
 
 	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Number of files to show (max 100)")
 	cmd.Flags().IntVarP(&offset, "offset", "o", 0, "Number of files to skip")
+	cmd.Flags().BoolVar(&bundles, "bundles", false, "List your bundles instead of single files")
 
 	return cmd
 }
