@@ -425,6 +425,16 @@ func run() error {
 		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
+	// Bundles (one link for several files): create a draft, then publish or
+	// delete it with the upload token it returns. Members are uploaded
+	// through /api/upload and /api/upload/init. Same auth as uploading.
+	mux.HandleFunc("/api/bundles", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.BundleCreateHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/api/bundles/", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.BundleManageHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+
 	// No-JavaScript drop page (DROP_RECIPIENT; 404 when unset). Open to
 	// anyone, like anonymous uploads: senders have no account.
 	dropPage := handlers.DropPageHandler(cfg)

@@ -59,6 +59,10 @@ type UploadInitRequest struct {
 	MaxDownloads    int    `json:"max_downloads"`
 	Password        string `json:"password,omitempty"`
 	ClientEncrypted bool   `json:"client_encrypted,omitempty"`
+	// Bundle membership (both set, or neither). The bundle's settings replace
+	// expires_in_hours, max_downloads and password for a member.
+	BundleID       *int64 `json:"bundle_id,omitempty"`
+	BundlePosition *int   `json:"bundle_position,omitempty"`
 }
 
 // UploadInitResponse represents the response after initializing a chunked upload

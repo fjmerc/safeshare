@@ -277,6 +277,12 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
+			} else if r.URL.Path == "/api/bundles" || strings.HasPrefix(r.URL.Path, "/api/bundles/") {
+				// Creating, publishing and deleting a bundle: one bucket at
+				// the upload limit. The member files themselves go through
+				// /api/upload and /api/upload/init and count as uploads.
+				limit = rl.config.GetRateLimitUpload()
+				limitType = "bundle_manage"
 			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP
 				limitType = "regeneration"

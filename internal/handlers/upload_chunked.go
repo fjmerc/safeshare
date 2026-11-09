@@ -197,6 +197,33 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 
 		// Validate expiration hours
 		// Special case: 0 means "never expire", negative values use default
+		// Bundle membership: a request carrying any bundle field must be an
+		// authorized member (fail closed). The bundle's settings replace the
+		// request's; the expiry is taken from the bundle at assembly time.
+		var bundle *models.Bundle
+		if req.BundleID != nil || req.BundlePosition != nil || r.Header.Get(bundleUploadTokenHeader) != "" {
+			if req.BundleID == nil || req.BundlePosition == nil {
+				sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
+				return
+			}
+			b, err := resolveBundleMembership(ctx, r, repos, *req.BundleID, *req.BundlePosition)
+			if err != nil {
+				sendBundleMembershipError(w, err)
+				return
+			}
+			if req.ClientEncrypted != b.ClientEncrypted {
+				sendError(w, "client_encrypted must match the bundle", "INVALID_PARAMETER", http.StatusBadRequest)
+				return
+			}
+			bundle = b
+			req.ExpiresInHours = 0
+			req.MaxDownloads = 0
+			if b.MaxDownloads != nil {
+				req.MaxDownloads = *b.MaxDownloads
+			}
+			req.Password = ""
+		}
+
 		if req.ExpiresInHours < 0 {
 			req.ExpiresInHours = cfg.GetDefaultExpirationHours()
 		}
@@ -280,6 +307,13 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			// records the real uploader IP on the eventual file row,
 			// instead of a synthetic placeholder.
 			UploaderIP: storeIP(getClientIP(r), cfg),
+		}
+		if bundle != nil {
+			bundleID, position := bundle.ID, *req.BundlePosition
+			partialUpload.BundleID = &bundleID
+			partialUpload.BundlePosition = &position
+			partialUpload.PasswordHash = bundle.PasswordHash
+			partialUpload.UserID = bundle.UserID
 		}
 
 		// Use transactional quota check to prevent race conditions (P0 fix)
@@ -787,6 +821,18 @@ func respondProcessing(w http.ResponseWriter, uploadID string) {
 // is "completed" and which has a claim code (the caller must check for nil
 // first — a completed row with no claim code is an internal-error state).
 func respondUploadComplete(w http.ResponseWriter, r *http.Request, cfg *config.Config, partialUpload *models.PartialUpload) {
+	if partialUpload.BundleID != nil && partialUpload.BundlePosition != nil {
+		// A bundle member is reachable only through its bundle: no claim code or link.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(models.BundleMemberUploadResponse{
+			BundleID:         *partialUpload.BundleID,
+			BundlePosition:   *partialUpload.BundlePosition,
+			OriginalFilename: partialUpload.Filename,
+			FileSize:         partialUpload.TotalSize,
+		})
+		return
+	}
 	downloadURL := buildShareURL(r, cfg, *partialUpload.ClaimCode)
 
 	var expiresAt time.Time
@@ -1215,8 +1261,12 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 
 		// Build download URL if completed
 		var downloadURL *string
-		if partialUpload.Status == "completed" && partialUpload.ClaimCode != nil {
-			url := buildShareURL(r, cfg, *partialUpload.ClaimCode)
+		claimCode := partialUpload.ClaimCode
+		if partialUpload.BundleID != nil {
+			claimCode = nil // bundle members are reachable only through their bundle
+		}
+		if partialUpload.Status == "completed" && claimCode != nil {
+			url := buildShareURL(r, cfg, *claimCode)
 			downloadURL = &url
 		}
 
@@ -1237,7 +1287,7 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			MissingChunks:      missingChunks,
 			Complete:           partialUpload.Completed,
 			ExpiresAt:          expiresAt,
-			ClaimCode:          partialUpload.ClaimCode,
+			ClaimCode:          claimCode,
 			Status:             partialUpload.Status,
 			ErrorMessage:       partialUpload.ErrorMessage,
 			ErrorCode:          partialUpload.ErrorCode,
