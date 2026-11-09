@@ -866,6 +866,7 @@ Authenticated Origin Pulls or Cloudflare Tunnel exclusivity to fully close).
 - `CHUNKED_UPLOAD_THRESHOLD`: Files >= this size use chunked upload in bytes (default: 100MB)
 - `CHUNK_SIZE`: Size of each chunk in bytes (default: 5MB)
 - `PARTIAL_UPLOAD_EXPIRY_HOURS`: Hours before abandoned uploads are cleaned up (default: 24)
+- `MAX_FILES_PER_BUNDLE`: Most files one bundle (several files under one link) may hold, 1-100 (default: 10)
 - `AUDIT_LOG`: `auto` (default: on, except in anonymous mode), `true` or `false`. See `docs/SECURITY.md` → Audit Log.
 - `AUDIT_LOG_KEY`: 64 hex characters (32 bytes) used to sign the audit log (default: generated into `audit.key` next to the database on first start). See `docs/SECURITY.md` → Audit Log.
 
@@ -1708,3 +1709,16 @@ rm -rf ./uploads/*
 - **Standard library**: HTTP server, crypto (AES-256-GCM), logging (slog), file I/O
 
 No external web frameworks or ORMs. Minimal dependencies for security and portability.
+
+
+## Bundles (Several Files, One Link)
+
+A bundle shares several files under one code and one link. See [API_REFERENCE.md](API_REFERENCE.md#bundles-several-files-one-link) for the endpoints and [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#bundles) for encrypted bundles.
+
+**Data model.** The `bundles` table (SQLite migration 028, PostgreSQL 016) holds the code, status (`draft` / `published`), `file_count`, the hash of the draft's upload token, and the settings: expiry, per-file download limit, password hash, owner, `client_encrypted` and, for encrypted bundles, the opaque `encrypted_manifest`. Member files are ordinary `files` rows with `bundle_id` and `bundle_position` set (unique per bundle). The bundle's settings are copied onto every member row, so the existing expiry sweep, password check, quota and download-limit (ADR-014 session) code applies unchanged. `files.bundle_id` has no `ON DELETE` action: a bundle can only be deleted after its members, which `BundleRepository.DeleteWithMembers` does in one transaction.
+
+**Creation.** Draft, then member uploads through the existing direct and chunked endpoints (membership is fixed on the `partial_uploads` row at init, because assembly can run without a request), then publish, which checks in one transaction that positions `0..file_count-1` are all present and clean. Abandoned drafts and published bundles whose files have all gone are removed by `utils.CleanupAbandonedUploads`.
+
+**Isolation from single files.** Members are excluded from `GetByClaimCode` and from every per-file user route, so their own claim codes (never returned to anyone) are useless. The receive routes `/api/bundle/{code}/info` and `/api/bundle/{code}/files/{n}` resolve the bundle and member, then run the same `serveClaimedFile` pipeline as `/api/claim/{code}`.
+
+**Frontend.** `assets/bundle-upload.js` uploads a bundle from the upload page (two or more files selected); `assets/bundle-receive.js` is the receive view for `#/bundle/...` links. With no download limit it fetches every file on open; with a limit it waits for a tap. Save all calls `navigator.share({files})` where available, else downloads each file.

@@ -61,11 +61,12 @@ See individual SDK README files for detailed usage examples and advanced pattern
 1. [Authentication](#authentication)
 2. [API Token Authentication](#api-token-authentication)
 3. [File Sharing](#file-sharing)
-4. [User Management](#user-management)
-5. [Admin Operations](#admin-operations)
-6. [Health & Monitoring](#health--monitoring)
-7. [Webhooks](#webhooks)
-8. [Error Responses](#error-responses)
+4. [Bundles (several files, one link)](#bundles-several-files-one-link)
+5. [User Management](#user-management)
+6. [Admin Operations](#admin-operations)
+7. [Health & Monitoring](#health--monitoring)
+8. [Webhooks](#webhooks)
+9. [Error Responses](#error-responses)
 
 ---
 
@@ -723,6 +724,143 @@ Retrieve file metadata without downloading.
 **Error Responses**:
 - 401 Unauthorized: Password required or incorrect
 - 404 Not Found: Invalid claim code or file expired
+
+---
+
+## Bundles (several files, one link)
+
+A bundle is a set of files shared under one code and one link (`https://host/#/bundle/CODE`, or `.../key/KEY` for an end-to-end encrypted bundle). The link opens a page that lists every file, with a Save all button.
+
+A bundle is built in three steps, so a link never points at part of one:
+
+1. **Create a draft** (`POST /api/bundles`). The response has a one-time `upload_token`.
+2. **Upload each file** through the normal endpoints (`POST /api/upload`, or `POST /api/upload/init` for chunked uploads) with `bundle_id`, `bundle_position` (0, 1, 2, ...) and the header `X-Bundle-Upload-Token`. A member takes the bundle's expiry, download limit, password and owner; any of those fields in its own request are ignored, but `client_encrypted` must match the bundle. Member uploads are rate limited like any upload, and their responses carry no claim code.
+3. **Publish** (`POST /api/bundles/{id}/publish`). This succeeds only when every position from 0 to `file_count - 1` has a file and none is pending a malware scan or infected. If anything goes wrong, delete the draft (`DELETE /api/bundles/{id}`). Drafts left unpublished are removed by the abandoned-upload cleanup after `PARTIAL_UPLOAD_EXPIRY_HOURS`.
+
+`max_downloads` on a bundle is **per file**: with `max_downloads: 1` each file can be downloaded once.
+
+Files in a bundle can't be reached by their own claim code, aren't listed by `GET /api/user/files`, and can't be renamed or changed one by one. An admin deleting any one of them deletes the whole bundle.
+
+### Create a Bundle
+
+**Endpoint**: `POST /api/bundles`
+
+**Authentication**: Same as uploading (required when `REQUIRE_AUTH_FOR_UPLOAD=true`)
+
+**Request Body**:
+```json
+{
+  "file_count": 3,
+  "expires_in_hours": 24,
+  "max_downloads": 0,
+  "password": "optional",
+  "client_encrypted": false
+}
+```
+
+`file_count` is 1 to `MAX_FILES_PER_BUNDLE` (default 10; `/api/config` reports it as `max_files_per_bundle`). `expires_in_hours`: omit for the server default, `0` for never. `max_downloads`: `0` for unlimited.
+
+**Response** (201 Created):
+```json
+{
+  "bundle_id": 42,
+  "bundle_code": "Xk3pQ9aBcD4e",
+  "upload_token": "q1w2e3...43 characters",
+  "expires_at": "2026-11-10T12:00:00Z"
+}
+```
+
+**Error Responses**: 400 `INVALID_PARAMETER` / `EXPIRATION_TOO_LONG` / `CLIENT_ENCRYPTION_REQUIRED`, 429 `RATE_LIMIT_EXCEEDED`
+
+### Publish a Bundle
+
+**Endpoint**: `POST /api/bundles/{id}/publish`
+
+**Headers**: `X-Bundle-Upload-Token: <upload_token>`
+
+**Request Body**: `{}`, or for an end-to-end encrypted bundle `{"encrypted_manifest": "<base64>"}` (required then, at most 256 KiB decoded). The manifest is the bundle's file list, encrypted by the client (see [E2E_ENCRYPTION.md](E2E_ENCRYPTION.md#bundles)); the server stores it without reading it.
+
+**Response** (200 OK):
+```json
+{
+  "bundle_code": "Xk3pQ9aBcD4e",
+  "bundle_url": "https://share.example.com/#/bundle/Xk3pQ9aBcD4e",
+  "expires_at": "2026-11-10T12:00:00Z",
+  "max_downloads": null,
+  "client_encrypted": false,
+  "files": [
+    {"position": 0, "name": "cover.png", "size": 48213, "mime_type": "image/png"}
+  ]
+}
+```
+
+For an encrypted bundle the client appends `/key/<key>` to `bundle_url`.
+
+**Error Responses**: 404 `NOT_FOUND` (unknown bundle, wrong token, not a draft), 409 `BUNDLE_INCOMPLETE`, 400 `INVALID_PARAMETER`
+
+### Delete a Draft Bundle
+
+**Endpoint**: `DELETE /api/bundles/{id}`
+
+**Headers**: `X-Bundle-Upload-Token: <upload_token>`
+
+Deletes a draft and every file uploaded into it. **Response**: 204 No Content. A published bundle is deleted by its owner (below) or an admin.
+
+### Get Bundle Info
+
+**Endpoint**: `GET /api/bundle/{code}/info`
+
+**Authentication**: None (no password needed, like `GET /api/claim/{code}/info`)
+
+**Response** (200 OK):
+```json
+{
+  "bundle_code": "Xk3pQ9aBcD4e",
+  "expires_at": "2026-11-10T12:00:00Z",
+  "file_count": 2,
+  "max_downloads": null,
+  "password_required": false,
+  "client_encrypted": false,
+  "files": [
+    {"position": 0, "original_filename": "cover.png", "file_size": 48213, "mime_type": "image/png",
+     "download_limit_reached": false, "download_available": true, "scan_status": "clean"}
+  ]
+}
+```
+
+Each file carries the same fields as `GET /api/claim/{code}/info` except `claim_code` and `download_url`. An encrypted bundle also has `encrypted_manifest` (base64). An unknown, unpublished, expired or deleted bundle gets exactly the 404 an unknown claim code gets.
+
+### Download a File from a Bundle
+
+**Endpoint**: `GET /api/bundle/{code}/files/{position}` (also `HEAD` and `POST`)
+
+Works exactly like `GET /api/claim/{code}`: `X-File-Password` for a password-protected bundle, `Range` requests, download sessions (`X-Download-Session`) and the malware-scan gate. Rate limited as a download.
+
+### List Your Bundles
+
+**Endpoint**: `GET /api/user/bundles?limit=50&offset=0`
+
+**Authentication**: Required
+
+**Response** (200 OK):
+```json
+{
+  "bundles": [
+    {"id": 42, "bundle_code": "Xk3pQ9aBcD4e", "created_at": "...", "expires_at": "...", "max_downloads": null,
+     "password_protected": false, "client_encrypted": false, "file_count": 2, "total_size": 90112,
+     "files": [{"position": 0, "name": "cover.png", "size": 48213, "completed_downloads": 1}]}
+  ],
+  "total": 1, "limit": 50, "offset": 0
+}
+```
+
+### Manage Your Bundles
+
+**Authentication**: Required. A bundle you don't own answers 404.
+
+- `DELETE /api/user/bundles/{id}` — delete the bundle and all its files.
+- `PUT /api/user/bundles/{id}/expiration` with `{"new_expiration": "2026-11-12T12:00:00Z"}` — change the expiry of the bundle and all its files (year 9999 means never; same limits as `update-expiration`).
+- `PUT /api/user/bundles/{id}/regenerate-code` — give the bundle a new code (`{"bundle_code": "..."}`); the old link stops working. Shares the regeneration rate limit.
 
 ---
 

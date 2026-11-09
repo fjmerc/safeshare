@@ -27,6 +27,20 @@ SafeShare supports optional end-to-end encryption (E2EE) where the file is encry
 5. The GCM authentication tag is verified automatically. If the ciphertext has been tampered with, decryption fails and the file is not saved.
 6. The browser triggers a file save dialog with the decrypted content using the original filename.
 
+## Bundles
+
+A bundle shares several files under one link. An encrypted bundle's link is
+
+```
+https://host/#/bundle/BUNDLE_CODE/key/BASE64URL_ENCODED_KEY
+```
+
+- **One key for the whole bundle.** Every file is encrypted exactly as a single file is (its own random 12-byte IV, the same payload framing), all under the one bundle key. The key never reaches the server.
+- **An encrypted file list (manifest).** When the bundle is published the uploader also stores its file list, encrypted under the same key: JSON `{"v":1,"files":[{"position":0,"name":"cover.png","size":48213,"sha256":"..."}]}`, where `size` and `sha256` are of the plaintext file, wrapped in an SF02 payload with no name (so it is padded like a file) and encrypted like a file. The server keeps it as an opaque blob.
+- **What the recipient checks.** The receive page (and `safeshare-cli download`) decrypts the list first, shows the real names before downloading anything, and checks every decrypted file against it: same count, order, name, size and SHA-256. If anything differs, nothing is offered for saving. A server that drops, swaps or reorders files, or claims a bundle opened with a key isn't encrypted, is caught.
+
+What the server learns about an encrypted bundle: how many files it has, their stored (padded) sizes, the timing, and that they belong together. It does not learn names (with *Hide filename*, or always in Ghost mode) or contents.
+
 ## When to Use E2EE
 
 End-to-end encryption protects files from anyone who has access to the server but not the share URL. This includes:

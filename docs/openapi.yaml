@@ -2665,6 +2665,266 @@ paths:
         '404':
           description: SSO link not found
 
+  /api/bundles:
+    post:
+      tags:
+        - Bundles
+      summary: Create a draft bundle
+      description: |
+        Start a bundle: several files shared under one code and one link. Upload
+        each file through /api/upload or /api/upload/init with `bundle_id`,
+        `bundle_position` and the `X-Bundle-Upload-Token` header, then publish.
+        Same authentication as uploading.
+      operationId: createBundle
+      security:
+        - {}
+        - sessionAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BundleCreateRequest'
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BundleCreateResponse'
+        '400':
+          description: Invalid parameters (`INVALID_PARAMETER`, `EXPIRATION_TOO_LONG`, `CLIENT_ENCRYPTION_REQUIRED`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/bundles/{id}/publish:
+    post:
+      tags:
+        - Bundles
+      summary: Publish a draft bundle
+      description: Succeeds only when every position 0..file_count-1 has a clean file.
+      operationId: publishBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+        - $ref: '#/components/parameters/BundleUploadToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                encrypted_manifest:
+                  type: string
+                  format: byte
+                  description: Required for end-to-end encrypted bundles (at most 256 KiB decoded); not allowed otherwise
+      responses:
+        '200':
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BundleResponse'
+        '404':
+          description: Unknown bundle, wrong token, or not a draft
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Not every file is uploaded and clean (`BUNDLE_INCOMPLETE`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/bundles/{id}:
+    delete:
+      tags:
+        - Bundles
+      summary: Delete a draft bundle and its files
+      operationId: deleteDraftBundle
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+        - $ref: '#/components/parameters/BundleUploadToken'
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Unknown bundle, wrong token, or not a draft
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/bundle/{code}/info:
+    get:
+      tags:
+        - Bundles
+      summary: Get a bundle's file list
+      description: |
+        No password needed. Unknown, unpublished, expired and deleted bundles get
+        the same 404 as an unknown claim code.
+      operationId: getBundleInfo
+      parameters:
+        - $ref: '#/components/parameters/BundleCode'
+      responses:
+        '200':
+          description: Bundle settings and files
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BundleInfoResponse'
+        '404':
+          description: Not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/bundle/{code}/files/{position}:
+    get:
+      tags:
+        - Bundles
+      summary: Download one file of a bundle
+      description: |
+        Same behavior as GET /api/claim/{code}: X-File-Password, Range requests,
+        download sessions, malware-scan gate. A bundle's max_downloads counts per file.
+      operationId: downloadBundleFile
+      parameters:
+        - $ref: '#/components/parameters/BundleCode'
+        - name: position
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Password required or incorrect
+        '404':
+          description: Not found or expired
+        '410':
+          description: Download limit reached
+
+  /api/user/bundles:
+    get:
+      tags:
+        - Bundles
+      summary: List your bundles
+      operationId: listUserBundles
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Your published bundles, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBundlesResponse'
+
+  /api/user/bundles/{id}:
+    delete:
+      tags:
+        - Bundles
+      summary: Delete one of your bundles and all its files
+      operationId: deleteUserBundle
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found or not yours
+
+  /api/user/bundles/{id}/expiration:
+    put:
+      tags:
+        - Bundles
+      summary: Change the expiry of one of your bundles and its files
+      operationId: updateUserBundleExpiration
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_expiration]
+              properties:
+                new_expiration:
+                  type: string
+                  format: date-time
+                  description: Year 9999 means never
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: Invalid date
+        '404':
+          description: Not found or not yours
+
+  /api/user/bundles/{id}/regenerate-code:
+    put:
+      tags:
+        - Bundles
+      summary: Give one of your bundles a new code
+      description: The old link stops working. Shares the regeneration rate limit.
+      operationId: regenerateUserBundleCode
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+      responses:
+        '200':
+          description: New code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bundle_code:
+                    type: string
+        '404':
+          description: Not found or not yours
+
 components:
   securitySchemes:
     sessionAuth:
@@ -2688,6 +2948,30 @@ components:
       description: Admin session cookie obtained via /admin/api/login
 
   parameters:
+    BundleID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Bundle id (from POST /api/bundles)
+
+    BundleCode:
+      name: code
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Bundle code
+
+    BundleUploadToken:
+      name: X-Bundle-Upload-Token
+      in: header
+      required: true
+      schema:
+        type: string
+      description: The upload_token returned when the draft was created
+
     CSRFToken:
       name: X-CSRF-Token
       in: header
@@ -2756,6 +3040,147 @@ components:
       description: RFC 3339 time or YYYY-MM-DD (exclusive)
 
   schemas:
+    BundleCreateRequest:
+      type: object
+      required: [file_count]
+      properties:
+        file_count:
+          type: integer
+          minimum: 1
+          description: 1 to MAX_FILES_PER_BUNDLE (default 10; max_files_per_bundle in /api/config)
+        expires_in_hours:
+          type: number
+          description: Omit for the server default; 0 means never
+        max_downloads:
+          type: integer
+          minimum: 0
+          description: Per file; 0 means unlimited
+        password:
+          type: string
+        client_encrypted:
+          type: boolean
+
+    BundleCreateResponse:
+      type: object
+      properties:
+        bundle_id:
+          type: integer
+        bundle_code:
+          type: string
+        upload_token:
+          type: string
+          description: Shown once; authorizes adding files to, publishing or deleting this draft
+        expires_at:
+          type: string
+          format: date-time
+
+    BundleResponse:
+      type: object
+      properties:
+        bundle_code:
+          type: string
+        bundle_url:
+          type: string
+          description: For an encrypted bundle the client appends /key/<key>
+        expires_at:
+          type: string
+          format: date-time
+        max_downloads:
+          type: integer
+          nullable: true
+          description: Per file; null means unlimited
+        client_encrypted:
+          type: boolean
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              position:
+                type: integer
+              name:
+                type: string
+              size:
+                type: integer
+              mime_type:
+                type: string
+
+    BundleInfoResponse:
+      type: object
+      properties:
+        bundle_code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        file_count:
+          type: integer
+        max_downloads:
+          type: integer
+          nullable: true
+        password_required:
+          type: boolean
+        client_encrypted:
+          type: boolean
+        encrypted_manifest:
+          type: string
+          format: byte
+          description: End-to-end encrypted bundles only
+        files:
+          type: array
+          description: Each has position plus the fields of FileInfoResponse except claim_code and download_url
+          items:
+            type: object
+
+    UserBundlesResponse:
+      type: object
+      properties:
+        bundles:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              bundle_code:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              expires_at:
+                type: string
+                format: date-time
+              max_downloads:
+                type: integer
+                nullable: true
+              password_protected:
+                type: boolean
+              client_encrypted:
+                type: boolean
+              file_count:
+                type: integer
+              total_size:
+                type: integer
+              files:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    position:
+                      type: integer
+                    name:
+                      type: string
+                    size:
+                      type: integer
+                    completed_downloads:
+                      type: integer
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
     # ==================== Audit Log Schemas ====================
     AuditLogEntry:
       type: object
