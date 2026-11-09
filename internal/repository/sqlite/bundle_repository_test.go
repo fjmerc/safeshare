@@ -93,7 +93,7 @@ func TestBundleGetPublishedByCode_HidesDraftAndExpired(t *testing.T) {
 	if got, err := f.bundles.GetPublishedByCode(f.ctx, "bundlePB01"); err != nil || got != nil {
 		t.Fatalf("draft visible: %v %v", got, err)
 	}
-	if err := f.bundles.Publish(f.ctx, b.ID, nil); err != nil {
+	if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	got, err := f.bundles.GetPublishedByCode(f.ctx, "bundlePB01")
@@ -105,7 +105,7 @@ func TestBundleGetPublishedByCode_HidesDraftAndExpired(t *testing.T) {
 	expired.ExpiresAt = time.Now().Add(-time.Hour)
 	f.create(t, expired)
 	f.addMember(t, expired, 0, "")
-	if err := f.bundles.Publish(f.ctx, expired.ID, nil); err != nil {
+	if err := f.bundles.Publish(f.ctx, expired.ID, nil, time.Time{}); err != nil {
 		t.Fatalf("publish expired: %v", err)
 	}
 	if got, err := f.bundles.GetPublishedByCode(f.ctx, "bundlePB02"); err != nil || got != nil {
@@ -121,30 +121,30 @@ func TestBundlePublish_RequiresExactPositions(t *testing.T) {
 	b := f.create(t, newTestBundle("bundlePX01", 3, nil))
 	f.addMember(t, b, 0, "")
 	f.addMember(t, b, 1, "")
-	if err := f.bundles.Publish(f.ctx, b.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+	if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 		t.Fatalf("publish with 2 of 3: err = %v, want ErrInvalidInput", err)
 	}
 
 	gap := f.create(t, newTestBundle("bundlePX02", 2, nil))
 	f.addMember(t, gap, 0, "")
 	f.addMember(t, gap, 2, "")
-	if err := f.bundles.Publish(f.ctx, gap.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+	if err := f.bundles.Publish(f.ctx, gap.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 		t.Fatalf("publish with positions {0,2}: err = %v, want ErrInvalidInput", err)
 	}
 
 	f.addMember(t, b, 2, "")
 	manifest := []byte{1, 2, 3}
-	if err := f.bundles.Publish(f.ctx, b.ID, manifest); err != nil {
+	if err := f.bundles.Publish(f.ctx, b.ID, manifest, time.Time{}); err != nil {
 		t.Fatalf("publish complete bundle: %v", err)
 	}
 	got, _ := f.bundles.GetByID(f.ctx, b.ID)
 	if string(got.EncryptedManifest) != string(manifest) {
 		t.Fatalf("manifest = %v, want %v", got.EncryptedManifest, manifest)
 	}
-	if err := f.bundles.Publish(f.ctx, b.ID, nil); !errors.Is(err, repository.ErrNotFound) {
+	if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("second publish: err = %v, want ErrNotFound", err)
 	}
-	if err := f.bundles.Publish(f.ctx, 9999, nil); !errors.Is(err, repository.ErrNotFound) {
+	if err := f.bundles.Publish(f.ctx, 9999, nil, time.Time{}); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("publish missing: err = %v, want ErrNotFound", err)
 	}
 }
@@ -155,7 +155,7 @@ func TestBundlePublish_RejectsPendingOrInfectedMember(t *testing.T) {
 		b := f.create(t, newTestBundle("bundleSC01", 2, nil))
 		f.addMember(t, b, 0, "clean")
 		f.addMember(t, b, 1, status)
-		if err := f.bundles.Publish(f.ctx, b.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+		if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 			t.Fatalf("%s member: err = %v, want ErrInvalidInput", status, err)
 		}
 	}
@@ -232,14 +232,14 @@ func TestBundleListByUser(t *testing.T) {
 	for _, code := range []string{"bundleLU02", "bundleLU03"} {
 		b := f.create(t, newTestBundle(code, 1, &uid))
 		f.addMember(t, b, 0, "")
-		if err := f.bundles.Publish(f.ctx, b.ID, nil); err != nil {
+		if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 		published = append(published, b)
 	}
 	anon := f.create(t, newTestBundle("bundleLU04", 1, nil))
 	f.addMember(t, anon, 0, "")
-	f.bundles.Publish(f.ctx, anon.ID, nil)
+	f.bundles.Publish(f.ctx, anon.ID, nil, time.Time{})
 
 	list, total, err := f.bundles.ListByUser(f.ctx, uid, 50, 0)
 	if err != nil || total != 2 || len(list) != 2 {
@@ -260,7 +260,7 @@ func TestBundleUpdateExpiration_MirrorsToMembers(t *testing.T) {
 	b := f.create(t, newTestBundle("bundleUE01", 2, &uid))
 	m0 := f.addMember(t, b, 0, "")
 	m1 := f.addMember(t, b, 1, "")
-	f.bundles.Publish(f.ctx, b.ID, nil)
+	f.bundles.Publish(f.ctx, b.ID, nil, time.Time{})
 
 	newExp := time.Now().Add(72 * time.Hour).UTC().Truncate(time.Second)
 	if err := f.bundles.UpdateExpiration(f.ctx, b.ID, uid, newExp); err != nil {
@@ -283,7 +283,7 @@ func TestBundleUpdateExpiration_WrongOwner(t *testing.T) {
 	uid := createColumnsTestUser(t, f.db)
 	b := f.create(t, newTestBundle("bundleUE02", 1, &uid))
 	f.addMember(t, b, 0, "")
-	f.bundles.Publish(f.ctx, b.ID, nil)
+	f.bundles.Publish(f.ctx, b.ID, nil, time.Time{})
 	if err := f.bundles.UpdateExpiration(f.ctx, b.ID, uid+100, time.Now().Add(time.Hour)); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("wrong owner: err = %v, want ErrNotFound", err)
 	}
@@ -294,7 +294,7 @@ func TestBundleRegenerateCode(t *testing.T) {
 	uid := createColumnsTestUser(t, f.db)
 	b := f.create(t, newTestBundle("bundleRG01", 1, &uid))
 	f.addMember(t, b, 0, "")
-	f.bundles.Publish(f.ctx, b.ID, nil)
+	f.bundles.Publish(f.ctx, b.ID, nil, time.Time{})
 	taken := f.create(t, newTestBundle("bundleRG02", 1, nil))
 	_ = taken
 
@@ -325,7 +325,7 @@ func TestBundleListAbandonedDrafts(t *testing.T) {
 	pubOld.CreatedAt = time.Now().Add(-48 * time.Hour)
 	f.create(t, pubOld)
 	f.addMember(t, pubOld, 0, "")
-	f.bundles.Publish(f.ctx, pubOld.ID, nil)
+	f.bundles.Publish(f.ctx, pubOld.ID, nil, time.Time{})
 
 	ids, err := f.bundles.ListAbandonedDrafts(f.ctx, time.Now().Add(-24*time.Hour))
 	if err != nil || len(ids) != 1 || ids[0] != old.ID {
@@ -337,10 +337,10 @@ func TestBundleListEmptyPublished(t *testing.T) {
 	f := newBundleFixture(t)
 	full := f.create(t, newTestBundle("bundleEP01", 1, nil))
 	f.addMember(t, full, 0, "")
-	f.bundles.Publish(f.ctx, full.ID, nil)
+	f.bundles.Publish(f.ctx, full.ID, nil, time.Time{})
 	empty := f.create(t, newTestBundle("bundleEP02", 1, nil))
 	m := f.addMember(t, empty, 0, "")
-	f.bundles.Publish(f.ctx, empty.ID, nil)
+	f.bundles.Publish(f.ctx, empty.ID, nil, time.Time{})
 	f.create(t, newTestBundle("bundleEP03", 1, nil)) // empty draft: not this list's job
 	if err := f.files.Delete(f.ctx, m.ID); err != nil {
 		t.Fatal(err)

@@ -75,7 +75,7 @@ func TestCleanup_RemovesEmptyPublishedBundles(t *testing.T) {
 	empty, _ := cleanupTestBundle(t, repos, cfg.UploadDir, "pubEmpty01", time.Now(), 1)
 	full, _ := cleanupTestBundle(t, repos, cfg.UploadDir, "pubFull001", time.Now(), 1)
 	for _, b := range []*models.Bundle{empty, full} {
-		if err := repos.Bundles.Publish(ctx, b.ID, nil); err != nil {
+		if err := repos.Bundles.Publish(ctx, b.ID, nil, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -150,6 +150,17 @@ func TestBundleCreate_GhostModeMinimizesRow(t *testing.T) {
 	if b.CreatedAt.Minute() != 0 || b.CreatedAt.Second() != 0 {
 		t.Errorf("created_at %v not rounded to the hour", b.CreatedAt)
 	}
+
+	// The publish time would otherwise give away what created_at hides.
+	uploadMember(t, e, resp, resp.UploadToken, 0, []byte("ct"), "encrypted.bin", map[string]string{"client_encrypted": "true"})
+	manifest := base64.StdEncoding.EncodeToString([]byte("m"))
+	if rr := bundleManageReq(t, e, http.MethodPost, publishPath(resp.BundleID), resp.UploadToken, map[string]any{"encrypted_manifest": manifest}); rr.Code != http.StatusOK {
+		t.Fatalf("publish: %d %s", rr.Code, rr.Body.String())
+	}
+	b, _ = e.repos.Bundles.GetByID(context.Background(), resp.BundleID)
+	if b.PublishedAt == nil || b.PublishedAt.Minute() != 0 || b.PublishedAt.Second() != 0 {
+		t.Errorf("published_at %v not rounded to the hour", b.PublishedAt)
+	}
 }
 
 // --- member uploads ------------------------------------------------------

@@ -144,7 +144,7 @@ func (r *BundleRepository) MemberPositionTaken(ctx context.Context, bundleID int
 	return false, nil
 }
 
-func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte) error {
+func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte, publishedAt time.Time) error {
 	if r.PublishError != nil {
 		return r.PublishError
 	}
@@ -163,9 +163,11 @@ func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest
 			return fmt.Errorf("%w: bundle is incomplete or not clean", repository.ErrInvalidInput)
 		}
 	}
-	now := time.Now()
+	if publishedAt.IsZero() {
+		publishedAt = time.Now()
+	}
 	b.Status = models.BundleStatusPublished
-	b.PublishedAt = &now
+	b.PublishedAt = &publishedAt
 	b.EncryptedManifest = append([]byte(nil), manifest...)
 	if len(manifest) == 0 {
 		b.EncryptedManifest = nil

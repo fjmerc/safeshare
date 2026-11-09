@@ -27,12 +27,12 @@ func TestMockBundleRepository_Lifecycle(t *testing.T) {
 		p := pos
 		files.AddFile(&models.File{ClaimCode: "m" + string(rune('0'+pos)), BundleID: &b.ID, BundlePosition: &p, ExpiresAt: time.Now().Add(time.Hour)})
 		if pos == 0 {
-			if err := bundles.Publish(ctx, b.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+			if err := bundles.Publish(ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 				t.Fatalf("publish incomplete: %v", err)
 			}
 		}
 	}
-	if err := bundles.Publish(ctx, b.ID, []byte("m")); err != nil {
+	if err := bundles.Publish(ctx, b.ID, []byte("m"), time.Time{}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	if got, _ := bundles.GetPublishedByCode(ctx, "mockbundle01"); got == nil || string(got.EncryptedManifest) != "m" {

@@ -172,7 +172,10 @@ func (r *BundleRepository) MemberPositionTaken(ctx context.Context, bundleID int
 }
 
 // Publish marks a complete, clean draft published.
-func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte) error {
+func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte, publishedAt time.Time) error {
+	if publishedAt.IsZero() {
+		publishedAt = time.Now()
+	}
 	return withRetryNoReturn(ctx, 3, func() error {
 		tx, err := r.pool.BeginTx(ctx, TxOptions())
 		if err != nil {
@@ -205,8 +208,8 @@ func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest
 			return fmt.Errorf("%w: bundle has files that are not clean", repository.ErrInvalidInput)
 		}
 
-		if _, err := tx.Exec(ctx, `UPDATE bundles SET status = $1, published_at = NOW(), encrypted_manifest = $2 WHERE id = $3`,
-			models.BundleStatusPublished, nullableBytea(manifest), bundleID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE bundles SET status = $1, published_at = $2, encrypted_manifest = $3 WHERE id = $4`,
+			models.BundleStatusPublished, publishedAt, nullableBytea(manifest), bundleID); err != nil {
 			return fmt.Errorf("failed to publish bundle: %w", err)
 		}
 		return tx.Commit(ctx)

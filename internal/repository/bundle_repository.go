@@ -34,9 +34,11 @@ type BundleRepository interface {
 
 	// Publish atomically checks that the draft has exactly the positions
 	// 0..file_count-1 with no member pending or infected, then marks it
-	// published and stores manifest. A bundle that is not a draft returns
-	// ErrNotFound; an incomplete or unclean one returns ErrInvalidInput.
-	Publish(ctx context.Context, bundleID int64, manifest []byte) error
+	// published and stores manifest. publishedAt is recorded as the publish
+	// time (zero means now; anonymous mode passes an hour-rounded value).
+	// A bundle that is not a draft returns ErrNotFound; an incomplete or
+	// unclean one returns ErrInvalidInput.
+	Publish(ctx context.Context, bundleID int64, manifest []byte, publishedAt time.Time) error
 
 	// DeleteWithMembers deletes the member file rows and then the bundle in
 	// one transaction, returning the deleted files so the caller can remove

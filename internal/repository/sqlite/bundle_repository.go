@@ -196,7 +196,10 @@ func (r *BundleRepository) MemberPositionTaken(ctx context.Context, bundleID int
 }
 
 // Publish marks a complete, clean draft published.
-func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte) error {
+func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest []byte, publishedAt time.Time) error {
+	if publishedAt.IsZero() {
+		publishedAt = time.Now()
+	}
 	tx, err := beginImmediateTx(ctx, r.db)
 	if err != nil {
 		return err
@@ -231,7 +234,7 @@ func (r *BundleRepository) Publish(ctx context.Context, bundleID int64, manifest
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE bundles SET status = ?, published_at = ?, encrypted_manifest = ? WHERE id = ? AND status = ?`,
-		models.BundleStatusPublished, time.Now().UTC().Format(time.RFC3339), nullableBlob(manifest), bundleID, models.BundleStatusDraft); err != nil {
+		models.BundleStatusPublished, publishedAt.UTC().Format(time.RFC3339), nullableBlob(manifest), bundleID, models.BundleStatusDraft); err != nil {
 		return fmt.Errorf("failed to publish bundle: %w", err)
 	}
 	return tx.Commit()

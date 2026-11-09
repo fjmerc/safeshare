@@ -50,23 +50,23 @@ func TestPGBundleCreatePublishGet(t *testing.T) {
 	}
 
 	pgAddMember(t, repos, b, 0, "")
-	if err := repos.Bundles.Publish(ctx, b.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+	if err := repos.Bundles.Publish(ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 		t.Fatalf("publish incomplete: %v", err)
 	}
 	if got, _ := repos.Bundles.GetPublishedByCode(ctx, "bundleCP01"); got != nil {
 		t.Fatal("draft visible")
 	}
 	pgAddMember(t, repos, b, 1, "pending")
-	if err := repos.Bundles.Publish(ctx, b.ID, nil); !errors.Is(err, repository.ErrInvalidInput) {
+	if err := repos.Bundles.Publish(ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrInvalidInput) {
 		t.Fatalf("publish with pending member: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `UPDATE files SET scan_status = 'clean' WHERE bundle_id = $1`, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repos.Bundles.Publish(ctx, b.ID, []byte{9}); err != nil {
+	if err := repos.Bundles.Publish(ctx, b.ID, []byte{9}, time.Time{}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if err := repos.Bundles.Publish(ctx, b.ID, nil); !errors.Is(err, repository.ErrNotFound) {
+	if err := repos.Bundles.Publish(ctx, b.ID, nil, time.Time{}); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("second publish: %v", err)
 	}
 	pub, err := repos.Bundles.GetPublishedByCode(ctx, "bundleCP01")
@@ -94,7 +94,7 @@ func TestPGBundleOwnerOpsAndDelete(t *testing.T) {
 	b := pgNewBundle("bundleOO01", 1, &uid)
 	repos.Bundles.Create(ctx, b)
 	m := pgAddMember(t, repos, b, 0, "")
-	if err := repos.Bundles.Publish(ctx, b.ID, nil); err != nil {
+	if err := repos.Bundles.Publish(ctx, b.ID, nil, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	list, total, err := repos.Bundles.ListByUser(ctx, uid, 10, 0)
@@ -151,7 +151,7 @@ func TestPGBundleCleanupLists(t *testing.T) {
 	empty := pgNewBundle("bundleCL03", 1, nil)
 	repos.Bundles.Create(ctx, empty)
 	m := pgAddMember(t, repos, empty, 0, "")
-	repos.Bundles.Publish(ctx, empty.ID, nil)
+	repos.Bundles.Publish(ctx, empty.ID, nil, time.Time{})
 	if err := repos.Files.Delete(ctx, m.ID); err != nil {
 		t.Fatal(err)
 	}

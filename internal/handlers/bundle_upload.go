@@ -358,7 +358,7 @@ func publishBundle(w http.ResponseWriter, r *http.Request, repos *repository.Rep
 		return
 	}
 
-	if err := repos.Bundles.Publish(ctx, bundleID, manifest); err != nil {
+	if err := repos.Bundles.Publish(ctx, bundleID, manifest, storeCreatedAt(cfg)); err != nil {
 		switch {
 		case errors.Is(err, repository.ErrInvalidInput):
 			sendError(w, "Not every file in the bundle has been uploaded and checked yet", "BUNDLE_INCOMPLETE", http.StatusConflict)
