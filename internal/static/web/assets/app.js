@@ -121,6 +121,16 @@
         // Handle file received via Web Share Target API
         await handleShareTarget();
 
+        // A bundle link (#/bundle/CODE[/key/KEY]) opens the bundle receive view
+        const bundleFragment = window.SafeShareCrypto && window.SafeShareBundle &&
+            SafeShareCrypto.parseBundleFragment(window.location.hash);
+        if (bundleFragment) {
+            // The key lives only in memory from here on; clear it from the address bar and history.
+            scrubLocationFragment();
+            window.SafeShareBundle.open(bundleFragment);
+            return;
+        }
+
         // Check for encrypted download URL fragment
         const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
         if (e2eFragment) {

@@ -477,6 +477,26 @@
                 </div>
             </div>
         </section>
+        <!-- Bundle receive view: opened by a #/bundle/CODE[/key/KEY] link -->
+        <section id="bundleView" class="bundle-view hidden" aria-labelledby="bundleTitle">
+            <div class="card">
+                <h2 id="bundleTitle">Files shared with you</h2>
+                <p id="bundleSummary" class="bundle-summary"></p>
+                <form id="bundlePasswordForm" class="bundle-password-form hidden">
+                    <label for="bundlePassword">These files are password protected</label>
+                    <input type="password" id="bundlePassword" autocomplete="off" required>
+                    <p id="bundlePasswordError" class="bundle-password-error hidden" role="alert">That password isn't right. Try again.</p>
+                    <button type="submit" class="btn-primary">Unlock</button>
+                </form>
+                <ul id="bundleReceiveList" class="bundle-receive-list" aria-label="Files"></ul>
+                <p id="bundleStatus" class="bundle-status" role="status" aria-live="polite"></p>
+                <p id="bundleError" class="bundle-error hidden" role="alert"></p>
+                <div class="bundle-actions">
+                    <button type="button" id="bundleGetFilesButton" class="btn-secondary hidden">Get files</button>
+                    <button type="button" id="bundleSaveAllButton" class="btn-primary" disabled>Save all</button>
+                </div>
+            </div>
+        </section>
         </main>
 
         <!-- Footer -->
@@ -581,6 +601,7 @@
     <script src="/assets/chunked-uploader.js"></script>
     <!-- Several files under one link (bundles) -->
     <script src="/assets/bundle-upload.js"></script>
+    <script src="/assets/bundle-receive.js"></script>
     <script src="/assets/app.js"></script>
     <script src="/assets/pwa.js"></script>
 </body>

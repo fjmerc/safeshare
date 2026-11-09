@@ -20,6 +20,7 @@ const STATIC_ASSETS = [
   '/assets/dialogs.js',
   '/assets/chunked-uploader.js',
   '/assets/bundle-upload.js',
+  '/assets/bundle-receive.js',
   '/assets/qrcode.min.js',
   '/assets/crypto.js',
   '/assets/metadata-strip.js',
