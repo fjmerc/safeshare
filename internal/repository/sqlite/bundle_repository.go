@@ -374,3 +374,16 @@ func (r *BundleRepository) queryIDs(ctx context.Context, query string, args ...i
 	}
 	return ids, rows.Err()
 }
+
+// BundleIDForMemberClaimCode returns the bundle that owns the file with claimCode.
+func (r *BundleRepository) BundleIDForMemberClaimCode(ctx context.Context, claimCode string) (int64, bool, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `SELECT bundle_id FROM files WHERE claim_code = ?`, claimCode).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to look up file bundle: %w", err)
+	}
+	return id.Int64, id.Valid, nil
+}

@@ -59,4 +59,9 @@ type BundleRepository interface {
 
 	// ListEmptyPublished returns ids of published bundles with no members left.
 	ListEmptyPublished(ctx context.Context) ([]int64, error)
+
+	// BundleIDForMemberClaimCode returns the bundle a file belongs to, looked
+	// up by the file's own claim code (admin tools address files that way).
+	// ok is false when no file has that code or the file is standalone.
+	BundleIDForMemberClaimCode(ctx context.Context, claimCode string) (bundleID int64, ok bool, err error)
 }

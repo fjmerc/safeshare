@@ -370,3 +370,23 @@ func TestMemberPositionTaken_CountsPartialUploads(t *testing.T) {
 		}
 	}
 }
+
+func TestBundleIDForMemberClaimCode(t *testing.T) {
+	f := newBundleFixture(t)
+	b := f.create(t, newTestBundle("bundleMC01", 1, nil))
+	m := f.addMember(t, b, 0, "")
+	plain := newColumnsTestFile("plainMC001", nil, nil, nil)
+	if err := f.files.Create(f.ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+
+	id, ok, err := f.bundles.BundleIDForMemberClaimCode(f.ctx, m.ClaimCode)
+	if err != nil || !ok || id != b.ID {
+		t.Fatalf("member: %d %v %v", id, ok, err)
+	}
+	for _, code := range []string{"plainMC001", "nosuchcode"} {
+		if _, ok, err := f.bundles.BundleIDForMemberClaimCode(f.ctx, code); err != nil || ok {
+			t.Fatalf("%s: ok=%v err=%v", code, ok, err)
+		}
+	}
+}

@@ -160,3 +160,21 @@ func TestPGBundleCleanupLists(t *testing.T) {
 		t.Fatalf("ListEmptyPublished = %v %v", ids, err)
 	}
 }
+
+func TestPGBundleIDForMemberClaimCode(t *testing.T) {
+	repos := setupTestRepos(t)
+	ctx := context.Background()
+	b := pgNewBundle("bundleMC01", 1, nil)
+	repos.Bundles.Create(ctx, b)
+	m := pgAddMember(t, repos, b, 0, "")
+	repos.Files.Create(ctx, pgBundleTestFile("plainMC001", nil, nil, nil))
+
+	if id, ok, err := repos.Bundles.BundleIDForMemberClaimCode(ctx, m.ClaimCode); err != nil || !ok || id != b.ID {
+		t.Fatalf("member: %d %v %v", id, ok, err)
+	}
+	for _, code := range []string{"plainMC001", "nosuchcode"} {
+		if _, ok, err := repos.Bundles.BundleIDForMemberClaimCode(ctx, code); err != nil || ok {
+			t.Fatalf("%s: %v %v", code, ok, err)
+		}
+	}
+}

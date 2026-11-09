@@ -78,3 +78,32 @@ func TestRateLimit_BundleReceivePaths(t *testing.T) {
 		t.Fatalf("claim after bundle downloads spent the budget: %d", c)
 	}
 }
+
+// TestRateLimit_BundleRegenerateCode: regenerating a bundle code shares the
+// hardcoded "regeneration" bucket with claim code regeneration.
+func TestRateLimit_BundleRegenerateCode(t *testing.T) {
+	cfg := &mockConfigProvider{uploadLimit: 10, downloadLimit: 50}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+	handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(path string) int {
+		req := httptest.NewRequest(http.MethodPut, path, nil)
+		req.RemoteAddr = "192.168.9.1:12345"
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	for i := 0; i < 5; i++ {
+		send("/api/user/files/regenerate-claim-code")
+	}
+	for i := 0; i < 5; i++ {
+		if c := send("/api/user/bundles/3/regenerate-code"); c != http.StatusOK {
+			t.Fatalf("regenerate %d: %d", i, c)
+		}
+	}
+	if c := send("/api/user/bundles/3/regenerate-code"); c != http.StatusTooManyRequests {
+		t.Fatalf("11th regeneration: %d, want 429", c)
+	}
+}

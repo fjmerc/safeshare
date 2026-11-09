@@ -564,6 +564,14 @@ func run() error {
 		userAuth(tokenAudit(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
+	// The signed-in user's bundles: list, delete, change expiry, new code.
+	mux.HandleFunc("/api/user/bundles", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserBundlesHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/api/user/bundles/", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserBundlesHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
 	// SDK-compatible user file management routes (claim code in URL path)
 	// These routes support: DELETE /api/user/files/{claimCode}
 	//                       PUT /api/user/files/{claimCode}/rename

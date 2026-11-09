@@ -286,3 +286,12 @@ func (r *BundleRepository) ListEmptyPublished(ctx context.Context) ([]int64, err
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids, nil
 }
+
+func (r *BundleRepository) BundleIDForMemberClaimCode(ctx context.Context, claimCode string) (int64, bool, error) {
+	r.files.mu.RLock()
+	defer r.files.mu.RUnlock()
+	if f, ok := r.files.byClaimCode[claimCode]; ok && f.BundleID != nil {
+		return *f.BundleID, true, nil
+	}
+	return 0, false, nil
+}

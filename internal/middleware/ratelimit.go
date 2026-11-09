@@ -289,7 +289,8 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// /api/upload and /api/upload/init and count as uploads.
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "bundle_manage"
-			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
+			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" ||
+				(strings.HasPrefix(r.URL.Path, "/api/user/bundles/") && strings.HasSuffix(r.URL.Path, "/regenerate-code")) {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP
 				limitType = "regeneration"
 			} else {
