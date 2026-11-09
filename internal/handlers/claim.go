@@ -158,271 +158,283 @@ func ClaimHandler(repos *repository.Repositories, cfg *config.Config) http.Handl
 			return
 		}
 
-		// ADR-015: gate the download on this file's own scan verdict before
-		// any password check, in-flight tracking, or reservation/session
-		// work — a blocked request must never reserve or commit a download
-		// slot.
-		if gate := scanGate(file, cfg); gate.blocked {
-			slog.Warn("download blocked by scan gate",
-				"reason", gate.code,
+		serveClaimedFile(w, r, repos, cfg, file)
+	}
+}
+
+// serveClaimedFile runs the claim pipeline for a file that has already been
+// looked up: scan gate, password check, HEAD, in-flight cap, download
+// reservation or ADR-014 session, streaming, commit, audit and webhook. It
+// is shared by ClaimHandler and the bundle file route, which find the file
+// by different means but must enforce exactly the same rules.
+func serveClaimedFile(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, file *models.File) {
+	ctx := r.Context()
+	claimCode := file.ClaimCode
+
+	// ADR-015: gate the download on this file's own scan verdict before
+	// any password check, in-flight tracking, or reservation/session
+	// work — a blocked request must never reserve or commit a download
+	// slot.
+	if gate := scanGate(file, cfg); gate.blocked {
+		slog.Warn("download blocked by scan gate",
+			"reason", gate.code,
+			"claim_code", redactClaimCode(claimCode),
+			"scan_status", file.ScanStatus,
+			"scan_result", file.ScanResult,
+			"client_ip", logIP(getClientIP(r), cfg),
+		)
+		if gate.retryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(gate.retryAfter))
+		}
+		sendErrorResponse(w, r, gate.title, gate.message, gate.code, gate.statusCode)
+		return
+	}
+
+	// Check password if file is password-protected.
+	// SH-1.5: accept the password via three channels, in priority order:
+	//   1. X-File-Password header — preferred; never lands in proxy logs,
+	//      browser history, or outbound Referer.
+	//   2. POST form body (`password`) — for programmatic clients that
+	//      can't set custom headers but can POST a form.
+	//   3. URL query string (`?password=…`) — deprecated; kept for one
+	//      release to avoid breaking direct browser <a href> downloads
+	//      while frontends migrate. Emits a WARN log + Deprecation
+	//      response header so operators can see who still uses it.
+	if utils.IsPasswordProtected(file.PasswordHash) {
+		providedPassword, passwordViaQuery := extractDownloadPassword(w, r)
+
+		if passwordViaQuery {
+			// Defence-in-depth even on the deprecated path: tell the browser
+			// not to forward the URL (which still contains the password) as a
+			// Referer on any subsequent navigation triggered by the download
+			// page.
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("Deprecation", "true")
+			w.Header().Set("Sunset", "Wed, 31 Mar 2027 00:00:00 GMT")
+			// Points at a fetchable docs URL (RFC 8594 / draft-ietf-httpapi-
+			// deprecation-header expect an actual resource, not a repo
+			// path). Track this if the default branch is renamed.
+			w.Header().Set("Link", `<https://github.com/fjmerc/safeshare/blob/main/docs/API_REFERENCE_FOR_TESTING.md#file-passwords-sh-15>; rel="deprecation"; type="text/markdown"`)
+			slog.Warn("deprecated password-in-query-string usage",
 				"claim_code", redactClaimCode(claimCode),
-				"scan_status", file.ScanStatus,
-				"scan_result", file.ScanResult,
+				"client_ip", logIP(getClientIP(r), cfg),
+				"user_agent", logUserAgent(getUserAgent(r), cfg),
+			)
+			metrics.DownloadsTotal.WithLabelValues("password_via_query_deprecated").Inc()
+		}
+
+		if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
+			metrics.DownloadsTotal.WithLabelValues("password_failed").Inc()
+
+			slog.Warn("file access denied",
+				"reason", "incorrect_password",
+				"claim_code", redactClaimCode(claimCode),
+				"filename", logFilename(file.OriginalFilename, cfg),
+				"client_ip", logIP(getClientIP(r), cfg),
+				"user_agent", logUserAgent(getUserAgent(r), cfg),
+			)
+			if r.Method != http.MethodHead { // the web UI's password pre-check is a HEAD
+				audit.Record(r, cfg, audit.Event{Type: models.AuditEventSecurity, Action: "download_denied", Outcome: models.AuditOutcomeFailure,
+					ResourceType: "file", ResourceID: idStr(file.ID), Details: map[string]any{"reason": "incorrect_password"}})
+			}
+			sendErrorResponse(w, r, "Incorrect Password", "The password provided for this file is incorrect. Please check the password and try again, or contact the sender for the correct password.", "INCORRECT_PASSWORD", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// ADR-017: HEAD is answered here, before any reservation/session
+	// work — it must go through every gate GET does (scan status,
+	// password, expiry — all above this point) but never spends a
+	// download or reserves session bytes (T38). It still opens,
+	// classifies, and (for SFSE) primes the file through the exact
+	// same serveFileWithRangeSupport path a GET would use, so a HEAD
+	// response's headers (Content-Length, ETag, Accept-Ranges, ...)
+	// can never promise a download that would then fail — a broken or
+	// truncated stored file fails HEAD the same fail-closed way it
+	// fails GET, instead of silently advertising a size it can't
+	// deliver.
+	if r.Method == http.MethodHead {
+		// Code-review finding: HEAD must not bypass the download-limit
+		// gate a capped GET enforces via ReserveDownload. This is the
+		// same best-effort check ClaimInfoHandler already uses (it
+		// judges the `file` snapshot read at the top of this handler,
+		// not a fresh atomic read) — HEAD never reserves, so it has no
+		// stronger guarantee available, but that's fine: the worst
+		// case is a narrow race where the limit was hit a moment ago
+		// and this HEAD still reports the file as available, exactly
+		// like ClaimInfoHandler already accepts for `/info`.
+		if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
+			slog.Warn("file access denied",
+				"reason", "download_limit_reached",
+				"claim_code", redactClaimCode(claimCode),
+				"filename", logFilename(file.OriginalFilename, cfg),
 				"client_ip", logIP(getClientIP(r), cfg),
 			)
-			if gate.retryAfter > 0 {
-				w.Header().Set("Retry-After", strconv.Itoa(gate.retryAfter))
-			}
-			sendErrorResponse(w, r, gate.title, gate.message, gate.code, gate.statusCode)
+			sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
 			return
 		}
-
-		// Check password if file is password-protected.
-		// SH-1.5: accept the password via three channels, in priority order:
-		//   1. X-File-Password header — preferred; never lands in proxy logs,
-		//      browser history, or outbound Referer.
-		//   2. POST form body (`password`) — for programmatic clients that
-		//      can't set custom headers but can POST a form.
-		//   3. URL query string (`?password=…`) — deprecated; kept for one
-		//      release to avoid breaking direct browser <a href> downloads
-		//      while frontends migrate. Emits a WARN log + Deprecation
-		//      response header so operators can see who still uses it.
-		if utils.IsPasswordProtected(file.PasswordHash) {
-			providedPassword, passwordViaQuery := extractDownloadPassword(w, r)
-
-			if passwordViaQuery {
-				// Defence-in-depth even on the deprecated path: tell the browser
-				// not to forward the URL (which still contains the password) as a
-				// Referer on any subsequent navigation triggered by the download
-				// page.
-				w.Header().Set("Referrer-Policy", "no-referrer")
-				w.Header().Set("Deprecation", "true")
-				w.Header().Set("Sunset", "Wed, 31 Mar 2027 00:00:00 GMT")
-				// Points at a fetchable docs URL (RFC 8594 / draft-ietf-httpapi-
-				// deprecation-header expect an actual resource, not a repo
-				// path). Track this if the default branch is renamed.
-				w.Header().Set("Link", `<https://github.com/fjmerc/safeshare/blob/main/docs/API_REFERENCE_FOR_TESTING.md#file-passwords-sh-15>; rel="deprecation"; type="text/markdown"`)
-				slog.Warn("deprecated password-in-query-string usage",
-					"claim_code", redactClaimCode(claimCode),
-					"client_ip", logIP(getClientIP(r), cfg),
-					"user_agent", logUserAgent(getUserAgent(r), cfg),
-				)
-				metrics.DownloadsTotal.WithLabelValues("password_via_query_deprecated").Inc()
-			}
-
-			if !utils.VerifyPassword(file.PasswordHash, providedPassword) {
-				metrics.DownloadsTotal.WithLabelValues("password_failed").Inc()
-
-				slog.Warn("file access denied",
-					"reason", "incorrect_password",
-					"claim_code", redactClaimCode(claimCode),
-					"filename", logFilename(file.OriginalFilename, cfg),
-					"client_ip", logIP(getClientIP(r), cfg),
-					"user_agent", logUserAgent(getUserAgent(r), cfg),
-				)
-				if r.Method != http.MethodHead { // the web UI's password pre-check is a HEAD
-					audit.Record(r, cfg, audit.Event{Type: models.AuditEventSecurity, Action: "download_denied", Outcome: models.AuditOutcomeFailure,
-						ResourceType: "file", ResourceID: idStr(file.ID), Details: map[string]any{"reason": "incorrect_password"}})
-				}
-				sendErrorResponse(w, r, "Incorrect Password", "The password provided for this file is incorrect. Please check the password and try again, or contact the sender for the correct password.", "INCORRECT_PASSWORD", http.StatusUnauthorized)
-				return
-			}
-		}
-
-		// ADR-017: HEAD is answered here, before any reservation/session
-		// work — it must go through every gate GET does (scan status,
-		// password, expiry — all above this point) but never spends a
-		// download or reserves session bytes (T38). It still opens,
-		// classifies, and (for SFSE) primes the file through the exact
-		// same serveFileWithRangeSupport path a GET would use, so a HEAD
-		// response's headers (Content-Length, ETag, Accept-Ranges, ...)
-		// can never promise a download that would then fail — a broken or
-		// truncated stored file fails HEAD the same fail-closed way it
-		// fails GET, instead of silently advertising a size it can't
-		// deliver.
-		if r.Method == http.MethodHead {
-			// Code-review finding: HEAD must not bypass the download-limit
-			// gate a capped GET enforces via ReserveDownload. This is the
-			// same best-effort check ClaimInfoHandler already uses (it
-			// judges the `file` snapshot read at the top of this handler,
-			// not a fresh atomic read) — HEAD never reserves, so it has no
-			// stronger guarantee available, but that's fine: the worst
-			// case is a narrow race where the limit was hit a moment ago
-			// and this HEAD still reports the file as available, exactly
-			// like ClaimInfoHandler already accepts for `/info`.
-			if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
-				slog.Warn("file access denied",
-					"reason", "download_limit_reached",
-					"claim_code", redactClaimCode(claimCode),
-					"filename", logFilename(file.OriginalFilename, cfg),
-					"client_ip", logIP(getClientIP(r), cfg),
-				)
-				sendErrorResponse(w, r, "Download Limit Reached", "This file has reached its maximum number of downloads and is no longer available. Please contact the sender if you need the file again.", "DOWNLOAD_LIMIT_REACHED", http.StatusGone)
-				return
-			}
-			filePath, ok := resolveClaimFilePath(w, r, file, cfg)
-			if !ok {
-				return
-			}
-			serveFileWithRangeSupport(w, r, file, filePath, cfg, time.Time{})
-			return
-		}
-
-		// SH-2.3 / ADR-012: download_count is no longer incremented up-front. The
-		// race-fix property of the original TryIncrementDownloadWithLimit (P1) is
-		// preserved by ReserveDownload, which takes an in_flight_reservations slot
-		// against the same `(download_count + in_flight) < max_downloads` guard.
-
-		// SH-2.3 bug-hunter M3: cap concurrent reservations per (file, IP) before
-		// taking the DB-level slot. The global RateLimitDownload middleware bounds
-		// total requests per IP per hour (default 50); this tracker bounds
-		// *concurrency*, blocking a single attacker from burst-holding many slots
-		// via slow reads on a max_downloads=N file. Disabled (cap == 0) bypasses
-		// this entirely. Acquired here BEFORE Reserve so a 429 path doesn't touch
-		// the reservation table at all.
-		clientIPForCap := getClientIP(r)
-		// T43: the tracker's bucket key groups IPv6 clients by the
-		// configured prefix (default /64); logging below still uses the
-		// full clientIPForCap.
-		inFlightKey := utils.RateLimitKey(clientIPForCap)
-		if !inFlightTracker.TryAcquire(file.ID, inFlightKey) {
-			slog.Warn("file access denied",
-				"reason", "inflight_cap_per_ip_reached",
-				"claim_code", redactClaimCode(claimCode),
-				"file_id", file.ID,
-				"client_ip", logIP(clientIPForCap, cfg),
-				"max_per_ip", inFlightTracker.MaxPerIP(),
-			)
-			w.Header().Set("Retry-After", "120")
-			sendErrorResponse(w, r,
-				"Too Many Concurrent Downloads",
-				"You have too many concurrent downloads in progress for this file. Please wait for them to finish and try again.",
-				"TOO_MANY_INFLIGHT", http.StatusTooManyRequests)
-			return
-		}
-		defer inFlightTracker.Release(file.ID, inFlightKey)
-
-		// Validate stored filename and build the on-disk path (defense-in-depth
-		// against database corruption/compromise).
 		filePath, ok := resolveClaimFilePath(w, r, file, cfg)
 		if !ok {
 			return
 		}
+		serveFileWithRangeSupport(w, r, file, filePath, cfg, time.Time{})
+		return
+	}
 
-		// Store original claim code for optimistic locking
-		originalClaimCode := file.ClaimCode
+	// SH-2.3 / ADR-012: download_count is no longer incremented up-front. The
+	// race-fix property of the original TryIncrementDownloadWithLimit (P1) is
+	// preserved by ReserveDownload, which takes an in_flight_reservations slot
+	// against the same `(download_count + in_flight) < max_downloads` guard.
 
-		// capped files (max_downloads set and > 0) go through the ADR-014
-		// download-session flow below, which closes T1 (Range-splitting a
-		// download never counted) and T5 (reaper TTL shorter than the max
-		// transfer deadline). Uncapped files keep the original ADR-012 fast
-		// path unchanged — see ADR-014 "Unlimited files keep the existing fast
-		// path unchanged": no session bookkeeping, no X-Download-Session
-		// header, no Cache-Control override, one code path fewer for the
-		// overwhelmingly common case.
-		capped := file.MaxDownloads != nil && *file.MaxDownloads > 0
+	// SH-2.3 bug-hunter M3: cap concurrent reservations per (file, IP) before
+	// taking the DB-level slot. The global RateLimitDownload middleware bounds
+	// total requests per IP per hour (default 50); this tracker bounds
+	// *concurrency*, blocking a single attacker from burst-holding many slots
+	// via slow reads on a max_downloads=N file. Disabled (cap == 0) bypasses
+	// this entirely. Acquired here BEFORE Reserve so a 429 path doesn't touch
+	// the reservation table at all.
+	clientIPForCap := getClientIP(r)
+	// T43: the tracker's bucket key groups IPv6 clients by the
+	// configured prefix (default /64); logging below still uses the
+	// full clientIPForCap.
+	inFlightKey := utils.RateLimitKey(clientIPForCap)
+	if !inFlightTracker.TryAcquire(file.ID, inFlightKey) {
+		slog.Warn("file access denied",
+			"reason", "inflight_cap_per_ip_reached",
+			"claim_code", redactClaimCode(claimCode),
+			"file_id", file.ID,
+			"client_ip", logIP(clientIPForCap, cfg),
+			"max_per_ip", inFlightTracker.MaxPerIP(),
+		)
+		w.Header().Set("Retry-After", "120")
+		sendErrorResponse(w, r,
+			"Too Many Concurrent Downloads",
+			"You have too many concurrent downloads in progress for this file. Please wait for them to finish and try again.",
+			"TOO_MANY_INFLIGHT", http.StatusTooManyRequests)
+		return
+	}
+	defer inFlightTracker.Release(file.ID, inFlightKey)
 
-		if !capped {
-			// Reserve a download slot. ReserveDownload returns the sentinel
-			// ReservationTokenUnlimited here; Commit/Cancel are no-ops for it.
-			token, _, err := repos.Files.ReserveDownload(ctx, file.ID, originalClaimCode)
-			if err != nil {
-				if errors.Is(err, repository.ErrClaimCodeChanged) {
-					slog.Warn("claim code changed before reservation",
-						"file_id", file.ID,
-						"original_code", redactClaimCode(originalClaimCode),
-						"client_ip", logIP(getClientIP(r), cfg),
-					)
-					sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
-					return
-				}
-				slog.Error("failed to reserve download slot", "file_id", file.ID, "error", err)
+	// Validate stored filename and build the on-disk path (defense-in-depth
+	// against database corruption/compromise).
+	filePath, ok := resolveClaimFilePath(w, r, file, cfg)
+	if !ok {
+		return
+	}
+
+	// Store original claim code for optimistic locking
+	originalClaimCode := file.ClaimCode
+
+	// capped files (max_downloads set and > 0) go through the ADR-014
+	// download-session flow below, which closes T1 (Range-splitting a
+	// download never counted) and T5 (reaper TTL shorter than the max
+	// transfer deadline). Uncapped files keep the original ADR-012 fast
+	// path unchanged — see ADR-014 "Unlimited files keep the existing fast
+	// path unchanged": no session bookkeeping, no X-Download-Session
+	// header, no Cache-Control override, one code path fewer for the
+	// overwhelmingly common case.
+	capped := file.MaxDownloads != nil && *file.MaxDownloads > 0
+
+	if !capped {
+		// Reserve a download slot. ReserveDownload returns the sentinel
+		// ReservationTokenUnlimited here; Commit/Cancel are no-ops for it.
+		token, _, err := repos.Files.ReserveDownload(ctx, file.ID, originalClaimCode)
+		if err != nil {
+			if errors.Is(err, repository.ErrClaimCodeChanged) {
+				slog.Warn("claim code changed before reservation",
+					"file_id", file.ID,
+					"original_code", redactClaimCode(originalClaimCode),
+					"client_ip", logIP(getClientIP(r), cfg),
+				)
+				sendErrorResponse(w, r, "File Not Found or Expired", "This file does not exist or has expired. Files on SafeShare are automatically deleted after their expiration time. Please contact the sender if you need the file again.", "NOT_FOUND", http.StatusNotFound)
+				return
+			}
+			slog.Error("failed to reserve download slot", "file_id", file.ID, "error", err)
+			sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
+			return
+		}
+		if token != "" && token != repository.ReservationTokenUnlimited {
+			// Race: max_downloads was set on this file after we read it
+			// (capped=false, from the snapshot at the top of this
+			// handler), but ReserveDownload's fresh read saw the new cap
+			// and returned a real session token instead of the sentinel.
+			// Streaming it here would apply no probe threshold and never
+			// Cancel on a partial range — release the slot and re-dispatch
+			// to the capped flow, which re-reserves with the correct
+			// threshold/session semantics (bug-hunter finding).
+			if err := repos.Files.CancelDownload(ctx, file.ID, token); err != nil {
+				slog.Error("failed to cancel late-capped reservation", "file_id", file.ID, "error", err)
+			}
+			// serveCappedDownload dereferences file.MaxDownloads once it
+			// has credited a download — the `file` snapshot in scope here
+			// still has it nil (that's the whole reason we're in this
+			// branch), which would panic there. Re-read the file so the
+			// capped flow sees the cap that's now actually in effect
+			// (bug-hunter finding).
+			freshFile, ferr := repos.Files.GetByID(ctx, file.ID)
+			if ferr != nil || freshFile == nil {
+				slog.Error("failed to re-read file for late-capped re-dispatch", "file_id", file.ID, "error", ferr)
 				sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
 				return
 			}
-			if token != "" && token != repository.ReservationTokenUnlimited {
-				// Race: max_downloads was set on this file after we read it
-				// (capped=false, from the snapshot at the top of this
-				// handler), but ReserveDownload's fresh read saw the new cap
-				// and returned a real session token instead of the sentinel.
-				// Streaming it here would apply no probe threshold and never
-				// Cancel on a partial range — release the slot and re-dispatch
-				// to the capped flow, which re-reserves with the correct
-				// threshold/session semantics (bug-hunter finding).
-				if err := repos.Files.CancelDownload(ctx, file.ID, token); err != nil {
-					slog.Error("failed to cancel late-capped reservation", "file_id", file.ID, "error", err)
-				}
-				// serveCappedDownload dereferences file.MaxDownloads once it
-				// has credited a download — the `file` snapshot in scope here
-				// still has it nil (that's the whole reason we're in this
-				// branch), which would panic there. Re-read the file so the
-				// capped flow sees the cap that's now actually in effect
-				// (bug-hunter finding).
-				freshFile, ferr := repos.Files.GetByID(ctx, file.ID)
-				if ferr != nil || freshFile == nil {
-					slog.Error("failed to re-read file for late-capped re-dispatch", "file_id", file.ID, "error", ferr)
-					sendErrorResponse(w, r, "Server Error", "An internal error occurred while preparing the download. Please try again later.", "INTERNAL_ERROR", http.StatusInternalServerError)
-					return
-				}
-				serveCappedDownload(ctx, w, r, repos, cfg, freshFile, filePath, originalClaimCode, claimCode)
-				return
-			}
-
-			// Serve file with Range support (handles both full and partial downloads).
-			// Returns commitable=true only when the request received the entire file
-			// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
-			transferDeadline := extendTransferDeadline(w, cfg, file.FileSize)
-			commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg, transferDeadline)
-
-			// Commit/Cancel run on a context detached from the request: when the client
-			// disconnects, r.Context() is already cancelled, the transaction can't begin.
-			finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), reservationFinalizeTimeout)
-			defer cancelFinalize()
-
-			committed := false
-			if commitable {
-				if err := repos.Files.CommitDownload(finalizeCtx, file.ID, token); err != nil {
-					slog.Error("failed to commit download", "file_id", file.ID, "error", err)
-				} else {
-					committed = true
-				}
-			}
-			// No cap, no reservation row for ReservationTokenUnlimited — nothing to
-			// Cancel on the non-commitable path.
-
-			if committed {
-				audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_download", Outcome: models.AuditOutcomeSuccess,
-					ResourceType: "file", ResourceID: idStr(file.ID)})
-				now := time.Now()
-				EmitWebhookEvent(&webhooks.Event{
-					Type:      webhooks.EventFileDownloaded,
-					Timestamp: now,
-					File: webhooks.FileData{
-						ID:           file.ID,
-						ClaimCode:    file.ClaimCode,
-						Filename:     file.OriginalFilename,
-						Size:         file.FileSize,
-						MimeType:     file.MimeType,
-						ExpiresAt:    file.ExpiresAt,
-						DownloadedAt: &now,
-					},
-				})
-			}
-
-			slog.Debug("download completed",
-				"claim_code", redactClaimCode(claimCode),
-				"committed", committed,
-				"remaining_downloads", "unlimited",
-			)
+			serveCappedDownload(ctx, w, r, repos, cfg, freshFile, filePath, originalClaimCode, claimCode)
 			return
 		}
 
-		// Capped files (max_downloads set and > 0) go through the ADR-014
-		// download-session flow in claim_session.go, which closes T1
-		// (Range-splitting a download never counted) and T5 (reaper TTL
-		// shorter than the max transfer deadline).
-		serveCappedDownload(ctx, w, r, repos, cfg, file, filePath, originalClaimCode, claimCode)
+		// Serve file with Range support (handles both full and partial downloads).
+		// Returns commitable=true only when the request received the entire file
+		// (no Range header, or Range covering [0, fileSize-1]) AND the stream completed.
+		transferDeadline := extendTransferDeadline(w, cfg, file.FileSize)
+		commitable := serveFileWithRangeSupport(w, r, file, filePath, cfg, transferDeadline)
+
+		// Commit/Cancel run on a context detached from the request: when the client
+		// disconnects, r.Context() is already cancelled, the transaction can't begin.
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), reservationFinalizeTimeout)
+		defer cancelFinalize()
+
+		committed := false
+		if commitable {
+			if err := repos.Files.CommitDownload(finalizeCtx, file.ID, token); err != nil {
+				slog.Error("failed to commit download", "file_id", file.ID, "error", err)
+			} else {
+				committed = true
+			}
+		}
+		// No cap, no reservation row for ReservationTokenUnlimited — nothing to
+		// Cancel on the non-commitable path.
+
+		if committed {
+			audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_download", Outcome: models.AuditOutcomeSuccess,
+				ResourceType: "file", ResourceID: idStr(file.ID)})
+			now := time.Now()
+			EmitWebhookEvent(&webhooks.Event{
+				Type:      webhooks.EventFileDownloaded,
+				Timestamp: now,
+				File: webhooks.FileData{
+					ID:           file.ID,
+					ClaimCode:    file.ClaimCode,
+					Filename:     file.OriginalFilename,
+					Size:         file.FileSize,
+					MimeType:     file.MimeType,
+					ExpiresAt:    file.ExpiresAt,
+					DownloadedAt: &now,
+				},
+			})
+		}
+
+		slog.Debug("download completed",
+			"claim_code", redactClaimCode(claimCode),
+			"committed", committed,
+			"remaining_downloads", "unlimited",
+		)
+		return
 	}
+
+	// Capped files (max_downloads set and > 0) go through the ADR-014
+	// download-session flow in claim_session.go, which closes T1
+	// (Range-splitting a download never counted) and T5 (reaper TTL
+	// shorter than the max transfer deadline).
+	serveCappedDownload(ctx, w, r, repos, cfg, file, filePath, originalClaimCode, claimCode)
 }
 
 // ClaimInfoHandler returns file information without downloading
@@ -472,44 +484,7 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			return
 		}
 
-		// Check download limit
-		downloadLimitReached := false
-		if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
-			downloadLimitReached = true
-		}
-
-		// Build download URL
-		downloadURL := buildDownloadURL(r, cfg, claimCode)
-
-		// ADR-015: report the scan gate's verdict so clients can show a
-		// meaningful state (e.g. "still being scanned") instead of a bare
-		// 423/403/410 the next time they try to actually download.
-		gate := scanGate(file, cfg)
-
-		// Return file info as JSON
-		response := map[string]interface{}{
-			"claim_code":             file.ClaimCode,
-			"original_filename":      file.OriginalFilename,
-			"file_size":              file.FileSize,
-			"mime_type":              file.MimeType,
-			"created_at":             file.CreatedAt,
-			"expires_at":             file.ExpiresAt,
-			"max_downloads":          file.MaxDownloads,
-			"download_count":         file.DownloadCount,
-			"completed_downloads":    file.CompletedDownloads,
-			"download_limit_reached": downloadLimitReached,
-			"password_required":      utils.IsPasswordProtected(file.PasswordHash),
-			"download_url":           downloadURL,
-			"client_encrypted":       file.ClientEncrypted,
-			"scan_status":            file.ScanStatus,
-			"download_available":     !gate.blocked,
-		}
-
-		// SHA256 checksum for client verification. Empty means "not recorded"
-		// (legacy rows, and all rows in anonymous mode): omit the key.
-		if file.SHA256Hash != "" {
-			response["sha256_hash"] = file.SHA256Hash
-		}
+		response := claimInfoPayload(r, cfg, file)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -520,6 +495,50 @@ func ClaimInfoHandler(repos *repository.Repositories, cfg *config.Config) http.H
 			"filename", logFilename(file.OriginalFilename, cfg),
 		)
 	}
+}
+
+// claimInfoPayload builds the JSON body /api/claim/{code}/info returns for
+// file. The bundle info route reuses it for each member.
+func claimInfoPayload(r *http.Request, cfg *config.Config, file *models.File) map[string]interface{} {
+	// Check download limit
+	downloadLimitReached := false
+	if file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads {
+		downloadLimitReached = true
+	}
+
+	// Build download URL
+	downloadURL := buildDownloadURL(r, cfg, file.ClaimCode)
+
+	// ADR-015: report the scan gate's verdict so clients can show a
+	// meaningful state (e.g. "still being scanned") instead of a bare
+	// 423/403/410 the next time they try to actually download.
+	gate := scanGate(file, cfg)
+
+	// Return file info as JSON
+	response := map[string]interface{}{
+		"claim_code":             file.ClaimCode,
+		"original_filename":      file.OriginalFilename,
+		"file_size":              file.FileSize,
+		"mime_type":              file.MimeType,
+		"created_at":             file.CreatedAt,
+		"expires_at":             file.ExpiresAt,
+		"max_downloads":          file.MaxDownloads,
+		"download_count":         file.DownloadCount,
+		"completed_downloads":    file.CompletedDownloads,
+		"download_limit_reached": downloadLimitReached,
+		"password_required":      utils.IsPasswordProtected(file.PasswordHash),
+		"download_url":           downloadURL,
+		"client_encrypted":       file.ClientEncrypted,
+		"scan_status":            file.ScanStatus,
+		"download_available":     !gate.blocked,
+	}
+
+	// SHA256 checksum for client verification. Empty means "not recorded"
+	// (legacy rows, and all rows in anonymous mode): omit the key.
+	if file.SHA256Hash != "" {
+		response["sha256_hash"] = file.SHA256Hash
+	}
+	return response
 }
 
 // resolveClaimFilePath validates file's stored filename (defense-in-depth
