@@ -229,8 +229,10 @@ func TestBundleListByUser(t *testing.T) {
 	draft := f.create(t, newTestBundle("bundleLU01", 1, &uid))
 	f.addMember(t, draft, 0, "")
 	var published []*models.Bundle
-	for _, code := range []string{"bundleLU02", "bundleLU03"} {
-		b := f.create(t, newTestBundle(code, 1, &uid))
+	for i, code := range []string{"bundleLU02", "bundleLU03"} {
+		nb := newTestBundle(code, 1, &uid)
+		nb.CreatedAt = time.Now().Add(time.Duration(i-2) * time.Minute) // distinct times: ids are random
+		b := f.create(t, nb)
 		f.addMember(t, b, 0, "")
 		if err := f.bundles.Publish(f.ctx, b.ID, nil, time.Time{}); err != nil {
 			t.Fatal(err)
