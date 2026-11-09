@@ -425,3 +425,64 @@ func freeBundleName(dir, name string, used map[string]bool) string {
 		candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
 	}
 }
+
+// UserBundleFile is one file of a bundle in ListBundles.
+type UserBundleFile struct {
+	Position           int    `json:"position"`
+	Name               string `json:"name"`
+	Size               int64  `json:"size"`
+	CompletedDownloads int    `json:"completed_downloads"`
+}
+
+// UserBundle is one of the signed-in user's bundles.
+type UserBundle struct {
+	ID                int64            `json:"id"`
+	BundleCode        string           `json:"bundle_code"`
+	CreatedAt         time.Time        `json:"created_at"`
+	ExpiresAt         time.Time        `json:"expires_at"`
+	DownloadLimit     *int             `json:"max_downloads"` // per file; nil = unlimited
+	PasswordProtected bool             `json:"password_protected"`
+	Encrypted         bool             `json:"client_encrypted"`
+	FileCount         int              `json:"file_count"`
+	TotalSize         int64            `json:"total_size"`
+	Files             []UserBundleFile `json:"files"`
+}
+
+// UserBundlesResponse is a page of the signed-in user's bundles.
+type UserBundlesResponse struct {
+	Bundles []UserBundle `json:"bundles"`
+	Total   int          `json:"total"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+}
+
+// ListBundles returns the signed-in user's bundles, newest first. Requires
+// an API token. limit is clamped to 1..100 (default 50).
+func (c *Client) ListBundles(ctx context.Context, limit, offset int) (*UserBundlesResponse, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	resp, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/api/user/bundles?limit=%d&offset=%d", limit, offset), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	var out UserBundlesResponse
+	if err := handleResponse(resp, &out); err != nil {
+		return nil, err
+	}
+	if out.Bundles == nil {
+		out.Bundles = []UserBundle{}
+	}
+	for _, b := range out.Bundles {
+		if err := checkServerClaimCode(b.BundleCode); err != nil {
+			return nil, err
+		}
+	}
+	return &out, nil
+}

@@ -27,6 +27,7 @@ func uploadCmd() *cobra.Command {
 		keepMetadata   bool
 		failFast       bool
 		showQR         bool
+		bundle         bool
 	)
 
 	cmd := &cobra.Command{
@@ -69,7 +70,19 @@ order; a file that failed has "error" instead of the upload's fields.
 
 --qr also draws each link as a QR code to scan with a phone. For an encrypted
 upload the code holds the key: anyone who sees the screen, or a recording or
-log of it, can read the file.`,
+log of it, can read the file.
+
+Bundles:
+  With --bundle, the files are uploaded as one bundle: one code and one link
+  (and with --qr one QR code) for all of them. The link opens a page listing
+  every file, with a Save all button. --expires, --limit and --password apply
+  to the bundle; --limit counts per file. If any file fails, nothing is kept
+  and no link is given. An encrypted bundle uses one key for all its files.
+  With --json, a bundle prints one object: bundle_code, url, expires_at,
+  download_limit, password_protected, encrypted and files (position, file,
+  name, size).
+
+  safeshare-cli upload --bundle --qr cover.png slide-2.png slide-3.png`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkConfig(); err != nil {
@@ -77,6 +90,9 @@ log of it, can read the file.`,
 			}
 			if showQR && jsonOut {
 				return errQRWithJSON
+			}
+			if bundle && failFast {
+				return fmt.Errorf("--fail-fast does not apply to --bundle: a bundle is uploaded whole or not at all")
 			}
 
 			// Check every file before uploading any, so a typo in the last
@@ -165,6 +181,10 @@ log of it, can read the file.`,
 				}
 			} else {
 				fmt.Fprintln(os.Stderr, "[NOTE] Not encrypting: this server doesn't require it. Use --encrypt to encrypt anyway.")
+			}
+
+			if bundle {
+				return uploadBundle(ctx, cmd, out, client, args, sizes, opts, willEncrypt, showQR)
 			}
 
 			results := make([]*safeshare.UploadResult, len(args))
@@ -257,6 +277,7 @@ log of it, can read the file.`,
 	cmd.Flags().BoolVar(&keepMetadata, "keep-metadata", false, "Allow encrypted uploads of files whose metadata the CLI cannot remove")
 	cmd.Flags().BoolVar(&failFast, "fail-fast", false, "With several files, stop at the first failed upload")
 	cmd.Flags().BoolVar(&showQR, "qr", false, "Also show each link as a QR code to scan with a phone")
+	cmd.Flags().BoolVar(&bundle, "bundle", false, "Upload the files as one bundle: one link for all of them")
 
 	return cmd
 }
