@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Never expire" works for large uploads from the web page.** Files big enough to use chunked upload (100 MB and up by default) were stored with a 24-hour expiry when "never expire" was chosen. Files uploaded that way before this fix still expire after 24 hours; change their expiry in My Dashboard if they should be kept.
+
 ## [1.18.2] - 2026-11-05
 
 ### Changed

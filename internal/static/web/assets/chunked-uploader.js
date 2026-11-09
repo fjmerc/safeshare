@@ -29,7 +29,8 @@ class ChunkedUploader {
     constructor(file, options = {}) {
         this.file = file;
         this.options = {
-            expiresInHours: options.expiresInHours || 24,
+            // 0 means "never expire", so only a missing or invalid value gets the default
+            expiresInHours: (typeof options.expiresInHours === 'number' && options.expiresInHours >= 0) ? options.expiresInHours : 24,
             maxDownloads: options.maxDownloads || 0,
             password: options.password || '',
             clientEncrypted: !!options.clientEncrypted,
