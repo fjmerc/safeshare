@@ -369,8 +369,10 @@ client.download("CLAIM_CODE", "file.pdf", password="yourpassword")
    ```
 
 2. **Check token scopes:**
-   - Token must have required scope for operation
-   - Scopes: `upload`, `download`, `manage`, `admin`
+   - Token must have required scope for operation: `upload` for uploads, `manage` for listing, renaming and deleting your files (`admin` implies both)
+   - A `403` with `"code": "INSUFFICIENT_SCOPE"` means the token lacks the scope; create one that has it
+   - A `403` with `"code": "SESSION_REQUIRED"` means the action (password, MFA, SSO, token management) needs a signed-in browser session; tokens can't do it
+   - `ENFORCE_API_TOKEN_SCOPES=false` on the server skips the scope checks (not the session-only rule)
 
 3. **Token may be expired or revoked:**
    - Create new token via dashboard
@@ -888,8 +890,8 @@ curl http://localhost:8080/health | jq .status_details
    ```
 
 2. **Verify scopes:**
-   - Token needs appropriate scope for operation
-   - Check token scopes in dashboard
+   - Token needs appropriate scope for operation (`upload` to upload, `manage` to list or change files)
+   - Check token scopes in dashboard; a `403` with `INSUFFICIENT_SCOPE` means the scope is missing
 
 ### Chunked upload via SDK failing
 

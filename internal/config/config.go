@@ -123,7 +123,7 @@ type Config struct {
 	SessionExpiryHours          int
 	HTTPSEnabled                bool
 	RequireAuthForUpload        bool
-	EnforceAPITokenScopes       bool // ENFORCE_API_TOKEN_SCOPES (default true): API tokens may only use routes their scopes allow
+	EnforceAPITokenScopes       bool // ENFORCE_API_TOKEN_SCOPES (default true): API tokens may only use routes their scopes allow. false skips the scope checks; account-security routes stay browser-session only either way
 	ChunkedUploadEnabled        bool
 	ChunkedUploadThreshold      int64
 	ChunkSize                   int64

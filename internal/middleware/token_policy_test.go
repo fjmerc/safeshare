@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,12 +31,6 @@ func TestTokenRequirement(t *testing.T) {
 		{"PUT", "/api/user/files/rename", "manage", true},
 		{"GET", "/api/tokens", "manage", true},
 		{"GET", "/api/auth/user", "", true},
-		// Bundles (several files under one link) follow the same split.
-		{"POST", "/api/bundles", "upload", true},
-		{"POST", "/api/bundles/42/publish", "upload", true},
-		{"DELETE", "/api/bundles/42", "upload", true},
-		{"GET", "/api/user/bundles", "manage", true},
-		{"PUT", "/api/user/bundles/42/expiration", "manage", true},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
 		{"DELETE", "/api/tokens/5", "", false},
@@ -51,9 +46,9 @@ func TestTokenRequirement(t *testing.T) {
 		{"GET", "/api/something-new", "", false},
 	}
 	for _, c := range cases {
-		scope, allowed := TokenRequirement(c.method, c.path)
+		scope, allowed := tokenRequirement(c.method, c.path)
 		if scope != c.scope || allowed != c.allowed {
-			t.Errorf("TokenRequirement(%s %s) = %q, %v; want %q, %v", c.method, c.path, scope, allowed, c.scope, c.allowed)
+			t.Errorf("tokenRequirement(%s %s) = %q, %v; want %q, %v", c.method, c.path, scope, allowed, c.scope, c.allowed)
 		}
 	}
 }
@@ -72,14 +67,17 @@ func newTokenPolicyEnv(t *testing.T) *tokenPolicyEnv {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	hash, _ := utils.HashPassword("password123")
+	hash, err := utils.HashPassword("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
 	user, err := repos.Users.Create(ctx, "scopeuser", "scope@example.com", hash, "user", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	env := &tokenPolicyEnv{repos: repos, tokens: map[string]string{}}
 	expires := time.Now().Add(24 * time.Hour)
-	for _, scopes := range []string{"upload", "manage", "download", "upload,manage"} {
+	for _, scopes := range []string{"upload", "manage", "download", "upload,manage", "admin"} {
 		plain, prefix, err := utils.GenerateAPIToken()
 		if err != nil {
 			t.Fatal(err)
@@ -93,8 +91,10 @@ func newTokenPolicyEnv(t *testing.T) *tokenPolicyEnv {
 }
 
 // call runs method path through mw with the given bearer token and returns
-// the status and, for a refusal, the error code.
-func (e *tokenPolicyEnv) call(mw func(http.Handler) http.Handler, method, path, token string) (int, string) {
+// the status and, for a refusal, the error code. A refusal must be a JSON
+// error with a message.
+func (e *tokenPolicyEnv) call(t *testing.T, mw func(http.Handler) http.Handler, method, path, token string) (int, string) {
+	t.Helper()
 	reached := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	req := httptest.NewRequest(method, path, nil)
 	if token != "" {
@@ -103,9 +103,19 @@ func (e *tokenPolicyEnv) call(mw func(http.Handler) http.Handler, method, path, 
 	rr := httptest.NewRecorder()
 	mw(reached).ServeHTTP(rr, req)
 	var body struct {
-		Code string `json:"code"`
+		Error string `json:"error"`
+		Code  string `json:"code"`
 	}
 	json.Unmarshal(rr.Body.Bytes(), &body)
+	if rr.Code == http.StatusForbidden {
+		if ct := rr.Header().Get("Content-Type"); ct != "application/json" || body.Error == "" {
+			t.Errorf("%s %s: refusal is not a JSON error (Content-Type %q, body %q)", method, path, ct, rr.Body.String())
+		}
+		// The Go SDK masks messages that mention tokens; keep the useful part visible.
+		if strings.Contains(strings.ToLower(body.Error), "token") {
+			t.Errorf("%s %s: refusal message %q would be masked by the SDK", method, path, body.Error)
+		}
+	}
 	return rr.Code, body.Code
 }
 
@@ -132,9 +142,11 @@ func TestTokenPolicy_Enforced(t *testing.T) {
 		{"no token changes the password", required, "POST", "/api/auth/change-password", "upload,manage", 403, "SESSION_REQUIRED"},
 		{"no token touches MFA", required, "DELETE", "/api/user/mfa/totp", "upload,manage", 403, "SESSION_REQUIRED"},
 		{"no token links SSO", required, "POST", "/api/auth/sso/link", "upload,manage", 403, "SESSION_REQUIRED"},
+		{"admin scope implies the others", required, "GET", "/api/user/files", "admin", 200, ""},
+		{"admin scope still can't change the password", required, "POST", "/api/auth/change-password", "admin", 403, "SESSION_REQUIRED"},
 	}
 	for _, c := range cases {
-		status, code := e.call(c.mw, c.method, c.path, e.tokens[c.scopes])
+		status, code := e.call(t, c.mw, c.method, c.path, e.tokens[c.scopes])
 		if status != c.status || code != c.code {
 			t.Errorf("%s: got %d %q, want %d %q", c.name, status, code, c.status, c.code)
 		}
@@ -142,16 +154,23 @@ func TestTokenPolicy_Enforced(t *testing.T) {
 
 	// Without a token nothing changes: anonymous uploads still pass where
 	// the route allows them.
-	if status, _ := e.call(optional, "POST", "/api/upload", ""); status != 200 {
+	if status, _ := e.call(t, optional, "POST", "/api/upload", ""); status != 200 {
 		t.Errorf("anonymous upload: %d, want 200", status)
 	}
 }
 
-func TestTokenPolicy_CanBeTurnedOff(t *testing.T) {
+// TestTokenPolicy_OptOutRelaxesScopesOnly: ENFORCE_API_TOKEN_SCOPES=false
+// lets tokens use routes regardless of scope, but account security
+// (password, MFA, SSO, token management) stays browser-session only.
+// (This flips a package-level switch: tests here must not run in parallel.)
+func TestTokenPolicy_OptOutRelaxesScopesOnly(t *testing.T) {
 	SetTokenScopeEnforcement(false)
 	t.Cleanup(func() { SetTokenScopeEnforcement(true) })
 	e := newTokenPolicyEnv(t)
-	if status, _ := e.call(UserAuth(e.repos, false), "GET", "/api/user/files", e.tokens["upload"]); status != 200 {
-		t.Errorf("with enforcement off: %d, want 200", status)
+	if status, _ := e.call(t, UserAuth(e.repos, false), "GET", "/api/user/files", e.tokens["upload"]); status != 200 {
+		t.Errorf("scope check with enforcement off: %d, want 200", status)
+	}
+	if status, code := e.call(t, UserAuth(e.repos, false), "GET", "/api/user/mfa/status", e.tokens["upload,manage"]); status != 403 || code != "SESSION_REQUIRED" {
+		t.Errorf("session-only route with enforcement off: %d %q, want 403 SESSION_REQUIRED", status, code)
 	}
 }

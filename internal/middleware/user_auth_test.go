@@ -857,99 +857,10 @@ func TestAddTokenExpirationHeaders_Unit(t *testing.T) {
 }
 
 // TestRequireScope_SessionAuth tests that session auth bypasses scope checks
-func TestRequireScope_SessionAuth(t *testing.T) {
-	handler := RequireScope("files:write")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
-	}))
-
-	// Create request with session auth type
-	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
-	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeSession)
-	req = req.WithContext(ctx)
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d (session auth should bypass scope)", rr.Code, http.StatusOK)
-	}
-}
-
 // TestRequireScope_APIToken_HasScope tests API token with required scope
-func TestRequireScope_APIToken_HasScope(t *testing.T) {
-	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
-	ctx = context.WithValue(ctx, ContextKeyTokenScopes, "files:read,files:write")
-	req = req.WithContext(ctx)
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d (token has required scope)", rr.Code, http.StatusOK)
-	}
-}
-
 // TestRequireScope_APIToken_MissingScope tests API token without required scope
-func TestRequireScope_APIToken_MissingScope(t *testing.T) {
-	handler := RequireScope("files:write")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/api/upload", nil)
-	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
-	ctx = context.WithValue(ctx, ContextKeyTokenScopes, "files:read") // Only has read, not write
-	req = req.WithContext(ctx)
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want %d (token missing required scope)", rr.Code, http.StatusForbidden)
-	}
-}
-
 // TestRequireScope_NoAuthType tests when no auth type is set
-func TestRequireScope_NoAuthType(t *testing.T) {
-	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d (no auth type)", rr.Code, http.StatusUnauthorized)
-	}
-}
-
 // TestRequireScope_APIToken_NoScopes tests API token auth with no scopes in context
-func TestRequireScope_APIToken_NoScopes(t *testing.T) {
-	handler := RequireScope("files:read")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/user/files", nil)
-	ctx := context.WithValue(req.Context(), ContextKeyAuthType, AuthTypeAPIToken)
-	// Note: No scopes set in context
-	req = req.WithContext(ctx)
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d (no scopes in context)", rr.Code, http.StatusInternalServerError)
-	}
-}
-
 // TestGetUserFromContext tests the context helper function
 func TestGetUserFromContext(t *testing.T) {
 	db := testutil.SetupTestDB(t)

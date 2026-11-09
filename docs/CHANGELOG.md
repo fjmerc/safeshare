@@ -41,8 +41,9 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
   - `upload` is needed for the upload endpoints and `manage` for `/api/user/files` (and listing tokens). A token without the scope gets `403` with `INSUFFICIENT_SCOPE`.
   - Account security - changing the password, MFA, SSO linking, logout and token management - needs a signed-in browser session; API tokens get `403` with `SESSION_REQUIRED`, whatever their scopes.
   - Browser sessions and anonymous uploads are unaffected.
-  - **Check your tokens:** a script whose token lacks the scope it uses will now be refused. Create a token with the right scopes, or set `ENFORCE_API_TOKEN_SCOPES=false` to keep the old behavior for now (the server logs a warning at startup).
-  - The Go SDK reports these refusals as `ErrInsufficientScope` (they were reported as a quota error).
+  - The `admin` scope implies the others.
+  - **Check your tokens:** a script whose token lacks the scope it uses will now be refused. Create a token with the right scopes, or set `ENFORCE_API_TOKEN_SCOPES=false` to skip the scope checks for now (the server logs a warning at startup); account-security routes stay closed to tokens either way.
+  - The Go SDK reports these refusals as `ErrInsufficientScope` (previously they had no specific error type).
 
 ## [1.18.2] - 2026-11-05
 

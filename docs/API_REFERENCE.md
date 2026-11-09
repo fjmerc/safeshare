@@ -194,13 +194,13 @@ curl -H "Authorization: Bearer safeshare_<your-token>" \
 | `upload` | `/api/upload` and the chunked upload endpoints (`/api/upload/init`, `/chunk/`, `/complete/`, `/status/`) | Backup scripts, CI/CD |
 | `download` | Nothing extra today: downloads (`/api/claim/:code`) need no login | Automated retrievals |
 | `manage` | `/api/user/files` and its subroutes (list, rename, delete, change expiry, new code) and `GET /api/tokens` | File management apps |
-| `admin` | Nothing today: admin routes need an admin browser session | Admin automation |
+| `admin` | Everything the other scopes allow (it implies them); admin dashboard routes still need an admin browser session | Admin automation |
 
 Any valid token can call `GET /api/auth/user`. Everything else - changing the password, MFA, SSO linking, creating, rotating or revoking tokens, logout - needs a signed-in browser session, whatever the token's scopes.
 
 A token used where it isn't allowed gets `403` with `"code": "INSUFFICIENT_SCOPE"` (it lacks the scope) or `"code": "SESSION_REQUIRED"` (the route needs a browser session). A valid token without the `upload` scope is refused on upload routes even when anonymous uploads are allowed; send no token to upload anonymously.
 
-Scopes are enforced unless the server sets `ENFORCE_API_TOKEN_SCOPES=false` (default `true`), which restores the old behavior where any valid token could use any route its user could.
+Scopes are enforced unless the server sets `ENFORCE_API_TOKEN_SCOPES=false` (default `true`), which lets a token use the routes above whatever its scopes. The browser-session-only routes stay closed to tokens either way.
 
 **Scope Restrictions**:
 - Users can only request scopes matching their role
@@ -392,7 +392,7 @@ Revoke any user's API token (admin only).
 
 ### Using API Tokens with Endpoints
 
-API tokens can authenticate most user endpoints. Here are examples:
+API tokens can authenticate the endpoints their scopes allow (see [Available Scopes](#available-scopes)). Here are examples:
 
 **Upload a file**:
 ```bash

@@ -408,6 +408,9 @@ func run() error {
 	}
 
 	// Upload endpoint with conditional authentication and token audit logging
+	// API tokens may only use the routes listed in
+	// internal/middleware/token_policy.go; add a route there if scripts
+	// should reach it with a token.
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
 		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadHandler(repos, cfg))))).ServeHTTP(w, r)
 	})

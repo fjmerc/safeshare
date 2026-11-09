@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -80,7 +79,7 @@ func UserAuth(repos *repository.Repositories, anonymousMode bool) func(http.Hand
 					return
 				}
 				if user != nil {
-					if !tokenPolicyAllows(w, r, ctx) {
+					if !tokenPolicyAllows(ctx, w, r, anonymousMode) {
 						return
 					}
 					// Add token expiration warning headers before serving
@@ -130,7 +129,7 @@ func OptionalUserAuth(repos *repository.Repositories, anonymousMode bool) func(h
 				if err == nil && user != nil {
 					// A valid token without the scope is refused, not
 					// quietly treated as anonymous.
-					if !tokenPolicyAllows(w, r, ctx) {
+					if !tokenPolicyAllows(ctx, w, r, anonymousMode) {
 						return
 					}
 					// Add token expiration warning headers before serving
@@ -382,45 +381,6 @@ func authenticateWithSession(repos *repository.Repositories, r *http.Request, an
 // RequireScope middleware ensures the API token has the required scope
 // Must be used AFTER UserAuth middleware
 // Session auth bypasses scope checks (has full access)
-func RequireScope(requiredScope string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authType, ok := r.Context().Value(ContextKeyAuthType).(string)
-			if !ok {
-				// No auth type set means no auth happened
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-
-			// Session auth has all scopes (full access)
-			if authType == AuthTypeSession {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Check API token scopes
-			scopes, ok := r.Context().Value(ContextKeyTokenScopes).(string)
-			if !ok {
-				slog.Error("API token scopes not found in context")
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-				return
-			}
-
-			if !utils.HasScope(scopes, requiredScope) {
-				slog.Warn("API token missing required scope",
-					"required", requiredScope,
-					"has", scopes,
-					"path", logPath(r.URL.Path),
-				)
-				http.Error(w, fmt.Sprintf("Token missing required scope: %s", requiredScope), http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // GetUserFromContext retrieves the authenticated user from request context
 // Returns nil if no user is authenticated
 func GetUserFromContext(r *http.Request) *models.User {
