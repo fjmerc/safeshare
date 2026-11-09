@@ -866,6 +866,7 @@ Authenticated Origin Pulls or Cloudflare Tunnel exclusivity to fully close).
 - `CHUNKED_UPLOAD_THRESHOLD`: Files >= this size use chunked upload in bytes (default: 100MB)
 - `CHUNK_SIZE`: Size of each chunk in bytes (default: 5MB)
 - `PARTIAL_UPLOAD_EXPIRY_HOURS`: Hours before abandoned uploads are cleaned up (default: 24)
+- `ENFORCE_API_TOKEN_SCOPES`: API tokens may only use the routes their scopes allow; account-security routes need a browser session (default: true). See `internal/middleware/token_policy.go`
 - `AUDIT_LOG`: `auto` (default: on, except in anonymous mode), `true` or `false`. See `docs/SECURITY.md` → Audit Log.
 - `AUDIT_LOG_KEY`: 64 hex characters (32 bytes) used to sign the audit log (default: generated into `audit.key` next to the database on first start). See `docs/SECURITY.md` → Audit Log.
 

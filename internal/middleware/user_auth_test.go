@@ -465,7 +465,7 @@ func createTestAPIToken(t *testing.T, repos *repository.Repositories, userID int
 	}
 	tokenHash := utils.HashAPIToken(tokenPlaintext)
 
-	_, err = repos.APITokens.Create(ctx, userID, "test-token", tokenHash, tokenPrefix, "files:read", "127.0.0.1", expiresAt)
+	_, err = repos.APITokens.Create(ctx, userID, "test-token", tokenHash, tokenPrefix, "upload,manage", "127.0.0.1", expiresAt)
 	if err != nil {
 		t.Fatalf("failed to create API token: %v", err)
 	}

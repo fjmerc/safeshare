@@ -123,6 +123,7 @@ type Config struct {
 	SessionExpiryHours          int
 	HTTPSEnabled                bool
 	RequireAuthForUpload        bool
+	EnforceAPITokenScopes       bool // ENFORCE_API_TOKEN_SCOPES (default true): API tokens may only use routes their scopes allow
 	ChunkedUploadEnabled        bool
 	ChunkedUploadThreshold      int64
 	ChunkSize                   int64
@@ -180,6 +181,7 @@ func Load() (*Config, error) {
 		SessionExpiryHours:          getEnvInt("SESSION_EXPIRY_HOURS", 24),
 		HTTPSEnabled:                getEnvBool("HTTPS_ENABLED", false),
 		RequireAuthForUpload:        getEnvBool("REQUIRE_AUTH_FOR_UPLOAD", false),
+		EnforceAPITokenScopes:       getEnvBool("ENFORCE_API_TOKEN_SCOPES", true),
 		ChunkedUploadEnabled:        getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
 		ChunkedUploadThreshold:      getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
 		ChunkSize:                   getEnvInt64("CHUNK_SIZE", 10485760),                // 10MB (was 5MB)

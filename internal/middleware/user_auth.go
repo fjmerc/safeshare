@@ -80,6 +80,9 @@ func UserAuth(repos *repository.Repositories, anonymousMode bool) func(http.Hand
 					return
 				}
 				if user != nil {
+					if !tokenPolicyAllows(w, r, ctx) {
+						return
+					}
 					// Add token expiration warning headers before serving
 					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))
@@ -125,6 +128,11 @@ func OptionalUserAuth(repos *repository.Repositories, anonymousMode bool) func(h
 			if bearerToken != "" {
 				user, ctx, err := authenticateWithAPIToken(repos, r, bearerToken, anonymousMode)
 				if err == nil && user != nil {
+					// A valid token without the scope is refused, not
+					// quietly treated as anonymous.
+					if !tokenPolicyAllows(w, r, ctx) {
+						return
+					}
 					// Add token expiration warning headers before serving
 					addTokenExpirationHeaders(w, ctx)
 					next.ServeHTTP(w, r.WithContext(ctx))

@@ -70,6 +70,10 @@ func run() error {
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
 	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 	privacy.SetAnonymousMode(cfg.IsAnonymousMode())
+	middleware.SetTokenScopeEnforcement(cfg.EnforceAPITokenScopes)
+	if !cfg.EnforceAPITokenScopes {
+		slog.Warn("ENFORCE_API_TOKEN_SCOPES=false: API tokens can use every route their user can, whatever their scopes")
+	}
 
 	// T43: apply the IPv6 rate-limit grouping width process-wide so every
 	// per-IP limiter/concurrency cap (upload/download rate limits, login

@@ -54,6 +54,10 @@ var (
 	// encrypted before upload (REQUIRE_CLIENT_ENCRYPTION); use EncryptAuto or
 	// EncryptAlways.
 	ErrClientEncryptionRequired = errors.New("server requires client-side encryption")
+	// ErrInsufficientScope indicates the API token may not make this request:
+	// it lacks the scope the route needs (upload, manage), or the route needs
+	// a signed-in browser session (password, MFA, SSO, token management).
+	ErrInsufficientScope = errors.New("API token is not allowed to do this")
 	// ErrMetadataNotRemoved indicates an encrypted upload to a Ghost-mode
 	// server was refused because the file may contain metadata the SDK cannot
 	// remove. Scrub it first (for example with mat2) or set KeepMetadata.
@@ -190,6 +194,9 @@ func newAPIError(statusCode int, message string, code string) *APIError {
 		return err
 	case "CLIENT_ENCRYPTION_REQUIRED":
 		err.Err = ErrClientEncryptionRequired
+		return err
+	case "INSUFFICIENT_SCOPE", "SESSION_REQUIRED":
+		err.Err = ErrInsufficientScope
 		return err
 	}
 

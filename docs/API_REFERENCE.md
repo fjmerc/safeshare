@@ -189,12 +189,18 @@ curl -H "Authorization: Bearer safeshare_<your-token>" \
 
 ### Available Scopes
 
-| Scope | Description | Typical Use Case |
+| Scope | Lets the token use | Typical Use Case |
 |-------|-------------|------------------|
-| `upload` | Upload files via `/api/upload` | Backup scripts, CI/CD |
-| `download` | Download files via `/api/claim/:code` | Automated retrievals |
-| `manage` | List, rename, delete own files | File management apps |
-| `admin` | Admin operations (admin users only) | Admin automation |
+| `upload` | `/api/upload` and the chunked upload endpoints (`/api/upload/init`, `/chunk/`, `/complete/`, `/status/`) | Backup scripts, CI/CD |
+| `download` | Nothing extra today: downloads (`/api/claim/:code`) need no login | Automated retrievals |
+| `manage` | `/api/user/files` and its subroutes (list, rename, delete, change expiry, new code) and `GET /api/tokens` | File management apps |
+| `admin` | Nothing today: admin routes need an admin browser session | Admin automation |
+
+Any valid token can call `GET /api/auth/user`. Everything else - changing the password, MFA, SSO linking, creating, rotating or revoking tokens, logout - needs a signed-in browser session, whatever the token's scopes.
+
+A token used where it isn't allowed gets `403` with `"code": "INSUFFICIENT_SCOPE"` (it lacks the scope) or `"code": "SESSION_REQUIRED"` (the route needs a browser session). A valid token without the `upload` scope is refused on upload routes even when anonymous uploads are allowed; send no token to upload anonymously.
+
+Scopes are enforced unless the server sets `ENFORCE_API_TOKEN_SCOPES=false` (default `true`), which restores the old behavior where any valid token could use any route its user could.
 
 **Scope Restrictions**:
 - Users can only request scopes matching their role
