@@ -170,6 +170,7 @@ func deleteUserBundle(w http.ResponseWriter, r *http.Request, repos *repository.
 		return
 	}
 	removeStoredFiles(cfg, deleted)
+	emitBundleFilesDeleted(deleted, "bundle deleted by its owner")
 	audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "bundle_delete", Outcome: models.AuditOutcomeSuccess,
 		UserID: user.ID, Username: user.Username, ResourceType: "bundle", ResourceID: idStr(bundleID),
 		Details: map[string]any{"via": "owner", "file_count": len(deleted)}})
@@ -264,6 +265,7 @@ func deleteBundleOfMember(ctx context.Context, r *http.Request, repos *repositor
 		return true, err
 	}
 	removeStoredFiles(cfg, deleted)
+	emitBundleFilesDeleted(deleted, "bundle deleted by admin")
 	recordAdmin(r, cfg, audit.Event{Action: "bundle_delete", Outcome: models.AuditOutcomeSuccess,
 		ResourceType: "bundle", ResourceID: idStr(bundleID), Details: map[string]any{"via": "admin", "file_count": len(deleted)}})
 	slog.Info("admin deleted bundle", "bundle_id", bundleID, "files", len(deleted), "admin_ip", logIP(getClientIP(r), cfg))

@@ -24,6 +24,7 @@ import (
 	"github.com/fjmerc/safeshare/internal/models"
 	"github.com/fjmerc/safeshare/internal/repository"
 	"github.com/fjmerc/safeshare/internal/utils"
+	"github.com/fjmerc/safeshare/internal/webhooks"
 )
 
 // bundleUploadTokenHeader carries the bearer token returned by
@@ -417,6 +418,7 @@ func deleteDraftBundle(w http.ResponseWriter, r *http.Request, repos *repository
 		return
 	}
 	removeStoredFiles(cfg, deleted)
+	emitBundleFilesDeleted(deleted, "bundle discarded before it was published")
 
 	ev := audit.Event{Type: models.AuditEventFile, Action: "bundle_delete", Outcome: models.AuditOutcomeSuccess,
 		ResourceType: "bundle", ResourceID: idStr(bundleID), Details: map[string]any{"via": "upload_token", "file_count": len(deleted)}}
@@ -425,6 +427,25 @@ func deleteDraftBundle(w http.ResponseWriter, r *http.Request, repos *repository
 	}
 	audit.Record(r, cfg, ev)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// emitBundleFilesDeleted sends a file.deleted webhook event for each file
+// of a deleted bundle, as a single-file delete does.
+func emitBundleFilesDeleted(files []*models.File, reason string) {
+	for _, f := range files {
+		r := reason
+		EmitWebhookEvent(&webhooks.Event{
+			Type:      webhooks.EventFileDeleted,
+			Timestamp: time.Now(),
+			File: webhooks.FileData{
+				ID:        f.ID,
+				ClaimCode: f.ClaimCode,
+				Filename:  f.OriginalFilename,
+				Size:      f.FileSize,
+				Reason:    &r,
+			},
+		})
+	}
 }
 
 // removeStoredFiles deletes the on-disk data of files whose rows are

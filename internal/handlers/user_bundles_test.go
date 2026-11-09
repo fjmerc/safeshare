@@ -243,3 +243,43 @@ func TestUserBundles_RejectsNonCanonicalPaths(t *testing.T) {
 		t.Errorf("DELETE with trailing slash: %d, want 404", rr.Code)
 	}
 }
+
+// TestBundleDelete_EmitsFileDeletedWebhooks: every way of deleting a bundle
+// tells webhook consumers about each file that went, as a single-file
+// delete does.
+func TestBundleDelete_EmitsFileDeletedWebhooks(t *testing.T) {
+	var emitted int
+	SetWebhookEmitGate(func() bool { emitted++; return false })
+	t.Cleanup(func() { SetWebhookEmitGate(nil) })
+
+	e := newGhostEnv(t, nil)
+	alice := ownerUser(t, e, "alice")
+
+	b := ownedBundle(t, e, alice, "one", "two")
+	emitted = 0
+	if rr := userBundlesReq(e, alice, http.MethodDelete, fmt.Sprintf("/api/user/bundles/%d", b.BundleID), nil); rr.Code != http.StatusOK {
+		t.Fatalf("owner delete: %d", rr.Code)
+	}
+	if emitted != 2 {
+		t.Errorf("owner delete emitted %d events, want 2", emitted)
+	}
+
+	pb := publishedBundle(t, e, map[string]any{}, "a", "b", "c")
+	members, _ := e.repos.Bundles.ListMembers(context.Background(), pb.BundleID)
+	emitted = 0
+	rr := httptest.NewRecorder()
+	AdminDeleteFileHandler(e.repos, e.cfg).ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/admin/api/files/delete?claim_code="+url.QueryEscape(members[0].ClaimCode), nil))
+	if rr.Code != http.StatusOK || emitted != 3 {
+		t.Errorf("admin delete: status %d, emitted %d events, want 3", rr.Code, emitted)
+	}
+
+	draft := mustCreateBundle(t, e, map[string]any{"file_count": 2})
+	uploadMember(t, e, draft, draft.UploadToken, 0, []byte("x"), "x.txt", nil)
+	emitted = 0
+	if rr := bundleManageReq(t, e, http.MethodDelete, fmt.Sprintf("/api/bundles/%d", draft.BundleID), draft.UploadToken, nil); rr.Code != http.StatusNoContent {
+		t.Fatalf("draft delete: %d", rr.Code)
+	}
+	if emitted != 1 {
+		t.Errorf("draft delete emitted %d events, want 1", emitted)
+	}
+}
