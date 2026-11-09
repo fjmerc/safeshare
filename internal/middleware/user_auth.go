@@ -378,9 +378,6 @@ func authenticateWithSession(repos *repository.Repositories, r *http.Request, an
 	return user, newCtx, nil
 }
 
-// RequireScope middleware ensures the API token has the required scope
-// Must be used AFTER UserAuth middleware
-// Session auth bypasses scope checks (has full access)
 // GetUserFromContext retrieves the authenticated user from request context
 // Returns nil if no user is authenticated
 func GetUserFromContext(r *http.Request) *models.User {

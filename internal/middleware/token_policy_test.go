@@ -31,6 +31,8 @@ func TestTokenRequirement(t *testing.T) {
 		{"PUT", "/api/user/files/rename", "manage", true},
 		{"GET", "/api/tokens", "manage", true},
 		{"GET", "/api/auth/user", "", true},
+		{"HEAD", "/api/auth/user", "", true}, // HEAD is a GET without a body
+		{"HEAD", "/api/tokens", "manage", true},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
 		{"DELETE", "/api/tokens/5", "", false},

@@ -63,7 +63,7 @@ var tokenPolicy = []tokenRule{
 // the scope the token must hold ("" = any valid token).
 func tokenRequirement(method, path string) (scope string, allowed bool) {
 	for _, rule := range tokenPolicy {
-		if rule.method != "" && rule.method != method {
+		if rule.method != "" && rule.method != method && !(rule.method == http.MethodGet && method == http.MethodHead) {
 			continue
 		}
 		if path == rule.path || (strings.HasSuffix(rule.path, "/") && strings.HasPrefix(path, rule.path)) {
