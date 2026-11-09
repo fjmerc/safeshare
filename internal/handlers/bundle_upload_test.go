@@ -317,7 +317,7 @@ func TestBundlePublish_E2ERequiresManifest(t *testing.T) {
 	if rr.Code != http.StatusBadRequest || errorCode(t, rr) != "INVALID_PARAMETER" {
 		t.Fatalf("E2E publish without manifest: %d %s", rr.Code, rr.Body.String())
 	}
-	big := base64.StdEncoding.EncodeToString(make([]byte, 64*1024+1))
+	big := base64.StdEncoding.EncodeToString(make([]byte, maxBundleManifestBytes+1))
 	if rr := bundleManageReq(t, e, http.MethodPost, publishPath(b.BundleID), b.UploadToken, map[string]any{"encrypted_manifest": big}); rr.Code != http.StatusBadRequest {
 		t.Fatalf("oversized manifest: %d %s", rr.Code, rr.Body.String())
 	}
@@ -385,5 +385,17 @@ func TestBundleDelete_PublishedNotDeletableWithToken(t *testing.T) {
 	bundleManageReq(t, e, http.MethodPost, publishPath(b.BundleID), b.UploadToken, map[string]any{})
 	if rr := bundleManageReq(t, e, http.MethodDelete, fmt.Sprintf("/api/bundles/%d", b.BundleID), b.UploadToken, nil); rr.Code != http.StatusNotFound {
 		t.Fatalf("delete published via upload token: %d", rr.Code)
+	}
+}
+
+// TestBundlePublish_LargeManifestAccepted: the file list of a full bundle
+// (up to 100 files, names up to 1 KB each) fits under the manifest cap.
+func TestBundlePublish_LargeManifestAccepted(t *testing.T) {
+	e := newGhostEnv(t, nil)
+	b := mustCreateBundle(t, e, map[string]any{"file_count": 1, "client_encrypted": true})
+	uploadMember(t, e, b, b.UploadToken, 0, []byte("ct"), "encrypted.bin", map[string]string{"client_encrypted": "true"})
+	manifest := base64.StdEncoding.EncodeToString(make([]byte, 150*1024))
+	if rr := bundleManageReq(t, e, http.MethodPost, publishPath(b.BundleID), b.UploadToken, map[string]any{"encrypted_manifest": manifest}); rr.Code != http.StatusOK {
+		t.Fatalf("150 KiB manifest: %d %s", rr.Code, rr.Body.String())
 	}
 }

@@ -62,6 +62,10 @@ async function generate() {
         encrypt: [],
         decrypt_fails: [],
         share_url: [],
+        bundle_url: [],
+        bundle_fragment_rejects: [],
+        manifest: null,
+        manifest_rejects: [],
     };
 
     const ns = [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 255, 256, 257, 1000, 1023, 1024,
@@ -170,6 +174,52 @@ async function generate() {
         const url = C.buildEncryptedUrl(base, 'Abc_123-xyz', out.key);
         const parsed = C.parseFragment(new URL(url).hash);
         out.share_url.push({ base, claim_code: 'Abc_123-xyz', key: out.key, url, parsed_code: parsed.claimCode, parsed_key: parsed.encryptionKey });
+    }
+
+    // Bundle links: #/bundle/CODE for plain bundles, #/bundle/CODE/key/KEY for E2E ones.
+    for (const base of ['https://share.example.com', 'http://abc.onion/sub/']) {
+        for (const k of [out.key, '']) {
+            const url = C.buildBundleUrl(base, 'Abc_123-xyz', k || null);
+            const parsed = C.parseBundleFragment(new URL(url).hash);
+            if (!parsed) throw new Error('bundle url did not parse: ' + url);
+            out.bundle_url.push({ base, bundle_code: 'Abc_123-xyz', key: k, url, parsed_code: parsed.bundleCode, parsed_key: parsed.encryptionKey || '' });
+        }
+    }
+    for (const hash of ['', '#/claim/Abc_123-xyz/key/' + out.key, '#/bundle/short', '#/bundle/Abc_123-xyz/key/tooshort',
+        '#/bundle/Abc_123-xyz/key/' + out.key + 'AA', '#/bundle/Abc_123-xyz/extra', '#/bundle/Abc 123-xyz', '#/bundle/../../x/key/' + out.key]) {
+        if (C.parseBundleFragment(hash) !== null) throw new Error('bundle fragment accepted: ' + hash);
+        out.bundle_fragment_rejects.push(hash);
+    }
+
+    // The encrypted manifest of an E2E bundle: SF02 (no name) around JSON, under the bundle key.
+    const manifest = {
+        v: 1,
+        files: [
+            { position: 0, name: 'a.png', size: 3, sha256: await C.sha256Hex(ab(bytes('abc'))) },
+            { position: 1, name: 'naïve 日本語.txt', size: 0, sha256: await C.sha256Hex(new ArrayBuffer(0)) },
+        ],
+    };
+    const sealed = await C.sealManifest(encKey, manifest);
+    const opened = await C.openManifest(key, sealed);
+    if (JSON.stringify(opened) !== JSON.stringify(manifest)) throw new Error('manifest round trip failed');
+    out.manifest = { manifest, sealed: hex(sealed) };
+
+    const sha = manifest.files[0].sha256;
+    const badManifests = [
+        { id: 'wrong-version', plaintext: JSON.stringify({ v: 2, files: manifest.files }) },
+        { id: 'no-files', plaintext: JSON.stringify({ v: 1, files: [] }) },
+        { id: 'position-gap', plaintext: JSON.stringify({ v: 1, files: [{ position: 0, name: 'a', size: 1, sha256: sha }, { position: 2, name: 'b', size: 1, sha256: sha }] }) },
+        { id: 'negative-size', plaintext: JSON.stringify({ v: 1, files: [{ position: 0, name: 'a', size: -1, sha256: sha }] }) },
+        { id: 'bad-sha', plaintext: JSON.stringify({ v: 1, files: [{ position: 0, name: 'a', size: 1, sha256: 'xyz' }] }) },
+        { id: 'name-not-string', plaintext: JSON.stringify({ v: 1, files: [{ position: 0, name: 7, size: 1, sha256: sha }] }) },
+        { id: 'not-json', plaintext: 'not json' },
+    ];
+    for (const b of badManifests) {
+        const blob = await C.encryptFile(encKey, C.wrapPayloadPadded('', ab(bytes(b.plaintext)), 0));
+        let failed = false;
+        try { await C.openManifest(key, blob); } catch (e) { failed = true; }
+        if (!failed) throw new Error('openManifest accepted ' + b.id);
+        out.manifest_rejects.push({ id: b.id, sealed: hex(blob) });
     }
     return out;
 }

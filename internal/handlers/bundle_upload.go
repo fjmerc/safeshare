@@ -32,7 +32,8 @@ import (
 const bundleUploadTokenHeader = "X-Bundle-Upload-Token"
 
 // maxBundleManifestBytes caps the opaque encrypted file list an E2E bundle stores.
-const maxBundleManifestBytes = 64 * 1024
+// Sized for 100 files with 1 KB names (the longest a payload keeps), padded.
+const maxBundleManifestBytes = 256 * 1024
 
 var (
 	errBundleNotFound      = errors.New("bundle not found")
