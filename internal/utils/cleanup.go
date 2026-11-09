@@ -315,7 +315,9 @@ func cleanupBundles(ctx context.Context, repos *repository.Repositories, uploadD
 	if repos.Bundles == nil {
 		return 0
 	}
-	drafts, err := repos.Bundles.ListAbandonedDrafts(ctx, time.Now().Add(-time.Duration(expiryHours)*time.Hour))
+	// One extra hour: in anonymous mode created_at is rounded down to the
+	// hour, so a draft can look up to an hour older than it really is.
+	drafts, err := repos.Bundles.ListAbandonedDrafts(ctx, time.Now().Add(-time.Duration(expiryHours)*time.Hour-time.Hour))
 	if err != nil {
 		slog.Error("failed to list abandoned bundles", "error", err)
 	}

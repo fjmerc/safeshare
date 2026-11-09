@@ -98,3 +98,24 @@ func TestCleanup_RemovesEmptyPublishedBundles(t *testing.T) {
 		t.Fatal("bundle with members was deleted")
 	}
 }
+
+// TestCleanup_DraftGraceCoversHourRounding: in Ghost mode created_at is
+// rounded down to the hour, so a draft can look up to an hour older than
+// it is. Cleanup allows that hour before treating a draft as abandoned.
+func TestCleanup_DraftGraceCoversHourRounding(t *testing.T) {
+	repos, cfg := testutil.SetupTestRepos(t)
+	ctx := context.Background()
+
+	young, _ := cleanupTestBundle(t, repos, cfg.UploadDir, "draftRnd01", time.Now().Add(-24*time.Hour-30*time.Minute), 1)
+	old, _ := cleanupTestBundle(t, repos, cfg.UploadDir, "draftRnd02", time.Now().Add(-25*time.Hour-30*time.Minute), 1)
+
+	if _, err := utils.CleanupAbandonedUploads(repos, cfg.UploadDir, 24); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repos.Bundles.GetByID(ctx, young.ID); got == nil {
+		t.Error("a draft within the rounding hour was deleted")
+	}
+	if got, _ := repos.Bundles.GetByID(ctx, old.ID); got != nil {
+		t.Error("a draft past the grace hour was kept")
+	}
+}
