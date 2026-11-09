@@ -13,20 +13,29 @@
     'use strict';
 
     // Same ceiling as the E2E large-file warning: above it, files are not
-    // held in memory together; each is fetched only when its button is pressed.
-    var MEMORY_CEILING = 500 * 1024 * 1024;
+    // held in memory together; each is saved only when its button is pressed.
+    // (window.SafeShareBundleMemoryCeiling lowers it for browser tests.)
+    function memoryCeiling() {
+        var override = window.SafeShareBundleMemoryCeiling;
+        return (typeof override === 'number' && override > 0) ? override : 500 * 1024 * 1024;
+    }
 
     var MSG_NOT_FOUND = 'These files were not found or have expired. Files are deleted automatically after their expiration time. Ask the sender for a new link if you still need them.';
     var MSG_TAMPERED = 'These files don\'t match what the sender uploaded: something changed them after they were sent. Nothing was saved. Ask the sender to send them again.';
     var MSG_KEY_BUT_PLAIN = 'This link has a decryption key, but the server says these files are not encrypted. That doesn\'t match what the sender made, so nothing was downloaded.';
     var MSG_MISSING_KEY = 'This link is missing its decryption key (the part after /key/). Ask the sender for the full link.';
 
+    // Types the page will give a file it hands over (share sheet, download,
+    // thumbnail). Anything else - SVG, HTML, XML, scripts - becomes plain
+    // bytes, so an uploader can't get an active document onto this origin.
     var EXT_TYPES = {
         png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif',
         heic: 'image/heic', heif: 'image/heif', bmp: 'image/bmp',
         mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
         pdf: 'application/pdf', txt: 'text/plain'
     };
+    var SAFE_TYPES = {};
+    Object.keys(EXT_TYPES).forEach(function (k) { SAFE_TYPES[EXT_TYPES[k]] = true; });
 
     var state = null;
 
@@ -42,7 +51,8 @@
     }
 
     function typeFor(name, serverType) {
-        if (serverType && serverType !== 'application/octet-stream') return serverType;
+        var base = (serverType || '').split(';')[0].trim().toLowerCase();
+        if (SAFE_TYPES[base]) return base;
         var m = /\.([A-Za-z0-9]+)$/.exec(name || '');
         return (m && EXT_TYPES[m[1].toLowerCase()]) || 'application/octet-stream';
     }
@@ -183,7 +193,7 @@
 
     function proceed() {
         if (state.failed) return;
-        if (state.storedTotal > MEMORY_CEILING) {
+        if (state.storedTotal > memoryCeiling()) {
             // Too much to hold at once: save each file on its own.
             setStatus('These files are too large to prepare all at once. Save them one at a time.');
             el('bundleSaveAllButton').classList.add('hidden');
@@ -322,8 +332,49 @@
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
     }
 
+    // A file that isn't end-to-end encrypted needs no checking in the page,
+    // so the browser downloads it straight to disk (never into memory).
+    function nativeDownload(entry) {
+        var url = '/api/bundle/' + encodeURIComponent(state.code) + '/files/' + entry.position;
+        if (!state.password) {
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = entry.name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return;
+        }
+        // The password goes in a POST body, never in the URL.
+        var frame = document.getElementById('bundleDownloadFrame');
+        if (!frame) {
+            frame = document.createElement('iframe');
+            frame.id = 'bundleDownloadFrame';
+            frame.name = 'bundleDownloadFrame';
+            frame.hidden = true;
+            document.body.appendChild(frame);
+        }
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = url;
+        form.target = 'bundleDownloadFrame';
+        form.hidden = true;
+        var field = document.createElement('input');
+        field.type = 'hidden';
+        field.name = 'password';
+        field.value = state.password;
+        form.appendChild(field);
+        document.body.appendChild(form);
+        form.submit();
+        form.remove();
+    }
+
     async function saveOne(entry) {
         if (state.failed) return;
+        if (entry.onDemand && !state.cryptoKey) {
+            nativeDownload(entry);
+            return;
+        }
         if (entry.onDemand && !entry.file) {
             entry.saveButton.disabled = true;
             try {

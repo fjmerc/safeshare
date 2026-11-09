@@ -218,6 +218,54 @@ async function openReceive(browser, baseURL, link) {
             await context.close();
         }
 
+        // Uploader-chosen types: an SVG gets no preview and is handed over as
+        // plain bytes, never as an active document type on this origin.
+        {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>';
+            const code = await apiBundle(base, [['pic.svg', svg], ['ok.png', H.PNG_1PX]]);
+            const context = await H.newBrowserContext(browser, base);
+            await context.addInitScript(() => {
+                window.__types = null;
+                navigator.canShare = () => true;
+                navigator.share = async (data) => { window.__types = data.files.map((f) => f.type); };
+            });
+            const page = await context.newPage();
+            await page.goto(base + '/#/bundle/' + code);
+            await page.waitForFunction(() => !document.getElementById('bundleSaveAllButton').disabled, null, { timeout: 30000 });
+            H.check('svg: no preview', (await page.$$('#bundleReceiveList li[data-position="0"] img')).length === 0);
+            H.check('png: preview', (await page.$$('#bundleReceiveList li[data-position="1"] img')).length === 1);
+            await page.click('#bundleSaveAllButton');
+            await page.waitForFunction(() => window.__types !== null);
+            const types = await page.evaluate(() => window.__types);
+            H.check('svg handed over as plain bytes', JSON.stringify(types) === JSON.stringify(['application/octet-stream', 'image/png']), JSON.stringify(types));
+            await context.close();
+        }
+
+        // Over the memory ceiling (lowered for the test): an unencrypted file is
+        // downloaded by the browser directly, not read into the page first.
+        {
+            const code = await apiBundle(base, [['big1.bin', Buffer.alloc(3000, 1)], ['big2.bin', Buffer.alloc(3000, 2)]], { password: 'pw' });
+            const context = await H.newBrowserContext(browser, base);
+            await context.addInitScript(() => { window.SafeShareBundleMemoryCeiling = 1024; });
+            const page = await context.newPage();
+            const fetches = [];
+            page.on('request', (r) => {
+                if (/\/files\/\d+$/.test(r.url()) && (r.resourceType() === 'fetch' || r.resourceType() === 'xhr')) fetches.push(r.url());
+            });
+            await page.goto(base + '/#/bundle/' + code);
+            await page.waitForSelector('#bundlePasswordForm:not(.hidden)');
+            await page.fill('#bundlePassword', 'pw');
+            await page.press('#bundlePassword', 'Enter');
+            await page.waitForFunction(() => !document.querySelector('#bundleReceiveList li[data-position="0"] button.bundle-save').disabled, null, { timeout: 10000 });
+            const download = page.waitForEvent('download', { timeout: 15000 });
+            await page.click('#bundleReceiveList li[data-position="0"] button.bundle-save');
+            const d = await download;
+            const size = require('fs').statSync(await d.path()).size;
+            H.check('over the ceiling: browser downloads the file itself', d.suggestedFilename() === 'big1.bin' && size === 3000, d.suggestedFilename() + ' ' + size);
+            H.check('over the ceiling: the page never read the file', fetches.length === 0, JSON.stringify(fetches));
+            await context.close();
+        }
+
         // Desktop: no file sharing, so Save all downloads each file.
         {
             const code = await apiBundle(base, [['d1.txt', 'one'], ['d2.txt', 'two']]);
