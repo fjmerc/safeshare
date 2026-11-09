@@ -15,17 +15,20 @@ import (
 // MockRepositories contains all mock repository implementations for testing.
 // This provides a convenient way to set up and access mocks in tests.
 type MockRepositories struct {
-	Files *repoMock.FileRepository
-	Users *repoMock.UserRepository
+	Files   *repoMock.FileRepository
+	Users   *repoMock.UserRepository
+	Bundles *repoMock.BundleRepository
 	// Note: Admin, Settings, PartialUploads, Webhooks, APITokens mocks
 	// can be added here as needed in future iterations
 }
 
 // NewMockRepositories creates a new set of mock repositories for testing.
 func NewMockRepositories() *MockRepositories {
+	files := repoMock.NewFileRepository()
 	return &MockRepositories{
-		Files: repoMock.NewFileRepository(),
-		Users: repoMock.NewUserRepository(),
+		Files:   files,
+		Users:   repoMock.NewUserRepository(),
+		Bundles: repoMock.NewBundleRepository(files),
 	}
 }
 
@@ -33,6 +36,7 @@ func NewMockRepositories() *MockRepositories {
 func (m *MockRepositories) Reset() {
 	m.Files.Reset()
 	m.Users.Reset()
+	m.Bundles.Reset()
 }
 
 // NewMockStorageBackend creates a new mock storage backend for testing.

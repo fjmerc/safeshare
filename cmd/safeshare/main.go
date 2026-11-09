@@ -425,6 +425,16 @@ func run() error {
 		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadStatusHandler(repos, cfg))))).ServeHTTP(w, r)
 	})
 
+	// Bundles (one link for several files): create a draft, then publish or
+	// delete it with the upload token it returns. Members are uploaded
+	// through /api/upload and /api/upload/init. Same auth as uploading.
+	mux.HandleFunc("/api/bundles", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.BundleCreateHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/api/bundles/", func(w http.ResponseWriter, r *http.Request) {
+		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.BundleManageHandler(repos, cfg))))).ServeHTTP(w, r)
+	})
+
 	// No-JavaScript drop page (DROP_RECIPIENT; 404 when unset). Open to
 	// anyone, like anonymous uploads: senders have no account.
 	dropPage := handlers.DropPageHandler(cfg)
@@ -455,6 +465,16 @@ func run() error {
 		}
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
+
+	// Bundle receive routes: same middleware as /api/claim/ (no user auth).
+	mux.HandleFunc("/api/bundle/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/info") {
+			ipBlockMw(http.HandlerFunc(handlers.BundleInfoHandler(repos, cfg))).ServeHTTP(w, r)
+			return
+		}
+		ipBlockMw(http.HandlerFunc(handlers.BundleFileHandler(repos, cfg))).ServeHTTP(w, r)
+	})
+
 	// Health check endpoints (no auth required for monitoring)
 	// Note: Health handlers still use *sql.DB - use repos.DB for backward compatibility
 	mux.HandleFunc("/health", handlers.HealthHandler(repos.DB, cfg, startTime))
@@ -542,6 +562,14 @@ func run() error {
 	})
 	mux.HandleFunc("/api/user/files/regenerate-claim-code", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(tokenAudit(http.HandlerFunc(handlers.UserRegenerateClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
+	// The signed-in user's bundles: list, delete, change expiry, new code.
+	mux.HandleFunc("/api/user/bundles", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserBundlesHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/api/user/bundles/", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserBundlesHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
 	// SDK-compatible user file management routes (claim code in URL path)

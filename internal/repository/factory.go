@@ -25,6 +25,7 @@ type Repositories struct {
 	MFA             MFARepository
 	SSO             SSORepository
 	AuditLogs       AuditLogRepository
+	Bundles         BundleRepository
 
 	// DB provides direct database access for code that hasn't been migrated to use repositories yet.
 	// DEPRECATED: This field will be removed once all database access is migrated to use repositories.

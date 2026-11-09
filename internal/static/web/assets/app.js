@@ -6,6 +6,9 @@
 
     // State
     let selectedFile = null;
+    // Two or more files chosen at once: uploaded as one bundle (one link).
+    let selectedFiles = [];
+    let bundleUploading = false;
     let maxFileSizeBytes = 104857600; // 100MB default
     let uploadState = 'idle'; // 'idle', 'uploading', 'completed'
     let filePreparationState = 'idle'; // 'idle', 'preparing', 'ready'
@@ -117,6 +120,16 @@
 
         // Handle file received via Web Share Target API
         await handleShareTarget();
+
+        // A bundle link (#/bundle/CODE[/key/KEY]) opens the bundle receive view
+        const bundleFragment = window.SafeShareCrypto && window.SafeShareBundle &&
+            SafeShareCrypto.parseBundleFragment(window.location.hash);
+        if (bundleFragment) {
+            // The key lives only in memory from here on; clear it from the address bar and history.
+            scrubLocationFragment();
+            window.SafeShareBundle.open(bundleFragment);
+            return;
+        }
 
         // Check for encrypted download URL fragment
         const e2eFragment = window.SafeShareCrypto && SafeShareCrypto.parseFragment(window.location.hash);
@@ -840,18 +853,99 @@
         e.preventDefault();
         dropZone.classList.remove('drag-over');
 
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            selectedFile = files[0];
-            prepareFile(selectedFile);
-        }
+        selectFiles(e.dataTransfer.files);
     }
 
     // Handle file select
     function handleFileSelect(e) {
-        if (e.target.files.length > 0) {
-            selectedFile = e.target.files[0];
+        selectFiles(e.target.files);
+    }
+
+    // One file: the usual single-file upload. Several: one bundle.
+    function selectFiles(fileList) {
+        const files = Array.from(fileList || []);
+        if (files.length === 0) return;
+        if (files.length === 1) {
+            selectedFiles = [];
+            hideBundleSelection();
+            selectedFile = files[0];
             prepareFile(selectedFile);
+            return;
+        }
+        selectedFile = null;
+        selectedFiles = files;
+        filePreparationState = 'ready';
+        showBundleSelection();
+    }
+
+    function maxFilesPerBundle() {
+        return serverConfig.max_files_per_bundle || 10;
+    }
+
+    function hideBundleSelection() {
+        document.getElementById('bundleSelection')?.classList.add('hidden');
+        document.getElementById('bundleFileList')?.classList.add('hidden');
+        document.getElementById('bundleLimitMessage')?.classList.add('hidden');
+    }
+
+    // Show the chosen files, check them against the server's limits, and
+    // set the drop zone and upload button for a bundle.
+    function showBundleSelection() {
+        const list = document.getElementById('bundleFileList');
+        const limitMessage = document.getElementById('bundleLimitMessage');
+        list.innerHTML = '';
+        selectedFiles.forEach((file, i) => {
+            const li = document.createElement('li');
+            const name = document.createElement('span');
+            name.className = 'bundle-file-name';
+            name.textContent = file.name;
+            name.title = file.name;
+            const size = document.createElement('span');
+            size.className = 'bundle-file-size';
+            size.textContent = formatFileSize(file.size);
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'bundle-file-remove';
+            remove.setAttribute('aria-label', 'Remove ' + file.name);
+            remove.textContent = '✕';
+            remove.addEventListener('click', () => removeBundleFile(i));
+            li.append(name, size, remove);
+            list.appendChild(li);
+        });
+
+        const problems = [];
+        if (selectedFiles.length > maxFilesPerBundle()) {
+            problems.push(`One link can hold at most ${maxFilesPerBundle()} files. Remove ${selectedFiles.length - maxFilesPerBundle()}.`);
+        }
+        const tooBig = selectedFiles.filter((f) => f.size > maxFileSizeBytes);
+        if (tooBig.length) {
+            problems.push(`${tooBig.map((f) => f.name).join(', ')} ${tooBig.length === 1 ? 'is' : 'are'} over the ${formatFileSize(maxFileSizeBytes)} limit.`);
+        }
+        limitMessage.textContent = problems.join(' ');
+        limitMessage.classList.toggle('hidden', problems.length === 0);
+
+        document.getElementById('bundleSelection').classList.remove('hidden');
+        list.classList.remove('hidden');
+        const spinner = dropZone.querySelector('.file-preparation-spinner');
+        if (spinner) spinner.classList.add('hidden');
+        const total = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+        dropZone.querySelector('h2').textContent = `${selectedFiles.length} files`;
+        dropZone.querySelector('p').textContent = `Total size: ${formatFileSize(total)}`;
+        uploadButton.textContent = `Upload ${selectedFiles.length} files as one link`;
+        uploadButton.disabled = uploadBlocked || problems.length > 0;
+        updateRemoveButtonState();
+        updateE2ESizeWarning();
+    }
+
+    function removeBundleFile(index) {
+        const remaining = selectedFiles.filter((_, i) => i !== index);
+        if (remaining.length === 1) {
+            selectFiles(remaining);
+        } else if (remaining.length === 0) {
+            clearSelectedFile();
+        } else {
+            selectedFiles = remaining;
+            showBundleSelection();
         }
     }
 
@@ -995,7 +1089,7 @@
             spinner.classList.add('hidden');
         }
 
-        dropZone.querySelector('h2').textContent = 'Drop file here or click to browse';
+        dropZone.querySelector('h2').textContent = 'Drop files here or click to browse';
         dropZone.querySelector('p').innerHTML = `Maximum file size: <span id="maxFileSize">${formatFileSize(maxFileSizeBytes)}</span>`;
         uploadButton.disabled = true;
         uploadButton.textContent = 'Upload File';
@@ -1032,6 +1126,10 @@
 
     // Handle upload - routes to chunked or simple upload based on file size
     async function handleUpload() {
+        if (selectedFiles.length > 1) {
+            await handleBundleUpload();
+            return;
+        }
         if (!selectedFile || uploadBlocked) return;
 
         const e2eToggle = document.getElementById('e2eEncryptionToggle');
@@ -1118,6 +1216,123 @@
             console.log('Using simple upload for file:', formatFileSize(fileToUpload.size));
             await handleSimpleUpload(fileToUpload, useE2E);
         }
+    }
+
+    // Upload the selected files as one bundle and show its one link.
+    async function handleBundleUpload() {
+        if (uploadBlocked || bundleUploading || !window.SafeShareBundleUpload) return;
+        const files = selectedFiles.slice();
+        const e2eToggle = document.getElementById('e2eEncryptionToggle');
+        const hideFilenameToggle = document.getElementById('e2eHideFilenameToggle');
+        const useE2E = !!(e2eToggle && e2eToggle.checked && window.SafeShareCrypto);
+        const hideFilename = useE2E && !!(hideFilenameToggle && hideFilenameToggle.checked);
+        const password = document.getElementById('uploadPassword').value.trim();
+
+        bundleUploading = true;
+        uploadState = 'uploading';
+        updateRemoveButtonState();
+        showUploadWarning();
+        resetUploadStats();
+        uploadProgress.classList.remove('hidden');
+        uploadButton.disabled = true;
+        setUploadSettingsDisabled(true);
+        setDropZoneDisabled(true);
+        progressText.textContent = 'Starting upload...';
+        setProgress(progressFill, 0);
+
+        try {
+            const result = await SafeShareBundleUpload.uploadBundle({
+                files: files,
+                settings: {
+                    expiresInHours: parseFloat(expirationHours.value),
+                    maxDownloads: parseInt(maxDownloads.value) || 0,
+                    password: password
+                },
+                e2e: { enabled: useE2E, hideFilename: hideFilename, pad: !serverConfigLoaded || !!serverConfig.anonymous_mode },
+                serverConfig: serverConfig,
+                maxFileSizeBytes: maxFileSizeBytes,
+                prepare: (serverConfig.strip_metadata && window.SafeShareMetadata) ? stripMetadataForUpload : null,
+                onProgress: (p) => {
+                    const overall = ((p.index + p.fraction) / p.count) * 100;
+                    setProgress(progressFill, overall);
+                    const verb = p.stage === 'preparing' ? 'Encrypting' : 'Uploading';
+                    progressText.textContent = `${verb} file ${p.index + 1} of ${p.count} • ${Math.round(p.fraction * 100)}%`;
+                }
+            });
+            bundleUploading = false;
+            showBundleResults(result, password !== '');
+        } catch (error) {
+            bundleUploading = false;
+            let message = (error && error.metadataAbort) ? error.message
+                : (ghostErrorMessage(error && error.code) || (error && error.message) || 'Upload failed');
+            if (error && error.code === 'PAYLOAD_TOO_LARGE') {
+                message = 'A file is too large to upload encrypted.';
+            }
+            const which = error && error.file ? `${error.file}: ` : '';
+            showToast(`No link was created. ${which}${message}`, 'error', 7000);
+            resetProgress();
+            if (selectedFiles.length > 1) showBundleSelection();
+        }
+    }
+
+    // Show the one link of a bundle, its QR code and its files.
+    function showBundleResults(result, passwordUsed) {
+        const bundle = result.bundle;
+        const isE2E = !!result.key;
+        const link = SafeShareCrypto.buildBundleUrl(window.location.origin, bundle.bundle_code, result.key);
+        const total = result.files.reduce((sum, f) => sum + f.size, 0);
+
+        currentShareData = {
+            claim_code: bundle.bundle_code,
+            download_url: link,
+            original_filename: `${result.files.length} files`,
+            file_size: total,
+            expires_at: bundle.expires_at,
+            max_downloads: bundle.max_downloads,
+            completed_downloads: 0
+        };
+        sendUploadCompleteNotification(currentShareData);
+
+        document.getElementById('e2eBadge')?.classList.toggle('hidden', !isE2E);
+        document.getElementById('e2eWarning')?.classList.toggle('hidden', !isE2E);
+        document.getElementById('claimCode').textContent = bundle.bundle_code;
+        document.getElementById('downloadUrl').value = link;
+        const fileNameElement = document.getElementById('fileName');
+        fileNameElement.textContent = `${result.files.length} files`;
+        fileNameElement.title = result.files.map((f) => f.name).join(', ');
+        document.getElementById('fileSize').textContent = formatFileSize(total);
+        document.getElementById('expiresAt').textContent = formatDate(bundle.expires_at);
+        document.getElementById('maxDownloadsInfo').textContent = bundle.max_downloads
+            ? `${bundle.max_downloads} per file` : 'Unlimited';
+        document.getElementById('resultPasswordNote')?.classList.toggle('hidden', !passwordUsed);
+        document.getElementById('resultDashboardLink')?.classList.toggle('hidden', !currentUser);
+
+        const filesInfo = document.getElementById('bundleFilesInfo');
+        filesInfo.innerHTML = '';
+        result.files.forEach((f) => {
+            const li = document.createElement('li');
+            li.textContent = `${f.name} (${formatFileSize(f.size)})`;
+            filesInfo.appendChild(li);
+        });
+        filesInfo.classList.remove('hidden');
+
+        const qrcodeDiv = document.getElementById('qrcode');
+        qrcodeDiv.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+            try {
+                new QRCode(qrcodeDiv, { text: link, width: 200, height: 200, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.H });
+            } catch (qrError) {
+                qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable</p>';
+            }
+        } else {
+            qrcodeDiv.innerHTML = '<p class="qr-unavailable">QR code unavailable (library not loaded)</p>';
+        }
+
+        uploadSection.classList.add('hidden');
+        resultsSection.classList.remove('hidden');
+        uploadState = 'idle';
+        hideUploadWarning();
+        showToast(`${result.files.length} files uploaded under one link`, 'success', 3000);
     }
 
     // Why metadata couldn't be removed, by SafeShareMetadata error code
@@ -1483,6 +1698,8 @@
             if (e2eBadge) e2eBadge.classList.toggle('hidden', !isE2E);
             if (e2eWarning) e2eWarning.classList.toggle('hidden', !isE2E);
 
+            document.getElementById('bundleFilesInfo')?.classList.add('hidden');
+
             // Populate results
             document.getElementById('claimCode').textContent = data.claim_code;
             document.getElementById('downloadUrl').value = displayUrl;
@@ -1560,6 +1777,8 @@
     // Clear selected file
     function clearSelectedFile() {
         selectedFile = null;
+        selectedFiles = [];
+        hideBundleSelection();
         fileInput.value = '';
         uploadButton.disabled = true;
         uploadState = 'idle';
@@ -1595,7 +1814,16 @@
 
     // Update remove button state based on upload state
     function updateRemoveButtonState() {
-        if (uploadState === 'uploading') {
+        if (bundleUploading) {
+            // A bundle upload can't be cancelled midway from here; on failure
+            // the draft is deleted anyway.
+            removeFileButton.classList.add('hidden');
+        } else if (selectedFiles.length > 1) {
+            removeFileButton.textContent = 'Remove Files';
+            removeFileButton.classList.add('btn-remove-file');
+            removeFileButton.classList.remove('btn-cancel');
+            removeFileButton.classList.remove('hidden');
+        } else if (uploadState === 'uploading') {
             // Show as cancel button
             removeFileButton.textContent = 'Cancel Upload';
             removeFileButton.classList.remove('btn-remove-file');

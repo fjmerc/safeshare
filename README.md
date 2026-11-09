@@ -91,6 +91,7 @@ chmod +x safeshare-linux-amd64
 - **Drag-and-drop uploads** with automatic expiration and download limits
 - **Password-protected files** for sensitive shares
 - **QR code generation** for easy mobile sharing
+- **Several files, one link**: a bundle shares a set of files under one link and QR code; on a phone, Save all puts them all in Photos at once
 - **End-to-end encryption** in the browser, the CLI and the SDKs (the key never reaches the server)
 - **Resumable uploads and downloads** for large files
 - **AES-256 encryption at rest** for everything stored on disk

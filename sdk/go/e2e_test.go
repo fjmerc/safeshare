@@ -71,6 +71,21 @@ type e2eVectors struct {
 		Key       string `json:"key"`
 		URL       string `json:"url"`
 	} `json:"share_url"`
+	BundleURL []struct {
+		Base       string `json:"base"`
+		BundleCode string `json:"bundle_code"`
+		Key        string `json:"key"`
+		URL        string `json:"url"`
+	} `json:"bundle_url"`
+	BundleFragmentRejects []string `json:"bundle_fragment_rejects"`
+	Manifest              struct {
+		Manifest BundleManifest `json:"manifest"`
+		Sealed   string         `json:"sealed"`
+	} `json:"manifest"`
+	ManifestRejects []struct {
+		ID     string `json:"id"`
+		Sealed string `json:"sealed"`
+	} `json:"manifest_rejects"`
 }
 
 func loadVectors(t *testing.T) *e2eVectors {

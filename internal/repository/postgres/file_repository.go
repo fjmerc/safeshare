@@ -85,7 +85,8 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 			id, claim_code, original_filename, stored_filename, file_size,
 			mime_type, created_at, expires_at, max_downloads, download_count, completed_downloads,
 			uploader_ip, password_hash, user_id, sha256_hash,
-			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id, uncounted_bytes
+			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id, uncounted_bytes,
+			bundle_id, bundle_position
 		FROM files
 		WHERE id = $1
 	`
@@ -99,6 +100,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 	var scanResult sql.NullString
 	var scannedAt sql.NullTime
 	var encFileID []byte
+	var bundleID, bundlePosition sql.NullInt64
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&file.ID,
@@ -122,6 +124,8 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		&file.ClientEncrypted,
 		&encFileID,
 		&file.UncountedBytes,
+		&bundleID,
+		&bundlePosition,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -151,6 +155,7 @@ func (r *FileRepository) GetByID(ctx context.Context, id int64) (*models.File, e
 		file.ScannedAt = &scannedAt.Time
 	}
 	file.EncFileID = encFileID // SQL NULL maps to nil via *[]byte scan
+	applyBundleColumns(file, bundleID, bundlePosition)
 
 	return file, nil
 }
@@ -165,7 +170,7 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 			uploader_ip, password_hash, user_id, sha256_hash,
 			scan_status, scan_result, scanned_at, client_encrypted, enc_file_id, uncounted_bytes
 		FROM files
-		WHERE claim_code = $1 AND expires_at > NOW()
+		WHERE claim_code = $1 AND expires_at > NOW() AND bundle_id IS NULL
 	`
 
 	file := &models.File{}
@@ -1507,7 +1512,8 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads,
 			f.uploader_ip, f.password_hash, f.user_id, u.username,
-			f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
+			f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted,
+			f.bundle_id, f.bundle_position
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		ORDER BY f.created_at DESC, f.id DESC
@@ -1530,6 +1536,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		var scanStatus sql.NullString
 		var scanResult sql.NullString
 		var scannedAt sql.NullTime
+		var bundleID, bundlePosition sql.NullInt64
 
 		err := rows.Scan(
 			&file.ID,
@@ -1551,6 +1558,8 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			&scanResult,
 			&scannedAt,
 			&file.ClientEncrypted,
+			&bundleID,
+			&bundlePosition,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -1576,6 +1585,7 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 			file.ScannedAt = &scannedAt.Time
 		}
 
+		applyBundleColumns(&file, bundleID, bundlePosition)
 		files = append(files, file)
 	}
 
@@ -1623,7 +1633,8 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 			f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads,
 			f.uploader_ip, f.password_hash, f.user_id, u.username,
-			f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted
+			f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted,
+			f.bundle_id, f.bundle_position
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
 		WHERE f.claim_code ILIKE $1 ESCAPE '\'
@@ -1650,6 +1661,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 		var scanStatus sql.NullString
 		var scanResult sql.NullString
 		var scannedAt sql.NullTime
+		var bundleID, bundlePosition sql.NullInt64
 
 		err := rows.Scan(
 			&file.ID,
@@ -1671,6 +1683,8 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 			&scanResult,
 			&scannedAt,
 			&file.ClientEncrypted,
+			&bundleID,
+			&bundlePosition,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
@@ -1696,6 +1710,7 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 			file.ScannedAt = &scannedAt.Time
 		}
 
+		applyBundleColumns(&file, bundleID, bundlePosition)
 		files = append(files, file)
 	}
 

@@ -2405,3 +2405,195 @@ footer a {
 .claim-code {
     min-width: 0;
 }
+
+/* Several files under one link (bundles) */
+.bundle-selection {
+    margin: 0.75rem 0;
+}
+
+.bundle-selection-note {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+
+.bundle-file-list,
+.bundle-files-info {
+    list-style: none;
+    margin: 0 0 0.75rem;
+    padding: 0;
+}
+
+.bundle-file-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.bundle-file-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bundle-file-size {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    white-space: nowrap;
+}
+
+.bundle-file-remove {
+    min-width: 2rem;
+    min-height: 2rem;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.bundle-file-remove:hover,
+.bundle-file-remove:focus-visible {
+    background: rgba(127, 127, 127, 0.15);
+}
+
+.bundle-limit-message {
+    color: #c0392b;
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+.bundle-files-info li {
+    padding: 0.2rem 0;
+    overflow-wrap: anywhere;
+}
+
+/* Bundle receive view */
+.bundle-summary {
+    margin: 0 0 1rem;
+    opacity: 0.8;
+}
+
+.bundle-receive-list {
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+}
+
+.bundle-receive-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+}
+
+.bundle-thumb,
+.bundle-thumb-placeholder {
+    width: 56px;
+    height: 56px;
+    flex: 0 0 56px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: rgba(127, 127, 127, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+}
+
+.bundle-receive-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.bundle-receive-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bundle-receive-size {
+    font-size: 0.85rem;
+    opacity: 0.7;
+}
+
+.bundle-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.bundle-actions .btn-primary,
+.bundle-actions .btn-secondary {
+    flex: 1 1 10rem;
+    min-height: 3rem;
+}
+
+.bundle-status {
+    min-height: 1.25rem;
+    font-size: 0.9rem;
+}
+
+.bundle-error,
+.bundle-password-error {
+    color: #c0392b;
+}
+
+.bundle-password-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+/* Dashboard: bundles */
+.section-note {
+    margin: 0 0 0.75rem;
+    opacity: 0.8;
+}
+
+.bundle-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.bundle-row {
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+}
+
+.bundle-row summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.75rem;
+    cursor: pointer;
+    min-height: 2.5rem;
+}
+
+.bundle-row-meta {
+    font-size: 0.9rem;
+    opacity: 0.8;
+}
+
+.bundle-row-files {
+    margin: 0.5rem 0;
+    padding-left: 1.25rem;
+    overflow-wrap: anywhere;
+}
+
+.bundle-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}

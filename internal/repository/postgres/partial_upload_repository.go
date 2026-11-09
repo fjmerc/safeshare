@@ -29,7 +29,8 @@ const partialUploadColumns = `
 	chunks_received, received_bytes, expires_in_hours, max_downloads,
 	password_hash, created_at, last_activity, completed, claim_code,
 	status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code,
-	processing_owner, lease_expires_at, assembly_attempts, error_retryable, uploader_ip
+	processing_owner, lease_expires_at, assembly_attempts, error_retryable, uploader_ip,
+	bundle_id, bundle_position
 `
 
 // PartialUploadRepository implements repository.PartialUploadRepository for PostgreSQL.
@@ -61,8 +62,8 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code, status,
-			client_encrypted, uploader_ip
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			client_encrypted, uploader_ip, bundle_id, bundle_position
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	`
 
 	_, err := r.pool.Exec(ctx, query,
@@ -84,6 +85,8 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 		status,
 		upload.ClientEncrypted,
 		pgNullableString(upload.UploaderIP),
+		upload.BundleID,
+		upload.BundlePosition,
 	)
 
 	if err != nil {
@@ -137,8 +140,8 @@ func (r *PartialUploadRepository) CreateWithQuotaCheck(ctx context.Context, uplo
 				upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 				chunks_received, received_bytes, expires_in_hours, max_downloads,
 				password_hash, created_at, last_activity, completed, claim_code, status,
-				client_encrypted, uploader_ip
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+				client_encrypted, uploader_ip, bundle_id, bundle_position
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		`
 
 		_, err = tx.Exec(ctx, insertQuery,
@@ -160,6 +163,8 @@ func (r *PartialUploadRepository) CreateWithQuotaCheck(ctx context.Context, uplo
 			status,
 			upload.ClientEncrypted,
 			pgNullableString(upload.UploaderIP),
+			upload.BundleID,
+			upload.BundlePosition,
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -897,6 +902,7 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 	var processingOwner sql.NullString
 	var leaseExpiresAt sql.NullTime
 	var uploaderIP sql.NullString
+	var bundleID, bundlePosition sql.NullInt64
 	var errorRetryable sql.NullBool
 
 	err := row.Scan(
@@ -926,6 +932,8 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 		&upload.AssemblyAttempts,
 		&errorRetryable,
 		&uploaderIP,
+		&bundleID,
+		&bundlePosition,
 	)
 	if err != nil {
 		return err
@@ -963,6 +971,14 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 	upload.ErrorRetryable = errorRetryable.Valid && errorRetryable.Bool
 	if uploaderIP.Valid {
 		upload.UploaderIP = uploaderIP.String
+	}
+	if bundleID.Valid {
+		id := bundleID.Int64
+		upload.BundleID = &id
+	}
+	if bundlePosition.Valid {
+		pos := int(bundlePosition.Int64)
+		upload.BundlePosition = &pos
 	}
 
 	return nil
