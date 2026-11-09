@@ -30,6 +30,12 @@ func TestTokenRequirement(t *testing.T) {
 		{"PUT", "/api/user/files/rename", "manage", true},
 		{"GET", "/api/tokens", "manage", true},
 		{"GET", "/api/auth/user", "", true},
+		// Bundles (several files under one link) follow the same split.
+		{"POST", "/api/bundles", "upload", true},
+		{"POST", "/api/bundles/42/publish", "upload", true},
+		{"DELETE", "/api/bundles/42", "upload", true},
+		{"GET", "/api/user/bundles", "manage", true},
+		{"PUT", "/api/user/bundles/42/expiration", "manage", true},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
 		{"DELETE", "/api/tokens/5", "", false},

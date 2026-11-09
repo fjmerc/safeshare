@@ -46,6 +46,10 @@ var tokenPolicy = []tokenRule{
 	{"", "/api/upload/cancel/", utils.ScopeUpload},
 	{"", "/api/user/files", utils.ScopeManage},
 	{"", "/api/user/files/", utils.ScopeManage},
+	{"", "/api/bundles", utils.ScopeUpload},
+	{"", "/api/bundles/", utils.ScopeUpload},
+	{"", "/api/user/bundles", utils.ScopeManage},
+	{"", "/api/user/bundles/", utils.ScopeManage},
 	{http.MethodGet, "/api/tokens", utils.ScopeManage},
 	{http.MethodGet, "/api/auth/user", ""},
 }
