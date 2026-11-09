@@ -71,12 +71,16 @@ func (r *BundleRepository) Create(ctx context.Context, b *models.Bundle) error {
 	if !b.CreatedAt.IsZero() {
 		createdAt = &b.CreatedAt
 	}
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO bundles (bundle_code, status, file_count, upload_token_hash, created_at, expires_at,
+	id, err := repository.NewBundleID()
+	if err != nil {
+		return fmt.Errorf("failed to generate bundle id: %w", err)
+	}
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO bundles (id, bundle_code, status, file_count, upload_token_hash, created_at, expires_at,
 			max_downloads, password_hash, user_id, client_encrypted, encrypted_manifest, uploader_ip)
-		VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, CURRENT_TIMESTAMP), $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, CURRENT_TIMESTAMP), $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at`,
-		b.BundleCode, status, b.FileCount, b.UploadTokenHash, createdAt, b.ExpiresAt, b.MaxDownloads,
+		id, b.BundleCode, status, b.FileCount, b.UploadTokenHash, createdAt, b.ExpiresAt, b.MaxDownloads,
 		pgNullableString(b.PasswordHash), b.UserID, b.ClientEncrypted, nullableBytea(b.EncryptedManifest),
 		pgNullableString(b.UploaderIP)).Scan(&b.ID, &b.CreatedAt)
 	if err != nil {

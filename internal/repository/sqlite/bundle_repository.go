@@ -89,11 +89,15 @@ func (r *BundleRepository) Create(ctx context.Context, b *models.Bundle) error {
 	if status == "" {
 		status = models.BundleStatusDraft
 	}
-	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO bundles (bundle_code, status, file_count, upload_token_hash, created_at, expires_at,
+	id, err := repository.NewBundleID()
+	if err != nil {
+		return fmt.Errorf("failed to generate bundle id: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO bundles (id, bundle_code, status, file_count, upload_token_hash, created_at, expires_at,
 			max_downloads, password_hash, user_id, client_encrypted, encrypted_manifest, uploader_ip)
-		VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)`,
-		b.BundleCode, status, b.FileCount, b.UploadTokenHash, nullableCreatedAt(b.CreatedAt),
+		VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?)`,
+		id, b.BundleCode, status, b.FileCount, b.UploadTokenHash, nullableCreatedAt(b.CreatedAt),
 		b.ExpiresAt.UTC().Format(time.RFC3339), b.MaxDownloads, nullableString(b.PasswordHash), b.UserID,
 		b.ClientEncrypted, nullableBlob(b.EncryptedManifest), nullableString(b.UploaderIP))
 	if err != nil {
@@ -101,10 +105,6 @@ func (r *BundleRepository) Create(ctx context.Context, b *models.Bundle) error {
 			return fmt.Errorf("%w: bundle code already exists", repository.ErrDuplicateKey)
 		}
 		return fmt.Errorf("failed to create bundle: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get bundle id: %w", err)
 	}
 	b.ID = id
 	b.Status = status

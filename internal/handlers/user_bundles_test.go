@@ -104,10 +104,17 @@ func TestUserBundles_List(t *testing.T) {
 	if resp.Total != 2 || len(resp.Bundles) != 2 {
 		t.Fatalf("list: %s", rr.Body.String())
 	}
-	if resp.Bundles[0].ID != second.BundleID || resp.Bundles[1].ID != first.BundleID {
-		t.Fatalf("not newest first: %+v", resp.Bundles)
+	// Both were created within the same second, so their relative order is
+	// not defined (ids are random); only which bundles are listed matters.
+	byID := map[int64]int{resp.Bundles[0].ID: 0, resp.Bundles[1].ID: 1}
+	if _, ok := byID[second.BundleID]; !ok {
+		t.Fatalf("second bundle missing: %+v", resp.Bundles)
 	}
-	got := resp.Bundles[1]
+	i, ok := byID[first.BundleID]
+	if !ok {
+		t.Fatalf("first bundle missing: %+v", resp.Bundles)
+	}
+	got := resp.Bundles[i]
 	if got.BundleCode != first.BundleCode || got.FileCount != 2 || got.TotalSize != 5 || len(got.Files) != 2 || got.Files[1].Name != "u1.txt" {
 		t.Fatalf("bundle entry: %+v", got)
 	}

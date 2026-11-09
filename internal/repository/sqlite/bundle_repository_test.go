@@ -390,3 +390,22 @@ func TestBundleIDForMemberClaimCode(t *testing.T) {
 		}
 	}
 }
+
+// TestBundleCreate_IDsAreNotSequential: bundle ids are handed to anonymous
+// uploaders, so they must not count bundles (Ghost mode). They stay below
+// 2^53 so JavaScript clients hold them exactly.
+func TestBundleCreate_IDsAreNotSequential(t *testing.T) {
+	f := newBundleFixture(t)
+	var ids []int64
+	for _, code := range []string{"bundleID01", "bundleID02", "bundleID03"} {
+		ids = append(ids, f.create(t, newTestBundle(code, 1, nil)).ID)
+	}
+	for i, id := range ids {
+		if id < 1<<32 || id >= 1<<53 {
+			t.Errorf("id %d out of the random range", id)
+		}
+		if i > 0 && (id == ids[i-1]+1 || id == ids[i-1]) {
+			t.Errorf("ids look sequential: %v", ids)
+		}
+	}
+}
