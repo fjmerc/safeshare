@@ -70,6 +70,10 @@ func run() error {
 	// access (middleware, handler shortcuts) honor TRUST_PROXY_HEADERS
 	utils.ConfigureClientIPTrust(cfg.GetTrustProxyHeaders(), cfg.GetTrustedProxyIPs(), cfg.IsAnonymousMode())
 	privacy.SetAnonymousMode(cfg.IsAnonymousMode())
+	middleware.SetTokenScopeEnforcement(cfg.EnforceAPITokenScopes)
+	if !cfg.EnforceAPITokenScopes {
+		slog.Warn("ENFORCE_API_TOKEN_SCOPES=false: API tokens can use every route their user can, whatever their scopes")
+	}
 
 	// T43: apply the IPv6 rate-limit grouping width process-wide so every
 	// per-IP limiter/concurrency cap (upload/download rate limits, login
@@ -404,6 +408,9 @@ func run() error {
 	}
 
 	// Upload endpoint with conditional authentication and token audit logging
+	// API tokens may only use the routes listed in
+	// internal/middleware/token_policy.go; add a route there if scripts
+	// should reach it with a token.
 	mux.HandleFunc("/api/upload", func(w http.ResponseWriter, r *http.Request) {
 		ipBlockMw(uploadAuthMw(tokenAudit(http.HandlerFunc(handlers.UploadHandler(repos, cfg))))).ServeHTTP(w, r)
 	})

@@ -48,6 +48,16 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - Files in a bundle are not listed by `/api/user/files`, so older CLIs and SDKs (and `safeshare-cli list` without `--bundles`) don't show them. They can't be opened by their own claim code, and an admin deleting any one of them deletes the whole bundle.
 
+### Security
+
+- **API token scopes are now enforced.** Until now a token could use any route its user could, whatever scopes it was created with: a token made with only `download` could upload, list and delete files. Now:
+  - `upload` is needed for the upload endpoints and bundle uploads, and `manage` for `/api/user/files`, `/api/user/bundles` and listing tokens. A token without the scope gets `403` with `INSUFFICIENT_SCOPE`.
+  - Account security - changing the password, MFA, SSO linking, logout and token management - needs a signed-in browser session; API tokens get `403` with `SESSION_REQUIRED`, whatever their scopes.
+  - Browser sessions and anonymous uploads are unaffected.
+  - The `admin` scope implies the others.
+  - **Check your tokens:** a script whose token lacks the scope it uses will now be refused. Create a token with the right scopes, or set `ENFORCE_API_TOKEN_SCOPES=false` to skip the scope checks for now (the server logs a warning at startup); account-security routes stay closed to tokens either way.
+  - The Go SDK reports these refusals as `ErrInsufficientScope` (previously they had no specific error type).
+
 ## [1.18.2] - 2026-11-05
 
 ### Changed

@@ -25,8 +25,16 @@ const (
 	APITokenPrefixDisplayLength = 12
 )
 
+// API token scopes.
+const (
+	ScopeUpload   = "upload"
+	ScopeDownload = "download"
+	ScopeManage   = "manage"
+	ScopeAdmin    = "admin"
+)
+
 // ValidAPITokenScopes defines all valid scope values
-var ValidAPITokenScopes = []string{"upload", "download", "manage", "admin"}
+var ValidAPITokenScopes = []string{ScopeUpload, ScopeDownload, ScopeManage, ScopeAdmin}
 
 // GenerateAPIToken creates a new API token with the safeshare_ prefix
 // Returns the full token (to show user once) and the display prefix (for identification)

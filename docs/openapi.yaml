@@ -18,7 +18,11 @@ info:
     Authorization: Bearer safeshare_<token>
     ```
     
-    API tokens support granular scopes: `upload`, `download`, `manage`, `admin`.
+    API tokens are limited by their scopes: `upload` for the upload endpoints, `manage` for
+    /api/user/files and listing tokens (`admin` implies both); any token may call
+    GET /api/auth/user. Everything else (password, MFA, SSO, token management, logout)
+    needs a browser session. A refused token gets 403 with `code` INSUFFICIENT_SCOPE or
+    SESSION_REQUIRED.
     
     ## Rate Limiting
     
@@ -215,7 +219,6 @@ paths:
       operationId: userLogout
       security:
         - sessionAuth: []
-        - bearerAuth: []
       responses:
         '200':
           description: Logout successful
@@ -259,7 +262,6 @@ paths:
       operationId: changePassword
       security:
         - sessionAuth: []
-        - bearerAuth: []
       requestBody:
         required: true
         content:

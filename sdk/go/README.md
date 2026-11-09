@@ -302,6 +302,8 @@ fmt.Printf("New code: %s\n", updated.ClaimCode)
 
 #### List Tokens
 
+Needs a token with the `manage` scope.
+
 ```go
 tokens, err := client.ListTokens(ctx)
 
@@ -391,6 +393,7 @@ if errors.As(err, &apiErr) {
 | `ErrDownloadLimitReached` | Download limit exceeded |
 | `ErrFileTooLarge` | File exceeds size limit |
 | `ErrQuotaExceeded` | User quota exceeded |
+| `ErrInsufficientScope` | The API token lacks the scope this needs (`upload`, `manage`), or the action needs a browser session |
 
 ## CLI Tool
 
