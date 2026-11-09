@@ -312,3 +312,28 @@ func TestDownloadBundle_EncryptedLinkNeedsKey(t *testing.T) {
 		t.Fatalf("encrypted bundle without key: %v", err)
 	}
 }
+
+// TestDownloadBundle_KeyedLinkRefusesUnencryptedClaim: a link with a key
+// means the sender encrypted the bundle. A server that then claims the
+// bundle is not encrypted must not get its plaintext saved unchecked.
+func TestDownloadBundle_KeyedLinkRefusesUnencryptedClaim(t *testing.T) {
+	f, srv := newBundleFake(t, bundleTestConfig)
+	c := bundleClient(t, srv)
+	res, err := c.UploadBundle(context.Background(), writeBundleFiles(t, "x"), &UploadOptions{Encrypt: EncryptAlways})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.encrypted, f.manifest = false, nil
+	f.members[0] = []byte("attacker content")
+	f.mu.Unlock()
+
+	link, _ := ParseBundleURL(res.BundleURL)
+	dir := filepath.Join(t.TempDir(), "out")
+	if _, err := c.DownloadBundle(context.Background(), link, dir, nil); !errors.Is(err, ErrManifestMismatch) {
+		t.Fatalf("err = %v, want ErrManifestMismatch", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("saved files: %v", entries)
+	}
+}

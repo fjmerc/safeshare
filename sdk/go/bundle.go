@@ -323,6 +323,11 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 
 	var rawKey []byte
 	var manifest *BundleManifest
+	if link.Key != "" && !info.ClientEncrypted {
+		// The link's key says the sender encrypted this bundle; a server that
+		// claims otherwise would have its files saved unchecked.
+		return nil, fmt.Errorf("%w: the link has a key but the server says the bundle is not encrypted", ErrManifestMismatch)
+	}
 	if info.ClientEncrypted {
 		if link.Key == "" {
 			return nil, &ValidationError{Field: "link", Message: "is for an end-to-end encrypted bundle but has no key"}
