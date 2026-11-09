@@ -136,10 +136,17 @@
                         <div class="file-preparation-spinner hidden">
                             <div class="spinner"></div>
                         </div>
-                        <h2>Drop file here or click to browse</h2>
+                        <h2>Drop files here or click to browse</h2>
                         <p>Maximum file size: <span id="maxFileSize">100 MB</span></p>
                         <button type="button" id="browseButton" class="btn-browse">Browse files</button>
-                        <input type="file" id="fileInput" hidden>
+                        <input type="file" id="fileInput" multiple hidden>
+                    </div>
+
+                    <!-- Several files: one bundle, one link -->
+                    <div id="bundleSelection" class="bundle-selection hidden">
+                        <p class="bundle-selection-note">These files will share one link.</p>
+                        <ul id="bundleFileList" class="bundle-file-list hidden" aria-label="Files to upload"></ul>
+                        <p id="bundleLimitMessage" class="bundle-limit-message hidden" role="alert"></p>
                     </div>
 
                     <button type="button" id="removeFileButton" class="btn-remove-file hidden">Remove File</button>
@@ -304,6 +311,8 @@
                             </button>
                         </div>
                     </div>
+
+                    <ul id="bundleFilesInfo" class="bundle-files-info hidden" aria-label="Files in this link"></ul>
 
                     <div class="result-details">
                         <div class="detail">
@@ -570,6 +579,8 @@
     <script src="/assets/metadata-strip.js"></script>
     <!-- Chunked Upload Handler -->
     <script src="/assets/chunked-uploader.js"></script>
+    <!-- Several files under one link (bundles) -->
+    <script src="/assets/bundle-upload.js"></script>
     <script src="/assets/app.js"></script>
     <script src="/assets/pwa.js"></script>
 </body>
