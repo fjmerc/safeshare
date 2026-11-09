@@ -465,6 +465,16 @@ func run() error {
 		}
 		ipBlockMw(http.HandlerFunc(handler)).ServeHTTP(w, r)
 	})
+
+	// Bundle receive routes: same middleware as /api/claim/ (no user auth).
+	mux.HandleFunc("/api/bundle/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/info") {
+			ipBlockMw(http.HandlerFunc(handlers.BundleInfoHandler(repos, cfg))).ServeHTTP(w, r)
+			return
+		}
+		ipBlockMw(http.HandlerFunc(handlers.BundleFileHandler(repos, cfg))).ServeHTTP(w, r)
+	})
+
 	// Health check endpoints (no auth required for monitoring)
 	// Note: Health handlers still use *sql.DB - use repos.DB for backward compatibility
 	mux.HandleFunc("/health", handlers.HealthHandler(repos.DB, cfg, startTime))
