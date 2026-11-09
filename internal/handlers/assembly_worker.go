@@ -929,6 +929,8 @@ func (w *assemblyWorker) run() {
 		SHA256Hash:       storeSHA256(sha256Hash, cfg),
 		ClientEncrypted:  partialUpload.ClientEncrypted,
 		EncFileID:        encFileID,
+		BundleID:         partialUpload.BundleID,
+		BundlePosition:   partialUpload.BundlePosition,
 	}
 	if verdict.status != "" {
 		scannedAt := storeScannedAt(time.Now(), cfg)
