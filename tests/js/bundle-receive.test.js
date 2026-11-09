@@ -101,6 +101,37 @@ async function openReceive(browser, baseURL, link) {
             await context.close();
         }
 
+        // A transient error on one file of a limited bundle keeps the files
+        // already fetched (their downloads are spent) and offers a retry.
+        {
+            const code = await apiBundle(base, [['r0.txt', 'zero'], ['r1.txt', 'one'], ['r2.txt', 'two']], { max_downloads: 1 });
+            const context = await H.newBrowserContext(browser, base);
+            let failedOnce = false;
+            await context.route(/\/api\/bundle\/[^/]+\/files\/2$/, (route) => {
+                if (!failedOnce) {
+                    failedOnce = true;
+                    return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"busy","code":"SERVICE_UNAVAILABLE"}' });
+                }
+                return route.continue();
+            });
+            const page = await context.newPage();
+            const fileRequests = [];
+            page.on('request', (r) => { if (/\/files\/\d+$/.test(r.url())) fileRequests.push(r.url().slice(-1)); });
+            await page.goto(base + '/#/bundle/' + code);
+            await page.waitForSelector('#bundleGetFilesButton:not(.hidden)');
+            await page.click('#bundleGetFilesButton');
+            await page.waitForSelector('#bundleError:not(.hidden)', { timeout: 15000 });
+            H.check('transient error: retry offered', await page.isVisible('#bundleGetFilesButton'));
+            H.check('transient error: fetched files still saveable',
+                await page.isEnabled('#bundleReceiveList li[data-position="0"] button.bundle-save') &&
+                await page.isEnabled('#bundleReceiveList li[data-position="1"] button.bundle-save'));
+            await page.click('#bundleGetFilesButton');
+            await page.waitForFunction(() => !document.getElementById('bundleSaveAllButton').disabled, null, { timeout: 15000 });
+            H.check('transient error: retry fetches only the missing file', JSON.stringify(fileRequests) === JSON.stringify(['0', '1', '2', '2']), JSON.stringify(fileRequests));
+            H.check('transient error: error cleared after the retry', await page.isHidden('#bundleError'));
+            await context.close();
+        }
+
         // Encrypted bundle: names come from the manifest, files decrypt.
         const pngs = H.makeFiles([['first.png', H.PNG_1PX], ['second.txt', 'second file']]);
         const e2eLink = await e2eBundleViaPage(browser, base, pngs);

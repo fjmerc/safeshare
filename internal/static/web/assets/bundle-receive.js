@@ -72,6 +72,19 @@
         });
     }
 
+    // A file could not be fetched for an ordinary reason (network, server
+    // busy, limit reached). Keep the files already fetched - their downloads
+    // are spent - and offer to try the rest again.
+    function softFail(message) {
+        var err = el('bundleError');
+        err.textContent = message + ' Files already downloaded are kept; try again to get the rest.';
+        err.classList.remove('hidden');
+        setStatus('');
+        var retry = el('bundleGetFilesButton');
+        retry.textContent = 'Try again';
+        retry.classList.remove('hidden');
+    }
+
     function showView() {
         var tabs = document.querySelector('.tabs');
         if (tabs) tabs.classList.add('hidden');
@@ -204,7 +217,7 @@
         if (!res.ok) {
             var e = new Error('fetch failed');
             e.userMessage = res.status === 410 ? 'A file has reached its download limit or is no longer available.'
-                : (res.status === 404 ? MSG_NOT_FOUND : 'A file could not be downloaded. Try again later.');
+                : (res.status === 404 ? MSG_NOT_FOUND : 'A file could not be downloaded right now.');
             throw e;
         }
         var buf = await res.arrayBuffer();
@@ -216,6 +229,7 @@
                 plain = await SafeShareCrypto.decryptFile(state.cryptoKey, buf);
             } catch (err) {
                 err.userMessage = MSG_TAMPERED;
+                err.tampered = true;
                 throw err;
             }
             var payloadName = null;
@@ -225,6 +239,7 @@
                     unwrapped = SafeShareCrypto.unwrapPayload(plain);
                 } catch (err2) {
                     err2.userMessage = MSG_TAMPERED;
+                    err2.tampered = true;
                     throw err2;
                 }
                 payloadName = unwrapped.filename;
@@ -241,6 +256,7 @@
             if ((payloadName && payloadName !== want.name) || data.byteLength !== want.size || sha !== want.sha256) {
                 var t = new Error('manifest mismatch');
                 t.userMessage = MSG_TAMPERED;
+                t.tampered = true;
                 throw t;
             }
             name = want.name;
@@ -267,6 +283,7 @@
         if (state.busy || state.failed) return;
         state.busy = true;
         el('bundleGetFilesButton').classList.add('hidden');
+        el('bundleError').classList.add('hidden');
         try {
             for (var i = 0; i < state.entries.length; i++) {
                 var entry = state.entries[i];
@@ -284,7 +301,11 @@
             setStatus('Ready to save.');
             el('bundleSaveAllButton').disabled = false;
         } catch (err) {
-            fail(err.userMessage || 'A file could not be downloaded. Try again later.');
+            if (err.tampered) {
+                fail(err.userMessage);
+            } else {
+                softFail(err.userMessage || 'A file could not be downloaded.');
+            }
         } finally {
             state.busy = false;
         }
@@ -308,7 +329,13 @@
             try {
                 if (await fetchFile(entry) === 'password') { showPasswordForm(true); return; }
             } catch (err) {
-                fail(err.userMessage || 'A file could not be downloaded. Try again later.');
+                if (err.tampered) {
+                    fail(err.userMessage);
+                } else {
+                    el('bundleError').textContent = (err.userMessage || 'This file could not be downloaded.') + ' Try its Save button again.';
+                    el('bundleError').classList.remove('hidden');
+                    entry.saveButton.disabled = false;
+                }
                 return;
             }
             download(entry.file);
