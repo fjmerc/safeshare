@@ -48,6 +48,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - Files in a bundle are not listed by `/api/user/files`, so older CLIs and SDKs (and `safeshare-cli list` without `--bundles`) don't show them. They can't be opened by their own claim code, and an admin deleting any one of them deletes the whole bundle.
 
+### Fixed
+
+- **"Never expire" works for large uploads from the web page.** Files big enough to use chunked upload (100 MB and up by default) were stored with a 24-hour expiry when "never expire" was chosen. Files uploaded that way before this fix were given a 24-hour expiry and may already be gone; check My Dashboard for any still listed and change their expiry if they should be kept.
+
 ### Security
 
 - **API token scopes are now enforced.** Until now a token could use any route its user could, whatever scopes it was created with: a token made with only `download` could upload, list and delete files. Now:
