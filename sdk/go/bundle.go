@@ -378,16 +378,24 @@ func (c *Client) DownloadBundle(ctx context.Context, link *BundleLink, dir strin
 		if err != nil {
 			return nil, fmt.Errorf("%w: file %d does not decrypt with the bundle key", ErrManifestMismatch, i)
 		}
-		df, err := unwrapDownload(pt, f.Name)
-		if err != nil {
-			return nil, fmt.Errorf("%w: file %d: %v", ErrManifestMismatch, i, err)
+		// The name is checked only when it travelled inside the encrypted
+		// payload; a name left visible was cleaned up by the server, and the
+		// manifest (encrypted, authenticated) holds the real one. Content is
+		// always checked by size and SHA-256.
+		data, payloadName := pt, ""
+		if f.Name == EncryptedFilename || hasPaddedPayloadMagic(pt) {
+			p, err := unwrapPayload(pt)
+			if err != nil {
+				return nil, fmt.Errorf("%w: file %d: %v", ErrManifestMismatch, i, err)
+			}
+			data, payloadName = p.data, p.filename
 		}
 		want := manifest.Files[i]
-		sum := sha256.Sum256(df.Data)
-		if df.Filename != want.Name || int64(len(df.Data)) != want.Size || hex.EncodeToString(sum[:]) != want.SHA256 {
+		sum := sha256.Sum256(data)
+		if (payloadName != "" && payloadName != want.Name) || int64(len(data)) != want.Size || hex.EncodeToString(sum[:]) != want.SHA256 {
 			return nil, fmt.Errorf("%w: file %d is not the file the sender put there", ErrManifestMismatch, i)
 		}
-		got = append(got, fetched{name: want.Name, data: df.Data})
+		got = append(got, fetched{name: want.Name, data: data})
 	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {

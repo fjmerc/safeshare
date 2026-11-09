@@ -95,7 +95,7 @@ func newBundleFake(t *testing.T, cfg map[string]any) (*bundleFake, *httptest.Ser
 		file, h, _ := r.FormFile("file")
 		data, _ := io.ReadAll(file)
 		f.mu.Lock()
-		f.members[pos], f.names[pos] = data, h.Filename
+		f.members[pos], f.names[pos] = data, sanitizeLikeServer(h.Filename)
 		f.mu.Unlock()
 		w.WriteHeader(201)
 		json.NewEncoder(w).Encode(map[string]any{"bundle_id": 7, "bundle_position": pos, "original_filename": h.Filename, "file_size": len(data)})
@@ -335,5 +335,40 @@ func TestDownloadBundle_KeyedLinkRefusesUnencryptedClaim(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("saved files: %v", entries)
+	}
+}
+
+// sanitizeLikeServer mirrors utils.SanitizeFilename: anything but letters,
+// digits, space, '-', '_' and '.' becomes '_'.
+func sanitizeLikeServer(name string) string {
+	out := []rune(name)
+	for i, r := range out {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == ' ' || r == '-' || r == '_' || r == '.') {
+			out[i] = '_'
+		}
+	}
+	return string(out)
+}
+
+// TestDownloadBundle_VisibleNameWithSpecialCharacters: with the name left
+// visible (ShowFilename), the server stores a cleaned-up name; the
+// encrypted manifest's name is the real one and must win, not count as tampering.
+func TestDownloadBundle_VisibleNameWithSpecialCharacters(t *testing.T) {
+	_, srv := newBundleFake(t, bundleTestConfig)
+	c := bundleClient(t, srv)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "photo (1)&co.txt")
+	if err := os.WriteFile(p, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.UploadBundle(context.Background(), []string{p}, &UploadOptions{Encrypt: EncryptAlways, ShowFilename: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, _ := ParseBundleURL(res.BundleURL)
+	out := filepath.Join(t.TempDir(), "out")
+	saved, err := c.DownloadBundle(context.Background(), link, out, nil)
+	if err != nil || len(saved) != 1 || filepath.Base(saved[0]) != "photo (1)&co.txt" {
+		t.Fatalf("saved %v, err %v", saved, err)
 	}
 }

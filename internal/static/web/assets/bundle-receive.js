@@ -232,10 +232,13 @@
             } else {
                 data = plain;
             }
-            var actualName = payloadName || entry.storedName;
+            // The name is checked only when it travelled inside the encrypted
+            // payload. A name left visible was cleaned up by the server; the
+            // encrypted file list holds the real one. Content is always
+            // checked by size and SHA-256.
             var want = state.manifest.files[entry.position];
             var sha = await SafeShareCrypto.sha256Hex(data);
-            if (actualName !== want.name || data.byteLength !== want.size || sha !== want.sha256) {
+            if ((payloadName && payloadName !== want.name) || data.byteLength !== want.size || sha !== want.sha256) {
                 var t = new Error('manifest mismatch');
                 t.userMessage = MSG_TAMPERED;
                 throw t;

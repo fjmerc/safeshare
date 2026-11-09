@@ -27,16 +27,16 @@ async function apiBundle(baseURL, files, settings = {}) {
 }
 
 // Create an encrypted bundle through the upload page; returns its link.
-async function e2eBundleViaPage(browser, baseURL, paths) {
+async function e2eBundleViaPage(browser, baseURL, paths, hideFilename = true) {
     const context = await H.newBrowserContext(browser, baseURL);
     const page = await context.newPage();
     await page.goto(baseURL + '/');
-    await page.evaluate(() => {
+    await page.evaluate((hideFilename) => {
         const t = document.getElementById('e2eEncryptionToggle');
         if (t && !t.checked) t.click();
         const h = document.getElementById('e2eHideFilenameToggle');
-        if (h && !h.checked) h.click();
-    });
+        if (h && h.checked !== hideFilename) h.click();
+    }, hideFilename);
     await page.setInputFiles('#fileInput', paths);
     await page.waitForFunction(() => !document.getElementById('uploadButton').disabled);
     await page.click('#uploadButton');
@@ -113,6 +113,24 @@ async function openReceive(browser, baseURL, link) {
             await page.waitForFunction(() => window.__shared !== null);
             const shared = await page.evaluate(() => window.__shared);
             H.check('e2e: Save all shares the decrypted files', JSON.stringify(shared) === JSON.stringify(['first.png:' + H.PNG_1PX.length, 'second.txt:11']), JSON.stringify(shared));
+            await context.close();
+        }
+
+        // Encrypted bundle with the names left visible: the server cleans up
+        // "photo (1)&co.png"; the encrypted file list's real name must win.
+        {
+            const odd = H.makeFiles([['photo (1)&co.png', H.PNG_1PX], ['notes+draft.txt', 'abc']]);
+            const link = await e2eBundleViaPage(browser, base, odd, false);
+            const { context, page } = await openReceive(browser, base, link);
+            await page.waitForFunction(() => !document.getElementById('bundleSaveAllButton').disabled ||
+                !document.getElementById('bundleError').classList.contains('hidden'), null, { timeout: 30000 });
+            H.check('visible names with special characters: no false tamper alarm', await page.isHidden('#bundleError'),
+                await page.textContent('#bundleError'));
+            await page.click('#bundleSaveAllButton').catch(() => {});
+            await page.waitForFunction(() => window.__shared !== null, null, { timeout: 5000 }).catch(() => {});
+            const shared = await page.evaluate(() => window.__shared);
+            H.check('visible names with special characters: saved under the real names',
+                JSON.stringify(shared) === JSON.stringify(['photo (1)&co.png:' + H.PNG_1PX.length, 'notes+draft.txt:3']), JSON.stringify(shared));
             await context.close();
         }
 
