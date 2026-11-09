@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -124,6 +125,7 @@ type CleanupResult struct {
 	OrphanedBytes      int64 // Bytes reclaimed from orphaned chunks
 	OrphanedFilesCount int   // Orphaned complete files (no DB record)
 	OrphanedFilesBytes int64 // Bytes reclaimed from orphaned complete files
+	BundlesDeleted     int   // Abandoned draft bundles and published bundles with no files left
 }
 
 // CleanupAbandonedUploads removes abandoned partial uploads and returns statistics
@@ -300,7 +302,54 @@ func CleanupAbandonedUploads(repos *repository.Repositories, uploadDir string, e
 		slog.Error("failed to cleanup partial uploads directory", "error", err)
 	}
 
+	result.BundlesDeleted = cleanupBundles(ctx, repos, uploadDir, expiryHours)
+
 	return result, nil
+}
+
+// cleanupBundles deletes draft bundles older than expiryHours (an upload
+// that never finished publishing), together with their files, and
+// published bundles whose files have all gone (expired or deleted).
+// Returns how many bundles it deleted; errors are logged, not returned.
+func cleanupBundles(ctx context.Context, repos *repository.Repositories, uploadDir string, expiryHours int) int {
+	if repos.Bundles == nil {
+		return 0
+	}
+	// One extra hour: in anonymous mode created_at is rounded down to the
+	// hour, so a draft can look up to an hour older than it really is.
+	drafts, err := repos.Bundles.ListAbandonedDrafts(ctx, time.Now().Add(-time.Duration(expiryHours)*time.Hour-time.Hour))
+	if err != nil {
+		slog.Error("failed to list abandoned bundles", "error", err)
+	}
+	empty, err := repos.Bundles.ListEmptyPublished(ctx)
+	if err != nil {
+		slog.Error("failed to list empty bundles", "error", err)
+	}
+
+	deleted := 0
+	for _, id := range append(drafts, empty...) {
+		files, err := repos.Bundles.DeleteWithMembers(ctx, id)
+		if err != nil {
+			if !errors.Is(err, repository.ErrNotFound) {
+				slog.Error("failed to delete bundle", "bundle_id", id, "error", err)
+			}
+			continue
+		}
+		for _, f := range files {
+			if err := ValidateStoredFilename(f.StoredFilename); err != nil {
+				slog.Error("refusing to remove file with invalid stored filename", "error", err)
+				continue
+			}
+			if err := os.Remove(filepath.Join(uploadDir, f.StoredFilename)); err != nil && !os.IsNotExist(err) {
+				slog.Error("failed to remove bundle file", "bundle_id", id, "error", err)
+			}
+		}
+		deleted++
+	}
+	if deleted > 0 {
+		slog.Info("cleaned up bundles", "deleted", deleted)
+	}
+	return deleted
 }
 
 // CleanupOrphanedFiles removes files from the uploads directory that have no

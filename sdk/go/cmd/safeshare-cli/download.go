@@ -26,8 +26,8 @@ func downloadCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "download <claim-code | share-link | -> [destination]",
-		Short: "Download a file by claim code or encrypted share link",
+		Use:   "download <claim-code | share-link | bundle-link | -> [destination]",
+		Short: "Download a file by claim code or share link, or every file of a bundle link",
 		Long: `Download a file from SafeShare using its claim code.
 
 If no destination is specified, the file is saved to the current directory
@@ -37,6 +37,11 @@ End-to-end encrypted files are decrypted on this machine. Give the share link
 (https://host/#/claim/CODE/key/KEY), or "-" to read it from standard input so
 the key stays out of your shell history and the process list. Alternatively
 give the claim code and put the key in the SAFESHARE_KEY environment variable.
+
+A bundle link (https://host/#/bundle/CODE, with /key/KEY when encrypted)
+downloads every file of the bundle into a directory: the destination, by
+default the bundle code. Encrypted bundles are checked against their file
+list; if anything differs, nothing is saved.
 
 Files sent with a server's drop page (/drop) are encrypted to the recipient's
 age key. Give the key file with --identity: the drop is decrypted and its
@@ -64,6 +69,13 @@ Examples:
 				}
 			} else if strings.Contains(target, "/key/") {
 				fmt.Fprintln(os.Stderr, "[WARNING] The share link (and its key) on the command line is visible in the process list and shell history. Use \"download -\" to read it from standard input.")
+			}
+
+			if strings.Contains(target, "#/bundle/") {
+				if identity != "" {
+					return fmt.Errorf("--identity takes a drop's claim code, not a bundle link")
+				}
+				return downloadBundleLink(cmd, target, args[1:], password, overwrite)
 			}
 
 			if identity != "" {

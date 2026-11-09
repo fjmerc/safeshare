@@ -123,6 +123,22 @@ fmt.Println(result.ShareURL) // https://host/#/claim/CODE/key/KEY - keep it secr
 
 The filename is hidden inside the encrypted payload unless `ShowFilename` is set, and encrypted uploads are always padded to a size bucket. `EncryptAuto` follows the server's settings; use `EncryptAlways` if the server itself isn't trusted to report them. The SDK cannot remove metadata: on Ghost servers, JPEG, PNG, PDF and Office files fail with `ErrMetadataNotRemoved` unless `KeepMetadata` is set. Encrypted files are held in memory whole.
 
+#### Upload Several Files as One Bundle
+
+`UploadBundle` puts several files behind one code and one link. The link opens a page that lists every file, with a Save all button. The options apply to the whole bundle; `DownloadLimit` counts per file. If any file fails, the draft is deleted, no link exists, and the error is a `*BundleUploadError` naming the file.
+
+```go
+res, err := client.UploadBundle(ctx, []string{"cover.png", "slide-2.png"}, &safeshare.UploadOptions{
+    ExpiresInHours: &hours,
+})
+fmt.Println(res.BundleURL) // for an encrypted bundle this holds the key
+for _, f := range res.Files {
+    fmt.Println(f.Position, f.Name, f.Size)
+}
+```
+
+An encrypted bundle uses one key for all its files and also stores its file list (names, sizes, SHA-256), encrypted under that key, so a recipient can check that nothing was dropped or swapped.
+
 #### Chunked Upload Progress
 
 For large files, the progress callback includes chunk information:
@@ -188,6 +204,15 @@ for _, file := range files {
 
 The directory must not exist yet (its parent must). Only plain files are written, with mode 0600 and safe names; an archive with anything else, or a download that fails to decrypt to the last byte, is refused and the directory removed. `ExtractDrop` does the same for a drop already downloaded (`safeshare-drop.tar.age`).
 
+#### Download a Bundle
+
+```go
+link, err := safeshare.ParseBundleURL("https://share.example.com/#/bundle/Xk3pQ9aB/key/...")
+paths, err := client.DownloadBundle(ctx, link, "./bundle", nil)
+```
+
+Every file is saved into the directory (created if needed). For an encrypted bundle each file is decrypted and checked against the bundle's file list before anything is saved; a mismatch returns an error wrapping `ErrManifestMismatch` and saves nothing. `GetBundleInfo` returns the file list without downloading.
+
 #### Download to Writer
 
 ```go
@@ -231,6 +256,17 @@ for _, file := range response.Files {
 
 fmt.Printf("Total: %d\n", response.Total)
 ```
+
+#### List Bundles
+
+```go
+page, err := client.ListBundles(ctx, 50, 0)
+for _, b := range page.Bundles {
+    fmt.Println(b.BundleCode, b.FileCount)
+}
+```
+
+`ListFiles` does not include files that are in a bundle.
 
 #### Delete a File
 
@@ -430,6 +466,12 @@ To open a link on a phone, add `--qr`: each link is also drawn as a QR code in t
 
 Flags for encrypted uploads: `--encrypt`, `--no-encrypt`, `--show-filename` (let the server see the name), `--keep-metadata` (allow JPEG/PNG/PDF/Office files on Ghost servers; the CLI can't remove their metadata).
 
+To send several files as **one link**, add `--bundle`. The link (and with `--qr`, one QR code) opens a page listing every file with a Save all button, which on a phone saves them all to the photo library in one go. `--expires`, `--limit` and `--password` apply to the bundle, and `--limit` counts per file. A bundle is created whole or not at all: if any file fails, nothing is kept and no link is printed (`--fail-fast` doesn't apply).
+
+```bash
+safeshare-cli upload --bundle --qr cover.png slide-2.png slide-3.png --expires 24
+```
+
 #### Download
 
 ```bash
@@ -444,6 +486,9 @@ safeshare-cli download abc12345 ./output.pdf --overwrite
 
 # Encrypted file: read the share link from stdin (keeps the key out of shell history)
 safeshare-cli download - < link.txt
+
+# Bundle link: every file into a directory (default: the bundle code)
+safeshare-cli download - ./promo < bundle-link.txt
 
 # Drop-page submission: decrypt with your age key into a new directory (default drop-CODE)
 safeshare-cli download abc12345 --identity drop-key.txt
@@ -460,6 +505,9 @@ safeshare-cli info abc12345
 ```bash
 # List your files
 safeshare-cli list
+
+# Your bundles (files in bundles aren't in the plain list)
+safeshare-cli list --bundles
 
 # With pagination
 safeshare-cli list --limit 50 --offset 50
@@ -516,6 +564,14 @@ url=$(safeshare-cli upload video.mp4 --expires 24 --json | jq -r .url)
 safeshare-cli upload a.mp4 b.txt --json | jq -r '.[] | .url // "FAILED \(.file): \(.error)"'
 ```
 
+`upload --bundle` prints one object for the whole bundle (its `url` holds the key when encrypted):
+
+```json
+{"schema":1,"bundle_code":"Xk3pQ9aB","url":"https://share.example.com/#/bundle/Xk3pQ9aB","expires_at":"2026-10-27T12:00:00Z","download_limit":null,"password_protected":false,"encrypted":false,"files":[{"position":0,"file":"cover.png","name":"cover.png","size":48213}]}
+```
+
+If the bundle could not be created it prints one object with `file` (the file that failed, if any), `error` and possibly `code`/`status`, and the exit status is 1.
+
 > **Warning: the JSON of an encrypted upload is a secret.** Its `url` holds the decryption key after the `#`, and anyone who sees it can read the file. Don't write it to logs, CI output, shared files or anywhere else you wouldn't put a password. (The Go SDK leaves the key and the link out of `UploadResult`'s JSON for this reason; the CLI adds the link because it is what the command is for.)
 
 The other commands print:
@@ -525,7 +581,8 @@ The other commands print:
 | `info` | `claim_code` and the file's details: `filename`, `size`, `mime_type`, `expires_at`, `password_protected`, `downloads_remaining`, `client_encrypted`, `download_available`, `scan_status` |
 | `list` | `files` (each with `claim_code`, `filename`, `size`, `uploaded_at`, `expires_at`, `completed_downloads`, `download_limit`, ...), `total`, `page`, `per_page` |
 | `config` | `url` and the server's settings, including `version` |
-| `download` | `claim_code`, `filename`, `size`, `path` (where it was saved), `decrypted`; for a drop, `path` (the directory) and `files` |
+| `download` | `claim_code`, `filename`, `size`, `path` (where it was saved), `decrypted`; for a drop, `path` (the directory) and `files`; for a bundle link, `bundle_code`, `dir`, `files` (each with `name`, `path`, `size`) and `decrypted` |
+| `list --bundles` | `bundles` (each with `id`, `bundle_code`, `created_at`, `expires_at`, `max_downloads`, `password_protected`, `client_encrypted`, `file_count`, `total_size`, `files`), `total`, `limit`, `offset` |
 | `delete` | `claim_code`, `deleted`. Needs `--force`, since it can't ask |
 | `rename` | `claim_code`, `filename` |
 | `version` | `version`, `go`, `os`, `arch` |

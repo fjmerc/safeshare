@@ -54,6 +54,12 @@ var tokenPolicy = []tokenRule{
 	{"", "/api/upload/status/", utils.ScopeUpload},
 	{"", "/api/user/files", utils.ScopeManage},
 	{"", "/api/user/files/", utils.ScopeManage},
+	// Bundles: a draft is created, published or discarded (only while a
+	// draft, with its own upload token) as part of uploading.
+	{"", "/api/bundles", utils.ScopeUpload},
+	{"", "/api/bundles/", utils.ScopeUpload},
+	{"", "/api/user/bundles", utils.ScopeManage},
+	{"", "/api/user/bundles/", utils.ScopeManage},
 	{http.MethodGet, "/api/tokens", utils.ScopeManage},
 	{http.MethodGet, "/api/auth/user", ""},
 }

@@ -27,7 +27,8 @@ const partialUploadColumns = `
 	chunks_received, received_bytes, expires_in_hours, max_downloads,
 	password_hash, created_at, last_activity, completed, claim_code,
 	status, error_message, assembly_started_at, assembly_completed_at, client_encrypted, error_code,
-	processing_owner, lease_expires_at, assembly_attempts, error_retryable, uploader_ip
+	processing_owner, lease_expires_at, assembly_attempts, error_retryable, uploader_ip,
+	bundle_id, bundle_position
 `
 
 // PartialUploadRepository implements repository.PartialUploadRepository for SQLite.
@@ -54,8 +55,8 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code, status,
-			client_encrypted, uploader_ip
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			client_encrypted, uploader_ip, bundle_id, bundle_position
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	status := upload.Status
@@ -82,6 +83,8 @@ func (r *PartialUploadRepository) Create(ctx context.Context, upload *models.Par
 		status,
 		upload.ClientEncrypted,
 		nullableString(upload.UploaderIP),
+		upload.BundleID,
+		upload.BundlePosition,
 	)
 
 	if err != nil {
@@ -169,8 +172,8 @@ func (r *PartialUploadRepository) createWithQuotaCheckOnce(ctx context.Context, 
 			upload_id, user_id, filename, total_size, chunk_size, total_chunks,
 			chunks_received, received_bytes, expires_in_hours, max_downloads,
 			password_hash, created_at, last_activity, completed, claim_code, status,
-			client_encrypted, uploader_ip
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			client_encrypted, uploader_ip, bundle_id, bundle_position
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = tx.ExecContext(ctx, insertQuery,
@@ -192,6 +195,8 @@ func (r *PartialUploadRepository) createWithQuotaCheckOnce(ctx context.Context, 
 		status,
 		upload.ClientEncrypted,
 		nullableString(upload.UploaderIP),
+		upload.BundleID,
+		upload.BundlePosition,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert partial upload: %w", err)
@@ -1024,6 +1029,7 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 	var processingOwner sql.NullString
 	var leaseExpiresAt sql.NullString
 	var uploaderIP sql.NullString
+	var bundleID, bundlePosition sql.NullInt64
 	var errorRetryable sql.NullBool
 	var createdAt, lastActivity string
 
@@ -1054,6 +1060,8 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 		&upload.AssemblyAttempts,
 		&errorRetryable,
 		&uploaderIP,
+		&bundleID,
+		&bundlePosition,
 	)
 	if err != nil {
 		return err
@@ -1106,6 +1114,14 @@ func scanPartialUploadInto(row partialUploadScanner, upload *models.PartialUploa
 	upload.ErrorRetryable = errorRetryable.Valid && errorRetryable.Bool
 	if uploaderIP.Valid {
 		upload.UploaderIP = uploaderIP.String
+	}
+	if bundleID.Valid {
+		id := bundleID.Int64
+		upload.BundleID = &id
+	}
+	if bundlePosition.Valid {
+		pos := int(bundlePosition.Int64)
+		upload.BundlePosition = &pos
 	}
 
 	return nil

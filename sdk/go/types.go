@@ -78,6 +78,10 @@ type UploadOptions struct {
 	// UploadResult.MetadataKept says the metadata was kept (the web app warns
 	// rather than refusing there too).
 	KeepMetadata bool
+
+	// Set by UploadBundle for each file it uploads into a bundle.
+	member    *bundleMember // the draft bundle and position this file joins
+	bundleKey string        // the bundle key, used instead of a fresh per-file key
 }
 
 // UploadProgress provides information about upload progress.

@@ -498,6 +498,7 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 			PasswordProtected  bool      `json:"password_protected"`
 			ScanStatus         string    `json:"scan_status"`
 			ScanResult         string    `json:"scan_result"`
+			BundleID           *int64    `json:"bundle_id,omitempty"` // set for a file that is part of a bundle
 		}
 
 		fileResponses := make([]FileResponse, len(files))
@@ -518,6 +519,7 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 				PasswordProtected:  file.PasswordHash != "",
 				ScanStatus:         file.ScanStatus,
 				ScanResult:         file.ScanResult,
+				BundleID:           file.BundleID,
 			}
 		}
 
@@ -572,6 +574,21 @@ func AdminDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) 
 		}
 
 		// Delete file from database and get file info
+		// A file in a bundle takes the whole bundle with it.
+		if isMember, err := deleteBundleOfMember(ctx, r, repos, cfg, claimCode); isMember || err != nil {
+			if err != nil {
+				slog.Error("admin bundle deletion failed", "claim_code", redactClaimCode(claimCode), "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "File deleted successfully, together with the other files in its bundle",
+			})
+			return
+		}
+
 		file, err := repos.Files.DeleteByClaimCode(ctx, claimCode)
 		if err != nil {
 			slog.Error("admin file deletion failed",
@@ -670,7 +687,30 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 		}
 
 		// Delete files from database and get file info
-		files, err := repos.Files.DeleteByClaimCodes(ctx, claimCodes)
+		// Files in a bundle take their whole bundle with them; the rest are
+		// deleted as before.
+		requestedCount := len(claimCodes)
+		standalone := claimCodes[:0:0]
+		bundleFiles := 0
+		for _, code := range claimCodes {
+			isMember, err := deleteBundleOfMember(ctx, r, repos, cfg, code)
+			if err != nil {
+				slog.Error("admin bundle deletion failed", "claim_code", redactClaimCode(code), "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if isMember {
+				bundleFiles++
+			} else {
+				standalone = append(standalone, code)
+			}
+		}
+		claimCodes = standalone
+		var files []*models.File
+		var err error
+		if len(claimCodes) > 0 {
+			files, err = repos.Files.DeleteByClaimCodes(ctx, claimCodes)
+		}
 		if err != nil {
 			slog.Error("admin bulk file deletion failed",
 				"count", len(claimCodes),
@@ -682,7 +722,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 		}
 
 		// Delete physical files
-		deletedCount := 0
+		deletedCount := bundleFiles
 		deletedIDs := make([]int64, 0, len(files))
 		for _, file := range files {
 			// Validate stored filename (defense-in-depth against database corruption/compromise)
@@ -728,7 +768,7 @@ func AdminBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Con
 
 		slog.Info("admin bulk deleted files",
 			"deleted_count", deletedCount,
-			"requested_count", len(claimCodes),
+			"requested_count", requestedCount,
 			"admin_ip", logIP(getClientIP(r), cfg),
 		)
 		recordAdmin(r, cfg, audit.Event{Action: "file_bulk_delete", Outcome: models.AuditOutcomeSuccess, ResourceType: "file",

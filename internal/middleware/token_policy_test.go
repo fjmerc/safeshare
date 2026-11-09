@@ -33,6 +33,15 @@ func TestTokenRequirement(t *testing.T) {
 		{"GET", "/api/auth/user", "", true},
 		{"HEAD", "/api/auth/user", "", true}, // HEAD is a GET without a body
 		{"HEAD", "/api/tokens", "manage", true},
+		// Bundles (several files under one link): creating, publishing and
+		// discarding a draft is part of uploading; the owner routes manage.
+		{"POST", "/api/bundles", "upload", true},
+		{"POST", "/api/bundles/42/publish", "upload", true},
+		{"DELETE", "/api/bundles/42", "upload", true},
+		{"GET", "/api/user/bundles", "manage", true},
+		{"PUT", "/api/user/bundles/42/expiration", "manage", true},
+		{"DELETE", "/api/user/bundles/42", "manage", true},
+		{"GET", "/api/bundlesx", "", false},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
 		{"DELETE", "/api/tokens/5", "", false},

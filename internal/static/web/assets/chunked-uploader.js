@@ -35,6 +35,9 @@ class ChunkedUploader {
             clientEncrypted: !!options.clientEncrypted,
             // false (Ghost mode): never write resume state (it holds the filename) to localStorage
             persistState: options.persistState !== false,
+            // Bundle membership {id, position, token}: the file joins a draft
+            // bundle and takes its settings; the server returns no claim code.
+            bundle: options.bundle || null,
             concurrency: options.concurrency || 10, // Increased from 6 to 10 for HTTP/2
             // 6 attempts with jittered 1s→30s backoff ride out ~30-60s of
             // network trouble (Wi-Fi handoff, brief outage) per chunk.
@@ -157,8 +160,9 @@ class ChunkedUploader {
                 signal: this.abortController.signal,
                 headers: Object.assign({
                     'Content-Type': 'application/json'
-                }, this.options.clientEncrypted ? { 'X-SafeShare-Client-Encrypted': 'true' } : {}),
-                body: JSON.stringify({
+                }, this.options.clientEncrypted ? { 'X-SafeShare-Client-Encrypted': 'true' } : {},
+                this.options.bundle ? { 'X-Bundle-Upload-Token': this.options.bundle.token } : {}),
+                body: JSON.stringify(Object.assign({
                     filename: this.file.name,
                     total_size: this.file.size,
                     chunk_size: this.chunkSize || 5242880, // Will be overridden by server
@@ -166,7 +170,7 @@ class ChunkedUploader {
                     max_downloads: this.options.maxDownloads,
                     password: this.options.password,
                     client_encrypted: this.options.clientEncrypted
-                })
+                }, this.options.bundle ? { bundle_id: this.options.bundle.id, bundle_position: this.options.bundle.position } : {}))
             });
 
             if (!response.ok) {
@@ -566,6 +570,15 @@ class ChunkedUploader {
 
                 // Check status field
                 if (status.status === 'completed') {
+                    // A bundle member has no claim code of its own.
+                    if (this.options.bundle) {
+                        return {
+                            bundle_id: this.options.bundle.id,
+                            bundle_position: this.options.bundle.position,
+                            original_filename: status.filename,
+                            file_size: status.file_size
+                        };
+                    }
                     // Assembly complete - return result
                     if (!status.claim_code || !status.download_url) {
                         const error = new Error('Assembly completed but missing claim_code or download_url');

@@ -78,6 +78,7 @@ func NewRepositories(cfg *config.Config) (*repository.Repositories, func(), erro
 		MFA:             NewMFARepository(pool),
 		SSO:             NewSSORepository(pool),
 		AuditLogs:       NewAuditLogRepository(pool),
+		Bundles:         NewBundleRepository(pool),
 		DB:              nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:    repository.DatabaseTypePostgreSQL,
 		Cleanup:         cleanup,
@@ -109,6 +110,7 @@ func NewRepositoriesWithPool(pool *Pool) (*repository.Repositories, error) {
 		MFA:             NewMFARepository(pool),
 		SSO:             NewSSORepository(pool),
 		AuditLogs:       NewAuditLogRepository(pool),
+		Bundles:         NewBundleRepository(pool),
 		DB:              nil, // PostgreSQL doesn't use *sql.DB
 		DatabaseType:    repository.DatabaseTypePostgreSQL,
 		Cleanup:         nil, // Caller manages the pool lifecycle
