@@ -274,10 +274,23 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// before each download.
 				limit = rl.config.GetRateLimitDownload() * claimInfoLimitMultiplier
 				limitType = "claim_info"
-			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") {
+			} else if strings.HasPrefix(r.URL.Path, "/api/bundle/") && strings.HasSuffix(r.URL.Path, "/info") {
+				// A bundle code lookup is the same kind of "does this code
+				// exist?" probe as a claim info lookup: same bucket.
+				limit = rl.config.GetRateLimitDownload() * claimInfoLimitMultiplier
+				limitType = "claim_info"
+			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") || strings.HasPrefix(r.URL.Path, "/api/bundle/") {
+				// Each file of a bundle is a download, like a single-file claim.
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
-			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
+			} else if r.URL.Path == "/api/bundles" || strings.HasPrefix(r.URL.Path, "/api/bundles/") {
+				// Creating, publishing and deleting a bundle: one bucket at
+				// the upload limit. The member files themselves go through
+				// /api/upload and /api/upload/init and count as uploads.
+				limit = rl.config.GetRateLimitUpload()
+				limitType = "bundle_manage"
+			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" ||
+				(strings.HasPrefix(r.URL.Path, "/api/user/bundles/") && strings.HasSuffix(r.URL.Path, "/regenerate-code")) {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP
 				limitType = "regeneration"
 			} else {

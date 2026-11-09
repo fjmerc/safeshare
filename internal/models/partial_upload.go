@@ -43,6 +43,11 @@ type PartialUpload struct {
 	// UploaderIP is set at init time (storeIP) so recovery/takeover keeps
 	// the real uploader IP instead of a synthetic "recovery-worker" value.
 	UploaderIP string `json:"-"`
+	// BundleID/BundlePosition record bundle membership at init time, because
+	// assembly can run with no request (RecoverAssembly) and the published
+	// files row must still land in its bundle. Nil for a standalone upload.
+	BundleID       *int64 `json:"-"`
+	BundlePosition *int   `json:"-"`
 }
 
 // UploadInitRequest represents the request to initialize a chunked upload
@@ -54,6 +59,10 @@ type UploadInitRequest struct {
 	MaxDownloads    int    `json:"max_downloads"`
 	Password        string `json:"password,omitempty"`
 	ClientEncrypted bool   `json:"client_encrypted,omitempty"`
+	// Bundle membership (both set, or neither). The bundle's settings replace
+	// expires_in_hours, max_downloads and password for a member.
+	BundleID       *int64 `json:"bundle_id,omitempty"`
+	BundlePosition *int   `json:"bundle_position,omitempty"`
 }
 
 // UploadInitResponse represents the response after initializing a chunked upload

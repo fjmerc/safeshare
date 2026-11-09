@@ -176,6 +176,18 @@ func deepCopyFile(src *models.File) *models.File {
 	if len(src.EncFileID) > 0 {
 		dst.EncFileID = append([]byte(nil), src.EncFileID...)
 	}
+	if src.BundleID != nil {
+		id := *src.BundleID
+		dst.BundleID = &id
+	}
+	if src.BundlePosition != nil {
+		pos := *src.BundlePosition
+		dst.BundlePosition = &pos
+	}
+	if src.PartialUploadID != nil {
+		pid := *src.PartialUploadID
+		dst.PartialUploadID = &pid
+	}
 	return &dst
 }
 
@@ -329,6 +341,12 @@ func (r *FileRepository) GetByClaimCode(ctx context.Context, claimCode string) (
 
 	// Check if expired
 	if time.Now().After(file.ExpiresAt) {
+		return nil, nil
+	}
+
+	// Bundle members are never reachable by their claim code (SQLite/Postgres
+	// filter on bundle_id IS NULL).
+	if file.BundleID != nil {
 		return nil, nil
 	}
 

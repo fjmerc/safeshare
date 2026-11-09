@@ -64,8 +64,9 @@ func (rw *responseWriter) ReadFrom(src io.Reader) (int64, error) {
 // whatever it wraps) and recurse back into responseWriter.ReadFrom.
 type onlyWriter struct{ io.Writer }
 
-// claimCodeRegex matches claim codes in URLs (e.g., /api/claim/ABC123xyz or /api/claim/ABC-123-xyz/info)
-var claimCodeRegex = regexp.MustCompile(`(/api/claim/)([^/\s]+)`)
+// claimCodeRegex matches claim codes and bundle codes in URLs (e.g.,
+// /api/claim/ABC123xyz, /api/claim/ABC-123-xyz/info, /api/bundle/ABC123xyz/files/0)
+var claimCodeRegex = regexp.MustCompile(`(/api/(?:claim|bundle)/)([^/\s]+)`)
 
 // redactPathClaimCodes redacts claim codes from URL paths for secure logging
 // Example: /api/claim/Xy9kLm8pQz4vDwE/info -> /api/claim/Xy9...wE/info
@@ -81,7 +82,7 @@ func redactPathClaimCodes(path string) string {
 		if len(submatches) < 3 {
 			return match
 		}
-		prefix := submatches[1]    // "/api/claim/"
+		prefix := submatches[1]    // "/api/claim/" or "/api/bundle/"
 		claimCode := submatches[2] // The actual claim code
 
 		return prefix + claimcode.Mask(claimCode)

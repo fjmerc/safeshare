@@ -197,8 +197,8 @@ func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error 
 			claim_code, original_filename, stored_filename, file_size,
 			mime_type, expires_at, max_downloads, uploader_ip, password_hash, user_id, sha256_hash,
 			client_encrypted, enc_file_id, scan_status, scan_result, scanned_at, partial_upload_id,
-			created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+			bundle_id, bundle_position, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
 	`
 
 	expiresAtRFC3339 := file.ExpiresAt.Format(time.RFC3339)
@@ -223,6 +223,8 @@ func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error 
 		nullableString(file.ScanResult),
 		nullableTimeRFC3339(file.ScannedAt),
 		file.PartialUploadID,
+		file.BundleID,
+		file.BundlePosition,
 		nullableCreatedAt(file.CreatedAt),
 	)
 	if err != nil {
@@ -236,4 +238,17 @@ func insertFile(ctx context.Context, execer sqlExecer, file *models.File) error 
 
 	file.ID = id
 	return nil
+}
+
+// applyBundleColumns copies nullable files.bundle_id / bundle_position scan
+// results onto file (nil for a standalone file).
+func applyBundleColumns(file *models.File, bundleID, bundlePosition sql.NullInt64) {
+	if bundleID.Valid {
+		id := bundleID.Int64
+		file.BundleID = &id
+	}
+	if bundlePosition.Valid {
+		pos := int(bundlePosition.Int64)
+		file.BundlePosition = &pos
+	}
 }

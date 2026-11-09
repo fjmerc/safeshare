@@ -35,6 +35,35 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-09
+
+### Added
+
+- **Several files under one link (bundles).** Choose two or more files on the upload page, or run `safeshare-cli upload --bundle a.png b.png c.png`, and get one link and one QR code for all of them. The link opens a page listing every file with previews and a **Save all** button: on a phone it opens the share sheet, so one more tap saves them all to Photos; on a computer it downloads each file. Expiry, download limit and password apply to the whole bundle, and the download limit counts per file. A bundle is created whole or not at all: if any file fails, nothing is kept and no link is shown.
+  - A bundle with no download limit loads its files as soon as the page opens; one with a limit waits for a **Get files** tap, so opening the link by accident doesn't spend downloads.
+  - End-to-end encrypted bundles use one key for all their files and carry an encrypted file list (names, sizes, SHA-256). The page and the CLI check every file against it and refuse to save anything that was dropped, swapped or changed.
+  - `safeshare-cli download <bundle link> [folder]` saves every file of a bundle; `safeshare-cli list --bundles` lists yours. The Go SDK gains `UploadBundle`, `DownloadBundle`, `GetBundleInfo` and `ListBundles`.
+  - My Dashboard has a **My Bundles** section: copy the link (unencrypted bundles), change the expiry, get a new code, or delete.
+  - New API: `/api/bundles`, `/api/bundle/{code}/info`, `/api/bundle/{code}/files/{n}` and `/api/user/bundles`; see `docs/API_REFERENCE.md`. New setting `MAX_FILES_PER_BUNDLE` (default 10, up to 100); `/api/config` reports it as `max_files_per_bundle`.
+
+### Changed
+
+- Files in a bundle are not listed by `/api/user/files`, so older CLIs and SDKs (and `safeshare-cli list` without `--bundles`) don't show them. They can't be opened by their own claim code, and an admin deleting any one of them deletes the whole bundle.
+
+### Fixed
+
+- **"Never expire" works for large uploads from the web page.** Files big enough to use chunked upload (100 MB and up by default) were stored with a 24-hour expiry when "never expire" was chosen. Files uploaded that way before this fix were given a 24-hour expiry and may already be gone; check My Dashboard for any still listed and change their expiry if they should be kept.
+
+### Security
+
+- **API token scopes are now enforced.** Until now a token could use any route its user could, whatever scopes it was created with: a token made with only `download` could upload, list and delete files. Now:
+  - `upload` is needed for the upload endpoints and bundle uploads, and `manage` for `/api/user/files`, `/api/user/bundles` and listing tokens. A token without the scope gets `403` with `INSUFFICIENT_SCOPE`.
+  - Account security - changing the password, MFA, SSO linking, logout and token management - needs a signed-in browser session; API tokens get `403` with `SESSION_REQUIRED`, whatever their scopes.
+  - Browser sessions and anonymous uploads are unaffected.
+  - The `admin` scope implies the others.
+  - **Check your tokens:** a script whose token lacks the scope it uses will now be refused. Create a token with the right scopes, or set `ENFORCE_API_TOKEN_SCOPES=false` to skip the scope checks for now (the server logs a warning at startup); account-security routes stay closed to tokens either way.
+  - The Go SDK reports these refusals as `ErrInsufficientScope` (previously they had no specific error type).
+
 ## [1.18.2] - 2026-11-05
 
 ### Changed

@@ -819,6 +819,49 @@ CREATE TABLE IF NOT EXISTS audit_log_state (
 INSERT INTO audit_log_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 `,
 	},
+	{
+		Version:     16,
+		Name:        "016_bundles",
+		Description: "Multi-file bundles: one code and one link for a set of files",
+		SQL: `
+-- See internal/database/migrations/028_bundles.sql (the SQLite counterpart).
+-- files.bundle_id has no ON DELETE action on purpose: a bundle that still
+-- has members cannot be deleted, so members are always removed first.
+CREATE TABLE IF NOT EXISTS bundles (
+    id                 BIGSERIAL PRIMARY KEY,
+    bundle_code        TEXT UNIQUE NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+    file_count         INTEGER NOT NULL CHECK (file_count > 0),
+    upload_token_hash  TEXT NOT NULL,
+    created_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    published_at       TIMESTAMPTZ,
+    expires_at         TIMESTAMPTZ NOT NULL,
+    max_downloads      INTEGER,
+    password_hash      TEXT,
+    user_id            BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    client_encrypted   BOOLEAN NOT NULL DEFAULT FALSE,
+    encrypted_manifest BYTEA,
+    uploader_ip        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bundles_expires_at ON bundles(expires_at);
+CREATE INDEX IF NOT EXISTS idx_bundles_user_id ON bundles(user_id);
+CREATE INDEX IF NOT EXISTS idx_bundles_status ON bundles(status);
+
+ALTER TABLE files ADD COLUMN IF NOT EXISTS bundle_id BIGINT REFERENCES bundles(id);
+ALTER TABLE files ADD COLUMN IF NOT EXISTS bundle_position INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_files_bundle_id ON files(bundle_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_bundle_position
+    ON files(bundle_id, bundle_position)
+    WHERE bundle_id IS NOT NULL;
+
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS bundle_id BIGINT;
+ALTER TABLE partial_uploads ADD COLUMN IF NOT EXISTS bundle_position INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_partial_uploads_bundle ON partial_uploads(bundle_id, bundle_position);
+`,
+	},
 }
 
 // RunMigrations applies all pending database migrations to PostgreSQL.

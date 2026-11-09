@@ -87,6 +87,8 @@ func setupUserTestDB(t *testing.T) *sql.DB {
 			scan_status TEXT DEFAULT NULL,
 			scan_result TEXT DEFAULT NULL,
 			scanned_at TEXT DEFAULT NULL,
+			bundle_id INTEGER,
+			bundle_position INTEGER,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 		)
 	`)
