@@ -150,68 +150,274 @@
             }
         }
 
-        function bundleButton(label, action, bundle, extra) {
-            const btn = document.createElement('button');
+        // Bundles the user has opened, kept while the list reloads (after a
+        // delete, a new code or a refresh).
+        const openBundles = new Set();
+        let shownBundleIds = [];
+
+        // Static icon markup (no user data) for the bundle table.
+        const BUNDLE_ICONS = {
+            chevron: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"><polyline points="9 6 15 12 9 18"></polyline></svg>',
+            chevronDown: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"><polyline points="6 9 12 15 18 9"></polyline></svg>',
+            link: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>',
+            newCode: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>',
+            trash: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+            pencil: '<svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>',
+            lock: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>',
+            key: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="7.5" cy="15.5" r="5.5"></circle><path d="M21 2l-9.6 9.6"></path><path d="M15.5 7.5l3 3L22 7l-3-3"></path></svg>'
+        };
+
+        function el(tag, className, text) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined) node.textContent = text;
+            return node;
+        }
+
+        function cell(label, className) {
+            const td = el('td', className);
+            if (label) td.setAttribute('data-label', label);
+            return td;
+        }
+
+        function filesLabel(n) {
+            return n + (n === 1 ? ' file' : ' files');
+        }
+
+        function fullDate(dateString) {
+            return new Date(dateString).toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+
+        // "Never expires" is stored as 9999-12-31T23:59:59Z. Read the year in
+        // UTC: east of UTC that moment is already the year 10000 locally.
+        function isNeverExpire(dateString) {
+            return new Date(dateString).getUTCFullYear() >= 9999;
+        }
+
+        function bundleNeverExpires(bundle) {
+            return isNeverExpire(bundle.expires_at);
+        }
+
+        // [text, badge class]: expired, every file at its download limit, or active.
+        function bundleStatus(bundle) {
+            if (!bundleNeverExpires(bundle) && new Date(bundle.expires_at).getTime() <= Date.now()) return ['Expired', 'badge-danger'];
+            const files = bundle.files || [];
+            if (bundle.max_downloads && files.length > 0 && files.every((f) => f.completed_downloads >= bundle.max_downloads)) {
+                return ['Limit Reached', 'badge-warning'];
+            }
+            return ['Active', 'badge-success'];
+        }
+
+        function bundleActionButton(action, bundle, className, icon, label) {
+            const btn = el('button', className);
             btn.type = 'button';
-            btn.className = 'btn btn-secondary btn-small';
-            btn.textContent = label;
+            btn.innerHTML = icon;
             btn.setAttribute('data-action', action);
             btn.setAttribute('data-bundle-id', String(bundle.id));
             btn.setAttribute('data-bundle-code', bundle.bundle_code);
             btn.setAttribute('data-expires-at', bundle.expires_at);
-            if (extra) extra(btn);
+            btn.setAttribute('aria-label', label);
+            btn.title = label;
             return btn;
         }
 
-        // One expandable row per bundle. Built with DOM methods: names come from uploaders.
+        function bundleTag(icon, text, title) {
+            const tag = el('span', 'bundle-tag');
+            tag.innerHTML = icon;
+            tag.appendChild(document.createTextNode(text));
+            tag.title = title;
+            return tag;
+        }
+
+        // Shows or hides one bundle's files and updates both of its toggles.
+        function applyBundleOpen(bundleId) {
+            const open = openBundles.has(bundleId);
+            const row = document.querySelector(`#bundlesContainer tr.bundle-row[data-bundle-id="${bundleId}"]`);
+            if (!row) return;
+            const count = Number(row.getAttribute('data-file-count'));
+            row.classList.toggle('is-open', open);
+            const toggle = row.querySelector('.bundle-toggle');
+            toggle.setAttribute('aria-expanded', String(open));
+            const label = `${open ? 'Hide' : 'Show'} the ${filesLabel(count)} in bundle ${row.getAttribute('data-bundle-code')}`;
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+            const mobile = row.querySelector('.bundle-toggle-mobile');
+            mobile.setAttribute('aria-expanded', String(open));
+            const mobileText = `${open ? 'Hide' : 'Show'} ${filesLabel(count)}`;
+            mobile.querySelector('.bundle-toggle-text').textContent = mobileText;
+            mobile.setAttribute('aria-label', `${mobileText} in bundle ${row.getAttribute('data-bundle-code')}`);
+            document.querySelectorAll(`#bundlesContainer tr.bundle-file-row[data-bundle-id="${bundleId}"]`).forEach((tr) => {
+                tr.hidden = !open;
+            });
+        }
+
+        function updateBundlesToggleAll() {
+            const allOpen = shownBundleIds.length > 0 && shownBundleIds.every((id) => openBundles.has(id));
+            document.getElementById('bundlesToggleAllText').textContent = allOpen ? 'Collapse all' : 'Expand all';
+        }
+
+        function toggleBundle(bundleId) {
+            if (openBundles.has(bundleId)) openBundles.delete(bundleId); else openBundles.add(bundleId);
+            applyBundleOpen(bundleId);
+            updateBundlesToggleAll();
+        }
+
+        function toggleAllBundles() {
+            const allOpen = shownBundleIds.every((id) => openBundles.has(id));
+            shownBundleIds.forEach((id) => {
+                if (allOpen) openBundles.delete(id); else openBundles.add(id);
+                applyBundleOpen(id);
+            });
+            updateBundlesToggleAll();
+        }
+
+        // One table row per bundle, laid out like My Uploads, with a row per
+        // file underneath that its toggle shows or hides. Built with DOM
+        // methods: names come from uploaders.
         function displayBundles(bundles) {
             const section = document.getElementById('bundlesSection');
             const container = document.getElementById('bundlesContainer');
             container.innerHTML = '';
             section.classList.toggle('hidden', bundles.length === 0);
-            const list = document.createElement('div');
-            list.className = 'bundle-rows';
-            bundles.forEach((bundle) => {
-                const row = document.createElement('details');
-                row.className = 'bundle-row';
-                const summary = document.createElement('summary');
-                const code = document.createElement('code');
-                code.textContent = bundle.bundle_code;
-                const meta = document.createElement('span');
-                meta.className = 'bundle-row-meta';
-                const expires = new Date(bundle.expires_at).getFullYear() === 9999 ? 'never expires' : 'expires ' + formatCompactDate(bundle.expires_at);
-                meta.textContent = `${bundle.file_count} ${bundle.file_count === 1 ? 'file' : 'files'} • ${formatFileSize(bundle.total_size)} • ${expires}` +
-                    (bundle.client_encrypted ? ' • encrypted' : '') + (bundle.password_protected ? ' • password' : '');
-                summary.append(code, meta);
-                row.appendChild(summary);
+            shownBundleIds = bundles.map((b) => b.id);
+            [...openBundles].forEach((id) => { if (!shownBundleIds.includes(id)) openBundles.delete(id); });
 
-                const files = document.createElement('ul');
-                files.className = 'bundle-row-files';
-                bundle.files.forEach((f) => {
-                    const li = document.createElement('li');
-                    const limit = bundle.max_downloads ? bundle.max_downloads : '∞';
-                    li.textContent = `${f.name} — ${formatFileSize(f.size)} — ${f.completed_downloads}/${limit} downloads`;
-                    files.appendChild(li);
-                });
-                row.appendChild(files);
-
-                const actions = document.createElement('div');
-                actions.className = 'bundle-row-actions';
-                actions.append(
-                    bundleButton('Copy link', 'copyBundleLink', bundle, (btn) => {
-                        if (bundle.client_encrypted) {
-                            btn.disabled = true;
-                            btn.title = 'The link of an encrypted bundle holds its key, which the server never stores';
-                        }
-                    }),
-                    bundleButton('Change expiration', 'editBundleExpiration', bundle),
-                    bundleButton('New code', 'regenerateBundleCode', bundle),
-                    bundleButton('Delete', 'deleteBundle', bundle, (btn) => { btn.className = 'btn btn-danger btn-small'; })
-                );
-                row.appendChild(actions);
-                list.appendChild(row);
+            const wrapper = el('div', 'files-table-wrapper');
+            wrapper.setAttribute('role', 'region');
+            wrapper.setAttribute('aria-label', 'My bundles table');
+            wrapper.tabIndex = 0;
+            const table = el('table', 'files-table bundles-table');
+            table.setAttribute('aria-label', 'My bundles');
+            const headRow = el('tr');
+            ['Bundle', 'Size', 'Claim code', 'Created', 'Expires', 'Downloads', 'Status', 'Actions'].forEach((h) => {
+                const th = el('th', null, h);
+                th.scope = 'col';
+                headRow.appendChild(th);
             });
-            container.appendChild(list);
+            const thead = el('thead');
+            thead.appendChild(headRow);
+            const tbody = el('tbody');
+
+            bundles.forEach((bundle) => {
+                const files = bundle.files || [];
+                const fileRowIds = files.map((f, i) => `bundle-${bundle.id}-file-${i}`);
+                const row = el('tr', 'bundle-row');
+                row.setAttribute('data-bundle-id', String(bundle.id));
+                row.setAttribute('data-bundle-code', bundle.bundle_code);
+                row.setAttribute('data-file-count', String(files.length));
+
+                // Bundle: toggle, file count, encrypted/password tags, first names
+                const nameCell = cell('Bundle', 'bundle-name-cell');
+                const name = el('div', 'bundle-name');
+                const toggle = el('button', 'btn-icon bundle-toggle');
+                toggle.type = 'button';
+                toggle.innerHTML = BUNDLE_ICONS.chevron;
+                toggle.setAttribute('data-action', 'toggleBundle');
+                toggle.setAttribute('data-bundle-id', String(bundle.id));
+                toggle.setAttribute('aria-controls', fileRowIds.join(' '));
+                const title = el('div', 'bundle-title');
+                const heading = el('div', 'bundle-heading');
+                heading.appendChild(el('span', 'bundle-count', filesLabel(files.length)));
+                if (bundle.client_encrypted) heading.appendChild(bundleTag(BUNDLE_ICONS.lock, 'Encrypted', 'End-to-end encrypted'));
+                if (bundle.password_protected) heading.appendChild(bundleTag(BUNDLE_ICONS.key, 'Password', 'Needs a password to download'));
+                const names = files.map((f) => f.name);
+                const preview = names.slice(0, 2).join(', ') + (names.length > 2 ? `, +${names.length - 2} more` : '');
+                const previewEl = el('span', 'bundle-preview', preview);
+                previewEl.title = names.join('\n');
+                title.append(heading, previewEl);
+                name.append(toggle, title);
+                nameCell.appendChild(name);
+
+                const sizeCell = cell('Size');
+                sizeCell.appendChild(el('span', 'file-size', formatFileSize(bundle.total_size)));
+
+                const codeCell = cell('Claim code');
+                codeCell.appendChild(el('span', 'claim-code', bundle.bundle_code));
+
+                const createdCell = cell('Created');
+                const created = el('span', 'date-truncate', formatCompactDate(bundle.created_at));
+                created.title = fullDate(bundle.created_at);
+                createdCell.appendChild(created);
+
+                const expiresCell = cell('Expires');
+                const expiresWrap = el('div', 'file-name-expires');
+                const expires = el('span', 'file-name-text', bundleNeverExpires(bundle) ? 'Never' : formatCompactDate(bundle.expires_at));
+                expires.title = bundleNeverExpires(bundle) ? 'Never expires' : fullDate(bundle.expires_at);
+                const editExpiry = bundleActionButton('editBundleExpiration', bundle, 'inline-edit-btn', BUNDLE_ICONS.pencil, `Edit expiration of bundle ${bundle.bundle_code}`);
+                expiresWrap.append(expires, editExpiry);
+                expiresCell.appendChild(expiresWrap);
+
+                // Downloads: the sum over its files; with a limit, out of
+                // limit x files (the limit applies to each file).
+                const downloadsCell = cell('Downloads', 'bundle-downloads');
+                const done = files.reduce((sum, f) => sum + f.completed_downloads, 0);
+                const dlValue = el('div', 'bundle-downloads-value');
+                dlValue.append(
+                    el('span', null, bundle.max_downloads ? `${done} of ${bundle.max_downloads * files.length}` : String(done)),
+                    el('span', 'bundle-limit', bundle.max_downloads ? `limit ${bundle.max_downloads} per file` : 'no limit')
+                );
+                downloadsCell.appendChild(dlValue);
+
+                const statusCell = cell('Status');
+                const [statusText, statusClass] = bundleStatus(bundle);
+                statusCell.appendChild(el('span', 'badge ' + statusClass, statusText));
+
+                const actionsCell = cell('Actions', 'actions-col');
+                const actions = el('div', 'actions-cell');
+                const copy = bundleActionButton('copyBundleLink', bundle, 'btn-icon btn-secondary', BUNDLE_ICONS.link, `Copy link of bundle ${bundle.bundle_code}`);
+                if (bundle.client_encrypted) {
+                    copy.disabled = true;
+                    copy.title = 'The link of an encrypted bundle holds its key, which the server never stores';
+                }
+                actions.append(
+                    copy,
+                    bundleActionButton('regenerateBundleCode', bundle, 'btn-icon btn-secondary', BUNDLE_ICONS.newCode, `New code for bundle ${bundle.bundle_code}`),
+                    bundleActionButton('deleteBundle', bundle, 'btn-icon btn-danger', BUNDLE_ICONS.trash, `Delete bundle ${bundle.bundle_code}`)
+                );
+                actionsCell.appendChild(actions);
+
+                // Phones: a labelled full-width toggle at the foot of the card
+                // (hidden on wider screens, where the chevron does this).
+                const mobileCell = el('td', 'bundle-toggle-cell');
+                const mobile = el('button', 'bundle-toggle-mobile');
+                mobile.type = 'button';
+                mobile.setAttribute('data-action', 'toggleBundle');
+                mobile.setAttribute('data-bundle-id', String(bundle.id));
+                mobile.setAttribute('aria-controls', fileRowIds.join(' '));
+                mobile.appendChild(el('span', 'bundle-toggle-text'));
+                mobile.insertAdjacentHTML('beforeend', BUNDLE_ICONS.chevronDown);
+                mobileCell.appendChild(mobile);
+
+                row.append(nameCell, sizeCell, codeCell, createdCell, expiresCell, downloadsCell, statusCell, actionsCell, mobileCell);
+                tbody.appendChild(row);
+
+                files.forEach((f, i) => {
+                    const fileRow = el('tr', 'bundle-file-row' + (i === files.length - 1 ? ' is-last' : ''));
+                    fileRow.id = fileRowIds[i];
+                    fileRow.setAttribute('data-bundle-id', String(bundle.id));
+                    fileRow.setAttribute('data-bundle-code', bundle.bundle_code);
+                    fileRow.hidden = true;
+                    const fName = cell('File', 'bundle-member-name');
+                    const fNameText = el('span', 'file-name-text', f.name);
+                    fNameText.title = f.name;
+                    fName.appendChild(fNameText);
+                    const fSize = cell('Size');
+                    fSize.appendChild(el('span', 'file-size', formatFileSize(f.size)));
+                    const fDownloads = cell('Downloads', null);
+                    fDownloads.textContent = `${f.completed_downloads}/${bundle.max_downloads || '∞'}`;
+                    // One cell per column (no colspan): the tablet layout hides
+                    // columns by position.
+                    const gap = () => cell(null, 'bundle-file-gap');
+                    fileRow.append(fName, fSize, gap(), gap(), gap(), fDownloads, gap(), gap());
+                    tbody.appendChild(fileRow);
+                });
+            });
+
+            table.append(thead, tbody);
+            wrapper.appendChild(table);
+            container.appendChild(wrapper);
+            shownBundleIds.forEach(applyBundleOpen);
+            updateBundlesToggleAll();
         }
 
         function deleteBundle(bundleId) {
@@ -299,8 +505,8 @@
 
                 // Check if "never expire" (year 9999)
                 const expiresDateObj = new Date(file.expires_at);
-                const expiresDate = expiresDateObj.getFullYear() === 9999 ? 'Never' : formatCompactDate(file.expires_at);
-                const expiresDateFull = expiresDateObj.getFullYear() === 9999 ? 'Never expires' : expiresDateObj.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+                const expiresDate = isNeverExpire(file.expires_at) ? 'Never' : formatCompactDate(file.expires_at);
+                const expiresDateFull = isNeverExpire(file.expires_at) ? 'Never expires' : expiresDateObj.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 
                 const downloads = file.max_downloads ? `${file.completed_downloads}/${file.max_downloads}` : file.completed_downloads;
 
@@ -483,8 +689,7 @@
             fileToEditExpiration = { id: fileId, currentExpiration: currentExpiration };
 
             // Check if current expiration is "never expire" (year 9999)
-            const expirationDate = new Date(currentExpiration);
-            const isNeverExpire = expirationDate.getFullYear() === 9999;
+            const neverExpires = isNeverExpire(currentExpiration);
 
             const neverExpireCheckbox = document.getElementById('neverExpireCheckbox');
             const expirationOptionsContainer = document.getElementById('expirationOptionsContainer');
@@ -494,7 +699,7 @@
             const maxExpirationText = document.getElementById('maxExpirationText');
 
             // Reset form
-            neverExpireCheckbox.checked = isNeverExpire;
+            neverExpireCheckbox.checked = neverExpires;
             datetimeInput.value = '';
             previewContainer.style.display = 'none';
             document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('selected'));
@@ -1535,7 +1740,7 @@
             const expirationDate = new Date(expiresAt);
             
             // Check for "never expire" (year 9999)
-            if (expirationDate.getFullYear() === 9999) {
+            if (isNeverExpire(expiresAt)) {
                 return '<span class="token-never">Never</span>';
             }
 
@@ -3342,6 +3547,8 @@ you may be locked out of your account.
 
             // Refresh buttons
             document.getElementById('refreshBtn').addEventListener('click', refreshFiles);
+            document.getElementById('bundlesToggleAllBtn').addEventListener('click', toggleAllBundles);
+            document.getElementById('bundlesRefreshBtn').addEventListener('click', loadBundles);
             document.getElementById('refreshTokensBtn').addEventListener('click', refreshTokens);
             document.getElementById('refreshMFABtn').addEventListener('click', refreshMFAStatus);
             document.getElementById('refreshSSOBtn').addEventListener('click', refreshSSOLinkedAccounts);
@@ -3454,6 +3661,9 @@ you may be locked out of your account.
                             download_count: parseInt(btn.getAttribute('data-download-count')),
                             claim_code: btn.getAttribute('data-claim-code')
                         });
+                        break;
+                    case 'toggleBundle':
+                        toggleBundle(parseInt(btn.getAttribute('data-bundle-id')));
                         break;
                     case 'copyBundleLink':
                         copyToClipboard(window.location.origin + '/#/bundle/' + btn.getAttribute('data-bundle-code'), 'Bundle link copied');

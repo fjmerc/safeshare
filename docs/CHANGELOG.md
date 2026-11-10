@@ -35,8 +35,13 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+
+- Dashboard: **My Bundles** is now a table laid out like My Uploads (size, claim code, created, expires, downloads, status and actions per bundle). Each bundle has an arrow button that shows or hides its files underneath, and **Expand all** / **Collapse all** opens or closes every bundle. Encrypted and password-protected bundles are marked, and a bundle with a download limit shows its downloads against that limit (the limit applies to each file). On phones each bundle is a card with a **Show files** button.
+
 ### Fixed
 
+- Dashboard: files, bundles and API tokens set to never expire showed `01/01/00` instead of **Never** for anyone in a time zone east of UTC (most of Europe, Africa and Asia), and the expiration dialog didn't tick **Never expire** for them.
 - `safeshare-cli` showed expiry, upload and creation times in UTC without saying so, so they looked hours off. It now shows them in your computer's time zone, with the zone's name (e.g. `2026-11-10 07:14:03 CET`).
 
 ## [1.19.0] - 2026-11-09

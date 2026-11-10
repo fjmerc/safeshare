@@ -2618,8 +2618,25 @@
         <section class="content-section hidden" id="bundlesSection" aria-labelledby="bundlesHeading">
             <div class="section-header">
                 <h2 id="bundlesHeading" tabindex="-1">My Bundles</h2>
+                <div class="section-actions">
+                    <button type="button" id="bundlesToggleAllBtn" class="btn btn-secondary" aria-controls="bundlesContainer">
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="7 15 12 20 17 15"></polyline>
+                            <polyline points="7 9 12 4 17 9"></polyline>
+                        </svg>
+                        <span id="bundlesToggleAllText">Expand all</span>
+                    </button>
+                    <button type="button" id="bundlesRefreshBtn" class="btn btn-secondary" aria-label="Refresh bundles">
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
             </div>
-            <p class="section-note">Each bundle is several files shared under one link.</p>
+            <p class="section-note">Each bundle is several files shared under one link. Open one to see its files.</p>
             <div id="bundlesContainer"></div>
         </section>
 
