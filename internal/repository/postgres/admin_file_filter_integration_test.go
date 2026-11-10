@@ -135,7 +135,7 @@ func TestFileRepository_ListForAdmin_Filters(t *testing.T) {
 		{"active", repository.AdminFileFilter{Status: repository.AdminFileStatusActive},
 			[]string{"fAnonSmall", "fBobNull", "fAlice1MiB", "fAnonSkip", "fAnonNever", "fBobMid", "fAnonEmpty"}},
 		{"never expires", repository.AdminFileFilter{Status: repository.AdminFileStatusNeverExpires}, []string{"fAnonNever", "fAliceBig"}},
-		{"expiring soon", repository.AdminFileFilter{Status: repository.AdminFileStatusExpiringSoon}, []string{"fBobNull", "fAlice1MiB", "fExpired"}},
+		{"expiring soon", repository.AdminFileFilter{Status: repository.AdminFileStatusExpiringSoon}, []string{"fBobNull", "fAlice1MiB"}},
 		{"scan clean", repository.AdminFileFilter{Scan: repository.AdminFileScanClean}, []string{"fAnonSmall", "fExpired"}},
 		{"scan pending", repository.AdminFileFilter{Scan: repository.AdminFileScanPending}, []string{"fAlice1MiB"}},
 		{"scan infected", repository.AdminFileFilter{Scan: repository.AdminFileScanInfected}, []string{"fAliceBig"}},

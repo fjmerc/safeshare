@@ -1306,7 +1306,7 @@ paths:
             `active`: download limit not reached and not expired.
             `limit_reached`: download count has reached `max_downloads` (a limit of 0 or none is unlimited).
             `never_expires`: set to never expire.
-            `expiring_soon`: expires within 24 hours.
+            `expiring_soon`: not yet expired, and expires within 24 hours.
         - name: scan
           in: query
           schema:

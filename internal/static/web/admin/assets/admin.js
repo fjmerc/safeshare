@@ -685,7 +685,13 @@ function updatePagination(pagination) {
 
 // Delete file
 async function deleteFile(claimCode) {
-    if (!await confirm(`Delete file with claim code ${claimCode}?`)) {
+    // AdminDeleteFileHandler deletes a member's whole bundle, as bulk delete does.
+    const inBundle = Array.from(document.querySelectorAll('#filesTableBody .file-checkbox[data-in-bundle]'))
+        .some((box) => box.getAttribute('data-claim-code') === claimCode);
+    const bundleWarning = inBundle
+        ? 'This file is in a bundle. Deleting it deletes the whole bundle, including files not shown by your filters.'
+        : '';
+    if (!await confirm(`Delete file with claim code ${claimCode}?`, bundleWarning)) {
         return;
     }
 
@@ -1715,8 +1721,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             showToast(data.message, 'success');
 
-            // Refresh dashboard data to update stats
-            loadDashboardData();
+            // Refresh dashboard data to update stats (keeping the page, search and filters)
+            loadDashboardData(currentPage, searchTerm);
         } catch (error) {
             console.error('Cleanup error:', error);
             showToast(error.message, 'error');

@@ -1550,7 +1550,8 @@ func adminFileWhere(filter repository.AdminFileFilter, now time.Time) (string, [
 	case repository.AdminFileStatusNeverExpires:
 		conds = append(conds, pgNeverExpires)
 	case repository.AdminFileStatusExpiringSoon:
-		conds = append(conds, `NOT (`+pgNeverExpires+`) AND f.expires_at <= `+arg(now.Add(repository.AdminFileExpiringSoonWindow)))
+		// Already expired (waiting for cleanup) isn't "expiring soon".
+		conds = append(conds, `NOT (`+pgNeverExpires+`) AND f.expires_at > `+arg(now)+` AND f.expires_at <= `+arg(now.Add(repository.AdminFileExpiringSoonWindow)))
 	}
 
 	switch filter.Scan {

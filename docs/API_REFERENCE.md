@@ -1088,7 +1088,7 @@ Retrieve admin dashboard statistics and file listings.
 - `user_id`: Only files uploaded by this user (positive integer)
 - `user=anonymous`: Only files uploaded without an account. Can't be combined with `user_id`.
 - `min_size` / `max_size`: File size in bytes; `min_size` is inclusive, `max_size` exclusive and must be greater than `min_size`
-- `status`: `active` (download limit not reached and not expired), `limit_reached` (download count has reached `max_downloads`; a limit of 0 or none is unlimited), `never_expires`, `expiring_soon` (expires within 24 hours)
+- `status`: `active` (download limit not reached and not expired), `limit_reached` (download count has reached `max_downloads`; a limit of 0 or none is unlimited), `never_expires`, `expiring_soon` (not yet expired, and expires within 24 hours)
 - `scan`: `clean`, `pending`, `infected`, `error`, or `not_scanned` (no scan status, `skipped` or `not_scanned`)
 - `uploaded`: `24h`, `7d`, `30d` (uploaded within that time) or `older_30d` (more than 30 days ago)
 - `sort`: `newest` (default), `oldest`, `largest`, `smallest`, `expiring` (soonest first, files that never expire last)

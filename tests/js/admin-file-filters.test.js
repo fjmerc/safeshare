@@ -115,6 +115,14 @@ const MB = 1024 * 1024;
             await page.isVisible('#confirmDetail') && /deletes the whole bundle, including files not shown by your filters/.test(detail), detail);
         await page.click('#confirmNo');
 
+        // The single Delete button removes a member's whole bundle too
+        await page.click('#filesTableBody [data-action="deleteFile"][data-claim-code="AliceHuge001"]');
+        await page.waitForSelector('#confirmModal', { state: 'visible' });
+        const one = await page.textContent('#confirmDetail');
+        H.check('single delete of a bundle file warns about the whole bundle',
+            await page.isVisible('#confirmDetail') && /whole bundle/.test(one), one);
+        await page.click('#confirmNo');
+
         // Remove one chip: its filter goes, focus lands on its select
         await page.click('#fileFilterChips .filter-chip[data-filter="size"]');
         await settle();
@@ -126,6 +134,10 @@ const MB = 1024 * 1024;
         await page.click('#deleteSelectedBtn');
         await page.waitForSelector('#confirmModal', { state: 'visible' });
         H.check('no bundle member selected: no bundle warning', await page.isHidden('#confirmDetail'));
+        await page.click('#confirmNo');
+        await page.click('#filesTableBody [data-action="deleteFile"][data-claim-code="AliceSmall01"]');
+        await page.waitForSelector('#confirmModal', { state: 'visible' });
+        H.check('single delete of a plain file: no bundle warning', await page.isHidden('#confirmDetail'));
         await page.click('#confirmNo');
 
         // Empty result
