@@ -476,6 +476,7 @@ function updateFilesTable(files) {
 
         // Update delete selected button visibility (should hide it)
         updateDeleteSelectedButton();
+        syncAdminCardsButton('files');
         return;
     }
 
@@ -2202,6 +2203,7 @@ function displayUsers(users) {
 
     if (!users || users.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="empty">No users found</td></tr>';
+        syncAdminCardsButton('users');
         return;
     }
 

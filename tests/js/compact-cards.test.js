@@ -47,6 +47,9 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('tokens desktop: no arrow, no summary line, no Expand all',
             !(await vis(`${trow(11)} .upload-card-toggle`)) && !(await vis(`${trow(11)} .upload-card-meta`)) && !(await vis('#tokensExpandAllBtn')));
 
+        await page.setViewportSize({ width: 800, height: 900 });
+        H.check('tokens tablet: table, no arrow or Expand all',
+            (await vis(`${trow(11)} .scopes-cell`)) && !(await vis(`${trow(11)} .upload-card-toggle`)) && !(await vis('#tokensExpandAllBtn')));
         await page.setViewportSize({ width: 390, height: 844 });
         H.check('tokens phone: cards start closed', !(await vis(`${trow(11)} .scopes-cell`)) && !(await vis(`${trow(11)} [data-action="revokeToken"]`)));
         H.check('tokens phone: closed card shows name and expiry',
@@ -103,6 +106,11 @@ H.requireBrowserTests('compact-cards.test.js');
             if (url.pathname === '/admin/api/files/uploaders') return json({ anonymous_count: 1, users: [{ user_id: 1, username: 'alice', file_count: 1 }] });
             if (url.pathname === '/admin/api/users') return json({ users, total: users.length });
             if (url.pathname === '/admin/api/dashboard') {
+                if (url.searchParams.get('search') === 'nomatch') {
+                    return json({ files: [], pagination: { page: 1, page_size: 20, total: 0, total_pages: 0, unfiltered_total: files.length },
+                        stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
+                        blocked_ips: [], system_info: {} });
+                }
                 return json({ files, pagination: { page: 1, page_size: 20, total: files.length, total_pages: 1, unfiltered_total: files.length },
                     stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
                     blocked_ips: [], system_info: {} });
@@ -118,6 +126,9 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('admin desktop: files table keeps its columns', (await avis(`${frow('AdmFile00001')} td[data-label="Uploader IP"]`)) && !(await avis(`${frow('AdmFile00001')} .cc-summary`)));
         H.check('admin desktop: no Expand all', !(await avis('#filesExpandAllBtn')));
 
+        await ap.setViewportSize({ width: 900, height: 900 });
+        H.check('admin tablet: table, no summary cell or Expand all',
+            (await avis(`${frow('AdmFile00001')} td[data-label="Claim Code"]`)) && !(await avis(`${frow('AdmFile00001')} .cc-summary`)) && !(await avis('#filesExpandAllBtn')));
         await ap.setViewportSize({ width: 390, height: 844 });
         H.check('admin phone: file cards start closed', !(await avis(`${frow('AdmFile00001')} td[data-label="Uploader IP"]`)) && !(await avis(`${frow('AdmFile00001')} [data-action="deleteFile"]`)));
         const meta = await ap.textContent(`${frow('AdmFile00002')} .cc-meta`);
@@ -144,6 +155,13 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('admin phone: open cards survive Refresh', (await ap.$$('#filesTableBody tr.cc-row.is-open')).length === 2);
         await ap.click('#filesExpandAllBtn');
         H.check('admin phone: Collapse all closes them', (await ap.$$('#filesTableBody tr.cc-row.is-open')).length === 0);
+
+        await ap.fill('#searchInput', 'nomatch');
+        await ap.waitForFunction(() => !document.querySelector('#filesTableBody tr.cc-row'), null, { timeout: 5000 });
+        H.check('admin phone: Expand all hides when no files match', !(await avis('#filesExpandAllBtn')));
+        await ap.fill('#searchInput', '');
+        await ap.waitForSelector('#filesTableBody tr.cc-row');
+        H.check('admin phone: Expand all returns with results', await avis('#filesExpandAllBtn'));
 
         await ap.click('#tab-users');
         await ap.waitForSelector('#usersTableBody tr.cc-row');
