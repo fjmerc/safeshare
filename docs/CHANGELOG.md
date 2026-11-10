@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- `safeshare-cli` showed expiry, upload and creation times in UTC without saying so, so they looked hours off. It now shows them in your computer's time zone, with the zone's name (e.g. `2026-11-10 07:14:03 CET`).
+
 ## [1.19.0] - 2026-11-09
 
 ### Added
