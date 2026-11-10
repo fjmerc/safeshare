@@ -965,6 +965,7 @@ Delete up to 100 files owned by the current user in one request. Each file is de
 - 400 Bad Request: Invalid JSON, an empty list, an ID that isn't a positive number, or more than 100 files
 - 401 Unauthorized: Not signed in
 - 405 Method Not Allowed: Not a POST
+- 415 Unsupported Media Type: The body isn't sent as `application/json`
 
 ---
 

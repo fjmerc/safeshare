@@ -179,3 +179,34 @@ func TestUserBulkDelete_RejectsBadRequests(t *testing.T) {
 		t.Errorf("at limit: %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+// A cross-site HTML form can only send form or text/plain bodies; requiring
+// JSON keeps such a form from deleting files even if a cookie were sent.
+func TestUserBulkDelete_RequiresJSON(t *testing.T) {
+	e := newGhostEnv(t, nil)
+	alice := ownerUser(t, e, "alice")
+	a := ownedFile(t, e, alice, "bulkJ0001", "j", nil)
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", ""} {
+		r := httptest.NewRequest(http.MethodPost, "/api/user/files/delete/bulk", strings.NewReader(idsBody(a.ID)))
+		if ct != "" {
+			r.Header.Set("Content-Type", ct)
+		}
+		r = r.WithContext(context.WithValue(r.Context(), middleware.ContextKeyUser, alice))
+		rr := httptest.NewRecorder()
+		UserBulkDeleteFilesHandler(e.repos, e.cfg).ServeHTTP(rr, r)
+		if rr.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("Content-Type %q: status %d, want 415", ct, rr.Code)
+		}
+	}
+	if fileGone(t, e, a) {
+		t.Fatal("file deleted by a non-JSON request")
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/user/files/delete/bulk", strings.NewReader(idsBody(a.ID)))
+	r.Header.Set("Content-Type", "application/json; charset=utf-8")
+	r = r.WithContext(context.WithValue(r.Context(), middleware.ContextKeyUser, alice))
+	rr := httptest.NewRecorder()
+	UserBulkDeleteFilesHandler(e.repos, e.cfg).ServeHTTP(rr, r)
+	if rr.Code != http.StatusOK || !fileGone(t, e, a) {
+		t.Errorf("JSON with charset: status %d", rr.Code)
+	}
+}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 
@@ -50,6 +51,14 @@ func UserBulkDeleteFilesHandler(repos *repository.Repositories, cfg *config.Conf
 		user := middleware.GetUserFromContext(r)
 		if user == nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// JSON only: a cross-site HTML form can send form-encoded or
+		// text/plain bodies but not application/json (that needs a CORS
+		// preflight), so this backs up the SameSite session cookie.
+		if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+			writeBulkDeleteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 			return
 		}
 

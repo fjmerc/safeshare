@@ -972,6 +972,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Not signed in
+        '415':
+          description: Body not sent as application/json
 
   /api/user/files/rename:
     post:
