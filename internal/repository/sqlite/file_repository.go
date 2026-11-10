@@ -1679,6 +1679,106 @@ func (r *FileRepository) GetAllStoredFilenames(ctx context.Context) (map[string]
 
 // GetAllForAdmin returns all files with pagination for admin dashboard.
 func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) ([]models.File, int, error) {
+	return r.ListForAdmin(ctx, repository.AdminFileFilter{}, limit, offset)
+}
+
+// SearchForAdmin searches files by claim code, filename, IP, or username.
+func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, limit, offset int) ([]models.File, int, error) {
+	return r.ListForAdmin(ctx, repository.AdminFileFilter{Search: searchTerm}, limit, offset)
+}
+
+// sqliteNeverExpires matches the year-9999 sentinel on the stored text, not
+// through datetime(): with a negative UTC offset it would normalise into year
+// 10000, which SQLite's datetime() can't represent. substr() matters too: the
+// column's NUMERIC affinity would turn a bare '9999' literal into an integer,
+// which sorts below every text value.
+const sqliteNeverExpires = `substr(f.expires_at, 1, 4) = '9999'`
+
+// sqliteAdminFileOrder maps AdminFileFilter.Sort to a fixed ORDER BY clause.
+// Every clause ends on f.id so pages never overlap.
+var sqliteAdminFileOrder = map[string]string{
+	"":                               `f.created_at DESC, f.id DESC`,
+	repository.AdminFileSortNewest:   `f.created_at DESC, f.id DESC`,
+	repository.AdminFileSortOldest:   `f.created_at ASC, f.id ASC`,
+	repository.AdminFileSortLargest:  `f.file_size DESC, f.id DESC`,
+	repository.AdminFileSortSmallest: `f.file_size ASC, f.id ASC`,
+	repository.AdminFileSortExpiring: `CASE WHEN ` + sqliteNeverExpires + ` THEN 1 ELSE 0 END, datetime(f.expires_at) ASC, f.id ASC`,
+}
+
+// adminFileWhere builds the WHERE clause (including "WHERE", or "" for no
+// filter) and its arguments, shared by ListForAdmin's COUNT and page queries.
+// now is passed in so both queries see the same instant.
+func adminFileWhere(filter repository.AdminFileFilter, now time.Time) (string, []interface{}) {
+	var conds []string
+	var args []interface{}
+	nowArg := now.UTC().Format("2006-01-02 15:04:05")
+
+	if filter.Search != "" {
+		pattern := "%" + escapeLikePattern(filter.Search) + "%"
+		conds = append(conds, `(f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\')`)
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	if filter.UserID != nil {
+		conds = append(conds, `f.user_id = ?`)
+		args = append(args, *filter.UserID)
+	}
+	if filter.Anonymous {
+		conds = append(conds, `f.user_id IS NULL`)
+	}
+	if filter.MinSize != nil {
+		conds = append(conds, `f.file_size >= ?`)
+		args = append(args, *filter.MinSize)
+	}
+	if filter.MaxSize != nil {
+		conds = append(conds, `f.file_size < ?`)
+		args = append(args, *filter.MaxSize)
+	}
+
+	// Same guard TryIncrementDownloadWithLimit enforces: NULL or 0 is unlimited.
+	const underLimit = `(f.max_downloads IS NULL OR f.max_downloads = 0 OR COALESCE(f.download_count, 0) < f.max_downloads)`
+	switch filter.Status {
+	case repository.AdminFileStatusActive:
+		conds = append(conds, underLimit+` AND (`+sqliteNeverExpires+` OR datetime(f.expires_at) > datetime(?))`)
+		args = append(args, nowArg)
+	case repository.AdminFileStatusLimitReached:
+		conds = append(conds, `NOT `+underLimit)
+	case repository.AdminFileStatusNeverExpires:
+		conds = append(conds, sqliteNeverExpires)
+	case repository.AdminFileStatusExpiringSoon:
+		conds = append(conds, `NOT (`+sqliteNeverExpires+`) AND datetime(f.expires_at) <= datetime(?)`)
+		args = append(args, now.Add(repository.AdminFileExpiringSoonWindow).UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	switch filter.Scan {
+	case repository.AdminFileScanNotScanned:
+		conds = append(conds, `(f.scan_status IS NULL OR f.scan_status IN ('', 'skipped', 'not_scanned'))`)
+	case "":
+	default:
+		conds = append(conds, `f.scan_status = ?`)
+		args = append(args, filter.Scan)
+	}
+
+	if filter.UploadedWithin > 0 {
+		conds = append(conds, `datetime(f.created_at) >= datetime(?)`)
+		args = append(args, now.Add(-filter.UploadedWithin).UTC().Format("2006-01-02 15:04:05"))
+	}
+	if filter.UploadedBefore > 0 {
+		conds = append(conds, `datetime(f.created_at) < datetime(?)`)
+		args = append(args, now.Add(-filter.UploadedBefore).UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return "WHERE " + strings.Join(conds, " AND "), args
+}
+
+// ListForAdmin returns one filtered, sorted page of the admin file list and
+// the number of files matching the filter.
+func (r *FileRepository) ListForAdmin(ctx context.Context, filter repository.AdminFileFilter, limit, offset int) ([]models.File, int, error) {
+	if err := filter.Validate(); err != nil {
+		return nil, 0, err
+	}
 	// Validate pagination bounds (defense in depth)
 	if limit < 0 {
 		limit = 0
@@ -1690,24 +1790,25 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 		offset = 0
 	}
 
-	// Get total count
+	where, args := adminFileWhere(filter, time.Now())
+	orderBy := sqliteAdminFileOrder[filter.Sort]
+
 	var total int
-	countQuery := `SELECT COUNT(*) FROM files`
-	err := r.db.QueryRowContext(ctx, countQuery).Scan(&total)
-	if err != nil {
+	countQuery := `SELECT COUNT(*) FROM files f LEFT JOIN users u ON f.user_id = u.id ` + where
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count files: %w", err)
 	}
 
-	// Get paginated files with username via LEFT JOIN
 	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
 		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
 		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted,
 		f.bundle_id, f.bundle_position
 		FROM files f
 		LEFT JOIN users u ON f.user_id = u.id
-		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
+		` + where + `
+		ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 
-	rows, err := r.db.QueryContext(ctx, query, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query files: %w", err)
 	}
@@ -1797,131 +1898,35 @@ func (r *FileRepository) GetAllForAdmin(ctx context.Context, limit, offset int) 
 	return files, total, nil
 }
 
-// SearchForAdmin searches files by claim code, filename, IP, or username.
-func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, limit, offset int) ([]models.File, int, error) {
-	// Validate pagination bounds (defense in depth)
-	if limit < 0 {
-		limit = 0
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	if offset < 0 {
-		offset = 0
+// GetAdminUploaders counts the admin list's files per uploading user and the
+// files with no user.
+func (r *FileRepository) GetAdminUploaders(ctx context.Context) (*repository.AdminUploaders, error) {
+	out := &repository.AdminUploaders{Users: []repository.AdminUploader{}}
+
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE user_id IS NULL`).Scan(&out.AnonymousCount); err != nil {
+		return nil, fmt.Errorf("failed to count anonymous files: %w", err)
 	}
 
-	// Escape LIKE wildcards to prevent LIKE injection
-	escapedTerm := escapeLikePattern(searchTerm)
-	searchPattern := "%" + escapedTerm + "%"
-
-	// Get total count
-	var total int
-	countQuery := `SELECT COUNT(*) FROM files f
-		LEFT JOIN users u ON f.user_id = u.id
-		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'`
-	err := r.db.QueryRowContext(ctx, countQuery, searchPattern, searchPattern, searchPattern, searchPattern).Scan(&total)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
-	}
-
-	// Get paginated results with username via LEFT JOIN
-	query := `SELECT f.id, f.claim_code, f.original_filename, f.stored_filename, f.file_size, f.mime_type,
-		f.created_at, f.expires_at, f.max_downloads, f.download_count, f.completed_downloads, f.uploader_ip, f.password_hash, f.user_id,
-		u.username, f.scan_status, f.scan_result, f.scanned_at, f.client_encrypted,
-		f.bundle_id, f.bundle_position
+	rows, err := r.db.QueryContext(ctx, `SELECT u.id, u.username, COUNT(*)
 		FROM files f
-		LEFT JOIN users u ON f.user_id = u.id
-		WHERE f.claim_code LIKE ? ESCAPE '\' OR f.original_filename LIKE ? ESCAPE '\' OR f.uploader_ip LIKE ? ESCAPE '\' OR u.username LIKE ? ESCAPE '\'
-		ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?`
-
-	rows, err := r.db.QueryContext(ctx, query, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset)
+		JOIN users u ON f.user_id = u.id
+		GROUP BY u.id, u.username
+		ORDER BY LOWER(u.username), u.id`)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search files: %w", err)
+		return nil, fmt.Errorf("failed to count files per user: %w", err)
 	}
 	defer rows.Close()
-
-	var files []models.File
 	for rows.Next() {
-		var file models.File
-		var createdAt, expiresAt string
-		var passwordHash sql.NullString
-		var maxDownloads sql.NullInt64
-		var userID sql.NullInt64
-		var username sql.NullString
-		var scanStatus sql.NullString
-		var scanResult sql.NullString
-		var scannedAt sql.NullString
-		var bundleID, bundlePosition sql.NullInt64
-
-		err := rows.Scan(
-			&file.ID,
-			&file.ClaimCode,
-			&file.OriginalFilename,
-			&file.StoredFilename,
-			&file.FileSize,
-			&file.MimeType,
-			&createdAt,
-			&expiresAt,
-			&maxDownloads,
-			&file.DownloadCount,
-			&file.CompletedDownloads,
-			&file.UploaderIP,
-			&passwordHash,
-			&userID,
-			&username,
-			&scanStatus,
-			&scanResult,
-			&scannedAt,
-			&file.ClientEncrypted,
-			&bundleID,
-			&bundlePosition,
-		)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
+		var up repository.AdminUploader
+		if err := rows.Scan(&up.UserID, &up.Username, &up.FileCount); err != nil {
+			return nil, fmt.Errorf("failed to scan uploader: %w", err)
 		}
-
-		// Parse timestamps
-		file.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to parse created_at: %w", err)
-		}
-
-		file.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to parse expires_at: %w", err)
-		}
-
-		// Handle nullable fields
-		if maxDownloads.Valid {
-			val := int(maxDownloads.Int64)
-			file.MaxDownloads = &val
-		}
-		if passwordHash.Valid {
-			file.PasswordHash = passwordHash.String
-		}
-		if userID.Valid {
-			file.UserID = &userID.Int64
-		}
-		if username.Valid {
-			file.Username = &username.String
-		}
-		file.ScanStatus = scanStatus.String
-		file.ScanResult = scanResult.String
-		if scannedAt.Valid {
-			if t, err := time.Parse(time.RFC3339, scannedAt.String); err == nil {
-				file.ScannedAt = &t
-			}
-		}
-
-		applyBundleColumns(&file, bundleID, bundlePosition)
-		files = append(files, file)
+		out.Users = append(out.Users, up)
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("error iterating search results: %w", err)
+		return nil, fmt.Errorf("error iterating uploaders: %w", err)
 	}
-
-	return files, total, nil
+	return out, nil
 }
 
 // UpdateScanStatus updates the malware scan status for a file.
