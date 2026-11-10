@@ -102,7 +102,7 @@ func uploadBundle(ctx context.Context, cmd *cobra.Command, out io.Writer, client
 		fmt.Fprintf(out, "  %d. %s (%s)\n", f.Position+1, display(f.Name), formatBytes(f.Size))
 	}
 	if res.ExpiresAt != nil {
-		fmt.Fprintf(out, "Expires:     %s\n", res.ExpiresAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Expires:     %s\n", formatTime(*res.ExpiresAt))
 	}
 	if res.DownloadLimit != nil {
 		fmt.Fprintf(out, "Downloads:   %d per file\n", *res.DownloadLimit)
@@ -212,8 +212,8 @@ func listBundles(ctx context.Context, cmd *cobra.Command, client *safeshare.Clie
 			}
 			fmt.Printf("  %d. %s (%s, %d/%s downloads)\n", f.Position+1, display(f.Name), formatBytes(f.Size), f.CompletedDownloads, limit)
 		}
-		fmt.Printf("%-12s %s\n", "Created:", b.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("%-12s %s\n", "Expires:", b.ExpiresAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("%-12s %s\n", "Created:", formatTime(b.CreatedAt))
+		fmt.Printf("%-12s %s\n", "Expires:", formatTime(b.ExpiresAt))
 		fmt.Printf("%-12s %v\n", "Password:", b.PasswordProtected)
 		fmt.Printf("%-12s %v\n", "Encrypted:", b.Encrypted)
 		fmt.Println(strings.Repeat("─", 80))

@@ -42,6 +42,7 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 ### Fixed
 
 - Dashboard: files, bundles and API tokens set to never expire showed `01/01/00` instead of **Never** for anyone in a time zone east of UTC (most of Europe, Africa and Asia), and the expiration dialog didn't tick **Never expire** for them.
+- `safeshare-cli` showed expiry, upload and creation times in UTC without saying so, so they looked hours off. It now shows them in your computer's time zone, with the zone's name (e.g. `2026-11-10 07:14:03 CET`).
 
 ## [1.19.0] - 2026-11-09
 
