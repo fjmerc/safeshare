@@ -35,9 +35,11 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-10
+
 ### Added
 
-- Admin dashboard: the **Files** tab has filters under the search box: user (or files uploaded without an account), size, status (active, download limit reached, never expires, expires within 24 hours), virus scan result and upload date, plus a **Sort by** choice (newest, oldest, largest, smallest, expiring soonest). Filters work on all files, not only the page you see, and combine with the search. Each active filter shows as a chip you can remove, and a line tells you how many files match. When you delete selected files and one of them is in a bundle, the confirmation now warns that the whole bundle goes, including files your filters hide.
+- Admin dashboard: the **Files** tab has filters under the search box: user (or files uploaded without an account), size, status (active, download limit reached, never expires, expires within 24 hours), virus scan result and upload date, plus a **Sort by** choice (newest, oldest, largest, smallest, expiring soonest). Filters work on all files, not only the page you see, and combine with the search. Each active filter shows as a chip you can remove, and a line tells you how many files match. When a file you delete (on its own or with Delete Selected) is in a bundle, the confirmation now warns that the whole bundle goes, including files your filters hide.
 - API: filter parameters on `GET /admin/api/dashboard` (`user_id`, `user=anonymous`, `min_size`, `max_size`, `status`, `scan`, `uploaded`, `sort`) and `pagination.unfiltered_total`; new `GET /admin/api/files/uploaders` lists who has files and how many.
 - Dashboard: delete several uploads at once. Tick files in **My Uploads** (or the box in the header to select them all) and press **Delete**; one confirmation covers the batch. On phones, tap **Select** first, then tap the files. If some files can't be deleted (say one was already removed on another device), the rest still go and the message says how many were deleted.
 - API: `POST /api/user/files/delete/bulk` with `{"file_ids": [...]}` (up to 100) deletes several of your own files and reports each one that couldn't be deleted. Bundle files aren't deleted this way; delete their bundle. API tokens need the `manage` scope, as for single deletes.
