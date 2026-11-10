@@ -765,14 +765,16 @@ const adminPhoneQuery = window.matchMedia('(max-width: 768px)');
 // how each one renders: after its rows are (re)drawn, a summary cell is built
 // from cells the row already shows. title is the card's heading (copied as
 // text); meta cells are cloned (already-escaped markup) onto the line below.
+// keyAttr names the id attribute the row's own buttons carry, so an open card
+// stays with its row when the list reorders (deliveries refresh every 10s).
 const ADMIN_COMPACT_TABLES = {
-    blockedIPsTable:   { title: 'IP Address', meta: ['Reason', 'Blocked At'] },
-    webhooksTable:     { title: 'URL', meta: ['Enabled', 'Events'] },
-    deliveriesTable:   { title: 'Event Type', meta: ['Status', 'Timestamp'] },
-    ssoProvidersTable: { title: 'Name', meta: ['Type', 'Status'] },
-    ssoLinksTable:     { title: 'User', meta: ['Provider', 'Linked At'] },
-    tokensTable:       { title: 'Token Name', meta: ['User', 'Status'] },
-    backupsTable:      { title: 'Filename', meta: ['Size', 'Status'] },
+    blockedIPsTable:   { title: 'IP Address', meta: ['Reason', 'Blocked At'], keyAttr: 'data-ip' },
+    webhooksTable:     { title: 'URL', meta: ['Enabled', 'Events'], keyAttr: 'data-webhook-id' },
+    deliveriesTable:   { title: 'Event Type', meta: ['Status', 'Timestamp'], keyAttr: 'data-delivery-id' },
+    ssoProvidersTable: { title: 'Name', meta: ['Type', 'Status'], keyAttr: 'data-provider-id' },
+    ssoLinksTable:     { title: 'User', meta: ['Provider', 'Linked At'], keyAttr: 'data-link-id' },
+    tokensTable:       { title: 'Token Name', meta: ['User', 'Status'], keyAttr: 'data-token-id' },
+    backupsTable:      { title: 'Filename', meta: ['Size', 'Status'], keyAttr: 'data-filename' },
     auditTable:        { title: 'Action', meta: ['Outcome', 'Time (UTC)', 'User'], key: '#' },
 };
 
@@ -782,17 +784,20 @@ function compactAdminTable(tableId) {
     if (!cfg || !table || !table.tBodies[0]) return;
     table.classList.add('compact-cards');
     ensureAdminExpandButton(tableId, table);
-    const seen = {};
+    const seen = new Map();
     Array.from(table.tBodies[0].rows).forEach(tr => {
         const titleCell = tr.querySelector(`:scope > td[data-label="${cfg.title}"]`);
         if (!titleCell) return;
         const title = titleCell.textContent.trim();
-        // A key that survives redraws: the row's own id column when it has
-        // one, else its title numbered across every row (rows that were
-        // already done count too, so appended rows can't reuse a key).
+        // A key that survives redraws and reordering: the row's id (from its
+        // id column or its buttons), else its title numbered across every row
+        // (rows already done count too, so appended rows can't reuse a key).
         const keyCell = cfg.key && tr.querySelector(`:scope > td[data-label="${cfg.key}"]`);
-        seen[title] = (seen[title] || 0) + 1;
-        const key = keyCell ? keyCell.textContent.trim() : title + '#' + seen[title];
+        const keyEl = cfg.keyAttr && tr.querySelector(`[${cfg.keyAttr}]`);
+        seen.set(title, (seen.get(title) || 0) + 1);
+        const key = keyCell ? keyCell.textContent.trim()
+            : keyEl ? 'id:' + keyEl.getAttribute(cfg.keyAttr)
+            : title + '#' + seen.get(title);
         if (tr.querySelector(':scope > td.cc-summary')) return;
         const open = openSetFor(tableId).has(key);
         tr.classList.add('cc-row');

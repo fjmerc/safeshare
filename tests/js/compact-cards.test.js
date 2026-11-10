@@ -103,6 +103,8 @@ H.requireBrowserTests('compact-cards.test.js');
             { id: 1, username: 'alice', email: 'alice@example.com', role: 'user', is_active: true, file_count: 1, created_at: iso(-100 * hour), last_login: iso(-hour) },
             { id: 2, username: 'boss', email: 'boss@example.com', role: 'admin', is_active: false, file_count: 0, created_at: iso(-200 * hour), last_login: null },
         ];
+        let dashLoads = 0;
+        let addBlocked = false;
         const actx = await H.newBrowserContext(browser, base, { viewport: { width: 1280, height: 900 } });
         await actx.route(/\/admin\/assets\/[^/?]+\.(js|css)(\?.*)?$/, (route) => {
             const name = new URL(route.request().url()).pathname.replace(/^\/admin\/assets\//, '');
@@ -124,7 +126,14 @@ H.requireBrowserTests('compact-cards.test.js');
                 return json(older ? { entries: [entry(3, 'login')], next_before_id: null }
                     : { entries: [entry(5, 'login'), entry(4, 'login')], next_before_id: 4 });
             }
+            if (url.pathname === '/admin/api/tokens') {
+                return json({ tokens: [
+                    { id: 71, name: 'ci-deploy', username: 'alice', is_active: true, scopes: ['upload'], created_at: iso(-hour), expires_at: iso(24 * hour), last_used_at: null, usage_stats: null },
+                    { id: 72, name: 'old-backup', username: 'boss', is_active: false, scopes: ['download'], created_at: iso(-9 * hour), expires_at: iso(-hour), last_used_at: null, usage_stats: null },
+                ], total: 2 });
+            }
             if (url.pathname === '/admin/api/dashboard') {
+                dashLoads++;
                 if (url.searchParams.get('search') === 'nomatch') {
                     return json({ files: [], pagination: { page: 1, page_size: 20, total: 0, total_pages: 0, unfiltered_total: files.length },
                         stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
@@ -132,7 +141,8 @@ H.requireBrowserTests('compact-cards.test.js');
                 }
                 return json({ files, pagination: { page: 1, page_size: 20, total: files.length, total_pages: 1, unfiltered_total: files.length },
                     stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
-                    blocked_ips: [{ IPAddress: '198.51.100.7', Reason: 'Too many failed logins', BlockedAt: iso(-hour), BlockedBy: 'admin' },
+                    blocked_ips: [...(addBlocked ? [{ IPAddress: '192.0.2.99', Reason: 'New block', BlockedAt: iso(0), BlockedBy: 'admin' }] : []),
+                        { IPAddress: '198.51.100.7', Reason: 'Too many failed logins', BlockedAt: iso(-hour), BlockedBy: 'admin' },
                         { IPAddress: '203.0.113.50', Reason: 'Abuse report', BlockedAt: iso(-2 * hour), BlockedBy: 'admin' }], system_info: {} });
             }
             return json({});
@@ -211,6 +221,30 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('blocked IPs phone: has its own Expand all', await avis('[data-cc-expand="blockedIPsTable"]'));
         await ap.click('[data-cc-expand="blockedIPsTable"]');
         H.check('blocked IPs phone: Expand all opens both', (await ap.$$(`${brow}.is-open`)).length === 2);
+        await ap.click('[data-cc-expand="blockedIPsTable"]');
+        // Open the second IP, then a reload puts a new IP on top: the open
+        // card must stay with 203.0.113.50, not with whatever is second now.
+        const ipRow = (ip) => `#blockedIPsTableBody tr.cc-row[data-cc-key="id:${ip}"]`;
+        await ap.click(`${ipRow('203.0.113.50')} .cc-toggle`);
+        addBlocked = true;
+        await ap.evaluate(() => loadDashboardData(1, ''));
+        await ap.waitForSelector(ipRow('192.0.2.99'));
+        H.check('blocked IPs phone: an open card follows its row when the list reorders',
+            (await ap.$eval(ipRow('203.0.113.50'), (r) => r.classList.contains('is-open'))) && !(await ap.$eval(ipRow('198.51.100.7'), (r) => r.classList.contains('is-open'))));
+
+        // Admin API tokens: the select checkbox stays on the closed card, clear of the arrow.
+        // The tab only shows when API tokens are enabled; open it directly.
+        await ap.evaluate(() => document.getElementById('tab-apiTokens').click());
+        const tk = '#tokensTableBody tr.cc-row[data-cc-key="id:71"]';
+        await ap.waitForSelector(tk);
+        H.check('admin tokens phone: closed card shows name, user and status',
+            (await ap.textContent(`${tk} .cc-title`)) === 'ci-deploy' && /alice/.test(await ap.textContent(`${tk} .cc-meta`)) && !(await avis(`${tk} td[data-label="Scopes"]`)));
+        const tbox = await ap.$eval(`${tk} input[type="checkbox"]`, (b) => b.getBoundingClientRect());
+        const tarrow = await ap.$eval(`${tk} .cc-toggle`, (b) => b.getBoundingClientRect());
+        H.check('admin tokens phone: checkbox visible and clear of the arrow',
+            tbox.width > 0 && (tarrow.right <= tbox.left || tbox.right <= tarrow.left || tarrow.bottom <= tbox.top || tbox.bottom <= tarrow.top), JSON.stringify({ tbox, tarrow }));
+        await ap.click(`${tk} .cc-toggle`);
+        H.check('admin tokens phone: opening shows scopes', await avis(`${tk} td[data-label="Scopes"]`));
 
         await ap.click('#tab-auditLog');
         await ap.waitForSelector('#auditTableBody tr.cc-row');
