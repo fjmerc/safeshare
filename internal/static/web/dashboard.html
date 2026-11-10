@@ -2427,6 +2427,225 @@
         }
 
 
+        /* ===== My Uploads: selecting several files, and compact phone cards ===== */
+        .upload-card-top {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            min-width: 0;
+        }
+
+        .upload-card-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .upload-select {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+
+        .upload-select input,
+        .uploads-select-all input {
+            width: 18px;
+            height: 18px;
+            margin: 0;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .uploads-select-all {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .files-table.uploads-table tbody tr.is-selected > td {
+            background: var(--primary-tint);
+        }
+
+        /* Phone-only pieces stay out of the table layout */
+        .uploads-table .upload-card-meta,
+        .uploads-table .upload-quick-download,
+        .uploads-table .upload-card-toggle,
+        #filesSection .uploads-phone-only {
+            display: none;
+        }
+
+        .uploads-bulk-bar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border: 1px solid var(--primary-text);
+            border-radius: 8px;
+            background: var(--primary-tint);
+            color: var(--primary-text);
+        }
+
+        .uploads-bulk-bar[hidden] {
+            display: none;
+        }
+
+        .uploads-bulk-count {
+            font-weight: 600;
+            margin-right: auto;
+        }
+
+        .uploads-bulk-clear {
+            border: 0;
+            background: none;
+            padding: 6px;
+            color: var(--primary-text);
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .uploads-bulk-clear:hover {
+            text-decoration: underline;
+        }
+
+        .delete-modal-list {
+            margin: 8px 0 0;
+            padding-left: 20px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 640px) {
+            #filesSection .uploads-phone-only:not([hidden]) {
+                display: inline-flex;
+            }
+
+            /* A closed card is its first line only: name, size, status, download */
+            .files-table.uploads-table tbody tr.upload-row:not(.is-open) > td:not(:first-child),
+            #filesSection.select-mode .files-table.uploads-table tbody tr.upload-row > td:not(:first-child) {
+                display: none;
+            }
+
+            /* Size and status are already on the card's first line */
+            .files-table.uploads-table tbody tr.upload-row > td:nth-child(2),
+            .files-table.uploads-table tbody tr.upload-row > td:nth-child(7) {
+                display: none;
+            }
+
+            .files-table.uploads-table tbody tr.upload-row:not(.is-open) > td:first-child,
+            #filesSection.select-mode .files-table.uploads-table tbody tr.upload-row > td:first-child {
+                border-bottom: 0;
+            }
+
+            .files-table.uploads-table tbody tr.upload-row {
+                padding: 4px 8px 4px 12px;
+            }
+
+            .files-table.uploads-table tbody tr.upload-row.is-selected {
+                border-color: var(--primary-text);
+                background: var(--primary-tint);
+            }
+
+            .files-table.uploads-table tbody tr.upload-row.is-selected > td {
+                background: transparent;
+            }
+
+            .upload-card-main {
+                cursor: pointer;
+                padding: 6px 0;
+            }
+
+            .uploads-table .upload-card-meta {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px;
+                color: var(--text-secondary);
+                font-size: 13px;
+                font-weight: 500;
+            }
+
+            .uploads-table .upload-quick-download,
+            .uploads-table .upload-card-toggle {
+                display: inline-flex;
+                width: 40px;
+                height: 40px;
+            }
+
+            .upload-card-toggle {
+                color: var(--primary-text);
+                background: var(--primary-tint);
+                border-color: var(--primary-text);
+            }
+
+            .upload-card-toggle svg {
+                transition: transform 0.2s var(--ease-out, ease);
+            }
+
+            .upload-card-toggle[aria-expanded="true"] svg {
+                transform: rotate(180deg);
+            }
+
+            /* Checkboxes appear only after tapping Select */
+            #filesSection:not(.select-mode) .upload-select,
+            #filesSection.select-mode .uploads-table .upload-quick-download,
+            #filesSection.select-mode .uploads-table .upload-card-toggle,
+            #filesSection.select-mode .file-name .inline-edit-btn,
+            .files-table.uploads-table tbody tr.upload-row:not(.is-open) .file-name .inline-edit-btn {
+                display: none;
+            }
+
+            .upload-select {
+                width: 32px;
+                height: 40px;
+                margin-left: -4px;
+            }
+
+            /* While choosing files the bar sits at the bottom of the screen */
+            #filesSection.select-mode .uploads-bulk-bar {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 900;
+                margin: 0;
+                border-width: 1px 0 0;
+                border-radius: 0;
+                background: var(--card-bg);
+                color: var(--text-primary);
+                padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+                box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.12);
+            }
+
+            #filesSection.select-mode .uploads-bulk-clear {
+                display: none;
+            }
+
+            #filesSection.select-mode .uploads-bulk-count {
+                margin: 0 auto;
+            }
+
+            /* Room so the bar never covers the last card */
+            #filesSection.select-mode #filesContainer {
+                padding-bottom: 72px;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .upload-card-toggle svg {
+                transition: none;
+            }
+        }
+
+
         /* ===== Phone / small-viewport adaptations ===== */
 
         /* Field groups inside modals are plain groups, never cards within the modal card */
@@ -2647,14 +2866,36 @@
         <section class="content-section" id="filesSection" aria-labelledby="filesHeading">
             <div class="section-header">
                 <h2 id="filesHeading" tabindex="-1">My Uploads</h2>
-                <button type="button" id="refreshBtn" class="btn btn-secondary" aria-label="Refresh uploads">
-                    <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="23 4 23 10 17 10"></polyline>
-                        <polyline points="1 20 1 14 7 14"></polyline>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                    </svg>
-                    Refresh
-                </button>
+                <div class="section-actions">
+                    <!-- Phones only: cards start closed; open them all, or pick several to delete -->
+                    <button type="button" id="filesExpandAllBtn" class="btn btn-secondary uploads-phone-only" aria-controls="filesContainer" hidden>
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="7 15 12 20 17 15"></polyline>
+                            <polyline points="7 9 12 4 17 9"></polyline>
+                        </svg>
+                        <span id="filesExpandAllText">Expand all</span>
+                    </button>
+                    <button type="button" id="filesSelectBtn" class="btn btn-secondary uploads-phone-only" hidden>
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                        <span id="filesSelectText">Select</span>
+                    </button>
+                    <button type="button" id="refreshBtn" class="btn btn-secondary" aria-label="Refresh uploads">
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+
+            <!-- Shown once files are ticked (on phones: while choosing files) -->
+            <div id="filesBulkBar" class="uploads-bulk-bar" role="region" aria-label="Selected files" hidden>
+                <button type="button" id="filesSelectCancelBtn" class="btn btn-secondary uploads-phone-only">Cancel</button>
+                <span id="filesBulkCount" class="uploads-bulk-count" aria-live="polite">0 files selected</span>
+                <button type="button" id="filesBulkClearBtn" class="uploads-bulk-clear">Clear selection</button>
+                <button type="button" id="filesBulkDeleteBtn" class="btn btn-danger">Delete selected</button>
             </div>
 
             <div id="filesContainer">
@@ -2800,6 +3041,7 @@
             <div class="modal-header" id="deleteModalTitle">Delete File</div>
             <div class="modal-body">
                 <p id="deleteModalText">Are you sure you want to delete this file? This action cannot be undone.</p>
+                <ul id="deleteModalList" class="delete-modal-list" hidden></ul>
             </div>
             <div class="modal-footer">
                 <button type="button" id="deleteCancelBtn" class="btn btn-secondary">Cancel</button>

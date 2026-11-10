@@ -172,14 +172,7 @@ func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
-		// Validate stored filename (defense-in-depth against database corruption/compromise)
-		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
-			slog.Error("stored filename validation failed",
-				"filename", file.StoredFilename,
-				"error", err,
-				"user_id", user.ID,
-				"client_ip", logIP(getClientIP(r), cfg),
-			)
+		if err := finishUserFileDelete(r, cfg, user, file, "user deleted file"); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -188,36 +181,47 @@ func UserDeleteFileHandler(repos *repository.Repositories, cfg *config.Config) h
 			return
 		}
 
-		// Delete physical file
-		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			slog.Error("failed to delete physical file",
-				"path", filePath,
-				"error", err,
-			)
-			// Don't fail the request - database record is already deleted
-		}
-
-		// Decrypt if necessary before deletion (for cleanup)
-		if utils.IsEncryptionEnabled(cfg.EncryptionKey) {
-			slog.Debug("encrypted file deleted", "stored_filename", file.StoredFilename)
-		}
-
-		slog.Info("user deleted file",
-			"user_id", user.ID,
-			"username", user.Username,
-			"file_id", file.ID,
-			"claim_code", redactClaimCode(file.ClaimCode),
-			"filename", logFilename(file.OriginalFilename, cfg),
-		)
-		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
-			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "File deleted successfully",
 		})
 	}
+}
+
+// finishUserFileDelete removes the stored file behind a row the user has just
+// deleted, then logs and audits the deletion. It fails only when the stored
+// filename is invalid (defense in depth against a corrupted or tampered
+// database); the row is already gone either way.
+func finishUserFileDelete(r *http.Request, cfg *config.Config, user *models.User, file *models.File, logMsg string) error {
+	if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
+		slog.Error("stored filename validation failed",
+			"filename", file.StoredFilename,
+			"error", err,
+			"user_id", user.ID,
+			"client_ip", logIP(getClientIP(r), cfg),
+		)
+		return err
+	}
+
+	filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		// Don't fail the request - the database record is already deleted
+		slog.Error("failed to delete physical file",
+			"path", filePath,
+			"error", err,
+		)
+	}
+
+	slog.Info(logMsg,
+		"user_id", user.ID,
+		"username", user.Username,
+		"file_id", file.ID,
+		"claim_code", redactClaimCode(file.ClaimCode),
+		"filename", logFilename(file.OriginalFilename, cfg),
+	)
+	audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
+		UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
+	return nil
 }
 
 // UserRenameFileHandler allows users to rename their own files
@@ -499,14 +503,7 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 			return
 		}
 
-		// Validate stored filename (defense-in-depth against database corruption/compromise)
-		if err := utils.ValidateStoredFilename(file.StoredFilename); err != nil {
-			slog.Error("stored filename validation failed",
-				"filename", file.StoredFilename,
-				"error", err,
-				"user_id", user.ID,
-				"client_ip", logIP(getClientIP(r), cfg),
-			)
+		if err := finishUserFileDelete(r, cfg, user, file, "user deleted file by claim code"); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -514,26 +511,6 @@ func UserDeleteFileByClaimCodeHandler(repos *repository.Repositories, cfg *confi
 			})
 			return
 		}
-
-		// Delete physical file
-		filePath := filepath.Join(cfg.UploadDir, file.StoredFilename)
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			slog.Error("failed to delete physical file",
-				"path", filePath,
-				"error", err,
-			)
-			// Don't fail the request - database record is already deleted
-		}
-
-		slog.Info("user deleted file by claim code",
-			"user_id", user.ID,
-			"username", user.Username,
-			"file_id", file.ID,
-			"claim_code", redactClaimCode(file.ClaimCode),
-			"filename", logFilename(file.OriginalFilename, cfg),
-		)
-		audit.Record(r, cfg, audit.Event{Type: models.AuditEventFile, Action: "file_delete", Outcome: models.AuditOutcomeSuccess,
-			UserID: user.ID, Username: user.Username, ResourceType: "file", ResourceID: idStr(file.ID)})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
