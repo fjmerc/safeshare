@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-10
+
 ### Changed
 
 - Dashboard on phones: a closed **My Bundles** card now shows just its files, size and status, and the **Show files** button; opening it shows the claim code, dates, downloads and buttons along with the files.
