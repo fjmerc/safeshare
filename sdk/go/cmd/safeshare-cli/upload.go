@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	safeshare "github.com/fjmerc/safeshare/sdk/go"
 	"github.com/spf13/cobra"
@@ -371,7 +372,7 @@ func printUploadResult(out io.Writer, result *safeshare.UploadResult) {
 	fmt.Fprintf(out, "Size:        %s\n", formatBytes(result.Size))
 	fmt.Fprintf(out, "MIME Type:   %s\n", display(result.MimeType))
 	if result.ExpiresAt != nil {
-		fmt.Fprintf(out, "Expires:     %s\n", result.ExpiresAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "Expires:     %s\n", formatTime(*result.ExpiresAt))
 	} else {
 		fmt.Fprintf(out, "Expires:     Never\n")
 	}
@@ -420,6 +421,12 @@ func progressBar(percentage int) string {
 	filled := percentage * width / 100
 	empty := width - filled
 	return fmt.Sprintf("[%s%s]", strings.Repeat("█", filled), strings.Repeat("░", empty))
+}
+
+// formatTime shows a server time in this computer's time zone, with the
+// zone's name so it can't be mistaken for another zone's time.
+func formatTime(t time.Time) string {
+	return t.Local().Format("2006-01-02 15:04:05 MST")
 }
 
 func formatBytes(b int64) string {

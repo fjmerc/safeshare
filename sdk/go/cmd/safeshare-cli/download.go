@@ -158,7 +158,7 @@ Examples:
 			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
 			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
-				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(out, "Expires:     %s\n", formatTime(*info.ExpiresAt))
 			} else {
 				fmt.Fprintf(out, "Expires:     Never\n")
 			}
@@ -439,7 +439,7 @@ Example:
 			fmt.Fprintf(out, "Size:        %s\n", formatBytes(info.Size))
 			fmt.Fprintf(out, "MIME Type:   %s\n", display(info.MimeType))
 			if info.ExpiresAt != nil {
-				fmt.Fprintf(out, "Expires:     %s\n", info.ExpiresAt.Format("2006-01-02 15:04:05"))
+				fmt.Fprintf(out, "Expires:     %s\n", formatTime(*info.ExpiresAt))
 			} else {
 				fmt.Fprintf(out, "Expires:     Never\n")
 			}

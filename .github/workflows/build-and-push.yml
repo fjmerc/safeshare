@@ -29,7 +29,7 @@ jobs:
       - name: Check Dockerfile Go matches go.mod toolchain
         run: |
           want=$(sed -n 's/^toolchain go//p' go.mod)
-          got=$(sed -n 's/^FROM golang:\([0-9.]*\)-alpine.*/\1/p' Dockerfile)
+          got=$(sed -n 's/^FROM \(--platform=[^ ]* \)\{0,1\}golang:\([0-9.]*\)-alpine.*/\2/p' Dockerfile)
           if [ -z "$want" ] || [ "$want" != "$got" ]; then
             echo "::error::Dockerfile golang:${got} != go.mod toolchain go${want}"
             exit 1
@@ -74,9 +74,10 @@ jobs:
 
   # Race detection runs as its own job so it can have a realistic time budget
   # and actually fail the build. It used to be a step in `test` with a 5-minute
-  # timeout, `|| echo` and continue-on-error: internal/handlers needs ~20+ min
+  # timeout, `|| echo` and continue-on-error: internal/handlers needs ~18 min
   # under -race (bcrypt/MFA timing tests), so it always timed out and races were
-  # never reported. handlers gets its own matrix leg to keep wall-clock down.
+  # never reported. handlers is split into shards to keep wall-clock down: each
+  # shard runs every Nth test by name, so a new test always lands in one.
   race:
     name: race (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -87,8 +88,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: handlers
+          - name: handlers 1/4
             packages: ./internal/handlers
+            shard: 0
+            shards: 4
+          - name: handlers 2/4
+            packages: ./internal/handlers
+            shard: 1
+            shards: 4
+          - name: handlers 3/4
+            packages: ./internal/handlers
+            shard: 2
+            shards: 4
+          - name: handlers 4/4
+            packages: ./internal/handlers
+            shard: 3
+            shards: 4
           - name: core
             packages: ./internal/middleware ./internal/database ./internal/utils ./internal/repository/sqlite
     steps:
@@ -102,7 +117,66 @@ jobs:
           cache: true
 
       - name: Run race detection
-        run: go test -race -timeout=45m ${{ matrix.packages }}
+        env:
+          PACKAGES: ${{ matrix.packages }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+        run: |
+          read -ra pkgs <<< "$PACKAGES"
+          if [ -z "$SHARDS" ]; then
+            go test -race -timeout=45m "${pkgs[@]}"
+            exit
+          fi
+          # -list builds the same -race test binary the run below reuses.
+          go test -race -list '.*' "${pkgs[@]}" > "$RUNNER_TEMP/tests.txt"
+          tests=$(grep -E '^(Test|Fuzz|Example)' "$RUNNER_TEMP/tests.txt" | sort |
+            awk -v n="$SHARDS" -v i="$SHARD" 'NR % n == i' | paste -sd'|' -)
+          if [ -z "$tests" ]; then
+            echo "::error::race shard $SHARD/$SHARDS has no tests"
+            exit 1
+          fi
+          echo "Shard $((SHARD + 1))/$SHARDS: $(echo "$tests" | tr '|' '\n' | wc -l) tests"
+          go test -race -timeout=25m -run "^(${tests})\$" "${pkgs[@]}"
+
+  # Branch protection on develop requires a check named "race (handlers)";
+  # this reports the shards' combined result under that name. always() so a
+  # failed shard fails this check instead of skipping it (skipped counts as
+  # passed).
+  race-handlers:
+    name: race (handlers)
+    needs: [race]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check every race shard passed
+        env:
+          RESULT: ${{ needs.race.result }}
+        run: test "$RESULT" = success
+
+  # Builds the image for both platforms while the tests run, without pushing,
+  # so build-and-push (which waits for the tests) only has to fetch it from
+  # the cache and push.
+  image-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image into the cache
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # PostgreSQL integration tests run separately to avoid slowing down the main test suite
   test-postgres:
@@ -454,7 +528,7 @@ jobs:
           scripts/build-cli.sh --check "$RUNNER_TEMP/cli/safeshare-cli.sha256"
 
   build-and-push:
-    needs: [test, race, test-postgres, test-minio, security-scan, js-test, reproducible-build]
+    needs: [test, race, test-postgres, test-minio, security-scan, js-test, reproducible-build, image-cache]
     runs-on: ubuntu-latest
     permissions:
       contents: read
