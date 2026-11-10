@@ -79,6 +79,7 @@ func UserDashboardDataHandler(repos *repository.Repositories, cfg *config.Config
 			DownloadURL         string    `json:"download_url"`
 			IsExpired           bool      `json:"is_expired"`
 			IsPasswordProtected bool      `json:"is_password_protected"`
+			ClientEncrypted     bool      `json:"client_encrypted"` // encrypted in the browser: the owner can't download it from the dashboard
 		}
 
 		fileResponses := make([]FileResponse, 0, len(files))
@@ -97,6 +98,7 @@ func UserDashboardDataHandler(repos *repository.Repositories, cfg *config.Config
 				DownloadURL:         buildShareURL(r, cfg, file.ClaimCode),
 				IsExpired:           time.Now().UTC().After(file.ExpiresAt) || (file.MaxDownloads != nil && *file.MaxDownloads > 0 && file.DownloadCount >= *file.MaxDownloads),
 				IsPasswordProtected: file.PasswordHash != "",
+				ClientEncrypted:     file.ClientEncrypted,
 			})
 		}
 

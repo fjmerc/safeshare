@@ -64,12 +64,35 @@ var tokenPolicy = []tokenRule{
 	{http.MethodGet, "/api/auth/user", ""},
 }
 
+// Routes under a tokenPolicy prefix that need a different scope, told apart
+// by their last segment; checked before tokenPolicy. Owner downloads read a
+// file's contents (with no password and no download limit), which manage
+// (list, rename, delete) does not grant.
+var tokenSuffixPolicy = []struct{ method, prefix, suffix, scope string }{
+	{http.MethodGet, "/api/user/files/", "/download", utils.ScopeDownload},
+	{http.MethodGet, "/api/user/bundles/", "/download", utils.ScopeDownload},
+}
+
+// methodMatches: "" matches any method, and a GET rule also covers HEAD.
+func methodMatches(rule, method string) bool {
+	return rule == "" || rule == method || (rule == http.MethodGet && method == http.MethodHead)
+}
+
 // tokenRequirement reports what an API token needs to make this request:
 // allowed is false when only a browser session may, and otherwise scope is
 // the scope the token must hold ("" = any valid token).
 func tokenRequirement(method, path string) (scope string, allowed bool) {
+	for _, rule := range tokenSuffixPolicy {
+		if !methodMatches(rule.method, method) || !strings.HasPrefix(path, rule.prefix) {
+			continue
+		}
+		// Something must sit between the prefix and the suffix (the file).
+		if rest := path[len(rule.prefix):]; len(rest) > len(rule.suffix) && strings.HasSuffix(rest, rule.suffix) {
+			return rule.scope, true
+		}
+	}
 	for _, rule := range tokenPolicy {
-		if rule.method != "" && rule.method != method && !(rule.method == http.MethodGet && method == http.MethodHead) {
+		if !methodMatches(rule.method, method) {
 			continue
 		}
 		if path == rule.path || (strings.HasSuffix(rule.path, "/") && strings.HasPrefix(path, rule.path)) {

@@ -223,6 +223,17 @@ const minStatusRateLimitPerHour = 6000
 const claimInfoLimitMultiplier = 2
 
 // RateLimitMiddleware creates a middleware that enforces rate limits
+// isOwnerDownloadPath reports whether path is an owner download:
+// /api/user/files/{code}/download or /api/user/bundles/{id}/files/{pos}/download.
+func isOwnerDownloadPath(path string) bool {
+	for _, prefix := range []string{"/api/user/files/", "/api/user/bundles/"} {
+		if rest, ok := strings.CutPrefix(path, prefix); ok && len(rest) > len("/download") && strings.HasSuffix(rest, "/download") {
+			return true
+		}
+	}
+	return false
+}
+
 func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +300,18 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				// /api/upload and /api/upload/init and count as uploads.
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "bundle_manage"
+			} else if isOwnerDownloadPath(r.URL.Path) {
+				// A signed-in user downloading their own file: the download
+				// rate, in its own bucket so it never eats into recipients'.
+				// The dashboard's HEAD check before each download moves no
+				// file data: it gets its own larger budget, like claim info.
+				if r.Method == http.MethodHead {
+					limit = rl.config.GetRateLimitDownload() * claimInfoLimitMultiplier
+					limitType = "owner_download_check"
+				} else {
+					limit = rl.config.GetRateLimitDownload()
+					limitType = "owner_download"
+				}
 			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" ||
 				(strings.HasPrefix(r.URL.Path, "/api/user/bundles/") && strings.HasSuffix(r.URL.Path, "/regenerate-code")) {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP

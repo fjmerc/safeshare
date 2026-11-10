@@ -45,6 +45,7 @@ type userBundle struct {
 //	DELETE /api/user/bundles/{id}
 //	PUT    /api/user/bundles/{id}/expiration      {"new_expiration": RFC3339}
 //	PUT    /api/user/bundles/{id}/regenerate-code
+//	GET    /api/user/bundles/{id}/files/{position}/download (also HEAD; owner download, see owner_download.go)
 //
 // A bundle another user owns answers 404, like one that does not exist.
 func UserBundlesHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
@@ -69,7 +70,20 @@ func UserBundlesHandler(repos *repository.Repositories, cfg *config.Config) http
 
 		idPart, action, hasAction := strings.Cut(strings.TrimPrefix(rest, "/"), "/")
 		bundleID, err := strconv.ParseInt(idPart, 10, 64)
-		if err != nil || bundleID <= 0 || (hasAction && action == "") || strings.Contains(action, "/") {
+		if err != nil || bundleID <= 0 || (hasAction && action == "") {
+			sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
+			return
+		}
+		if strings.HasPrefix(action, "files/") {
+			position, ok := memberDownloadPosition(action)
+			if !ok {
+				sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
+				return
+			}
+			downloadUserBundleFile(w, r, repos, cfg, user, bundleID, position)
+			return
+		}
+		if strings.Contains(action, "/") {
 			sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
 			return
 		}
@@ -133,6 +147,55 @@ func listUserBundles(w http.ResponseWriter, r *http.Request, repos *repository.R
 		"limit":   limit,
 		"offset":  offset,
 	})
+}
+
+// memberDownloadPosition parses "files/{position}/download".
+func memberDownloadPosition(action string) (int, bool) {
+	posStr, ok := strings.CutSuffix(strings.TrimPrefix(action, "files/"), ownerDownloadSuffix)
+	if !ok || posStr == "" || strings.Contains(posStr, "/") {
+		return 0, false
+	}
+	position, err := strconv.Atoi(posStr)
+	if err != nil || position < 0 {
+		return 0, false
+	}
+	return position, true
+}
+
+// downloadUserBundleFile serves one file of the user's own bundle to them
+// (owner download: no password, not counted).
+func downloadUserBundleFile(w http.ResponseWriter, r *http.Request, repos *repository.Repositories, cfg *config.Config, user *models.User, bundleID int64, position int) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		sendError(w, "Method not allowed", "METHOD_NOT_ALLOWED", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	b, err := ownedPublishedBundle(ctx, repos, user, bundleID)
+	if err != nil {
+		slog.Error("failed to get bundle for owner download", "error", err, "bundle_id", bundleID)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return
+	}
+	if b == nil {
+		sendError(w, "Bundle not found", "NOT_FOUND", http.StatusNotFound)
+		return
+	}
+	if b.ClientEncrypted {
+		sendError(w, "This bundle was encrypted in the browser; only its link can open it", "CLIENT_ENCRYPTED", http.StatusConflict)
+		return
+	}
+	file, err := repos.Bundles.GetMember(ctx, b.ID, position)
+	if err != nil {
+		slog.Error("failed to get bundle member for owner download", "error", err, "bundle_id", bundleID)
+		sendError(w, "Internal server error", "INTERNAL_ERROR", http.StatusInternalServerError)
+		return
+	}
+	if file == nil {
+		sendError(w, "File not found", "NOT_FOUND", http.StatusNotFound)
+		return
+	}
+	serveOwnerDownload(w, r, cfg, file, user)
 }
 
 // ownedPublishedBundle returns the bundle if user owns it and it is published.
