@@ -2745,9 +2745,38 @@ footer a {
     transform: rotate(180deg);
 }
 
+/* Size and status on the closed phone card only */
+.bundle-card-meta {
+    display: none;
+}
+
 @media (max-width: 640px) {
     .btn-icon.bundle-toggle {
         display: none;
+    }
+
+    /* A closed bundle card is its title, size and status, and the Show
+       files button; opening it shows the details and the files. Size and
+       status aren't repeated. */
+    .bundles-table tbody tr.bundle-row:not(.is-open) > td:not(.bundle-name-cell):not(.bundle-toggle-cell),
+    .bundles-table tbody tr.bundle-row > td[data-label="Size"],
+    .bundles-table tbody tr.bundle-row > td[data-label="Status"] {
+        display: none;
+    }
+
+    .bundles-table tbody tr.bundle-row:not(.is-open) > td.bundle-name-cell {
+        border-bottom: 0;
+    }
+
+    .bundles-table .bundle-card-meta {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 2px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
     }
 
     .bundles-table td.bundle-name-cell {
