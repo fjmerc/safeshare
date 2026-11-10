@@ -3142,6 +3142,12 @@ input[type="checkbox"].check-inline {
         border-top: 1px solid var(--border-color);
     }
 
+    /* The label sits beside the value, out of flow: keep every labelled
+       row at least as tall as its label, even when the value is empty. */
+    #main .data-table[id] tbody td[data-label] {
+        min-height: calc(var(--text-xs) * 1.4 + 12px);
+    }
+
     #main .data-table[id] tbody td[data-label]::before {
         content: attr(data-label);
         position: absolute;
@@ -3200,6 +3206,11 @@ input[type="checkbox"].check-inline {
     #auditTable tbody td {
         padding-top: 3px;
         padding-bottom: 3px;
+    }
+
+    /* A short or empty value still leaves room for its label */
+    #auditTable tbody td[data-label] {
+        min-height: calc(var(--text-xs) * 1.4 + 8px);
     }
 
     #auditTable tbody td[data-label]::before {
@@ -3300,6 +3311,11 @@ input[type="checkbox"].check-inline {
 @media (max-width: 768px) {
     .cc-phone-only:not([hidden]) {
         display: inline-flex;
+    }
+
+    .cc-expand-btn {
+        align-self: flex-start;
+        margin-bottom: 10px;
     }
 
     #main .data-table.compact-cards tbody tr.cc-row {

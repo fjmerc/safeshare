@@ -103,6 +103,8 @@ H.requireBrowserTests('compact-cards.test.js');
             { id: 1, username: 'alice', email: 'alice@example.com', role: 'user', is_active: true, file_count: 1, created_at: iso(-100 * hour), last_login: iso(-hour) },
             { id: 2, username: 'boss', email: 'boss@example.com', role: 'admin', is_active: false, file_count: 0, created_at: iso(-200 * hour), last_login: null },
         ];
+        let dashLoads = 0;
+        let addBlocked = false;
         const actx = await H.newBrowserContext(browser, base, { viewport: { width: 1280, height: 900 } });
         await actx.route(/\/admin\/assets\/[^/?]+\.(js|css)(\?.*)?$/, (route) => {
             const name = new URL(route.request().url()).pathname.replace(/^\/admin\/assets\//, '');
@@ -117,7 +119,21 @@ H.requireBrowserTests('compact-cards.test.js');
             const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
             if (url.pathname === '/admin/api/files/uploaders') return json({ anonymous_count: 1, users: [{ user_id: 1, username: 'alice', file_count: 1 }] });
             if (url.pathname === '/admin/api/users') return json({ users, total: users.length });
+            if (url.pathname === '/admin/api/audit-logs') {
+                const older = url.searchParams.get('before_id');
+                const entry = (id, action) => ({ id, timestamp: '2026-11-10T10:0' + (id % 10) + ':00Z', event_type: 'auth', action,
+                    outcome: 'success', username: 'alice', ip_address: '10.0.0.' + id, resource_type: '', details: '' });
+                return json(older ? { entries: [entry(3, 'login')], next_before_id: null }
+                    : { entries: [entry(5, 'login'), entry(4, 'login')], next_before_id: 4 });
+            }
+            if (url.pathname === '/admin/api/tokens') {
+                return json({ tokens: [
+                    { id: 71, name: 'ci-deploy', username: 'alice', is_active: true, scopes: ['upload'], created_at: iso(-hour), expires_at: iso(24 * hour), last_used_at: null, usage_stats: null },
+                    { id: 72, name: 'old-backup', username: 'boss', is_active: false, scopes: ['download'], created_at: iso(-9 * hour), expires_at: iso(-hour), last_used_at: null, usage_stats: null },
+                ], total: 2 });
+            }
             if (url.pathname === '/admin/api/dashboard') {
+                dashLoads++;
                 if (url.searchParams.get('search') === 'nomatch') {
                     return json({ files: [], pagination: { page: 1, page_size: 20, total: 0, total_pages: 0, unfiltered_total: files.length },
                         stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
@@ -125,7 +141,9 @@ H.requireBrowserTests('compact-cards.test.js');
                 }
                 return json({ files, pagination: { page: 1, page_size: 20, total: files.length, total_pages: 1, unfiltered_total: files.length },
                     stats: { total_files: 2, storage_used_bytes: 1, quota_limit_bytes: 0, quota_used_percent: 0, partial_uploads_bytes: 0, partial_uploads_count: 0 },
-                    blocked_ips: [], system_info: {} });
+                    blocked_ips: [...(addBlocked ? [{ IPAddress: '192.0.2.99', Reason: 'New block', BlockedAt: iso(0), BlockedBy: 'admin' }] : []),
+                        { IPAddress: '198.51.100.7', Reason: 'Too many failed logins', BlockedAt: iso(-hour), BlockedBy: 'admin' },
+                        { IPAddress: '203.0.113.50', Reason: 'Abuse report', BlockedAt: iso(-2 * hour), BlockedBy: 'admin' }], system_info: {} });
             }
             return json({});
         });
@@ -188,6 +206,65 @@ H.requireBrowserTests('compact-cards.test.js');
             (await avis(`${urow(1)} td[data-label="Email"]`)) && (await avis(`${urow(1)} [data-action="editUser"]`)) && !(await avis(`${urow(1)} td[data-label="Username"]`)) && !(await avis(`${urow(1)} td[data-label="Role"]`)));
         H.check('admin phone: users Expand all is shown', await avis('#usersExpandAllBtn'));
         H.check('admin phone: no sideways scrolling', await ap.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+
+        // The other admin tables: same cards, built from their own cells.
+        await ap.click('#tab-blockedIPs');
+        const brow = '#blockedIPsTableBody tr.cc-row';
+        await ap.waitForSelector(brow);
+        const bfirst = `${brow}:first-child`;
+        const bmeta = await ap.textContent(`${bfirst} .cc-meta`);
+        H.check('blocked IPs phone: closed card shows the IP, reason and when',
+            (await ap.textContent(`${bfirst} .cc-title`)) === '198.51.100.7' && /Too many failed logins/.test(bmeta) && !(await avis(`${bfirst} td[data-label="Blocked By"]`)), bmeta);
+        await ap.click(`${bfirst} .cc-toggle`);
+        H.check('blocked IPs phone: opening shows the rest and the Unblock button',
+            (await avis(`${bfirst} td[data-label="Blocked By"]`)) && (await avis(`${bfirst} [data-action="unblockIP"]`)) && !(await avis(`${bfirst} td[data-label="Reason"]`)));
+        H.check('blocked IPs phone: has its own Expand all', await avis('[data-cc-expand="blockedIPsTable"]'));
+        await ap.click('[data-cc-expand="blockedIPsTable"]');
+        H.check('blocked IPs phone: Expand all opens both', (await ap.$$(`${brow}.is-open`)).length === 2);
+        await ap.click('[data-cc-expand="blockedIPsTable"]');
+        // Open the second IP, then a reload puts a new IP on top: the open
+        // card must stay with 203.0.113.50, not with whatever is second now.
+        const ipRow = (ip) => `#blockedIPsTableBody tr.cc-row[data-cc-key="id:${ip}"]`;
+        await ap.click(`${ipRow('203.0.113.50')} .cc-toggle`);
+        addBlocked = true;
+        await ap.evaluate(() => loadDashboardData(1, ''));
+        await ap.waitForSelector(ipRow('192.0.2.99'));
+        H.check('blocked IPs phone: an open card follows its row when the list reorders',
+            (await ap.$eval(ipRow('203.0.113.50'), (r) => r.classList.contains('is-open'))) && !(await ap.$eval(ipRow('198.51.100.7'), (r) => r.classList.contains('is-open'))));
+
+        // Admin API tokens: the select checkbox stays on the closed card, clear of the arrow.
+        // The tab only shows when API tokens are enabled; open it directly.
+        await ap.evaluate(() => document.getElementById('tab-apiTokens').click());
+        const tk = '#tokensTableBody tr.cc-row[data-cc-key="id:71"]';
+        await ap.waitForSelector(tk);
+        H.check('admin tokens phone: closed card shows name, user and status',
+            (await ap.textContent(`${tk} .cc-title`)) === 'ci-deploy' && /alice/.test(await ap.textContent(`${tk} .cc-meta`)) && !(await avis(`${tk} td[data-label="Scopes"]`)));
+        const tbox = await ap.$eval(`${tk} input[type="checkbox"]`, (b) => b.getBoundingClientRect());
+        const tarrow = await ap.$eval(`${tk} .cc-toggle`, (b) => b.getBoundingClientRect());
+        H.check('admin tokens phone: checkbox visible and clear of the arrow',
+            tbox.width > 0 && (tarrow.right <= tbox.left || tbox.right <= tarrow.left || tarrow.bottom <= tbox.top || tbox.bottom <= tarrow.top), JSON.stringify({ tbox, tarrow }));
+        await ap.click(`${tk} .cc-toggle`);
+        H.check('admin tokens phone: opening shows scopes', await avis(`${tk} td[data-label="Scopes"]`));
+
+        await ap.click('#tab-auditLog');
+        await ap.waitForSelector('#auditTableBody tr.cc-row');
+        const arow = (id) => `#auditTableBody tr.cc-row[data-cc-key="${id}"]`;
+        H.check('audit phone: entries are closed cards keyed by entry number',
+            (await ap.$$('#auditTableBody tr.cc-row')).length === 2 && !(await avis(`${arow(5)} td[data-label="IP"]`)) && (await ap.textContent(`${arow(5)} .cc-title`)) === 'login');
+        await ap.click(`${arow(5)} .cc-toggle`);
+        // Empty values (no resource, no details) must not squash their rows.
+        const cramped = await ap.$$eval(`${arow(5)} > td[data-label]`, (tds) => tds
+            .filter((td) => td.offsetParent)
+            .filter((td) => td.getBoundingClientRect().height < parseFloat(getComputedStyle(td, '::before').lineHeight) + 4)
+            .map((td) => td.getAttribute('data-label')));
+        H.check('audit phone: no row is shorter than its label', cramped.length === 0, JSON.stringify(cramped));
+        H.check('audit phone: empty values show a dash', /—/.test(await ap.textContent(`${arow(5)} td[data-label="Details"]`)) && /—/.test(await ap.textContent(`${arow(5)} td[data-label="Resource"]`)));
+        await ap.click('#auditMoreBtn');
+        await ap.waitForFunction(() => document.querySelectorAll('#auditTableBody tr.cc-row').length === 3, null, { timeout: 5000 });
+        H.check('audit phone: older entries loaded later become cards too, with their own keys',
+            (await ap.$$('#auditTableBody td.cc-summary')).length === 3 && !(await avis(`${arow(3)} td[data-label="IP"]`)) && (await avis(`${arow(5)} td[data-label="IP"]`)));
+        await ap.setViewportSize({ width: 1280, height: 900 });
+        H.check('audit desktop: table keeps its columns, no summary', (await avis(`${arow(3)} td[data-label="IP"]`)) && !(await avis(`${arow(3)} .cc-summary`)) && !(await avis('[data-cc-expand="auditTable"]')));
 
         await actx.close();
     } finally {
