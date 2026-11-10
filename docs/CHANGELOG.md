@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-10
+
 ### Added
 
 - Dashboard: a **Download** button on each of your uploads and on each file inside your bundles. Downloading your own file needs no password and isn't counted, so it still works after the file reached its download limit and never uses up a recipient's download. Files encrypted in the browser can't be downloaded this way (the server never has their key), and expired ones can't either; their button is greyed out. My Uploads now tags encrypted and password-protected files.
