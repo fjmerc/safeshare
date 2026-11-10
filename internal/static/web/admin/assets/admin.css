@@ -817,6 +817,131 @@ button:disabled {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
 }
 
+/* Files tab filter row: labelled selects that wrap; chips for active filters */
+.file-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: -8px 0 16px;
+}
+
+.file-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1 1 150px;
+    min-width: 0;
+}
+
+.file-filter label {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.file-filter .filter-select {
+    width: 100%;
+    min-width: 0;
+}
+
+/* A filter set to anything but its default stands out (border + tint, not colour alone: weight too) */
+.file-filter .filter-select.is-active,
+[data-theme="dark"] .file-filter .filter-select.is-active {
+    border-color: var(--primary-text);
+    background-color: var(--primary-light);
+    font-weight: 600;
+}
+
+.file-filter-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 16px;
+}
+
+.file-filter-summary[hidden] {
+    display: none;
+}
+
+.file-filter-count {
+    margin: 0;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.file-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-family: inherit;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.filter-chip:hover {
+    border-color: var(--primary-text);
+}
+
+.filter-chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.filter-chip:hover .filter-chip-x {
+    background: var(--border-hover);
+}
+
+.filter-clear-all {
+    background: none;
+    border: none;
+    padding: 4px 6px;
+    color: var(--primary-text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-family: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.files-empty-filtered p {
+    margin: 0 0 12px;
+}
+
+.modal-content p.confirm-detail {
+    margin-top: -16px;
+    padding: 12px 14px;
+    border-left: 4px solid var(--warning-color);
+    border-radius: var(--radius-sm);
+    background: var(--warning-light);
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.modal-content p.confirm-detail[hidden] {
+    display: none;
+}
+
 .inline-form {
     display: flex;
     gap: 12px;
@@ -2684,6 +2809,8 @@ input[type="checkbox"].check-inline {
     .webhook-filter,
     .filter-select,
     .pagination button,
+    .filter-chip,
+    .filter-clear-all,
     .form-group input:not([type="checkbox"]):not([type="radio"]),
     .form-group select {
         min-height: 44px;
@@ -2891,6 +3018,14 @@ input[type="checkbox"].check-inline {
     .audit-filters .webhook-filter {
         width: 100%;
         min-width: 0;
+    }
+
+    /* Files tab filters: two-up grid, like the audit filters */
+    .file-filters {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin: 0 0 12px;
     }
 
     .audit-filters #auditFilterSearch,
