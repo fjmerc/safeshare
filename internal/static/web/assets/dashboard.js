@@ -435,6 +435,11 @@
                 mobile.insertAdjacentHTML('beforeend', BUNDLE_ICONS.chevronDown);
                 mobileCell.appendChild(mobile);
 
+                // Phones: size and status on the closed card's title (hidden on wider screens)
+                const cardMeta = el('span', 'bundle-card-meta');
+                cardMeta.append(formatFileSize(bundle.total_size) + ' · ', statusCell.firstChild.cloneNode(true));
+                title.appendChild(cardMeta);
+
                 row.append(nameCell, sizeCell, codeCell, createdCell, expiresCell, downloadsCell, statusCell, actionsCell, mobileCell);
                 tbody.appendChild(row);
 

@@ -125,9 +125,13 @@ H.requireBrowserTests('bundle-dashboard.test.js');
         await page.setViewportSize({ width: 390, height: 844 });
         const mobileToggle = `${rowFor('BundleDash03')} button.bundle-toggle-mobile`;
         H.check('phone shows a labelled toggle', (await page.isVisible(mobileToggle)) && /Show 1 file/.test(await page.textContent(mobileToggle)));
+        H.check('phone: a closed bundle card hides its details', !(await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Claim code"]`)) && !(await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Actions"]`)));
+        H.check('phone: the closed card shows size and status', await page.isVisible(`${rowFor('BundleDash03')} .bundle-card-meta .badge`));
         H.check('phone hides the chevron', !(await page.isVisible(`${rowFor('BundleDash03')} button.bundle-toggle`)));
         await page.click(mobileToggle);
         H.check('phone toggle opens the files', (await visibleCount(filesOf('BundleDash03'))) === 1 && /Hide 1 file/.test(await page.textContent(mobileToggle)));
+        H.check('phone: opening also shows the details and buttons', (await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Claim code"]`)) && (await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Actions"]`)));
+        H.check('phone: size and status are not repeated when open', !(await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Size"]`)) && !(await page.isVisible(`${rowFor('BundleDash03')} td[data-label="Status"]`)));
         H.check('no sideways scrolling on a phone', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
         await context.close();
     } finally {

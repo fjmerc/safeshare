@@ -695,6 +695,10 @@ function updatePagination(pagination) {
 // hidden on wider screens. On phones a card shows only that line until
 // opened. Open cards are remembered across reloads during this visit.
 const openAdminCards = { files: new Set(), users: new Set() };
+function openSetFor(table) {
+    if (!openAdminCards[table]) openAdminCards[table] = new Set();
+    return openAdminCards[table];
+}
 const ADMIN_CARD_CHEVRON = '<svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"><polyline points="6 9 12 15 18 9"></polyline></svg>';
 
 function adminCardSummary(table, key, title, metaHTML, isOpen) {
@@ -711,7 +715,7 @@ function adminCardSummary(table, key, title, metaHTML, isOpen) {
 function setAdminCardOpen(row, open) {
     const table = row.getAttribute('data-cc-table');
     const key = row.getAttribute('data-cc-key');
-    if (open) openAdminCards[table].add(key); else openAdminCards[table].delete(key);
+    if (open) openSetFor(table).add(key); else openSetFor(table).delete(key);
     row.classList.toggle('is-open', open);
     const toggle = row.querySelector('.cc-toggle');
     if (toggle) {
@@ -728,7 +732,7 @@ function adminCardRows(table) {
 function toggleAdminCard(table, key) {
     const row = adminCardRows(table).find(r => r.getAttribute('data-cc-key') === key);
     if (!row) return;
-    setAdminCardOpen(row, !openAdminCards[table].has(key));
+    setAdminCardOpen(row, !openSetFor(table).has(key));
     syncAdminCardsButton(table);
 }
 
@@ -743,8 +747,11 @@ function toggleAllAdminCards(table) {
 function syncAdminCardsButton(table) {
     const rows = adminCardRows(table);
     const present = new Set(rows.map(r => r.getAttribute('data-cc-key')));
-    openAdminCards[table].forEach(k => { if (!present.has(k)) openAdminCards[table].delete(k); });
-    const btn = document.getElementById(table === 'files' ? 'filesExpandAllBtn' : 'usersExpandAllBtn');
+    const open = openSetFor(table);
+    open.forEach(k => { if (!present.has(k)) open.delete(k); });
+    const btn = table === 'files' ? document.getElementById('filesExpandAllBtn')
+        : table === 'users' ? document.getElementById('usersExpandAllBtn')
+        : document.querySelector(`[data-cc-expand="${table}"]`);
     if (!btn) return;
     const allOpen = rows.length > 0 && rows.every(r => r.classList.contains('is-open'));
     btn.hidden = rows.length === 0;
@@ -753,6 +760,106 @@ function syncAdminCardsButton(table) {
 }
 
 const adminPhoneQuery = window.matchMedia('(max-width: 768px)');
+
+// The other stacked-card tables get the same compact cards without changing
+// how each one renders: after its rows are (re)drawn, a summary cell is built
+// from cells the row already shows. title is the card's heading (copied as
+// text); meta cells are cloned (already-escaped markup) onto the line below.
+const ADMIN_COMPACT_TABLES = {
+    blockedIPsTable:   { title: 'IP Address', meta: ['Reason', 'Blocked At'] },
+    webhooksTable:     { title: 'URL', meta: ['Enabled', 'Events'] },
+    deliveriesTable:   { title: 'Event Type', meta: ['Status', 'Timestamp'] },
+    ssoProvidersTable: { title: 'Name', meta: ['Type', 'Status'] },
+    ssoLinksTable:     { title: 'User', meta: ['Provider', 'Linked At'] },
+    tokensTable:       { title: 'Token Name', meta: ['User', 'Status'] },
+    backupsTable:      { title: 'Filename', meta: ['Size', 'Status'] },
+    auditTable:        { title: 'Action', meta: ['Outcome', 'Time (UTC)', 'User'], key: '#' },
+};
+
+function compactAdminTable(tableId) {
+    const cfg = ADMIN_COMPACT_TABLES[tableId];
+    const table = document.getElementById(tableId);
+    if (!cfg || !table || !table.tBodies[0]) return;
+    table.classList.add('compact-cards');
+    ensureAdminExpandButton(tableId, table);
+    const seen = {};
+    Array.from(table.tBodies[0].rows).forEach(tr => {
+        const titleCell = tr.querySelector(`:scope > td[data-label="${cfg.title}"]`);
+        if (!titleCell) return;
+        const title = titleCell.textContent.trim();
+        // A key that survives redraws: the row's own id column when it has
+        // one, else its title numbered across every row (rows that were
+        // already done count too, so appended rows can't reuse a key).
+        const keyCell = cfg.key && tr.querySelector(`:scope > td[data-label="${cfg.key}"]`);
+        seen[title] = (seen[title] || 0) + 1;
+        const key = keyCell ? keyCell.textContent.trim() : title + '#' + seen[title];
+        if (tr.querySelector(':scope > td.cc-summary')) return;
+        const open = openSetFor(tableId).has(key);
+        tr.classList.add('cc-row');
+        tr.setAttribute('data-cc-table', tableId);
+        tr.setAttribute('data-cc-key', key);
+        tr.classList.toggle('is-open', open);
+
+        const summary = document.createElement('td');
+        summary.className = 'cc-summary';
+        const main = document.createElement('div');
+        main.className = 'cc-summary-main';
+        main.setAttribute('data-cc-table', tableId);
+        main.setAttribute('data-cc-key', key);
+        const titleEl = document.createElement('span');
+        titleEl.className = 'cc-title';
+        titleEl.textContent = title;
+        const metaEl = document.createElement('span');
+        metaEl.className = 'cc-meta';
+        cfg.meta.forEach(label => {
+            const c = tr.querySelector(`:scope > td[data-label="${label}"]`);
+            const text = c ? c.textContent.trim() : '';
+            if (!text || text === '—') return;
+            if (metaEl.childNodes.length) metaEl.append(' · ');
+            Array.from(c.childNodes).forEach(n => metaEl.appendChild(n.cloneNode(true)));
+            c.classList.add('cc-dup');
+        });
+        titleCell.classList.add('cc-dup');
+        main.append(titleEl, metaEl);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'btn-icon cc-toggle';
+        toggle.setAttribute('data-action', 'toggleAdminCard');
+        toggle.setAttribute('data-cc-table', tableId);
+        toggle.setAttribute('data-cc-key', key);
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${title}`);
+        toggle.innerHTML = ADMIN_CARD_CHEVRON;
+        summary.append(main, toggle);
+        tr.appendChild(summary);
+    });
+    syncAdminCardsButton(tableId);
+}
+
+// A phone-only Expand all button just above the table.
+function ensureAdminExpandButton(tableId, table) {
+    if (document.querySelector(`[data-cc-expand="${tableId}"]`)) return;
+    const container = table.closest('.table-container') || table;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-secondary cc-phone-only cc-expand-btn';
+    btn.hidden = true;
+    btn.setAttribute('data-cc-expand', tableId);
+    btn.setAttribute('aria-controls', tableId);
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="7 15 12 20 17 15"></polyline><polyline points="7 9 12 4 17 9"></polyline></svg><span class="cc-expand-text">Expand all</span>';
+    btn.addEventListener('click', () => toggleAllAdminCards(tableId));
+    container.parentNode.insertBefore(btn, container);
+}
+
+// Re-run whenever a table's rows are redrawn.
+function watchAdminCompactTables() {
+    Object.keys(ADMIN_COMPACT_TABLES).forEach(tableId => {
+        const table = document.getElementById(tableId);
+        if (!table || !table.tBodies[0]) return;
+        compactAdminTable(tableId);
+        new MutationObserver(() => compactAdminTable(tableId)).observe(table.tBodies[0], { childList: true });
+    });
+}
 
 // A tap on a phone card's summary opens or closes it.
 function onAdminCardSummaryClick(e) {
@@ -4735,6 +4842,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Event delegation for dynamically generated elements ---
     // All dynamic buttons use data-action attributes instead of inline onclick
     document.body.addEventListener('click', onAdminCardSummaryClick);
+    watchAdminCompactTables();
     var filesExpandAll = document.getElementById('filesExpandAllBtn');
     if (filesExpandAll) filesExpandAll.addEventListener('click', function() { toggleAllAdminCards('files'); });
     var usersExpandAll = document.getElementById('usersExpandAllBtn');
@@ -4885,6 +4993,12 @@ function auditOutcomeBadge(outcome) {
     return `<span class="badge ${cls}">${escapeHtml(outcome)}</span>`;
 }
 
+// An empty audit field reads as a dash rather than a blank row.
+const AUDIT_EMPTY = '<span class="text-muted">—</span>';
+function auditValue(v) {
+    return v ? escapeHtml(v) : AUDIT_EMPTY;
+}
+
 function auditRow(e) {
     const user = e.username || (e.user_id ? `#${e.user_id}` : '');
     const resource = e.resource_type ? `${e.resource_type}${e.resource_id ? ': ' + e.resource_id : ''}` : '';
@@ -4895,10 +5009,10 @@ function auditRow(e) {
             <td data-label="Type">${escapeHtml(e.event_type)}</td>
             <td data-label="Action">${escapeHtml(e.action)}</td>
             <td data-label="Outcome">${auditOutcomeBadge(e.outcome)}</td>
-            <td data-label="User">${escapeHtml(user)}</td>
-            <td data-label="IP">${escapeHtml(e.ip_address || '')}</td>
-            <td data-label="Resource">${escapeHtml(resource)}</td>
-            <td class="audit-details" data-label="Details"><code>${escapeHtml(e.details || '')}</code></td>
+            <td data-label="User">${auditValue(user)}</td>
+            <td data-label="IP">${auditValue(e.ip_address)}</td>
+            <td data-label="Resource">${auditValue(resource)}</td>
+            <td class="audit-details" data-label="Details">${e.details ? `<code>${escapeHtml(e.details)}</code>` : AUDIT_EMPTY}</td>
         </tr>`;
 }
 

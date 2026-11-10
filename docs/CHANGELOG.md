@@ -35,6 +35,12 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+
+- Dashboard on phones: a closed **My Bundles** card now shows just its files, size and status, and the **Show files** button; opening it shows the claim code, dates, downloads and buttons along with the files.
+- Admin dashboard on phones: **Blocked IPs**, **Webhooks** and their deliveries, **SSO** providers and links, **API Tokens**, **Backups** and the **Audit Log** use the same compact cards, each with its own **Expand all**.
+- Admin dashboard on phones: rows in the stacked cards no longer squash their label when the value is empty, and empty audit log fields show a dash.
+
 ## [1.23.0] - 2026-11-10
 
 ### Changed
