@@ -35,6 +35,11 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Changed
+
+- Dashboard on phones: **API Tokens** are compact cards too, showing each token's name and when it expires (expired tokens are flagged). Tap a card or its arrow to see its scopes, usage, dates and the Rotate and Revoke buttons; **Expand all** opens every card.
+- Admin dashboard on phones: the **Files** and **Users** tabs show compact cards. A file card shows its name, size, who uploaded it and its virus scan result; a user card shows the username, role, status and number of files. Tap a card or its arrow for the rest and the buttons, or use **Expand all**. Selecting files to delete still works on closed cards. Computers and tablets keep the tables.
+
 ## [1.22.0] - 2026-11-10
 
 ### Added

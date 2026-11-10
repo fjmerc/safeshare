@@ -460,12 +460,12 @@ function updateFilesTable(files) {
 
     if (files.length === 0) {
         if (activeFileFilterKeys().length > 0) {
-            tbody.innerHTML = `<tr><td colspan="12" class="loading files-empty-filtered">
+            tbody.innerHTML = `<tr><td colspan="13" class="loading files-empty-filtered">
                 <p>No files match these filters.</p>
                 <button type="button" class="btn-secondary" data-action="clearFileFilters">Clear filters</button>
             </td></tr>`;
         } else {
-            tbody.innerHTML = '<tr><td colspan="12" class="loading">No files found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="13" class="loading">No files found</td></tr>';
         }
 
         // Reset select all checkbox even when no files
@@ -476,23 +476,27 @@ function updateFilesTable(files) {
 
         // Update delete selected button visibility (should hide it)
         updateDeleteSelectedButton();
+        syncAdminCardsButton('files');
         return;
     }
 
-    tbody.innerHTML = files.map(file => `
-        <tr>
+    tbody.innerHTML = files.map(file => {
+        const ccOpen = openAdminCards.files.has(file.claim_code);
+        const ccMeta = `${formatBytes(file.file_size)} · ${file.username ? escapeHtml(file.username) : 'Anonymous'} · ${formatScanStatus(file.scan_status, file.scan_result)}`;
+        return `
+        <tr class="cc-row${ccOpen ? ' is-open' : ''}" data-cc-table="files" data-cc-key="${escapeHtml(file.claim_code)}">
             <td>
                 <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}"${file.bundle_id ? ' data-in-bundle="true"' : ''} aria-label="Select ${escapeHtml(file.original_filename)}">
             </td>
             <td data-label="Claim Code"><code>${escapeHtml(file.claim_code)}</code></td>
-            <td class="filename-cell" title="${escapeHtml(file.original_filename)}" data-label="Filename">${escapeHtml(file.original_filename)}</td>
-            <td data-label="Size">${formatBytes(file.file_size)}</td>
-            <td data-label="User">${file.username ? escapeHtml(file.username) : '<em class="text-muted">Anonymous</em>'}</td>
+            <td class="filename-cell cc-dup" title="${escapeHtml(file.original_filename)}" data-label="Filename">${escapeHtml(file.original_filename)}</td>
+            <td class="cc-dup" data-label="Size">${formatBytes(file.file_size)}</td>
+            <td class="cc-dup" data-label="User">${file.username ? escapeHtml(file.username) : '<em class="text-muted">Anonymous</em>'}</td>
             <td class="ip-cell" title="${escapeHtml(file.uploader_ip || 'Unknown')}" data-label="Uploader IP">${escapeHtml(file.uploader_ip || 'Unknown')}</td>
             <td data-label="Created">${formatDate(file.created_at)}</td>
             <td data-label="Expires">${formatDate(file.expires_at)}</td>
             <td data-label="Downloads">${file.completed_downloads} / ${file.max_downloads || '∞'}</td>
-            <td data-label="Scan">${formatScanStatus(file.scan_status, file.scan_result)}</td>
+            <td class="cc-dup" data-label="Scan">${formatScanStatus(file.scan_status, file.scan_result)}</td>
             <td data-label="Protected"><span class="badge ${file.password_protected ? 'badge-yes' : 'badge-no'}">${file.password_protected ? 'Yes' : 'No'}</span></td>
             <td data-label="Actions">
                 <button class="btn-icon btn-danger" data-action="deleteFile" data-claim-code="${escapeHtml(file.claim_code)}" title="Delete">
@@ -502,8 +506,11 @@ function updateFilesTable(files) {
                     </svg>
                 </button>
             </td>
+            ${adminCardSummary('files', file.claim_code, file.original_filename, ccMeta, ccOpen)}
         </tr>
-    `).join('');
+    `;
+    }).join('');
+    syncAdminCardsButton('files');
 
     // Reset select all checkbox
     const selectAllCheckbox = document.getElementById('selectAllCheckbox');
@@ -681,6 +688,77 @@ function updatePagination(pagination) {
     html += `<button data-action="goToPage" data-page="${pagination.page + 1}" ${pagination.page === pagination.total_pages ? 'disabled' : ''}>Next</button>`;
 
     container.innerHTML = html;
+}
+
+// ---- Phones: compact Files / Users cards ----
+// Each row carries a summary cell (title, a short status line and an arrow),
+// hidden on wider screens. On phones a card shows only that line until
+// opened. Open cards are remembered across reloads during this visit.
+const openAdminCards = { files: new Set(), users: new Set() };
+const ADMIN_CARD_CHEVRON = '<svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+function adminCardSummary(table, key, title, metaHTML, isOpen) {
+    const label = `${isOpen ? 'Hide' : 'Show'} details for ${title}`;
+    return `<td class="cc-summary">
+                <div class="cc-summary-main" data-cc-table="${table}" data-cc-key="${escapeHtml(key)}">
+                    <span class="cc-title">${escapeHtml(title)}</span>
+                    <span class="cc-meta">${metaHTML}</span>
+                </div>
+                <button type="button" class="btn-icon cc-toggle" data-action="toggleAdminCard" data-cc-table="${table}" data-cc-key="${escapeHtml(key)}" aria-expanded="${isOpen}" aria-label="${escapeHtml(label)}">${ADMIN_CARD_CHEVRON}</button>
+            </td>`;
+}
+
+function setAdminCardOpen(row, open) {
+    const table = row.getAttribute('data-cc-table');
+    const key = row.getAttribute('data-cc-key');
+    if (open) openAdminCards[table].add(key); else openAdminCards[table].delete(key);
+    row.classList.toggle('is-open', open);
+    const toggle = row.querySelector('.cc-toggle');
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', String(open));
+        const title = row.querySelector('.cc-title');
+        toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${title ? title.textContent : ''}`);
+    }
+}
+
+function adminCardRows(table) {
+    return Array.from(document.querySelectorAll(`tr.cc-row[data-cc-table="${table}"]`));
+}
+
+function toggleAdminCard(table, key) {
+    const row = adminCardRows(table).find(r => r.getAttribute('data-cc-key') === key);
+    if (!row) return;
+    setAdminCardOpen(row, !openAdminCards[table].has(key));
+    syncAdminCardsButton(table);
+}
+
+function toggleAllAdminCards(table) {
+    const rows = adminCardRows(table);
+    const allOpen = rows.length > 0 && rows.every(r => r.classList.contains('is-open'));
+    rows.forEach(r => setAdminCardOpen(r, !allOpen));
+    syncAdminCardsButton(table);
+}
+
+// Keep only the keys still shown, then label the Expand all button.
+function syncAdminCardsButton(table) {
+    const rows = adminCardRows(table);
+    const present = new Set(rows.map(r => r.getAttribute('data-cc-key')));
+    openAdminCards[table].forEach(k => { if (!present.has(k)) openAdminCards[table].delete(k); });
+    const btn = document.getElementById(table === 'files' ? 'filesExpandAllBtn' : 'usersExpandAllBtn');
+    if (!btn) return;
+    const allOpen = rows.length > 0 && rows.every(r => r.classList.contains('is-open'));
+    btn.hidden = rows.length === 0;
+    btn.setAttribute('aria-expanded', String(allOpen));
+    btn.querySelector('.cc-expand-text').textContent = allOpen ? 'Collapse all' : 'Expand all';
+}
+
+const adminPhoneQuery = window.matchMedia('(max-width: 768px)');
+
+// A tap on a phone card's summary opens or closes it.
+function onAdminCardSummaryClick(e) {
+    const main = e.target.closest('.cc-summary-main');
+    if (!main || !adminPhoneQuery.matches) return;
+    toggleAdminCard(main.getAttribute('data-cc-table'), main.getAttribute('data-cc-key'));
 }
 
 // Delete file
@@ -2124,25 +2202,32 @@ function displayUsers(users) {
     const tbody = document.getElementById('usersTableBody');
 
     if (!users || users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">No users found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">No users found</td></tr>';
+        syncAdminCardsButton('users');
         return;
     }
 
-    tbody.innerHTML = users.map(user => `
-        <tr>
-            <td data-label="Username"><strong>${escapeHtml(user.username)}</strong></td>
+    tbody.innerHTML = users.map(user => {
+        const ccKey = String(user.id);
+        const ccOpen = openAdminCards.users.has(ccKey);
+        const ccMeta = `<span class="badge ${user.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">${escapeHtml(user.role)}</span>`
+            + `<span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">${user.is_active ? 'Active' : 'Disabled'}</span>`
+            + ` · ${user.file_count || 0} file${user.file_count === 1 ? '' : 's'}`;
+        return `
+        <tr class="cc-row${ccOpen ? ' is-open' : ''}" data-cc-table="users" data-cc-key="${ccKey}">
+            <td class="cc-dup" data-label="Username"><strong>${escapeHtml(user.username)}</strong></td>
             <td data-label="Email">${escapeHtml(user.email)}</td>
-            <td data-label="Role">
+            <td class="cc-dup" data-label="Role">
                 <span class="badge ${user.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">
-                    ${user.role}
+                    ${escapeHtml(user.role)}
                 </span>
             </td>
-            <td data-label="Status">
+            <td class="cc-dup" data-label="Status">
                 <span class="badge ${user.is_active ? 'badge-success' : 'badge-danger'}">
                     ${user.is_active ? 'Active' : 'Disabled'}
                 </span>
             </td>
-            <td data-label="Files">${user.file_count || 0}</td>
+            <td class="cc-dup" data-label="Files">${user.file_count || 0}</td>
             <td data-label="Created">${new Date(user.created_at).toLocaleDateString()}</td>
             <td data-label="Last Login">${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
             <td class="actions" data-label="Actions">
@@ -2175,8 +2260,11 @@ function displayUsers(users) {
                     </svg>
                 </button>
             </td>
+            ${adminCardSummary('users', ccKey, user.username, ccMeta, ccOpen)}
         </tr>
-    `).join('');
+    `;
+    }).join('');
+    syncAdminCardsButton('users');
 }
 
 function showCreateUserModal() {
@@ -4646,6 +4734,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Event delegation for dynamically generated elements ---
     // All dynamic buttons use data-action attributes instead of inline onclick
+    document.body.addEventListener('click', onAdminCardSummaryClick);
+    var filesExpandAll = document.getElementById('filesExpandAllBtn');
+    if (filesExpandAll) filesExpandAll.addEventListener('click', function() { toggleAllAdminCards('files'); });
+    var usersExpandAll = document.getElementById('usersExpandAllBtn');
+    if (usersExpandAll) usersExpandAll.addEventListener('click', function() { toggleAllAdminCards('users'); });
+
     document.body.addEventListener('click', function(e) {
         var btn = e.target.closest('[data-action]');
         if (!btn) return;
@@ -4653,6 +4747,9 @@ document.addEventListener('DOMContentLoaded', function() {
         var action = btn.getAttribute('data-action');
 
         switch (action) {
+            case 'toggleAdminCard':
+                toggleAdminCard(btn.getAttribute('data-cc-table'), btn.getAttribute('data-cc-key'));
+                break;
             // File management
             case 'deleteFile':
                 deleteFile(btn.getAttribute('data-claim-code'));
