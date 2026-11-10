@@ -193,8 +193,8 @@ curl -H "Authorization: Bearer safeshare_<your-token>" \
 | Scope | Lets the token use | Typical Use Case |
 |-------|-------------|------------------|
 | `upload` | `/api/upload`, the chunked upload endpoints (`/api/upload/init`, `/chunk/`, `/complete/`, `/status/`) and creating, publishing or discarding a bundle (`/api/bundles`) | Backup scripts, CI/CD |
-| `download` | Nothing extra today: downloads (`/api/claim/:code`) need no login | Automated retrievals |
-| `manage` | `/api/user/files` and `/api/user/bundles` with their subroutes (list, rename, delete, change expiry, new code) and `GET /api/tokens` | File management apps |
+| `download` | Downloading your own files: `/api/user/files/{claimCode}/download` and `/api/user/bundles/{id}/files/{position}/download` (recipient downloads, `/api/claim/:code`, need no login) | Backups of your own uploads |
+| `manage` | `/api/user/files` and `/api/user/bundles` with their subroutes (list, rename, delete, change expiry, new code), except downloading the files, and `GET /api/tokens` | File management apps |
 | `admin` | Everything the other scopes allow (it implies them); admin dashboard routes still need an admin browser session | Admin automation |
 
 Any valid token can call `GET /api/auth/user`. Everything else - changing the password, MFA, SSO linking, creating, rotating or revoking tokens, logout - needs a signed-in browser session, whatever the token's scopes.
@@ -867,6 +867,7 @@ Works exactly like `GET /api/claim/{code}`: `X-File-Password` for a password-pro
 - `DELETE /api/user/bundles/{id}` — delete the bundle and all its files.
 - `PUT /api/user/bundles/{id}/expiration` with `{"new_expiration": "2026-11-12T12:00:00Z"}` — change the expiry of the bundle and all its files (year 9999 means never; same limits as `update-expiration`).
 - `PUT /api/user/bundles/{id}/regenerate-code` — give the bundle a new code (`{"bundle_code": "..."}`); the old link stops working. Shares the regeneration rate limit.
+- `GET /api/user/bundles/{id}/files/{position}/download` — download one file of the bundle yourself, the same way as [Download Your Own File](#download-your-own-file). A bundle encrypted in the browser answers `409` `CLIENT_ENCRYPTED`.
 
 ---
 
@@ -1011,6 +1012,33 @@ Generate a new claim code for a user's uploaded file.
 - 404 Not Found: File doesn't exist
 
 **Note**: The old claim code becomes invalid immediately. This is useful for revoking access.
+
+---
+
+### Download Your Own File
+
+Download one of your files yourself, from the dashboard or a script.
+
+**Endpoint**: `GET /api/user/files/{claimCode}/download` (also `HEAD`, which checks without sending the file)
+
+**Authentication**: Required (user_session cookie, or an API token with the `download` scope)
+
+Unlike a recipient's download (`/api/claim/{claimCode}`), this one:
+- needs no password
+- is not counted, so it still works after the file reached its download limit and never uses up a recipient's download
+- fires no `file.downloaded` webhook (it is audit-logged as `file_download_owner`)
+
+The malware-scan gate still applies, and Range requests work as on `/api/claim/`.
+
+**Response** (200 OK): the file, as an attachment with its original name.
+
+**Error Responses**:
+- 401 Unauthorized: not signed in
+- 404 Not Found: no such file, not yours, or expired
+- 409 Conflict (`CLIENT_ENCRYPTED`): the file was encrypted in the browser; only its share link (which holds the key) can open it
+- 429 Too Many Requests: owner downloads are limited at the download rate (`RATE_LIMIT_DOWNLOAD`), in their own bucket; `HEAD` checks are not counted
+
+The file list (`GET /api/user/files`) reports `client_encrypted` for each file, so a client can tell which ones it can't download this way.
 
 ---
 

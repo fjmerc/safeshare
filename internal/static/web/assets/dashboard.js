@@ -164,8 +164,46 @@
             trash: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
             pencil: '<svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>',
             lock: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>',
-            key: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="7.5" cy="15.5" r="5.5"></circle><path d="M21 2l-9.6 9.6"></path><path d="M15.5 7.5l3 3L22 7l-3-3"></path></svg>'
+            key: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="7.5" cy="15.5" r="5.5"></circle><path d="M21 2l-9.6 9.6"></path><path d="M15.5 7.5l3 3L22 7l-3-3"></path></svg>',
+            download: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>'
         };
+
+        // Owner download: your own file, from the dashboard. Not counted,
+        // no password, works after the download limit is reached. Encrypted
+        // files can't be (the server never has their key), nor expired ones.
+        const OWNER_DOWNLOAD_TITLE = "Download (your own downloads don't count toward the limit)";
+
+        function ownerDownloadBlockedReason(clientEncrypted, expired) {
+            if (clientEncrypted) return 'Encrypted in the browser: only its share link can open it';
+            if (expired) return 'Expired';
+            return '';
+        }
+
+        // Check with HEAD first so a refusal becomes a message instead of an
+        // error page, then let the browser download it.
+        async function ownerDownload(url, name) {
+            try {
+                const check = await fetch(url, { method: 'HEAD', credentials: 'include' });
+                if (!check.ok) {
+                    const message = check.status === 409 ? `${name} was encrypted in the browser, so only its share link can open it.`
+                        : check.status === 404 ? `${name} is no longer available.`
+                        : check.status === 429 ? 'Too many downloads for now. Please try again later.'
+                        : `Couldn't download ${name}.`;
+                    showToast(message, 'error');
+                    return;
+                }
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = '';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                showToast(`Downloading ${name}. Your own downloads don't count toward its limit.`, 'success');
+            } catch (error) {
+                console.error('Owner download failed:', error);
+                showToast(`Couldn't download ${name}.`, 'error');
+            }
+        }
 
         function el(tag, className, text) {
             const node = document.createElement(tag);
@@ -408,7 +446,21 @@
                     // One cell per column (no colspan): the tablet layout hides
                     // columns by position.
                     const gap = () => cell(null, 'bundle-file-gap');
-                    fileRow.append(fName, fSize, gap(), gap(), gap(), fDownloads, gap(), gap());
+                    const fActions = cell('Actions', 'actions-col');
+                    const fActionsWrap = el('div', 'actions-cell');
+                    const fDownload = el('button', 'btn-icon btn-primary');
+                    fDownload.type = 'button';
+                    fDownload.innerHTML = BUNDLE_ICONS.download;
+                    fDownload.setAttribute('data-action', 'ownerDownload');
+                    fDownload.setAttribute('data-url', `/api/user/bundles/${encodeURIComponent(bundle.id)}/files/${encodeURIComponent(f.position)}/download`);
+                    fDownload.setAttribute('data-filename', f.name);
+                    fDownload.setAttribute('aria-label', `Download ${f.name}`);
+                    const blocked = ownerDownloadBlockedReason(bundle.client_encrypted, statusText === 'Expired');
+                    fDownload.disabled = !!blocked;
+                    fDownload.title = blocked || OWNER_DOWNLOAD_TITLE;
+                    fActionsWrap.appendChild(fDownload);
+                    fActions.appendChild(fActionsWrap);
+                    fileRow.append(fName, fSize, gap(), gap(), gap(), fDownloads, gap(), fActions);
                     tbody.appendChild(fileRow);
                 });
             });
@@ -523,6 +575,17 @@
                 // Attribute-safe (escapeHtml also escapes quotes)
                 const safeName = escapeHtml(file.original_filename);
                 const safeClaim = escapeHtml(file.claim_code);
+                // Static tag markup (icons and fixed words only).
+                const fileTags = (file.client_encrypted || file.is_password_protected)
+                    ? '<div class="file-tags">'
+                        + (file.client_encrypted ? `<span class="bundle-tag" title="End-to-end encrypted">${BUNDLE_ICONS.lock}Encrypted</span>` : '')
+                        + (file.is_password_protected ? `<span class="bundle-tag" title="Needs a password to download">${BUNDLE_ICONS.key}Password</span>` : '')
+                        + '</div>'
+                    : '';
+                // is_expired is also true at the download limit; only the date
+                // stops an owner download.
+                const pastExpiry = !isNeverExpire(file.expires_at) && new Date(file.expires_at).getTime() <= Date.now();
+                const downloadBlocked = ownerDownloadBlockedReason(file.client_encrypted, pastExpiry);
 
                 tableHTML += `
                     <tr>
@@ -535,6 +598,7 @@
                                     </svg>
                                 </button>
                             </div>
+                            ${fileTags}
                         </td>
                         <td data-label="Size"><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td data-label="Claim code"><button type="button" class="claim-code" data-action="copyClaimCode" data-claim-code="${safeClaim}" aria-label="Copy claim code ${safeClaim}" title="Click to copy">${safeClaim}</button></td>
@@ -553,6 +617,7 @@
                         <td data-label="Status">${statusBadge}</td>
                         <td class="actions-col" data-label="Actions">
                             <div class="actions-cell">
+                                <button type="button" class="btn-icon btn-primary" data-action="ownerDownload" data-url="/api/user/files/${encodeURIComponent(file.claim_code)}/download" data-filename="${safeName}" aria-label="Download ${safeName}" title="${escapeHtml(downloadBlocked || OWNER_DOWNLOAD_TITLE)}"${downloadBlocked ? ' disabled' : ''}>${BUNDLE_ICONS.download}</button>
                                 <button type="button" class="btn-icon btn-secondary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${safeName}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${escapeHtml(file.expires_at)}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${safeClaim}" aria-label="Share ${safeName}" title="Share file">
                                     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
@@ -3661,6 +3726,9 @@ you may be locked out of your account.
                             download_count: parseInt(btn.getAttribute('data-download-count')),
                             claim_code: btn.getAttribute('data-claim-code')
                         });
+                        break;
+                    case 'ownerDownload':
+                        ownerDownload(btn.getAttribute('data-url'), btn.getAttribute('data-filename'));
                         break;
                     case 'toggleBundle':
                         toggleBundle(parseInt(btn.getAttribute('data-bundle-id')));

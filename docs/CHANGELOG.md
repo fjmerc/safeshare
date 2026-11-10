@@ -35,6 +35,17 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-10
+
+### Added
+
+- Dashboard: a **Download** button on each of your uploads and on each file inside your bundles. Downloading your own file needs no password and isn't counted, so it still works after the file reached its download limit and never uses up a recipient's download. Files encrypted in the browser can't be downloaded this way (the server never has their key), and expired ones can't either; their button is greyed out. My Uploads now tags encrypted and password-protected files.
+- API: `GET /api/user/files/{claimCode}/download` and `GET /api/user/bundles/{id}/files/{position}/download` (owner downloads), and `client_encrypted` on each file in `GET /api/user/files`. API tokens need the `download` scope for these; `manage` alone can't read file contents. **Check your tokens:** a token that already has the `download` scope (until now it allowed nothing extra) can now download all of its owner's files. Owner downloads are limited at the download rate, in their own bucket; the dashboard's quick check before each download has a separate, larger budget. Each owner download is recorded in the audit log as `file_download_owner`.
+
+### Changed
+
+- Admin dashboard: the page heading now reads **Admin Dashboard**.
+
 ## [1.20.0] - 2026-11-10
 
 ### Changed

@@ -2902,6 +2902,78 @@ paths:
         '404':
           description: Not found or not yours
 
+  /api/user/bundles/{id}/files/{position}/download:
+    get:
+      tags:
+        - Bundles
+      summary: Download one file of your own bundle
+      description: >
+        Owner download: no password, not counted (works after the download
+        limit is reached), no webhook. HEAD checks without sending the file.
+        API tokens need the download scope.
+      operationId: downloadUserBundleFile
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BundleID'
+        - name: position
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: The file, as an attachment
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Not found, not yours, or expired
+        '409':
+          description: Encrypted in the browser (CLIENT_ENCRYPTED); only its link can open it
+        '429':
+          description: Owner download rate limit reached
+
+  /api/user/files/{claimCode}/download:
+    get:
+      tags:
+        - User Files
+      summary: Download one of your own files
+      description: >
+        Owner download: no password, not counted (works after the download
+        limit is reached), no webhook. HEAD checks without sending the file.
+        API tokens need the download scope.
+      operationId: downloadUserFile
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: claimCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The file, as an attachment
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Not signed in
+        '404':
+          description: Not found, not yours, or expired
+        '409':
+          description: Encrypted in the browser (CLIENT_ENCRYPTED); only its share link can open it
+        '429':
+          description: Owner download rate limit reached
+
   /api/user/bundles/{id}/regenerate-code:
     put:
       tags:

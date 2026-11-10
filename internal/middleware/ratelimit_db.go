@@ -127,6 +127,18 @@ func DBRateLimitMiddleware(rl *DBRateLimiter) func(http.Handler) http.Handler {
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") {
 				limit = rl.config.GetRateLimitDownload()
 				limitType = "download"
+			} else if isOwnerDownloadPath(r.URL.Path) {
+				// A signed-in user downloading their own file: the download
+				// rate, in its own bucket so it never eats into recipients'.
+				// The dashboard's HEAD check before each download moves no
+				// file data: it gets its own larger budget, like claim info.
+				if r.Method == http.MethodHead {
+					limit = min(rl.config.GetRateLimitDownload()*claimInfoLimitMultiplier, maxDBRateLimit)
+					limitType = "owner_download_check"
+				} else {
+					limit = rl.config.GetRateLimitDownload()
+					limitType = "owner_download"
+				}
 			} else if r.URL.Path == "/api/user/files/regenerate-claim-code" {
 				limit = 10 // Hardcoded: 10 regenerations per hour per IP
 				limitType = "regeneration"

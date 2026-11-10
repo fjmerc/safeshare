@@ -399,11 +399,14 @@
             .files-table th:nth-child(1), .files-table td:nth-child(1) { width: 20%; }
             .files-table th:nth-child(2), .files-table td:nth-child(2) { width: 8%; }
             .files-table th:nth-child(3), .files-table td:nth-child(3) { width: 15%; }
-            .files-table th:nth-child(4), .files-table td:nth-child(4) { width: 13%; }
+            .files-table th:nth-child(4), .files-table td:nth-child(4) { width: 11%; }
             .files-table th:nth-child(5), .files-table td:nth-child(5) { width: 16%; }
             .files-table th:nth-child(6), .files-table td:nth-child(6) { width: 9%; }
-            .files-table th:nth-child(7), .files-table td:nth-child(7) { width: 9%; }
-            .files-table th:nth-child(8), .files-table td:nth-child(8) { width: 10%; }
+            .files-table th:nth-child(7), .files-table td:nth-child(7) { width: 8%; }
+            .files-table th:nth-child(8), .files-table td:nth-child(8) { width: 13%; }
+
+            /* Three row actions (download, share/link, delete) stay on one line. */
+            .files-table .actions-cell { flex-wrap: nowrap; }
         }
 
         /* Centre every column except the first (table layouts only) */
@@ -2896,7 +2899,7 @@
                         <input type="checkbox" id="scopeDownload" value="download">
                         <div class="scope-checkbox-label">
                             <span class="scope-checkbox-title">Download</span>
-                            <span class="scope-checkbox-desc">Download files using claim codes</span>
+                            <span class="scope-checkbox-desc">Download your own files (no password needed, not counted)</span>
                         </div>
                     </label>
                     <label class="scope-checkbox-container" id="scopeManageLabel">
