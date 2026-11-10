@@ -3321,10 +3321,6 @@ input[type="checkbox"].check-inline {
         padding-right: 36px;
     }
 
-    #main .data-table.compact-cards tbody tr.cc-row.is-open > td.cc-summary {
-        border-bottom: 1px solid var(--border-color);
-    }
-
     /* Closed: only the summary (and the checkbox) */
     #main .data-table.compact-cards tbody tr.cc-row:not(.is-open) > td:not(.cc-summary):not(:has(> input[type="checkbox"])),
     #main .data-table.compact-cards tbody tr.cc-row > td.cc-dup {

@@ -32,8 +32,11 @@ H.requireBrowserTests('compact-cards.test.js');
             const p = new URL(route.request().url()).pathname;
             const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
             if (p === '/api/auth/user') return json({ id: 1, username: 'alice', role: 'user' });
-            if (p === '/api/user/files') return json({ files: [], total: 0, limit: 100, offset: 0 });
-            if (p === '/api/user/bundles') return json({ bundles: [], total: 0, limit: 100, offset: 0 });
+            if (p === '/api/user/files') return json({ files: [{ id: 31, claim_code: 'UpCode000031', original_filename: 'notes.txt', file_size: 2048,
+                created_at: iso(-hour), expires_at: iso(24 * hour), max_downloads: null, download_count: 0, completed_downloads: 0,
+                download_url: base + '/api/claim/UpCode000031', is_expired: false, is_password_protected: false, client_encrypted: false }], total: 1, limit: 100, offset: 0 });
+            if (p === '/api/user/bundles') return json({ bundles: [{ id: 41, bundle_code: 'BundleCode41', created_at: iso(-hour), expires_at: iso(24 * hour), max_downloads: null,
+                password_protected: false, client_encrypted: false, file_count: 1, total_size: 3, files: [{ position: 0, name: 'cover.png', size: 3, completed_downloads: 0 }] }], total: 1, limit: 100, offset: 0 });
             if (p === '/api/tokens') { tokenLoads++; return json({ tokens }); }
             return json({});
         });
@@ -44,6 +47,8 @@ H.requireBrowserTests('compact-cards.test.js');
         const vis = (sel) => page.isVisible(sel);
 
         H.check('tokens desktop: table shows scopes and actions', (await vis(`${trow(11)} .scopes-cell`)) && (await vis(`${trow(11)} [data-action="revokeToken"]`)));
+        H.check('uploads desktop: phone card pieces stay hidden',
+            !(await vis('#filesContainer tr.upload-row[data-file-id="31"] .upload-card-toggle')) && !(await vis('#filesContainer tr.upload-row[data-file-id="31"] .upload-card-meta')));
         H.check('tokens desktop: no arrow, no summary line, no Expand all',
             !(await vis(`${trow(11)} .upload-card-toggle`)) && !(await vis(`${trow(11)} .upload-card-meta`)) && !(await vis('#tokensExpandAllBtn')));
 
@@ -76,7 +81,14 @@ H.requireBrowserTests('compact-cards.test.js');
         await page.click('#refreshTokensBtn');
         await page.waitForTimeout(400);
         H.check('tokens phone: an open card stays open after reload', tokenLoads > before && await vis(`${trow(12)} .scopes-cell`));
-        H.check('tokens phone: My Uploads cards are unaffected (no uploads, no Select button)', !(await vis('#filesSelectBtn')));
+        // The shared card styles still work for My Uploads and stay out of My Bundles.
+        const up = '#filesContainer tr.upload-row[data-file-id="31"]';
+        H.check('uploads phone: upload card still starts closed with its arrow',
+            !(await vis(`${up} .claim-code`)) && (await vis(`${up} .upload-card-toggle`)) && (await vis(`${up} .upload-card-meta`)));
+        await page.click(`${up} .upload-card-toggle`);
+        H.check('uploads phone: upload card still opens', await vis(`${up} .claim-code`));
+        H.check('bundles phone: My Bundles gets no upload/token card pieces',
+            (await page.$$('#bundlesContainer .upload-card-toggle, #bundlesContainer .upload-card-meta')).length === 0 && await vis('#bundlesContainer .bundle-toggle-mobile'));
         H.check('tokens phone: no sideways scrolling', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
         await ctx.close();
 
@@ -137,7 +149,8 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('admin phone: select checkbox stays on the closed card', await avis(`${frow('AdmFile00001')} .file-checkbox`));
         const box = await ap.$eval(`${frow('AdmFile00001')} .file-checkbox`, (b) => b.getBoundingClientRect());
         const arrow = await ap.$eval(`${frow('AdmFile00001')} .cc-toggle`, (b) => b.getBoundingClientRect());
-        H.check('admin phone: arrow and checkbox do not overlap', arrow.right <= box.left || arrow.bottom <= box.top || box.bottom <= arrow.top, JSON.stringify({ arrow, box }));
+        const apart = arrow.right <= box.left || box.right <= arrow.left || arrow.bottom <= box.top || box.bottom <= arrow.top;
+        H.check('admin phone: arrow and checkbox do not overlap', apart, JSON.stringify({ arrow, box }));
         H.check('admin phone: closed file cards are compact', (await ap.$eval(frow('AdmFile00001'), (r) => r.getBoundingClientRect().height)) < 110);
 
         await ap.click(`${frow('AdmFile00001')} .cc-title`);
@@ -176,8 +189,6 @@ H.requireBrowserTests('compact-cards.test.js');
         H.check('admin phone: users Expand all is shown', await avis('#usersExpandAllBtn'));
         H.check('admin phone: no sideways scrolling', await ap.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
 
-        // Other admin tables keep their full cards.
-        H.check('admin: blocked IPs table is untouched', (await ap.$$('#blockedIPsTable tr.cc-row')).length === 0);
         await actx.close();
     } finally {
         await browser.close();

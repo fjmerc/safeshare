@@ -460,12 +460,12 @@ function updateFilesTable(files) {
 
     if (files.length === 0) {
         if (activeFileFilterKeys().length > 0) {
-            tbody.innerHTML = `<tr><td colspan="12" class="loading files-empty-filtered">
+            tbody.innerHTML = `<tr><td colspan="13" class="loading files-empty-filtered">
                 <p>No files match these filters.</p>
                 <button type="button" class="btn-secondary" data-action="clearFileFilters">Clear filters</button>
             </td></tr>`;
         } else {
-            tbody.innerHTML = '<tr><td colspan="12" class="loading">No files found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="13" class="loading">No files found</td></tr>';
         }
 
         // Reset select all checkbox even when no files
@@ -2202,7 +2202,7 @@ function displayUsers(users) {
     const tbody = document.getElementById('usersTableBody');
 
     if (!users || users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">No users found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">No users found</td></tr>';
         syncAdminCardsButton('users');
         return;
     }
@@ -2219,7 +2219,7 @@ function displayUsers(users) {
             <td data-label="Email">${escapeHtml(user.email)}</td>
             <td class="cc-dup" data-label="Role">
                 <span class="badge ${user.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">
-                    ${user.role}
+                    ${escapeHtml(user.role)}
                 </span>
             </td>
             <td class="cc-dup" data-label="Status">
