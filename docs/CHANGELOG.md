@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-10
+
 ### Changed
 
 - Dashboard on phones: **API Tokens** are compact cards too, showing each token's name and when it expires (expired tokens are flagged). Tap a card or its arrow to see its scopes, usage, dates and the Rotate and Revoke buttons; **Expand all** opens every card.
