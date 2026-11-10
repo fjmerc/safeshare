@@ -2559,41 +2559,284 @@ footer a {
     opacity: 0.8;
 }
 
-.bundle-rows {
+/* My Bundles: the My Uploads table (.files-table) with a row per bundle and,
+   under it, a row per file that the bundle's toggle shows or hides. */
+.bundles-table tr.bundle-file-row[hidden] {
+    display: none !important;
+}
+
+.bundle-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.btn-icon.bundle-toggle {
+    color: var(--primary-text);
+    background: var(--primary-tint);
+    border-color: var(--primary-text);
+}
+
+.btn-icon.bundle-toggle:hover {
+    background: var(--bg-tertiary);
+}
+
+.bundle-toggle svg,
+.bundle-toggle-mobile svg {
+    transition: transform 0.2s var(--ease-out);
+}
+
+.bundle-toggle[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+}
+
+.bundle-title {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 2px;
+    min-width: 0;
+    max-width: 240px;
 }
 
-.bundle-row {
-    border: 1px solid rgba(127, 127, 127, 0.25);
+.bundle-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.bundle-count {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.bundle-preview {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.bundle-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.bundle-tag svg {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+}
+
+.bundle-limit {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.bundles-table tr.bundle-row.is-open > td {
+    background: var(--bg-secondary);
+}
+
+.bundles-table tr.bundle-file-row > td {
+    background: var(--bg-secondary);
+    padding-top: 8px;
+    padding-bottom: 8px;
+    font-size: 13px;
+}
+
+/* Indent each file under its bundle, joined to it by a guide line. */
+.bundles-table td.bundle-member-name {
+    position: relative;
+    padding-left: 56px;
+}
+
+.bundles-table td.bundle-member-name::before,
+.bundles-table td.bundle-member-name::after {
+    content: '';
+    position: absolute;
+    left: 27px;
+    border-color: var(--primary-text);
+    opacity: 0.4;
+}
+
+.bundles-table td.bundle-member-name::before {
+    top: 0;
+    bottom: 0;
+    border-left: 2px solid;
+}
+
+.bundles-table tr.is-last td.bundle-member-name::before {
+    bottom: 50%;
+}
+
+.bundles-table td.bundle-member-name::after {
+    top: 50%;
+    width: 14px;
+    border-top: 2px solid;
+}
+
+.bundles-table td.bundle-member-name .file-name-text {
+    display: block;
+    max-width: 240px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Three row actions where My Uploads has two: Actions takes 3% from
+   Created and Status. */
+@media (min-width: 1025px) {
+    .files-table.bundles-table th:nth-child(7) { width: 8%; }
+    .files-table.bundles-table th:nth-child(4) { width: 11%; }
+    .files-table.bundles-table th:nth-child(8) { width: 13%; }
+
+    .bundles-table .actions-cell {
+        flex-wrap: nowrap;
+    }
+}
+
+/* Tablet: the table sizes to its content, so keep the Bundle column about
+   as wide as My Uploads' File name column. */
+@media (min-width: 641px) and (max-width: 1024px) {
+    .bundles-table .bundle-title,
+    .bundles-table td.bundle-member-name .file-name-text {
+        max-width: 100px;
+    }
+}
+
+/* The phone toggle only shows on phones (see below). */
+.bundles-table td.bundle-toggle-cell {
+    display: none;
+}
+
+.bundle-toggle-mobile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid var(--primary-text);
     border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-}
-
-.bundle-row summary {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.75rem;
+    background: var(--primary-tint);
+    color: var(--primary-text);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    min-height: 2.5rem;
 }
 
-.bundle-row-meta {
-    font-size: 0.9rem;
-    opacity: 0.8;
+.bundle-toggle-mobile svg {
+    width: 16px;
+    height: 16px;
 }
 
-.bundle-row-files {
-    margin: 0.5rem 0;
-    padding-left: 1.25rem;
-    overflow-wrap: anywhere;
+.bundle-toggle-mobile[aria-expanded="true"] svg {
+    transform: rotate(180deg);
 }
 
-.bundle-row-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
+@media (max-width: 640px) {
+    .btn-icon.bundle-toggle {
+        display: none;
+    }
+
+    .bundles-table td.bundle-name-cell {
+        min-width: 0;
+    }
+
+    .bundles-table .bundle-name,
+    .bundles-table .bundle-title {
+        width: 100%;
+        max-width: none;
+    }
+
+    .bundles-table .bundle-downloads-value {
+        text-align: right;
+    }
+
+    .bundles-table tr.bundle-row.is-open > td {
+        background: transparent;
+    }
+
+    .bundles-table tbody tr.bundle-row.is-open {
+        margin-bottom: 4px;
+    }
+
+    .bundles-table td.bundle-toggle-cell {
+        display: block;
+        padding: 8px 0 4px;
+        border-bottom: 0;
+    }
+
+    .bundles-table td.bundle-toggle-cell::before {
+        display: none;
+    }
+
+    /* Files hang under their card as a compact list. */
+    .bundles-table tbody tr.bundle-file-row {
+        margin: 0 0 4px 12px;
+        padding: 4px 0 4px 12px;
+        border: 0;
+        border-left: 2px solid var(--border-color);
+        border-radius: 0;
+        background: transparent;
+    }
+
+    .bundles-table tbody tr.bundle-file-row.is-last {
+        margin-bottom: 12px;
+    }
+
+    /* Each file on two short lines: its name, then size and downloads. */
+    .bundles-table tbody tr.bundle-file-row {
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 16px;
+    }
+
+    .bundles-table tr.bundle-file-row > td {
+        background: transparent;
+        padding: 2px 0;
+        border-bottom: 0;
+        justify-content: flex-start;
+        gap: 4px;
+        font-size: 13px;
+    }
+
+    .bundles-table td.bundle-member-name .file-name-text {
+        max-width: none;
+    }
+
+    .bundles-table tr.bundle-file-row > td.bundle-member-name {
+        flex-basis: 100%;
+        min-width: 0;
+        font-weight: 500;
+    }
+
+    .bundles-table tr.bundle-file-row > td::before {
+        font-size: 12px;
+    }
+
+    .bundles-table td.bundle-member-name {
+        padding-left: 0;
+    }
+
+    .bundles-table td.bundle-member-name::before,
+    .bundles-table td.bundle-member-name::after,
+    .bundles-table td.bundle-file-gap {
+        display: none;
+    }
 }
