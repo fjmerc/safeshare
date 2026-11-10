@@ -560,6 +560,12 @@ func run() error {
 		userAuth(tokenAudit(http.HandlerFunc(handlers.UserDeleteFileHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
 
+	// Registered explicitly so "delete" isn't read as a claim code by the
+	// /api/user/files/ subtree below.
+	mux.HandleFunc("/api/user/files/delete/bulk", func(w http.ResponseWriter, r *http.Request) {
+		userAuth(tokenAudit(http.HandlerFunc(handlers.UserBulkDeleteFilesHandler(repos, cfg)))).ServeHTTP(w, r)
+	})
+
 	mux.HandleFunc("/api/user/files/rename", func(w http.ResponseWriter, r *http.Request) {
 		userAuth(tokenAudit(http.HandlerFunc(handlers.UserRenameFileHandler(repos, cfg)))).ServeHTTP(w, r)
 	})
