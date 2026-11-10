@@ -1081,10 +1081,19 @@ Retrieve admin dashboard statistics and file listings.
 
 **Authentication**: Required (admin session)
 
-**Query Parameters**:
-- `limit` (optional): Files per page (default: 20)
-- `offset` (optional): Pagination offset
-- `search` (optional): Search query (claim code, filename, or uploader IP)
+**Query Parameters** (all optional; filters combine with each other and with `search`):
+- `page`: Page number, from 1 (default: 1)
+- `page_size`: Files per page, 1-100 (default: 20)
+- `search`: Search query (claim code, filename, uploader IP or username)
+- `user_id`: Only files uploaded by this user (positive integer)
+- `user=anonymous`: Only files uploaded without an account. Can't be combined with `user_id`.
+- `min_size` / `max_size`: File size in bytes; `min_size` is inclusive, `max_size` exclusive and must be greater than `min_size`
+- `status`: `active` (download limit not reached and not expired), `limit_reached` (download count has reached `max_downloads`; a limit of 0 or none is unlimited), `never_expires`, `expiring_soon` (expires within 24 hours)
+- `scan`: `clean`, `pending`, `infected`, `error`, or `not_scanned` (no scan status, `skipped` or `not_scanned`)
+- `uploaded`: `24h`, `7d`, `30d` (uploaded within that time) or `older_30d` (more than 30 days ago)
+- `sort`: `newest` (default), `oldest`, `largest`, `smallest`, `expiring` (soonest first, files that never expire last)
+
+An invalid value returns 400 with a plain-text message naming the parameter. Filters change `files` and `pagination` only; `stats` always describes all files. `pagination.total` counts the files that match, `pagination.unfiltered_total` all files in the list.
 
 **Response** (200 OK):
 ```json
@@ -1098,8 +1107,36 @@ Retrieve admin dashboard statistics and file listings.
     "total_users": 12
   },
   "files": [...],
+  "pagination": {
+    "page": 1,
+    "page_size": 20,
+    "total": 6,
+    "total_pages": 1,
+    "unfiltered_total": 150
+  },
   "blocked_ips": [...],
   "total_files": 150
+}
+```
+
+---
+
+### List File Uploaders
+
+Everyone who currently has files, for the Files tab's user filter.
+
+**Endpoint**: `GET /admin/api/files/uploaders`
+
+**Authentication**: Required (admin session)
+
+**Response** (200 OK): users with at least one file, sorted by username, and the number of files uploaded without an account.
+```json
+{
+  "anonymous_count": 4,
+  "users": [
+    { "user_id": 1, "username": "alice", "file_count": 12 },
+    { "user_id": 3, "username": "bob", "file_count": 2 }
+  ]
 }
 ```
 
