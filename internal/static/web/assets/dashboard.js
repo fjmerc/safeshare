@@ -54,6 +54,15 @@
         }
         let fileToDelete = null;
         let bundleToDelete = null;
+        // Several files picked in My Uploads, waiting for the delete confirmation
+        let filesToDelete = null;
+        // My Uploads: ticked files, phone cards opened during this visit, the
+        // phone "Select" mode, and the list last shown (for names in the confirm).
+        const selectedFiles = new Set();
+        const openUploads = new Set();
+        let uploadsSelectMode = false;
+        let shownFiles = [];
+        const phoneQuery = window.matchMedia('(max-width: 640px)');
         let fileToRename = { id: null, currentName: '' };
         let fileToEditExpiration = { id: null, currentExpiration: '' };
         let maxExpirationHours = 168; // Default, will be loaded from config
@@ -475,6 +484,7 @@
         function deleteBundle(bundleId) {
             bundleToDelete = bundleId;
             fileToDelete = null;
+            filesToDelete = null;
             document.getElementById('deleteModalTitle').textContent = 'Delete Bundle';
             document.getElementById('deleteModalText').textContent = 'Delete this bundle and every file in it? Its link will stop working. This cannot be undone.';
             document.getElementById('deleteModal').classList.add('show');
@@ -520,7 +530,14 @@
         function displayFiles(files) {
             const container = document.getElementById('filesContainer');
 
+            shownFiles = files || [];
+            // Forget ticks and open cards for files that are gone
+            const present = new Set(shownFiles.map(f => f.id));
+            [selectedFiles, openUploads].forEach(set => set.forEach(id => { if (!present.has(id)) set.delete(id); }));
+            if (shownFiles.length === 0) uploadsSelectMode = false;
+
             if (!files || files.length === 0) {
+                syncUploadsControls();
                 container.innerHTML = `
                     <div class="empty-state">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -535,10 +552,10 @@
 
             let tableHTML = `
                 <div class="files-table-wrapper" role="region" aria-label="My uploads table" tabindex="0">
-                    <table class="files-table" aria-label="My uploads">
+                    <table class="files-table uploads-table" aria-label="My uploads">
                         <thead>
                             <tr>
-                                <th scope="col">File name</th>
+                                <th scope="col"><span class="uploads-select-all"><input type="checkbox" id="filesSelectAll" aria-label="Select all files">File name</span></th>
                                 <th scope="col">Size</th>
                                 <th scope="col">Claim code</th>
                                 <th scope="col">Uploaded</th>
@@ -587,18 +604,31 @@
                 const pastExpiry = !isNeverExpire(file.expires_at) && new Date(file.expires_at).getTime() <= Date.now();
                 const downloadBlocked = ownerDownloadBlockedReason(file.client_encrypted, pastExpiry);
 
+                const isOpen = openUploads.has(file.id);
+                const isSelected = selectedFiles.has(file.id);
+                const ownerDownloadUrl = `/api/user/files/${encodeURIComponent(file.claim_code)}/download`;
+                const downloadButton = (extraClass) => `<button type="button" class="btn-icon btn-primary${extraClass}" data-action="ownerDownload" data-url="${ownerDownloadUrl}" data-filename="${safeName}" aria-label="Download ${safeName}" title="${escapeHtml(downloadBlocked || OWNER_DOWNLOAD_TITLE)}"${downloadBlocked ? ' disabled' : ''}>${BUNDLE_ICONS.download}</button>`;
+
                 tableHTML += `
-                    <tr>
+                    <tr class="upload-row${isOpen ? ' is-open' : ''}${isSelected ? ' is-selected' : ''}" data-file-id="${file.id}">
                         <td data-label="File name">
-                            <div class="file-name">
-                                <span class="file-name-text">${safeName}</span>
-                                <button type="button" class="inline-edit-btn" data-action="renameFile" data-file-id="${file.id}" data-filename="${safeName}" aria-label="Rename ${safeName}" title="Rename file">
-                                    <svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                                    </svg>
-                                </button>
+                            <div class="upload-card-top">
+                                <label class="upload-select"><input type="checkbox" class="upload-check" data-file-id="${file.id}" aria-label="Select ${safeName}"${isSelected ? ' checked' : ''}></label>
+                                <div class="upload-card-main" data-file-id="${file.id}">
+                                    <div class="file-name">
+                                        <span class="file-name-text">${safeName}</span>
+                                        <button type="button" class="inline-edit-btn" data-action="renameFile" data-file-id="${file.id}" data-filename="${safeName}" aria-label="Rename ${safeName}" title="Rename file">
+                                            <svg class="inline-edit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <span class="upload-card-meta">${formatFileSize(file.file_size)} · ${statusBadge}</span>
+                                    ${fileTags}
+                                </div>
+                                ${downloadButton(' upload-quick-download')}
+                                <button type="button" class="btn-icon upload-card-toggle" data-action="toggleUploadCard" data-file-id="${file.id}" aria-expanded="${isOpen}" aria-label="${isOpen ? 'Hide' : 'Show'} details for ${safeName}">${BUNDLE_ICONS.chevronDown}</button>
                             </div>
-                            ${fileTags}
                         </td>
                         <td data-label="Size"><span class="file-size">${formatFileSize(file.file_size)}</span></td>
                         <td data-label="Claim code"><button type="button" class="claim-code" data-action="copyClaimCode" data-claim-code="${safeClaim}" aria-label="Copy claim code ${safeClaim}" title="Click to copy">${safeClaim}</button></td>
@@ -617,7 +647,7 @@
                         <td data-label="Status">${statusBadge}</td>
                         <td class="actions-col" data-label="Actions">
                             <div class="actions-cell">
-                                <button type="button" class="btn-icon btn-primary" data-action="ownerDownload" data-url="/api/user/files/${encodeURIComponent(file.claim_code)}/download" data-filename="${safeName}" aria-label="Download ${safeName}" title="${escapeHtml(downloadBlocked || OWNER_DOWNLOAD_TITLE)}"${downloadBlocked ? ' disabled' : ''}>${BUNDLE_ICONS.download}</button>
+                                ${downloadButton('')}
                                 <button type="button" class="btn-icon btn-secondary" data-action="openShareModal" data-file-id="${file.id}" data-filename="${safeName}" data-file-size="${file.file_size}" data-download-url="${downloadUrl}" data-expires-at="${escapeHtml(file.expires_at)}" data-max-downloads="${file.max_downloads || ''}" data-download-count="${file.completed_downloads}" data-claim-code="${safeClaim}" aria-label="Share ${safeName}" title="Share file">
                                     <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="18" cy="5" r="3"></circle>
@@ -646,18 +676,206 @@
             `;
 
             container.innerHTML = tableHTML;
+            syncUploadsControls();
+        }
+
+        // ---- My Uploads: compact phone cards and picking several files ----
+
+        // Header buttons, select-all box and the selection bar follow the
+        // current ticks and open cards (updated in place, so focus stays put).
+        function syncUploadsControls() {
+            const section = document.getElementById('filesSection');
+            const count = selectedFiles.size;
+            const total = shownFiles.length;
+            section.classList.toggle('select-mode', uploadsSelectMode);
+
+            const expandBtn = document.getElementById('filesExpandAllBtn');
+            const allOpen = total > 0 && shownFiles.every(f => openUploads.has(f.id));
+            expandBtn.hidden = total === 0 || uploadsSelectMode;
+            expandBtn.setAttribute('aria-expanded', String(allOpen));
+            document.getElementById('filesExpandAllText').textContent = allOpen ? 'Collapse all' : 'Expand all';
+
+            const selectBtn = document.getElementById('filesSelectBtn');
+            selectBtn.hidden = total === 0;
+            const allSelected = total > 0 && count === total;
+            document.getElementById('filesSelectText').textContent =
+                !uploadsSelectMode ? 'Select' : (allSelected ? 'Select none' : 'Select all');
+
+            const bar = document.getElementById('filesBulkBar');
+            bar.hidden = total === 0 || !(count > 0 || uploadsSelectMode);
+            document.getElementById('filesBulkCount').textContent = uploadsSelectMode
+                ? `${count} selected`
+                : `${count} file${count === 1 ? '' : 's'} selected`;
+            const deleteBtn = document.getElementById('filesBulkDeleteBtn');
+            deleteBtn.disabled = count === 0;
+            deleteBtn.textContent = count === 0 ? 'Delete' : `Delete ${count} file${count === 1 ? '' : 's'}`;
+
+            const selectAll = document.getElementById('filesSelectAll');
+            if (selectAll) {
+                selectAll.checked = allSelected;
+                selectAll.indeterminate = count > 0 && !allSelected;
+            }
+            document.querySelectorAll('#filesContainer tr.upload-row').forEach(row => {
+                const id = parseInt(row.getAttribute('data-file-id'));
+                const selected = selectedFiles.has(id);
+                row.classList.toggle('is-selected', selected);
+                const box = row.querySelector('.upload-check');
+                if (box) box.checked = selected;
+            });
+        }
+
+        function setFileSelected(fileId, selected) {
+            if (selected) selectedFiles.add(fileId); else selectedFiles.delete(fileId);
+            syncUploadsControls();
+        }
+
+        function setAllFilesSelected(selected) {
+            shownFiles.forEach(f => { if (selected) selectedFiles.add(f.id); else selectedFiles.delete(f.id); });
+            syncUploadsControls();
+        }
+
+        function toggleUploadCard(fileId) {
+            const row = document.querySelector(`#filesContainer tr.upload-row[data-file-id="${fileId}"]`);
+            if (!row) return;
+            const open = !openUploads.has(fileId);
+            if (open) openUploads.add(fileId); else openUploads.delete(fileId);
+            row.classList.toggle('is-open', open);
+            const toggle = row.querySelector('.upload-card-toggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', String(open));
+                const name = row.querySelector('.file-name-text');
+                toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${name ? name.textContent : 'file'}`);
+            }
+            syncUploadsControls();
+        }
+
+        function toggleAllUploadCards() {
+            const allOpen = shownFiles.length > 0 && shownFiles.every(f => openUploads.has(f.id));
+            shownFiles.forEach(f => { if (allOpen) openUploads.delete(f.id); else openUploads.add(f.id); });
+            document.querySelectorAll('#filesContainer tr.upload-row').forEach(row => {
+                const id = parseInt(row.getAttribute('data-file-id'));
+                const open = openUploads.has(id);
+                row.classList.toggle('is-open', open);
+                const toggle = row.querySelector('.upload-card-toggle');
+                if (toggle) {
+                    toggle.setAttribute('aria-expanded', String(open));
+                    const name = row.querySelector('.file-name-text');
+                    toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${name ? name.textContent : 'file'}`);
+                }
+            });
+            syncUploadsControls();
+        }
+
+        // Phones: "Select" starts choosing; pressed again it selects all (or none).
+        function onUploadsSelectButton() {
+            if (!uploadsSelectMode) {
+                uploadsSelectMode = true;
+            } else {
+                setAllFilesSelected(selectedFiles.size !== shownFiles.length);
+                return;
+            }
+            syncUploadsControls();
+        }
+
+        function exitUploadsSelectMode() {
+            uploadsSelectMode = false;
+            selectedFiles.clear();
+            syncUploadsControls();
+            focusSectionHeading('filesHeading');
+        }
+
+        // A tap on a phone card's name opens it, or ticks it while choosing.
+        // On wider screens the name is just text.
+        function onUploadCardMainClick(e) {
+            const main = e.target.closest('#filesContainer .upload-card-main');
+            if (!main || !phoneQuery.matches) return;
+            if (e.target.closest('button, a, input, label')) return;
+            const id = parseInt(main.getAttribute('data-file-id'));
+            if (uploadsSelectMode) setFileSelected(id, !selectedFiles.has(id));
+            else toggleUploadCard(id);
+        }
+
+        function deleteSelectedFiles() {
+            const picked = shownFiles.filter(f => selectedFiles.has(f.id));
+            if (picked.length === 0) return;
+            filesToDelete = picked.map(f => ({ id: f.id, name: f.original_filename }));
+            fileToDelete = null;
+            bundleToDelete = null;
+            const n = picked.length;
+            document.getElementById('deleteModalTitle').textContent = n === 1 ? 'Delete File' : `Delete ${n} files?`;
+            document.getElementById('deleteModalText').textContent = n === 1
+                ? 'Are you sure you want to delete this file? This action cannot be undone.'
+                : 'These files and their share links stop working right away. This cannot be undone.';
+            const list = document.getElementById('deleteModalList');
+            list.replaceChildren();
+            filesToDelete.slice(0, 5).forEach(f => {
+                const li = document.createElement('li');
+                li.textContent = f.name;
+                list.appendChild(li);
+            });
+            if (n > 5) {
+                const li = document.createElement('li');
+                li.textContent = `and ${n - 5} more`;
+                list.appendChild(li);
+            }
+            list.hidden = false;
+            document.getElementById('deleteConfirmBtn').textContent = n === 1 ? 'Delete' : `Delete ${n} files`;
+            document.getElementById('deleteModal').classList.add('show');
+        }
+
+        async function confirmBulkDelete() {
+            const ids = filesToDelete.map(f => f.id);
+            const confirmBtn = document.getElementById('deleteConfirmBtn');
+            confirmBtn.disabled = true;
+            try {
+                const response = await fetch('/api/user/files/delete/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ file_ids: ids }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showToast(data.error || 'Failed to delete files', 'error');
+                    return;
+                }
+                const done = data.deleted_count || 0;
+                const asked = data.requested_count || ids.length;
+                if (done === asked) {
+                    showToast(done === 1 ? 'File deleted successfully' : `Deleted ${done} files`, 'success');
+                } else if (done === 0) {
+                    showToast("None of the selected files could be deleted. They may already be gone; refresh to check.", 'error', 6000);
+                } else {
+                    const left = asked - done;
+                    showToast(`Deleted ${done} of ${asked} files. ${left} couldn't be deleted (${left === 1 ? 'it' : 'they'} may already be gone).`, 'warning', 6000);
+                }
+                selectedFiles.clear();
+                uploadsSelectMode = false;
+                hideDeleteModal();
+                await loadFiles(true);
+            } catch (error) {
+                console.error('Bulk delete failed:', error);
+                showToast('Network error deleting files', 'error');
+            } finally {
+                confirmBtn.disabled = false;
+            }
         }
 
         // Delete file
         function deleteFile(fileId) {
             fileToDelete = fileId;
             bundleToDelete = null;
+            filesToDelete = null;
             document.getElementById('deleteModalTitle').textContent = 'Delete File';
             document.getElementById('deleteModalText').textContent = 'Are you sure you want to delete this file? This action cannot be undone.';
             document.getElementById('deleteModal').classList.add('show');
         }
 
         async function confirmDelete() {
+            if (filesToDelete) {
+                await confirmBulkDelete();
+                return;
+            }
             if (bundleToDelete) {
                 await confirmDeleteBundle();
                 return;
@@ -695,6 +913,11 @@
             document.getElementById('deleteModal').classList.remove('show');
             fileToDelete = null;
             bundleToDelete = null;
+            filesToDelete = null;
+            const list = document.getElementById('deleteModalList');
+            list.hidden = true;
+            list.replaceChildren();
+            document.getElementById('deleteConfirmBtn').textContent = 'Delete';
         }
 
         // Rename file
@@ -3612,6 +3835,32 @@ you may be locked out of your account.
 
             // Refresh buttons
             document.getElementById('refreshBtn').addEventListener('click', refreshFiles);
+            document.getElementById('filesExpandAllBtn').addEventListener('click', toggleAllUploadCards);
+            document.getElementById('filesSelectBtn').addEventListener('click', onUploadsSelectButton);
+            document.getElementById('filesSelectCancelBtn').addEventListener('click', exitUploadsSelectMode);
+            document.getElementById('filesBulkClearBtn').addEventListener('click', () => {
+                selectedFiles.clear();
+                syncUploadsControls();
+            });
+            document.getElementById('filesBulkDeleteBtn').addEventListener('click', deleteSelectedFiles);
+            const filesContainer = document.getElementById('filesContainer');
+            filesContainer.addEventListener('change', (e) => {
+                if (e.target.id === 'filesSelectAll') {
+                    setAllFilesSelected(e.target.checked);
+                } else if (e.target.classList.contains('upload-check')) {
+                    setFileSelected(parseInt(e.target.getAttribute('data-file-id')), e.target.checked);
+                }
+            });
+            filesContainer.addEventListener('click', onUploadCardMainClick);
+            // Select mode's Cancel button only shows on phones: leave the mode
+            // (as Cancel does) when the screen gets wider, e.g. turned sideways.
+            phoneQuery.addEventListener('change', (e) => {
+                if (!e.matches && uploadsSelectMode) {
+                    uploadsSelectMode = false;
+                    selectedFiles.clear();
+                    syncUploadsControls();
+                }
+            });
             document.getElementById('bundlesToggleAllBtn').addEventListener('click', toggleAllBundles);
             document.getElementById('bundlesRefreshBtn').addEventListener('click', loadBundles);
             document.getElementById('refreshTokensBtn').addEventListener('click', refreshTokens);
@@ -3748,6 +3997,9 @@ you may be locked out of your account.
                         break;
                     case 'copyClaimCode':
                         copyToClipboard(btn.getAttribute('data-claim-code'), 'Claim code copied');
+                        break;
+                    case 'toggleUploadCard':
+                        toggleUploadCard(parseInt(btn.getAttribute('data-file-id')));
                         break;
                     case 'deleteFile':
                         deleteFile(parseInt(btn.getAttribute('data-file-id')));

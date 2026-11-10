@@ -137,6 +137,72 @@
                 </button>
             </div>
 
+            <div class="file-filters" id="fileFilters" role="group" aria-label="Filter files">
+                <div class="file-filter">
+                    <label for="fileFilterUser">User</label>
+                    <select id="fileFilterUser" class="filter-select" data-file-filter="user">
+                        <option value="">All users</option>
+                    </select>
+                </div>
+                <div class="file-filter">
+                    <label for="fileFilterSize">Size</label>
+                    <select id="fileFilterSize" class="filter-select" data-file-filter="size">
+                        <option value="">Any size</option>
+                        <option value="lt1m">Under 1 MB</option>
+                        <option value="1m-10m">1–10 MB</option>
+                        <option value="10m-100m">10–100 MB</option>
+                        <option value="100m-1g">100 MB – 1 GB</option>
+                        <option value="gt1g">Over 1 GB</option>
+                    </select>
+                </div>
+                <div class="file-filter">
+                    <label for="fileFilterStatus">Status</label>
+                    <select id="fileFilterStatus" class="filter-select" data-file-filter="status">
+                        <option value="">Any status</option>
+                        <option value="active">Active</option>
+                        <option value="limit_reached">Download limit reached</option>
+                        <option value="never_expires">Never expires</option>
+                        <option value="expiring_soon">Expires within 24 hours</option>
+                    </select>
+                </div>
+                <div class="file-filter">
+                    <label for="fileFilterScan">Virus scan</label>
+                    <select id="fileFilterScan" class="filter-select" data-file-filter="scan">
+                        <option value="">Any scan result</option>
+                        <option value="clean">Clean</option>
+                        <option value="pending">Waiting for scan</option>
+                        <option value="infected">Infected</option>
+                        <option value="error">Scan failed</option>
+                        <option value="not_scanned">Not scanned</option>
+                    </select>
+                </div>
+                <div class="file-filter">
+                    <label for="fileFilterUploaded">Uploaded</label>
+                    <select id="fileFilterUploaded" class="filter-select" data-file-filter="uploaded">
+                        <option value="">Any time</option>
+                        <option value="24h">Last 24 hours</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                        <option value="older_30d">More than 30 days ago</option>
+                    </select>
+                </div>
+                <div class="file-filter">
+                    <label for="fileFilterSort">Sort by</label>
+                    <select id="fileFilterSort" class="filter-select" data-file-filter="sort">
+                        <option value="">Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="largest">Largest first</option>
+                        <option value="smallest">Smallest first</option>
+                        <option value="expiring">Expiring soonest</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="file-filter-summary" id="fileFilterSummary" hidden>
+                <p class="file-filter-count" id="fileFilterCount" role="status"></p>
+                <div class="file-filter-chips" id="fileFilterChips"></div>
+            </div>
+
             <div class="table-container" tabindex="0" role="region" aria-label="Files">
                 <table class="data-table" id="filesTable">
                     <thead>
@@ -1441,6 +1507,7 @@
         <div class="modal-content">
             <h3>Confirm Action</h3>
             <p id="confirmMessage"></p>
+            <p id="confirmDetail" class="confirm-detail" hidden></p>
             <div class="modal-actions">
                 <button id="confirmYes" class="btn-danger">Confirm</button>
                 <button id="confirmNo" class="btn-secondary" data-modal-close data-modal-initial-focus>Cancel</button>

@@ -66,7 +66,7 @@ H.requireBrowserTests('owner-download.test.js');
         await page.waitForSelector('#bundlesSection:not(.hidden)');
 
         const rowOf = (name) => `#filesContainer tr:has(.file-name-text:text-is("${name}"))`;
-        const dlOf = (name) => `${rowOf(name)} [data-action="ownerDownload"]`;
+        const dlOf = (name) => `${rowOf(name)} .actions-cell [data-action="ownerDownload"]`;
 
         const firstActions = await page.$$eval('#filesContainer tbody tr', (trs) => trs.map((tr) => tr.querySelector('.actions-cell button')?.getAttribute('data-action')));
         H.check('download is the first action on every upload', firstActions.every((a) => a === 'ownerDownload'), JSON.stringify(firstActions));
@@ -107,9 +107,10 @@ H.requireBrowserTests('owner-download.test.js');
         H.check('bundle file downloads through the bundle route',
             new URL(bdl.url()).pathname === '/api/user/bundles/7/files/1/download' && calls[0] === 'HEAD /api/user/bundles/7/files/1/download', bdl.url() + ' ' + JSON.stringify(calls));
 
-        // Phone: the button is on each upload card too.
+        // Phone: the button sits on each closed upload card too.
         await page.setViewportSize({ width: 390, height: 844 });
-        H.check('phone cards show the button', await page.isVisible(dlOf('report.pdf')));
+        H.check('phone cards show the button', await page.isVisible(`${rowOf('report.pdf')} .upload-quick-download`));
+        H.check('the phone button is greyed out where downloads are', await page.isDisabled(`${rowOf('contract.pdf')} .upload-quick-download`));
         H.check('no sideways scrolling on a phone', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
         await context.close();
     } finally {

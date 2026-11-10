@@ -5,6 +5,21 @@ let currentPage = 1;
 let searchTerm = '';
 let csrfToken = '';
 
+// Files tab filters. Lives in memory only: switching admin tabs keeps it,
+// a page reload starts over. '' is each filter's default.
+const MB = 1024 * 1024;
+const FILE_SIZE_PRESETS = {
+    'lt1m': { max: MB },
+    '1m-10m': { min: MB, max: 10 * MB },
+    '10m-100m': { min: 10 * MB, max: 100 * MB },
+    '100m-1g': { min: 100 * MB, max: 1024 * MB },
+    'gt1g': { min: 1024 * MB }
+};
+// Chip labels, in display order. Sort is not a filter, so it gets no chip.
+const FILE_FILTER_LABELS = { user: 'User', size: 'Size', status: 'Status', scan: 'Virus scan', uploaded: 'Uploaded' };
+let fileFilters = { user: '', size: '', status: '', scan: '', uploaded: '', sort: '' };
+let dashboardLoadSeq = 0;
+
 // Unsaved changes tracking for Settings tab
 let hasUnsavedChanges = false;
 let originalSettingsValues = {};
@@ -348,20 +363,56 @@ function formatDate(dateString) {
     return `${month} ${day} @ ${time}`;
 }
 
+function activeFileFilterKeys() {
+    return Object.keys(FILE_FILTER_LABELS).filter(key => fileFilters[key] !== '');
+}
+
+// Query parameters for the current file filters (see AdminDashboardDataHandler).
+function fileFilterParams(params) {
+    if (fileFilters.user === 'anonymous') {
+        params.set('user', 'anonymous');
+    } else if (fileFilters.user) {
+        params.set('user_id', fileFilters.user);
+    }
+    const size = FILE_SIZE_PRESETS[fileFilters.size];
+    if (size && size.min !== undefined) params.set('min_size', size.min);
+    if (size && size.max !== undefined) params.set('max_size', size.max);
+    for (const key of ['status', 'scan', 'uploaded', 'sort']) {
+        if (fileFilters[key]) params.set(key, fileFilters[key]);
+    }
+    return params;
+}
+
 // Fetch dashboard data
 async function loadDashboardData(page = 1, search = '') {
+    // Filters change faster than responses arrive; only the latest request may render.
+    const seq = ++dashboardLoadSeq;
     try {
-        const response = await fetch(`/admin/api/dashboard?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
+        const params = fileFilterParams(new URLSearchParams({ page, page_size: 20, search }));
+        const response = await fetch(`/admin/api/dashboard?${params}`);
+        if (seq !== dashboardLoadSeq) return;
 
         if (!response.ok) {
             if (response.status === 401) {
                 window.location.href = '/admin/login';
                 return;
             }
+            if (response.status === 400) {
+                showError((await response.text()).trim() || 'Invalid file filter');
+                return;
+            }
             throw new Error('Failed to load dashboard data');
         }
 
         const data = await response.json();
+        if (seq !== dashboardLoadSeq) return;
+
+        // Deleting the last files of the last page: show the page before it.
+        const totalPages = data.pagination ? data.pagination.total_pages : 0;
+        if (page > 1 && totalPages > 0 && page > totalPages) {
+            currentPage = totalPages;
+            return loadDashboardData(totalPages, search);
+        }
 
         // Update stats
         document.getElementById('statTotalFiles').textContent = data.stats.total_files || 0;
@@ -389,6 +440,7 @@ async function loadDashboardData(page = 1, search = '') {
 
         // Update files table
         updateFilesTable(data.files || []);
+        updateFileFilterSummary(data.pagination, search);
 
         // Update pagination
         updatePagination(data.pagination);
@@ -407,7 +459,14 @@ function updateFilesTable(files) {
     const tbody = document.getElementById('filesTableBody');
 
     if (files.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="loading">No files found</td></tr>';
+        if (activeFileFilterKeys().length > 0) {
+            tbody.innerHTML = `<tr><td colspan="12" class="loading files-empty-filtered">
+                <p>No files match these filters.</p>
+                <button type="button" class="btn-secondary" data-action="clearFileFilters">Clear filters</button>
+            </td></tr>`;
+        } else {
+            tbody.innerHTML = '<tr><td colspan="12" class="loading">No files found</td></tr>';
+        }
 
         // Reset select all checkbox even when no files
         const selectAllCheckbox = document.getElementById('selectAllCheckbox');
@@ -423,7 +482,7 @@ function updateFilesTable(files) {
     tbody.innerHTML = files.map(file => `
         <tr>
             <td>
-                <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}" aria-label="Select ${escapeHtml(file.original_filename)}">
+                <input type="checkbox" class="file-checkbox" data-claim-code="${escapeHtml(file.claim_code)}"${file.bundle_id ? ' data-in-bundle="true"' : ''} aria-label="Select ${escapeHtml(file.original_filename)}">
             </td>
             <td data-label="Claim Code"><code>${escapeHtml(file.claim_code)}</code></td>
             <td class="filename-cell" title="${escapeHtml(file.original_filename)}" data-label="Filename">${escapeHtml(file.original_filename)}</td>
@@ -454,6 +513,114 @@ function updateFilesTable(files) {
 
     // Update delete selected button visibility
     updateDeleteSelectedButton();
+}
+
+// Result line ("6 of 214 files match") and removable chips for active filters
+function updateFileFilterSummary(pagination, search) {
+    const summary = document.getElementById('fileFilterSummary');
+    const count = document.getElementById('fileFilterCount');
+    const chips = document.getElementById('fileFilterChips');
+    if (!summary || !count || !chips) return;
+
+    const active = activeFileFilterKeys();
+    chips.replaceChildren();
+    if (active.length === 0 && !search) {
+        summary.hidden = true;
+        count.textContent = '';
+        return;
+    }
+
+    if (pagination) {
+        const total = pagination.total || 0;
+        const all = pagination.unfiltered_total ?? total;
+        count.textContent = `${total.toLocaleString()} of ${all.toLocaleString()} ${all === 1 ? 'file matches' : 'files match'}`;
+    }
+
+    for (const key of active) {
+        const select = document.querySelector(`[data-file-filter="${key}"]`);
+        const option = select && select.selectedOptions[0];
+        const valueLabel = option ? (option.dataset.label || option.textContent) : fileFilters[key];
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'filter-chip';
+        chip.dataset.action = 'removeFileFilter';
+        chip.dataset.filter = key;
+        chip.setAttribute('aria-label', `Remove filter ${FILE_FILTER_LABELS[key]}: ${valueLabel}`);
+        chip.append(`${FILE_FILTER_LABELS[key]}: ${valueLabel}`);
+        const x = document.createElement('span');
+        x.className = 'filter-chip-x';
+        x.setAttribute('aria-hidden', 'true');
+        x.textContent = '×';
+        chip.append(x);
+        chips.append(chip);
+    }
+    if (active.length >= 2) {
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'filter-clear-all';
+        clear.dataset.action = 'clearFileFilters';
+        clear.textContent = 'Clear all';
+        chips.append(clear);
+    }
+    summary.hidden = false;
+}
+
+// Push fileFilters into the selects and mark the non-default ones
+function syncFileFilterControls() {
+    document.querySelectorAll('[data-file-filter]').forEach(select => {
+        const key = select.dataset.fileFilter;
+        select.value = fileFilters[key];
+        select.classList.toggle('is-active', fileFilters[key] !== '');
+    });
+}
+
+function setFileFilters(changes) {
+    Object.assign(fileFilters, changes);
+    syncFileFilterControls();
+    currentPage = 1;
+    loadDashboardData(1, searchTerm);
+}
+
+function clearFileFilters() {
+    const cleared = {};
+    Object.keys(FILE_FILTER_LABELS).forEach(key => { cleared[key] = ''; });
+    setFileFilters(cleared);
+}
+
+// Fill the User filter with everyone who currently has files
+async function loadFileUploaders() {
+    const select = document.getElementById('fileFilterUser');
+    if (!select) return;
+    try {
+        const response = await fetch('/admin/api/files/uploaders');
+        if (!response.ok) throw new Error('Failed to load uploaders');
+        const data = await response.json();
+
+        const selected = select.selectedOptions[0];
+        const selectedLabel = selected ? (selected.dataset.label || selected.textContent) : '';
+        const options = [new Option('All users', '')];
+        if (data.anonymous_count > 0) {
+            options.push(userFilterOption('anonymous', 'Anonymous (no account)', data.anonymous_count));
+        }
+        for (const user of data.users || []) {
+            options.push(userFilterOption(String(user.user_id), user.username, user.file_count));
+        }
+        // A filtered-on user whose last file was just deleted stays selectable
+        // (with 0 files) so the select keeps matching the active filter.
+        if (fileFilters.user && !options.some(o => o.value === fileFilters.user)) {
+            options.push(userFilterOption(fileFilters.user, selectedLabel || fileFilters.user, 0));
+        }
+        select.replaceChildren(...options);
+        syncFileFilterControls();
+    } catch (error) {
+        console.error('Error loading uploaders:', error);
+    }
+}
+
+function userFilterOption(value, label, count) {
+    const option = new Option(`${label} · ${count.toLocaleString()}`, value);
+    option.dataset.label = label;
+    return option;
 }
 
 // Update blocked IPs table
@@ -518,7 +685,13 @@ function updatePagination(pagination) {
 
 // Delete file
 async function deleteFile(claimCode) {
-    if (!await confirm(`Delete file with claim code ${claimCode}?`)) {
+    // AdminDeleteFileHandler deletes a member's whole bundle, as bulk delete does.
+    const inBundle = Array.from(document.querySelectorAll('#filesTableBody .file-checkbox[data-in-bundle]'))
+        .some((box) => box.getAttribute('data-claim-code') === claimCode);
+    const bundleWarning = inBundle
+        ? 'This file is in a bundle. Deleting it deletes the whole bundle, including files not shown by your filters.'
+        : '';
+    if (!await confirm(`Delete file with claim code ${claimCode}?`, bundleWarning)) {
         return;
     }
 
@@ -537,6 +710,7 @@ async function deleteFile(claimCode) {
         if (response.ok && data.success) {
             showSuccess('File deleted successfully');
             loadDashboardData(currentPage, searchTerm);
+            loadFileUploaders();
         } else {
             showError(data.message || 'Failed to delete file');
         }
@@ -875,14 +1049,20 @@ function showWarning(message) {
     showToast(message, 'warning');
 }
 
-function confirm(message) {
+// detail (optional) is shown as a highlighted warning under the message.
+function confirm(message, detail = '') {
     return new Promise((resolve) => {
         const modal = document.getElementById('confirmModal');
         const confirmMsg = document.getElementById('confirmMessage');
+        const confirmDetail = document.getElementById('confirmDetail');
         const yesBtn = document.getElementById('confirmYes');
         const noBtn = document.getElementById('confirmNo');
 
         confirmMsg.textContent = message;
+        if (confirmDetail) {
+            confirmDetail.textContent = detail;
+            confirmDetail.hidden = !detail;
+        }
         modal.style.display = 'flex';
 
         function cleanup(result) {
@@ -956,7 +1136,13 @@ async function deleteSelectedFiles() {
         return;
     }
 
-    if (!await confirm(`Delete ${claimCodes.length} selected file(s)?`)) {
+    // AdminBulkDeleteFilesHandler deletes a member's whole bundle, and the
+    // other members may be hidden by the current filters or page.
+    const inBundle = document.querySelectorAll('.file-checkbox:checked[data-in-bundle]').length > 0;
+    const bundleWarning = inBundle
+        ? 'Some of these files are in a bundle. Deleting one file of a bundle deletes the whole bundle, including files not shown by your filters.'
+        : '';
+    if (!await confirm(`Delete ${claimCodes.length} selected file(s)?`, bundleWarning)) {
         return;
     }
 
@@ -975,6 +1161,7 @@ async function deleteSelectedFiles() {
         if (response.ok && data.success) {
             showSuccess(`Successfully deleted ${data.deleted_count} file(s)`);
             loadDashboardData(currentPage, searchTerm);
+            loadFileUploaders();
         } else {
             showError(data.message || 'Failed to delete files');
         }
@@ -1136,6 +1323,14 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.classList.add('btn-refreshing');
         setTimeout(() => btn.classList.remove('btn-refreshing'), 600);
         loadDashboardData(currentPage, searchTerm);
+        loadFileUploaders();
+    });
+
+    // File filters: each change applies at once and goes back to page 1
+    document.querySelectorAll('[data-file-filter]').forEach(select => {
+        select.addEventListener('change', () => {
+            setFileFilters({ [select.dataset.fileFilter]: select.value });
+        });
     });
 
     // Logout button
@@ -1494,6 +1689,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load initial data
     loadDashboardData();
+    loadFileUploaders();
     loadConfigValues(); // Load config values for settings tab
 
     // Cleanup partial uploads button handler
@@ -1525,8 +1721,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             showToast(data.message, 'success');
 
-            // Refresh dashboard data to update stats
-            loadDashboardData();
+            // Refresh dashboard data to update stats (keeping the page, search and filters)
+            loadDashboardData(currentPage, searchTerm);
         } catch (error) {
             console.error('Cleanup error:', error);
             showToast(error.message, 'error');
@@ -4470,6 +4666,19 @@ document.addEventListener('DOMContentLoaded', function() {
             // Pagination
             case 'goToPage':
                 goToPage(parseInt(btn.getAttribute('data-page'), 10));
+                break;
+
+            // File filters
+            // The clicked chip/button is about to be removed; keep focus nearby.
+            case 'removeFileFilter': {
+                const key = btn.getAttribute('data-filter');
+                setFileFilters({ [key]: '' });
+                document.querySelector(`[data-file-filter="${key}"]`)?.focus();
+                break;
+            }
+            case 'clearFileFilters':
+                clearFileFilters();
+                document.getElementById('fileFilterUser')?.focus();
                 break;
 
             // User management

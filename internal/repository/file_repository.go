@@ -371,17 +371,27 @@ type FileRepository interface {
 	// Includes both active and expired files.
 	GetAllStoredFilenames(ctx context.Context) (map[string]bool, error)
 
-	// GetAllForAdmin returns all files with pagination for admin dashboard.
-	// Includes username via join with users table.
+	// ListForAdmin returns one page of the admin dashboard file list, narrowed
+	// and ordered by filter, plus the number of files matching filter.
+	// Includes username via join with users table. An invalid filter returns
+	// an error wrapping ErrInvalidInput (see AdminFileFilter.Validate).
+	//
+	// SECURITY: Implementation MUST use parameterized queries, escape LIKE
+	// wildcards (% and _) in filter.Search, and map filter.Sort to a fixed
+	// ORDER BY clause.
+	ListForAdmin(ctx context.Context, filter AdminFileFilter, limit, offset int) ([]models.File, int, error)
+
+	// GetAllForAdmin is ListForAdmin with no filter.
 	// Returns (files, totalCount, error).
 	GetAllForAdmin(ctx context.Context, limit, offset int) ([]models.File, int, error)
 
-	// SearchForAdmin searches files by claim code, filename, IP, or username.
+	// SearchForAdmin is ListForAdmin filtered by search term only.
 	// Returns (files, totalCount, error).
-	//
-	// SECURITY: Implementation MUST use parameterized queries and escape
-	// LIKE wildcards (% and _) in searchTerm to prevent injection.
 	SearchForAdmin(ctx context.Context, searchTerm string, limit, offset int) ([]models.File, int, error)
+
+	// GetAdminUploaders counts the files in the admin list per uploading user
+	// (only users with at least one file) and the files with no user.
+	GetAdminUploaders(ctx context.Context) (*AdminUploaders, error)
 
 	// UpdateScanStatus updates the malware scan status for a file.
 	// status should be one of: "pending", "clean", "infected", "error", "skipped"

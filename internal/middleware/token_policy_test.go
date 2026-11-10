@@ -48,6 +48,7 @@ func TestTokenRequirement(t *testing.T) {
 		{"GET", "/api/user/bundles/42/files/0/download", "download", true},
 		{"POST", "/api/user/files/Xk3pQ9aB/download", "manage", true}, // not a download (the handler answers 405)
 		{"GET", "/api/user/files/download", "manage", true},            // no file in the path
+		{"POST", "/api/user/files/delete/bulk", "manage", true},
 		{"PUT", "/api/user/files/Xk3pQ9aB/rename", "manage", true},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
