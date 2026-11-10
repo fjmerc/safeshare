@@ -1093,7 +1093,7 @@ Retrieve admin dashboard statistics and file listings.
 - `uploaded`: `24h`, `7d`, `30d` (uploaded within that time) or `older_30d` (more than 30 days ago)
 - `sort`: `newest` (default), `oldest`, `largest`, `smallest`, `expiring` (soonest first, files that never expire last)
 
-An invalid value returns 400 with a plain-text message naming the parameter. Filters change `files` and `pagination` only; `stats` always describes all files. `pagination.total` counts the files that match, `pagination.unfiltered_total` all files in the list.
+An invalid value returns 400 with a plain-text message naming the parameter. Filters change `files` and `pagination` only; `stats` are not affected by them. `pagination.total` counts the files that match, `pagination.unfiltered_total` all files in the list.
 
 **Response** (200 OK):
 ```json
