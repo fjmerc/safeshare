@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-10
+
 ### Changed
 
 - Dashboard: **My Bundles** is now a table laid out like My Uploads (size, claim code, created, expires, downloads, status and actions per bundle). Each bundle has an arrow button that shows or hides its files underneath, and **Expand all** / **Collapse all** opens or closes every bundle. Encrypted and password-protected bundles are marked, and a bundle with a download limit shows its downloads against that limit (the limit applies to each file). On phones each bundle is a card with a **Show files** button.
