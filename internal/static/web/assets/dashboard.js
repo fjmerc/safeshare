@@ -552,7 +552,7 @@
 
             let tableHTML = `
                 <div class="files-table-wrapper" role="region" aria-label="My uploads table" tabindex="0">
-                    <table class="files-table uploads-table" aria-label="My uploads">
+                    <table class="files-table uploads-table compact-cards" aria-label="My uploads">
                         <thead>
                             <tr>
                                 <th scope="col"><span class="uploads-select-all"><input type="checkbox" id="filesSelectAll" aria-label="Select all files">File name</span></th>
@@ -1676,6 +1676,53 @@
 
         let tokenToRevoke = null;
         let createdTokenSecret = null;
+        // Phone token cards opened during this visit, and the list last shown
+        const openTokens = new Set();
+        let shownTokens = [];
+
+        // ---- API tokens: compact phone cards (same pattern as My Uploads) ----
+        function setTokenCardOpen(row, open) {
+            const id = parseInt(row.getAttribute('data-token-id'));
+            if (open) openTokens.add(id); else openTokens.delete(id);
+            row.classList.toggle('is-open', open);
+            const toggle = row.querySelector('.upload-card-toggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', String(open));
+                const name = row.querySelector('.token-name');
+                toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for token ${name ? name.textContent : ''}`);
+            }
+        }
+
+        function toggleTokenCard(tokenId) {
+            const row = document.querySelector(`#tokensContainer tr.token-row[data-token-id="${tokenId}"]`);
+            if (!row) return;
+            setTokenCardOpen(row, !openTokens.has(tokenId));
+            syncTokenCardsControls();
+        }
+
+        function toggleAllTokenCards() {
+            const allOpen = shownTokens.length > 0 && shownTokens.every(t => openTokens.has(t.id));
+            document.querySelectorAll('#tokensContainer tr.token-row').forEach(row => setTokenCardOpen(row, !allOpen));
+            syncTokenCardsControls();
+        }
+
+        function syncTokenCardsControls() {
+            const btn = document.getElementById('tokensExpandAllBtn');
+            if (!btn) return;
+            const total = shownTokens.length;
+            const allOpen = total > 0 && shownTokens.every(t => openTokens.has(t.id));
+            btn.hidden = total === 0;
+            btn.setAttribute('aria-expanded', String(allOpen));
+            document.getElementById('tokensExpandAllText').textContent = allOpen ? 'Collapse all' : 'Expand all';
+        }
+
+        // A tap on a phone token card's name opens or closes it.
+        function onTokenCardMainClick(e) {
+            const main = e.target.closest('#tokensContainer .token-card-main');
+            if (!main || !phoneQuery.matches) return;
+            if (e.target.closest('button, a, input, label')) return;
+            toggleTokenCard(parseInt(main.getAttribute('data-token-id')));
+        }
 
         // Load tokens
         async function loadTokens(restoreFocus) {
@@ -1701,8 +1748,12 @@
         // Display tokens in table
         function displayTokens(tokens) {
             const container = document.getElementById('tokensContainer');
+            shownTokens = tokens || [];
+            const present = new Set(shownTokens.map(t => t.id));
+            openTokens.forEach(id => { if (!present.has(id)) openTokens.delete(id); });
 
             if (!tokens || tokens.length === 0) {
+                syncTokenCardsControls();
                 container.innerHTML = `
                     <div class="empty-state-compact">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1716,7 +1767,7 @@
 
             let tableHTML = `
                 <div class="files-table-wrapper" role="region" aria-label="API tokens table" tabindex="0">
-                    <table class="tokens-table" aria-label="API tokens">
+                    <table class="tokens-table compact-cards" aria-label="API tokens">
                         <thead>
                             <tr>
                                 <th scope="col">Name</th>
@@ -1759,10 +1810,19 @@
                 const usageStats = formatTokenUsageStats(token.usage_stats);
 
                 const safeTokenName = escapeHtml(token.name);
+                const isOpen = openTokens.has(token.id);
 
                 tableHTML += `
-                    <tr>
-                        <td data-label="Name"><span class="token-name">${safeTokenName}</span></td>
+                    <tr class="token-row${isOpen ? ' is-open' : ''}" data-token-id="${token.id}">
+                        <td data-label="Name">
+                            <div class="upload-card-top">
+                                <div class="upload-card-main token-card-main" data-token-id="${token.id}">
+                                    <span class="token-name">${safeTokenName}</span>
+                                    <span class="upload-card-meta">Expires ${expiresDisplay}</span>
+                                </div>
+                                <button type="button" class="btn-icon upload-card-toggle" data-action="toggleTokenCard" data-token-id="${token.id}" aria-expanded="${isOpen}" aria-label="${isOpen ? 'Hide' : 'Show'} details for token ${safeTokenName}">${BUNDLE_ICONS.chevronDown}</button>
+                            </div>
+                        </td>
                         <td data-label="Scopes"><div class="scopes-cell">${scopesBadges}</div></td>
                         <td data-label="Usage">${usageStats}</td>
                         <td data-label="Created"><span class="token-date">${createdDate}</span></td>
@@ -1794,6 +1854,7 @@
             `;
 
             container.innerHTML = tableHTML;
+            syncTokenCardsControls();
         }
 
         // Refresh tokens with animation
@@ -3852,6 +3913,8 @@ you may be locked out of your account.
                 }
             });
             filesContainer.addEventListener('click', onUploadCardMainClick);
+            document.getElementById('tokensExpandAllBtn').addEventListener('click', toggleAllTokenCards);
+            document.getElementById('tokensContainer').addEventListener('click', onTokenCardMainClick);
             // Select mode's Cancel button only shows on phones: leave the mode
             // (as Cancel does) when the screen gets wider, e.g. turned sideways.
             phoneQuery.addEventListener('change', (e) => {
@@ -3997,6 +4060,9 @@ you may be locked out of your account.
                         break;
                     case 'copyClaimCode':
                         copyToClipboard(btn.getAttribute('data-claim-code'), 'Claim code copied');
+                        break;
+                    case 'toggleTokenCard':
+                        toggleTokenCard(parseInt(btn.getAttribute('data-token-id')));
                         break;
                     case 'toggleUploadCard':
                         toggleUploadCard(parseInt(btn.getAttribute('data-file-id')));

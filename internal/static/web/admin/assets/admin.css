@@ -3290,3 +3290,95 @@ input[type="checkbox"].check-inline {
         margin-left: 6px;
     }
 }
+
+/* ---- Phones: compact Files / Users cards (summary cell is phone-only) ---- */
+.data-table.compact-cards td.cc-summary,
+.cc-phone-only {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .cc-phone-only:not([hidden]) {
+        display: inline-flex;
+    }
+
+    #main .data-table.compact-cards tbody tr.cc-row {
+        display: flex;
+        flex-direction: column;
+    }
+
+    #main .data-table.compact-cards tbody tr.cc-row > td.cc-summary {
+        order: -1;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-top: 0;
+    }
+
+    /* Leave room for the select checkbox in the card's top-right corner */
+    #main .data-table.compact-cards tbody tr.cc-row:has(> td > input[type="checkbox"]) > td.cc-summary {
+        padding-right: 36px;
+    }
+
+    #main .data-table.compact-cards tbody tr.cc-row.is-open > td.cc-summary {
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    /* Closed: only the summary (and the checkbox) */
+    #main .data-table.compact-cards tbody tr.cc-row:not(.is-open) > td:not(.cc-summary):not(:has(> input[type="checkbox"])),
+    #main .data-table.compact-cards tbody tr.cc-row > td.cc-dup {
+        display: none;
+    }
+
+    .cc-summary-main {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: 1;
+        min-width: 0;
+        cursor: pointer;
+    }
+
+    .cc-title {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+
+    .cc-meta {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+    }
+
+    .cc-toggle {
+        width: 40px;
+        height: 40px;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--primary-text, var(--primary-color));
+        background: var(--primary-light);
+        border: 1px solid var(--primary-color);
+    }
+
+    .cc-toggle svg {
+        width: 18px;
+        height: 18px;
+        transition: transform 0.2s ease;
+    }
+
+    .cc-toggle[aria-expanded="true"] svg {
+        transform: rotate(180deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cc-toggle svg {
+        transition: none;
+    }
+}
