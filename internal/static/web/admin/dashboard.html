@@ -128,6 +128,13 @@
                     </svg>
                     Refresh
                 </button>
+                <button id="filesExpandAllBtn" type="button" class="btn-secondary cc-phone-only" aria-controls="filesTable" hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="7 15 12 20 17 15"></polyline>
+                        <polyline points="7 9 12 4 17 9"></polyline>
+                    </svg>
+                    <span class="cc-expand-text">Expand all</span>
+                </button>
                 <button id="deleteSelectedBtn" class="btn-danger" style="display: none;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -204,7 +211,7 @@
             </div>
 
             <div class="table-container" tabindex="0" role="region" aria-label="Files">
-                <table class="data-table" id="filesTable">
+                <table class="data-table compact-cards" id="filesTable">
                     <thead>
                         <tr>
                             <th scope="col" class="col-check">
@@ -225,7 +232,7 @@
                     </thead>
                     <tbody id="filesTableBody">
                         <tr>
-                            <td colspan="12" class="loading">Loading...</td>
+                            <td colspan="13" class="loading">Loading...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -256,10 +263,17 @@
                     </svg>
                     Refresh
                 </button>
+                <button id="usersExpandAllBtn" type="button" class="btn-secondary cc-phone-only" aria-controls="usersTable" hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="7 15 12 20 17 15"></polyline>
+                        <polyline points="7 9 12 4 17 9"></polyline>
+                    </svg>
+                    <span class="cc-expand-text">Expand all</span>
+                </button>
             </div>
 
             <div class="table-container" tabindex="0" role="region" aria-label="Users">
-                <table class="data-table" id="usersTable">
+                <table class="data-table compact-cards" id="usersTable">
                     <thead>
                         <tr>
                             <th scope="col">Username</th>

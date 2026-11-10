@@ -2472,10 +2472,11 @@
         }
 
         /* Phone-only pieces stay out of the table layout */
-        .uploads-table .upload-card-meta,
+        .compact-cards .upload-card-meta,
         .uploads-table .upload-quick-download,
-        .uploads-table .upload-card-toggle,
-        #filesSection .uploads-phone-only {
+        .compact-cards .upload-card-toggle,
+        #filesSection .uploads-phone-only,
+        #tokensSection .uploads-phone-only {
             display: none;
         }
 
@@ -2524,7 +2525,8 @@
         }
 
         @media (max-width: 640px) {
-            #filesSection .uploads-phone-only:not([hidden]) {
+            #filesSection .uploads-phone-only:not([hidden]),
+            #tokensSection .uploads-phone-only:not([hidden]) {
                 display: inline-flex;
             }
 
@@ -2563,7 +2565,7 @@
                 padding: 6px 0;
             }
 
-            .uploads-table .upload-card-meta {
+            .compact-cards .upload-card-meta {
                 display: flex;
                 align-items: center;
                 flex-wrap: wrap;
@@ -2574,7 +2576,7 @@
             }
 
             .uploads-table .upload-quick-download,
-            .uploads-table .upload-card-toggle {
+            .compact-cards .upload-card-toggle {
                 display: inline-flex;
                 width: 40px;
                 height: 40px;
@@ -2592,6 +2594,25 @@
 
             .upload-card-toggle[aria-expanded="true"] svg {
                 transform: rotate(180deg);
+            }
+
+            /* API tokens: a closed card is its name and expiry; Expires is
+               already on that line, so it isn't repeated when open */
+            .tokens-table.compact-cards tbody tr.token-row:not(.is-open) > td:not(:first-child),
+            .tokens-table.compact-cards tbody tr.token-row > td:nth-child(5) {
+                display: none;
+            }
+
+            .tokens-table.compact-cards tbody tr.token-row:not(.is-open) > td:first-child {
+                border-bottom: 0;
+            }
+
+            .tokens-table.compact-cards tbody tr.token-row {
+                padding: 4px 8px 4px 12px;
+            }
+
+            .tokens-table.compact-cards .upload-card-main .token-name {
+                overflow-wrap: anywhere;
             }
 
             /* Checkboxes appear only after tapping Select */
@@ -2908,6 +2929,14 @@
             <div class="section-header">
                 <h2 id="tokensHeading" tabindex="-1">API Tokens</h2>
                 <div class="section-actions">
+                    <!-- Phones only: token cards start closed -->
+                    <button type="button" id="tokensExpandAllBtn" class="btn btn-secondary uploads-phone-only" aria-controls="tokensContainer" hidden>
+                        <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="7 15 12 20 17 15"></polyline>
+                            <polyline points="7 9 12 4 17 9"></polyline>
+                        </svg>
+                        <span id="tokensExpandAllText">Expand all</span>
+                    </button>
                     <button type="button" id="refreshTokensBtn" class="btn btn-secondary" aria-label="Refresh API tokens">
                         <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="23 4 23 10 17 10"></polyline>
