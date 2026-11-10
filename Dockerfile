@@ -1,5 +1,10 @@
 # Build stage
-FROM golang:1.27.3-alpine AS builder
+# Runs on the build machine's own platform and cross-compiles for the target
+# (GOARCH below), so a multi-platform build doesn't compile Go under
+# emulation. Go gives the same binary whichever machine compiles it, which
+# scripts/verify-image.sh checks.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
+ARG TARGETARCH
 
 WORKDIR /build
 
@@ -25,13 +30,13 @@ COPY . .
 # /app/uploads, which only holds true inside this image, not on the host).
 # migrate-chunks is a one-off historical tool and is not shipped here — it
 # can still be built and run separately if ever needed again.
-RUN CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o safeshare ./cmd/safeshare && \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o import-file ./cmd/import-file && \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -buildvcs=false \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -trimpath -buildvcs=false \
     -ldflags="-w -s" \
     -o migrate-encryption ./cmd/migrate-encryption
 
