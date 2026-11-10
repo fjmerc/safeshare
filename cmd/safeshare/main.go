@@ -828,6 +828,10 @@ func run() error {
 			adminAuth(http.HandlerFunc(handlers.AdminDashboardDataHandler(repos, cfg))).ServeHTTP(w, r)
 		})
 
+		mux.HandleFunc("/admin/api/files/uploaders", func(w http.ResponseWriter, r *http.Request) {
+			adminAuth(http.HandlerFunc(handlers.AdminFileUploadersHandler(repos))).ServeHTTP(w, r)
+		})
+
 		mux.HandleFunc("/admin/api/files/delete", func(w http.ResponseWriter, r *http.Request) {
 			adminAuth(csrfProtection(http.HandlerFunc(handlers.AdminDeleteFileHandler(repos, cfg)))).ServeHTTP(w, r)
 		})

@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -411,7 +413,11 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 			pageSize = 20
 		}
 
-		searchTerm := r.URL.Query().Get("search")
+		filter, err := parseAdminFileFilter(r.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		// Calculate offset with validation to prevent overflow
 		offset := (page - 1) * pageSize
@@ -421,21 +427,23 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 			page = 1
 		}
 
-		// Get files
-		var files []models.File
-		var total int
-		var err error
-
-		if searchTerm != "" {
-			files, total, err = repos.Files.SearchForAdmin(ctx, searchTerm, pageSize, offset)
-		} else {
-			files, total, err = repos.Files.GetAllForAdmin(ctx, pageSize, offset)
-		}
-
+		files, total, err := repos.Files.ListForAdmin(ctx, filter, pageSize, offset)
 		if err != nil {
 			slog.Error("failed to get files for admin", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
+		}
+
+		// The list's own size without search or filters, for "N of M files
+		// match". Not stats.total_files: that leaves out expired files the
+		// list still shows until cleanup removes them.
+		unfilteredTotal := total
+		if filter != (repository.AdminFileFilter{Sort: filter.Sort}) {
+			if _, unfilteredTotal, err = repos.Files.ListForAdmin(ctx, repository.AdminFileFilter{}, 0, 0); err != nil {
+				slog.Error("failed to count files for admin", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Get storage stats
@@ -530,6 +538,8 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 				"page_size":   pageSize,
 				"total":       total,
 				"total_pages": (total + pageSize - 1) / pageSize,
+				// total without search or filters
+				"unfiltered_total": unfilteredTotal,
 			},
 			"stats": map[string]interface{}{
 				"total_files":           totalFiles,
@@ -549,6 +559,110 @@ func AdminDashboardDataHandler(repos *repository.Repositories, cfg *config.Confi
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// adminFileUploadedWindows maps the dashboard's "uploaded" filter values to
+// AdminFileFilter's upload-age fields.
+var adminFileUploadedWindows = map[string]repository.AdminFileFilter{
+	"24h":       {UploadedWithin: 24 * time.Hour},
+	"7d":        {UploadedWithin: 7 * 24 * time.Hour},
+	"30d":       {UploadedWithin: 30 * 24 * time.Hour},
+	"older_30d": {UploadedBefore: 30 * 24 * time.Hour},
+}
+
+// parseAdminFileFilter reads the dashboard's file-list query parameters:
+// search, user (only "anonymous"), user_id, min_size, max_size (bytes; min
+// inclusive, max exclusive), status, scan, uploaded and sort. The error text
+// is safe to show the admin.
+func parseAdminFileFilter(q url.Values) (repository.AdminFileFilter, error) {
+	filter := repository.AdminFileFilter{Search: q.Get("search")}
+
+	for _, e := range []struct {
+		name    string
+		dst     *string
+		allowed []string
+	}{
+		{"status", &filter.Status, repository.AdminFileStatuses},
+		{"scan", &filter.Scan, repository.AdminFileScans},
+		{"sort", &filter.Sort, repository.AdminFileSorts},
+	} {
+		v := q.Get(e.name)
+		if v != "" && !slices.Contains(e.allowed, v) {
+			return filter, fmt.Errorf("Invalid %s: must be one of %s", e.name, strings.Join(e.allowed, ", "))
+		}
+		*e.dst = v
+	}
+
+	if v := q.Get("uploaded"); v != "" {
+		window, ok := adminFileUploadedWindows[v]
+		if !ok {
+			return filter, errors.New("Invalid uploaded: must be one of 24h, 7d, 30d, older_30d")
+		}
+		filter.UploadedWithin, filter.UploadedBefore = window.UploadedWithin, window.UploadedBefore
+	}
+
+	switch q.Get("user") {
+	case "":
+	case "anonymous":
+		filter.Anonymous = true
+	default:
+		return filter, errors.New(`Invalid user: must be "anonymous" (use user_id for a user)`)
+	}
+	if v := q.Get("user_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			return filter, errors.New("Invalid user_id: must be a positive integer")
+		}
+		if filter.Anonymous {
+			return filter, errors.New("Invalid filter: user=anonymous and user_id can't be combined")
+		}
+		filter.UserID = &id
+	}
+
+	for _, p := range []struct {
+		name string
+		dst  **int64
+	}{{"min_size", &filter.MinSize}, {"max_size", &filter.MaxSize}} {
+		v := q.Get(p.name)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return filter, fmt.Errorf("Invalid %s: must be a whole number of bytes, 0 or more", p.name)
+		}
+		*p.dst = &n
+	}
+	if filter.MaxSize != nil && *filter.MaxSize == 0 {
+		return filter, errors.New("Invalid max_size: must be greater than 0")
+	}
+	if filter.MinSize != nil && filter.MaxSize != nil && *filter.MinSize >= *filter.MaxSize {
+		return filter, errors.New("Invalid size range: min_size must be less than max_size")
+	}
+
+	return filter, nil
+}
+
+// AdminFileUploadersHandler lists who has files, for the Files tab's user
+// filter: every user with at least one file (with their file count, sorted by
+// username) and the number of files uploaded without an account.
+func AdminFileUploadersHandler(repos *repository.Repositories) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		uploaders, err := repos.Files.GetAdminUploaders(r.Context())
+		if err != nil {
+			slog.Error("failed to get file uploaders for admin", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(uploaders)
 	}
 }
 

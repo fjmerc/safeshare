@@ -1253,36 +1253,122 @@ paths:
       security:
         - adminAuth: []
       parameters:
-        - name: limit
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+          description: Page number (1-based)
+        - name: page_size
           in: query
           schema:
             type: integer
             default: 20
+            maximum: 100
           description: Files per page
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
-          description: Pagination offset
         - name: search
           in: query
           schema:
             type: string
-          description: Search query (claim code, filename, or uploader IP)
+          description: Search query (claim code, filename, uploader IP or username)
+        - name: user_id
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Only files uploaded by this user. Can't be combined with `user`.
+        - name: user
+          in: query
+          schema:
+            type: string
+            enum: [anonymous]
+          description: "`anonymous`: only files uploaded without an account"
+        - name: min_size
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Smallest file size in bytes (inclusive)
+        - name: max_size
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          description: File size limit in bytes (exclusive); must be greater than `min_size`
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, limit_reached, never_expires, expiring_soon]
+          description: |
+            `active`: download limit not reached and not expired.
+            `limit_reached`: download count has reached `max_downloads` (a limit of 0 or none is unlimited).
+            `never_expires`: set to never expire.
+            `expiring_soon`: not yet expired, and expires within 24 hours.
+        - name: scan
+          in: query
+          schema:
+            type: string
+            enum: [clean, pending, infected, error, not_scanned]
+          description: Virus scan result. `not_scanned` covers files with no scan status, `skipped` and `not_scanned`.
+        - name: uploaded
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, older_30d]
+          description: Uploaded within the last 24 hours, 7 days or 30 days, or more than 30 days ago
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [newest, oldest, largest, smallest, expiring]
+            default: newest
+          description: List order. `expiring` puts files that never expire last.
       responses:
         '200':
-          description: Dashboard data
+          description: Dashboard data. Filters only change `files` and `pagination`, never `stats`.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DashboardResponse'
+        '400':
+          description: Invalid filter value (plain-text message naming the parameter)
         '401':
           description: Not authenticated
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/api/files/uploaders:
+    get:
+      tags:
+        - Admin
+      summary: List file uploaders
+      description: >
+        Everyone who currently has files, with their file count, sorted by
+        username, plus the number of files uploaded without an account. Feeds
+        the Files tab's user filter.
+      operationId: getAdminFileUploaders
+      security:
+        - adminAuth: []
+      responses:
+        '200':
+          description: Uploaders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminFileUploaders'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: Method not allowed (GET only)
 
   /admin/api/config:
     get:
@@ -3883,8 +3969,41 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BlockedIP'
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+            page_size:
+              type: integer
+            total:
+              type: integer
+              description: Files matching the search and filters
+            total_pages:
+              type: integer
+            unfiltered_total:
+              type: integer
+              description: All files in the list, ignoring search and filters
         total_files:
           type: integer
+
+    AdminFileUploaders:
+      type: object
+      properties:
+        anonymous_count:
+          type: integer
+          description: Files uploaded without an account
+        users:
+          type: array
+          items:
+            type: object
+            properties:
+              user_id:
+                type: integer
+              username:
+                type: string
+              file_count:
+                type: integer
 
     DashboardStats:
       type: object

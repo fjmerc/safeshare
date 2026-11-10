@@ -3,6 +3,7 @@ package mock
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -427,6 +428,65 @@ func TestFileRepository_SearchForAdmin(t *testing.T) {
 	}
 	if total != 1 {
 		t.Errorf("expected 1 match for IP, got %d", total)
+	}
+}
+
+func TestFileRepository_ListForAdminAndUploaders(t *testing.T) {
+	ctx := context.Background()
+	repo := NewFileRepository()
+	alice, aliceName := int64(1), "alice"
+	maxDL := 2
+	now := time.Now()
+	repo.AddFile(&models.File{ClaimCode: "small", FileSize: 10, UserID: &alice, Username: &aliceName,
+		CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour), MaxDownloads: &maxDL, DownloadCount: 2})
+	repo.AddFile(&models.File{ClaimCode: "large", FileSize: 1000, UserID: &alice, Username: &aliceName,
+		CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC), ScanStatus: "clean"})
+	repo.AddFile(&models.File{ClaimCode: "anon", FileSize: 500, CreatedAt: now.Add(-40 * 24 * time.Hour), ExpiresAt: now.Add(48 * time.Hour)})
+
+	codes := func(filter repository.AdminFileFilter) []string {
+		t.Helper()
+		files, total, err := repo.ListForAdmin(ctx, filter, 10, 0)
+		if err != nil {
+			t.Fatalf("ListForAdmin(%+v): %v", filter, err)
+		}
+		out := []string{}
+		for _, f := range files {
+			out = append(out, f.ClaimCode)
+		}
+		if total != len(out) {
+			t.Errorf("total %d != %d rows", total, len(out))
+		}
+		return out
+	}
+	minSize := int64(100)
+	for _, tt := range []struct {
+		filter repository.AdminFileFilter
+		want   string
+	}{
+		{repository.AdminFileFilter{}, "small,large,anon"},
+		{repository.AdminFileFilter{UserID: &alice, Sort: repository.AdminFileSortLargest}, "large,small"},
+		{repository.AdminFileFilter{Anonymous: true}, "anon"},
+		{repository.AdminFileFilter{MinSize: &minSize, Sort: repository.AdminFileSortExpiring}, "anon,large"},
+		{repository.AdminFileFilter{Status: repository.AdminFileStatusLimitReached}, "small"},
+		{repository.AdminFileFilter{Status: repository.AdminFileStatusNeverExpires}, "large"},
+		{repository.AdminFileFilter{Scan: repository.AdminFileScanNotScanned}, "small,anon"},
+		{repository.AdminFileFilter{UploadedBefore: 30 * 24 * time.Hour}, "anon"},
+		{repository.AdminFileFilter{Search: "ALICE"}, "small,large"},
+	} {
+		if got := strings.Join(codes(tt.filter), ","); got != tt.want {
+			t.Errorf("ListForAdmin(%+v) = %s, want %s", tt.filter, got, tt.want)
+		}
+	}
+	if _, _, err := repo.ListForAdmin(ctx, repository.AdminFileFilter{Sort: "bogus"}, 10, 0); !errors.Is(err, repository.ErrInvalidInput) {
+		t.Errorf("invalid sort err = %v, want ErrInvalidInput", err)
+	}
+
+	up, err := repo.GetAdminUploaders(ctx)
+	if err != nil {
+		t.Fatalf("GetAdminUploaders: %v", err)
+	}
+	if up.AnonymousCount != 1 || len(up.Users) != 1 || up.Users[0] != (repository.AdminUploader{UserID: 1, Username: "alice", FileCount: 2}) {
+		t.Errorf("GetAdminUploaders = %+v", up)
 	}
 }
 

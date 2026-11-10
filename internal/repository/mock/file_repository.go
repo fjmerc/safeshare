@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,8 @@ type FileRepository struct {
 	GetAllStoredFilenamesError           error
 	GetAllForAdminError                  error
 	SearchForAdminError                  error
+	ListForAdminError                    error
+	GetAdminUploadersError               error
 	UpdateScanStatusError                error
 
 	// Custom behavior hooks
@@ -141,6 +144,8 @@ func (r *FileRepository) Reset() {
 	r.GetAllStoredFilenamesError = nil
 	r.GetAllForAdminError = nil
 	r.SearchForAdminError = nil
+	r.ListForAdminError = nil
+	r.GetAdminUploadersError = nil
 	r.UpdateScanStatusError = nil
 
 	// Clear hooks
@@ -1281,6 +1286,173 @@ func (r *FileRepository) SearchForAdmin(ctx context.Context, searchTerm string, 
 	}
 
 	return matches[offset:end], total, nil
+}
+
+// ListForAdmin implements repository.FileRepository.ListForAdmin
+func (r *FileRepository) ListForAdmin(ctx context.Context, filter repository.AdminFileFilter, limit, offset int) ([]models.File, int, error) {
+	if r.ListForAdminError != nil {
+		return nil, 0, r.ListForAdminError
+	}
+	if err := filter.Validate(); err != nil {
+		return nil, 0, err
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	select {
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	default:
+	}
+
+	now := time.Now()
+	searchLower := strings.ToLower(filter.Search)
+	matches := []models.File{}
+	for _, f := range r.files {
+		if filter.Search != "" && !strings.Contains(strings.ToLower(f.ClaimCode), searchLower) &&
+			!strings.Contains(strings.ToLower(f.OriginalFilename), searchLower) &&
+			!strings.Contains(strings.ToLower(f.UploaderIP), searchLower) &&
+			(f.Username == nil || !strings.Contains(strings.ToLower(*f.Username), searchLower)) {
+			continue
+		}
+		if filter.UserID != nil && (f.UserID == nil || *f.UserID != *filter.UserID) {
+			continue
+		}
+		if filter.Anonymous && f.UserID != nil {
+			continue
+		}
+		if (filter.MinSize != nil && f.FileSize < *filter.MinSize) || (filter.MaxSize != nil && f.FileSize >= *filter.MaxSize) {
+			continue
+		}
+		never := f.ExpiresAt.Year() >= repository.NeverExpireYear
+		limitReached := f.MaxDownloads != nil && *f.MaxDownloads > 0 && f.DownloadCount >= *f.MaxDownloads
+		switch filter.Status {
+		case repository.AdminFileStatusActive:
+			if limitReached || (!never && !f.ExpiresAt.After(now)) {
+				continue
+			}
+		case repository.AdminFileStatusLimitReached:
+			if !limitReached {
+				continue
+			}
+		case repository.AdminFileStatusNeverExpires:
+			if !never {
+				continue
+			}
+		case repository.AdminFileStatusExpiringSoon:
+			if never || f.ExpiresAt.After(now.Add(repository.AdminFileExpiringSoonWindow)) {
+				continue
+			}
+		}
+		switch filter.Scan {
+		case "":
+		case repository.AdminFileScanNotScanned:
+			if f.ScanStatus != "" && f.ScanStatus != "skipped" && f.ScanStatus != "not_scanned" {
+				continue
+			}
+		default:
+			if f.ScanStatus != filter.Scan {
+				continue
+			}
+		}
+		if filter.UploadedWithin > 0 && f.CreatedAt.Before(now.Add(-filter.UploadedWithin)) {
+			continue
+		}
+		if filter.UploadedBefore > 0 && !f.CreatedAt.Before(now.Add(-filter.UploadedBefore)) {
+			continue
+		}
+		matches = append(matches, *deepCopyFile(f))
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		a, b := matches[i], matches[j]
+		switch filter.Sort {
+		case repository.AdminFileSortOldest:
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+			return a.ID < b.ID
+		case repository.AdminFileSortLargest:
+			if a.FileSize != b.FileSize {
+				return a.FileSize > b.FileSize
+			}
+			return a.ID > b.ID
+		case repository.AdminFileSortSmallest:
+			if a.FileSize != b.FileSize {
+				return a.FileSize < b.FileSize
+			}
+			return a.ID < b.ID
+		case repository.AdminFileSortExpiring:
+			an, bn := a.ExpiresAt.Year() >= repository.NeverExpireYear, b.ExpiresAt.Year() >= repository.NeverExpireYear
+			if an != bn {
+				return bn
+			}
+			if !a.ExpiresAt.Equal(b.ExpiresAt) {
+				return a.ExpiresAt.Before(b.ExpiresAt)
+			}
+			return a.ID < b.ID
+		default:
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				return a.CreatedAt.After(b.CreatedAt)
+			}
+			return a.ID > b.ID
+		}
+	})
+
+	total := len(matches)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if offset >= total {
+		return []models.File{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return matches[offset:end], total, nil
+}
+
+// GetAdminUploaders implements repository.FileRepository.GetAdminUploaders
+func (r *FileRepository) GetAdminUploaders(ctx context.Context) (*repository.AdminUploaders, error) {
+	if r.GetAdminUploadersError != nil {
+		return nil, r.GetAdminUploadersError
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := &repository.AdminUploaders{Users: []repository.AdminUploader{}}
+	byID := map[int64]int{}
+	for _, f := range r.files {
+		if f.UserID == nil {
+			out.AnonymousCount++
+			continue
+		}
+		idx, ok := byID[*f.UserID]
+		if !ok {
+			name := ""
+			if f.Username != nil {
+				name = *f.Username
+			}
+			idx = len(out.Users)
+			byID[*f.UserID] = idx
+			out.Users = append(out.Users, repository.AdminUploader{UserID: *f.UserID, Username: name})
+		}
+		out.Users[idx].FileCount++
+	}
+	sort.Slice(out.Users, func(i, j int) bool {
+		a, b := strings.ToLower(out.Users[i].Username), strings.ToLower(out.Users[j].Username)
+		if a != b {
+			return a < b
+		}
+		return out.Users[i].UserID < out.Users[j].UserID
+	})
+	return out, nil
 }
 
 // UpdateScanStatus implements repository.FileRepository.UpdateScanStatus

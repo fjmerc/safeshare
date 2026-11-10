@@ -661,7 +661,8 @@ The admin dashboard provides web-based administration for SafeShare with secure 
 
 **Protected routes** (require session):
 - `GET /admin/dashboard` - Dashboard page
-- `GET /admin/api/dashboard` - Dashboard data API
+- `GET /admin/api/dashboard` - Dashboard data API (file list with search and filters)
+- `GET /admin/api/files/uploaders` - Users who have files, for the Files tab user filter
 - `POST /admin/api/logout` - Logout
 
 **Protected routes with CSRF** (require session + CSRF token):

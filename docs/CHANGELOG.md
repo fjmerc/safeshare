@@ -35,6 +35,11 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Added
+
+- Admin dashboard: the **Files** tab has filters under the search box: user (or files uploaded without an account), size, status (active, download limit reached, never expires, expires within 24 hours), virus scan result and upload date, plus a **Sort by** choice (newest, oldest, largest, smallest, expiring soonest). Filters work on all files, not only the page you see, and combine with the search. Each active filter shows as a chip you can remove, and a line tells you how many files match. When you delete selected files and one of them is in a bundle, the confirmation now warns that the whole bundle goes, including files your filters hide.
+- API: filter parameters on `GET /admin/api/dashboard` (`user_id`, `user=anonymous`, `min_size`, `max_size`, `status`, `scan`, `uploaded`, `sort`) and `pagination.unfiltered_total`; new `GET /admin/api/files/uploaders` lists who has files and how many.
+
 ## [1.21.0] - 2026-11-10
 
 ### Added
