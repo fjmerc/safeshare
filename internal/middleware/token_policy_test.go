@@ -42,6 +42,13 @@ func TestTokenRequirement(t *testing.T) {
 		{"PUT", "/api/user/bundles/42/expiration", "manage", true},
 		{"DELETE", "/api/user/bundles/42", "manage", true},
 		{"GET", "/api/bundlesx", "", false},
+		// Owner downloads read file contents: the download scope, not manage.
+		{"GET", "/api/user/files/Xk3pQ9aB/download", "download", true},
+		{"HEAD", "/api/user/files/Xk3pQ9aB/download", "download", true},
+		{"GET", "/api/user/bundles/42/files/0/download", "download", true},
+		{"POST", "/api/user/files/Xk3pQ9aB/download", "manage", true}, // not a download (the handler answers 405)
+		{"GET", "/api/user/files/download", "manage", true},            // no file in the path
+		{"PUT", "/api/user/files/Xk3pQ9aB/rename", "manage", true},
 		// Account security needs a signed-in browser session.
 		{"POST", "/api/tokens", "", false},
 		{"DELETE", "/api/tokens/5", "", false},

@@ -2697,16 +2697,12 @@ footer a {
     white-space: nowrap;
 }
 
-/* Three row actions where My Uploads has two: Actions takes 3% from
-   Created and Status. */
-@media (min-width: 1025px) {
-    .files-table.bundles-table th:nth-child(7) { width: 8%; }
-    .files-table.bundles-table th:nth-child(4) { width: 11%; }
-    .files-table.bundles-table th:nth-child(8) { width: 13%; }
-
-    .bundles-table .actions-cell {
-        flex-wrap: nowrap;
-    }
+/* Encrypted / Password tags under a file name in My Uploads. */
+.file-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
 }
 
 /* Tablet: the table sizes to its content, so keep the Bundle column about

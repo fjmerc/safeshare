@@ -584,6 +584,7 @@ func run() error {
 	//                       PUT /api/user/files/{claimCode}/rename
 	//                       PUT /api/user/files/{claimCode}/expiration
 	//                       POST /api/user/files/{claimCode}/regenerate
+	//                       GET|HEAD /api/user/files/{claimCode}/download (owner download)
 	mux.HandleFunc("/api/user/files/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
@@ -595,6 +596,8 @@ func run() error {
 			userAuth(tokenAudit(http.HandlerFunc(handlers.UserEditExpirationByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/regenerate") && r.Method == http.MethodPost:
 			userAuth(tokenAudit(http.HandlerFunc(handlers.UserRegenerateClaimCodeByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/download") && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+			userAuth(tokenAudit(http.HandlerFunc(handlers.UserDownloadFileHandler(repos, cfg)))).ServeHTTP(w, r)
 		case r.Method == http.MethodDelete:
 			// DELETE /api/user/files/{claimCode}
 			userAuth(tokenAudit(http.HandlerFunc(handlers.UserDeleteFileByClaimCodeHandler(repos, cfg)))).ServeHTTP(w, r)

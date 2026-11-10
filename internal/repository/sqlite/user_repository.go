@@ -620,7 +620,7 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 
 	// Get paginated files
 	query := `SELECT id, claim_code, original_filename, stored_filename, file_size, mime_type,
-		created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id
+		created_at, expires_at, max_downloads, download_count, completed_downloads, uploader_ip, password_hash, user_id, client_encrypted
 		FROM files WHERE user_id = ? AND bundle_id IS NULL AND (scan_status IS NULL OR scan_status != 'infected') ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
 
 	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
@@ -652,6 +652,7 @@ func (r *UserRepository) GetFiles(ctx context.Context, userID int64, limit, offs
 			&file.UploaderIP,
 			&passwordHash,
 			&userIDVal,
+			&file.ClientEncrypted,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan file: %w", err)
