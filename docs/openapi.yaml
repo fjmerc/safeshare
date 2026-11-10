@@ -909,6 +909,70 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/user/files/delete/bulk:
+    post:
+      tags:
+        - User Files
+      summary: Delete several of the user's files
+      description: |
+        Delete up to 100 files owned by the current user. A file that isn't
+        the user's, no longer exists, or belongs to a bundle is reported in
+        `failed`; the others are still deleted. Repeated IDs count once.
+      operationId: bulkDeleteUserFiles
+      security:
+        - sessionAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file_ids
+              properties:
+                file_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: integer
+                    minimum: 1
+                  description: IDs of the files to delete
+      responses:
+        '200':
+          description: Request processed (check failed for files that weren't deleted)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requested_count:
+                    type: integer
+                  deleted_count:
+                    type: integer
+                  deleted:
+                    type: array
+                    items:
+                      type: integer
+                  failed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        file_id:
+                          type: integer
+                        error:
+                          type: string
+        '400':
+          description: Invalid request (bad JSON, empty list, invalid ID, or more than 100 files)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not signed in
+
   /api/user/files/rename:
     post:
       tags:

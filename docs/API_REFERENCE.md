@@ -934,6 +934,40 @@ Delete a file owned by the current user.
 
 ---
 
+### Delete Several of the User's Files
+
+Delete up to 100 files owned by the current user in one request. Each file is deleted exactly as by the single delete. A file that isn't yours, no longer exists, or belongs to a bundle (delete the bundle instead) is listed in `failed`, and the others are still deleted.
+
+**Endpoint**: `POST /api/user/files/delete/bulk`
+
+**Authentication**: Required (user_session cookie, or an API token with the `manage` scope)
+
+**Request Body** (JSON; repeated IDs count once):
+```json
+{
+  "file_ids": [12, 15, 18]
+}
+```
+
+**Response**: 200 OK whenever the request is valid, even if some files couldn't be deleted
+```json
+{
+  "requested_count": 3,
+  "deleted_count": 2,
+  "deleted": [12, 15],
+  "failed": [
+    { "file_id": 18, "error": "File not found or does not belong to you" }
+  ]
+}
+```
+
+**Error Responses**:
+- 400 Bad Request: Invalid JSON, an empty list, an ID that isn't a positive number, or more than 100 files
+- 401 Unauthorized: Not signed in
+- 405 Method Not Allowed: Not a POST
+
+---
+
 ### Rename User's File
 
 Change the original filename of a user's uploaded file.
