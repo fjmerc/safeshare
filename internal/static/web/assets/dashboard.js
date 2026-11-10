@@ -3852,6 +3852,15 @@ you may be locked out of your account.
                 }
             });
             filesContainer.addEventListener('click', onUploadCardMainClick);
+            // Select mode's Cancel button only shows on phones: leave the mode
+            // (as Cancel does) when the screen gets wider, e.g. turned sideways.
+            phoneQuery.addEventListener('change', (e) => {
+                if (!e.matches && uploadsSelectMode) {
+                    uploadsSelectMode = false;
+                    selectedFiles.clear();
+                    syncUploadsControls();
+                }
+            });
             document.getElementById('bundlesToggleAllBtn').addEventListener('click', toggleAllBundles);
             document.getElementById('bundlesRefreshBtn').addEventListener('click', loadBundles);
             document.getElementById('refreshTokensBtn').addEventListener('click', refreshTokens);

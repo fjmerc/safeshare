@@ -167,6 +167,16 @@ H.requireBrowserTests('uploads-compact-bulk.test.js');
         H.check('phone: Cancel leaves select mode and clears ticks',
             !(await visible('#filesBulkBar')) && (await page.$$('#filesContainer .upload-check:checked')).length === 0 && /^Select$/.test((await text('#filesSelectText')).trim()));
 
+        // Turning the phone sideways (wider than 640px) ends select mode, since
+        // its Cancel button only shows on phones.
+        await page.click('#filesSelectBtn');
+        await page.click(`${row(1)} .file-name-text`);
+        await page.setViewportSize({ width: 844, height: 390 });
+        await page.waitForTimeout(100);
+        H.check('rotating to landscape leaves select mode',
+            !(await page.$eval('#filesSection', (s) => s.classList.contains('select-mode'))) && !(await visible('#filesBulkBar')));
+        await page.setViewportSize({ width: 390, height: 844 });
+
         // Pick two on the phone and delete them.
         bulkBodies.length = 0;
         await page.click('#filesSelectBtn');
