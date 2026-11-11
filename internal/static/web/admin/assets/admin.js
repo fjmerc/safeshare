@@ -2137,7 +2137,8 @@ function displayRecommendations(data) {
             recommended: recommendations.rate_limit_download + ' per hour',
             impact: analysis.impacts.rate_limit_download || 'Optimized for download traffic',
             changed: current_config.rate_limit_download !== recommendations.rate_limit_download
-        }
+        },
+        blockedExtensionsComparison(current_config.blocked_extensions, recommendations.blocked_extensions)
     ];
 
     // Performance Settings (require restart)
@@ -2251,6 +2252,28 @@ function displayRecommendations(data) {
 }
 
 // Helper function to populate comparison tables
+// Apply also saves the blocked file types, so show exactly what it adds.
+// The server merges the admin's own types into the recommendation, so it
+// only ever adds; it never removes one.
+function blockedExtensionsComparison(current, recommended) {
+    const cur = current || [];
+    const rec = recommended || [];
+    const have = new Set(cur.map((e) => e.toLowerCase()));
+    const added = rec.filter((e) => !have.has(e.toLowerCase()));
+    const count = (n) => n + (n === 1 ? ' type' : ' types');
+    return {
+        setting: 'Blocked File Types',
+        current: count(cur.length),
+        recommended: added.length
+            ? count(rec.length) + ' (adds ' + added.join(', ') + ')'
+            : count(rec.length) + ' (no change)',
+        impact: added.length
+            ? 'Blocks common executable and script types. Types you already block stay blocked.'
+            : 'You already block every recommended type.',
+        changed: added.length > 0
+    };
+}
+
 function populateTable(tbody, comparisons) {
     comparisons.forEach(item => {
         const row = document.createElement('tr');
