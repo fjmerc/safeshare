@@ -364,7 +364,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			"upload_id", uploadID,
 			"filename", logFilename(req.Filename, cfg),
 			"total_size", req.TotalSize,
-			"chunk_size", cfg.ChunkSize,
+			"chunk_size", chunkSize,
 			"total_chunks", totalChunks,
 			"expires_in_hours", req.ExpiresInHours,
 			"password_protected", passwordHash != "",

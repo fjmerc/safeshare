@@ -23,7 +23,11 @@ const BASELINE = ['.exe', '.bat', '.sh'];
     const config = () => ({
         max_file_size: 104857600, quota_limit_gb: 0, default_expiration_hours: 24, max_expiration_hours: 168,
         rate_limit_upload: 10, rate_limit_download: 100, blocked_extensions: blocked.slice(),
+        chunked_upload_threshold: 104857600, partial_upload_expiry_hours: 24,
+        session_expiry_hours: 24, cleanup_interval_minutes: 60, require_auth_for_upload: false,
+        https_enabled: false, chunked_upload_enabled: true, public_url: '',
     });
+    let analyzeBody = null;
     const analysis = () => {
         const cur = config();
         const merged = blocked.concat(BASELINE.filter((e) => !blocked.includes(e)));
@@ -47,7 +51,10 @@ const BASELINE = ['.exe', '.bat', '.sh'];
         await context.route(/\/admin\/api\//, (route) => {
             const url = new URL(route.request().url());
             const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-            if (url.pathname === '/admin/api/config-assistant/analyze') return json(analysis());
+            if (url.pathname === '/admin/api/config-assistant/analyze') {
+                analyzeBody = JSON.parse(route.request().postData());
+                return json(analysis());
+            }
             if (url.pathname === '/admin/api/config') return json(config());
             if (url.pathname === '/admin/api/settings/storage') {
                 posts.push('storage');
@@ -99,6 +106,19 @@ const BASELINE = ['.exe', '.bat', '.sh'];
 
         // Results page lists exactly what Apply adds to the blocked types
         await analyze();
+        H.check('form no longer sends retired fields',
+            analyzeBody && !('cdn_timeout' in analyzeBody) && !('encryption_enabled' in analyzeBody) && analyzeBody.using_cdn === false,
+            JSON.stringify(analyzeBody));
+        H.check('retired questions are gone from the form',
+            (await page.$$('#cdnTimeout, #encryptionEnabled, #cdnTimeoutGroup')).length === 0);
+        const tableText = (await page.$$eval('#recommendationsSection tbody', (bs) => bs.map((b) => b.textContent).join(' ')));
+        H.check('no row shows undefined or NaN', !/undefined|NaN/.test(tableText), tableText.slice(0, 200));
+        const rowNames = await page.$$eval('#recommendationsSection .cmp-setting', (cs) => cs.map((c) => c.textContent.replace('Changed', '').trim()));
+        H.check('no chunk size or timeout rows', !rowNames.some((n) => /Chunk Size|Timeout/.test(n)), JSON.stringify(rowNames));
+        const envText = await page.textContent('#envFileContent');
+        H.check('settings block has no retired settings', !/CHUNK_SIZE=|READ_TIMEOUT=|WRITE_TIMEOUT=/.test(envText), envText);
+        H.check('settings block keeps the others',
+            /CHUNKED_UPLOAD_THRESHOLD=104857600/.test(envText) && /SESSION_EXPIRY_HOURS=24/.test(envText), envText);
         let row = await blockedRow();
         H.check('blocked types row is shown', !!row);
         H.check('row counts current types', row && row.current === '2 types', row && row.current);

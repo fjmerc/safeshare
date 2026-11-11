@@ -57,9 +57,6 @@ func TestLoad_DefaultConfiguration(t *testing.T) {
 	if cfg.ChunkedUploadThreshold != 104857600 {
 		t.Errorf("ChunkedUploadThreshold = %d, want 104857600", cfg.ChunkedUploadThreshold)
 	}
-	if cfg.ChunkSize != 10485760 {
-		t.Errorf("ChunkSize = %d, want 10485760", cfg.ChunkSize)
-	}
 	if cfg.PartialUploadExpiryHours != 24 {
 		t.Errorf("PartialUploadExpiryHours = %d, want 24", cfg.PartialUploadExpiryHours)
 	}
@@ -208,7 +205,6 @@ func TestLoad_CustomConfiguration(t *testing.T) {
 	t.Setenv("REQUIRE_AUTH_FOR_UPLOAD", "yes")
 	t.Setenv("CHUNKED_UPLOAD_ENABLED", "false")
 	t.Setenv("CHUNKED_UPLOAD_THRESHOLD", "209715200") // 200MB
-	t.Setenv("CHUNK_SIZE", "20971520")                // 20MB
 	t.Setenv("PARTIAL_UPLOAD_EXPIRY_HOURS", "48")
 	t.Setenv("READ_TIMEOUT", "300")
 	t.Setenv("WRITE_TIMEOUT", "300")
@@ -278,9 +274,6 @@ func TestLoad_CustomConfiguration(t *testing.T) {
 	}
 	if cfg.ChunkedUploadThreshold != 209715200 {
 		t.Errorf("ChunkedUploadThreshold = %d, want 209715200", cfg.ChunkedUploadThreshold)
-	}
-	if cfg.ChunkSize != 20971520 {
-		t.Errorf("ChunkSize = %d, want 20971520", cfg.ChunkSize)
 	}
 	if cfg.PartialUploadExpiryHours != 48 {
 		t.Errorf("PartialUploadExpiryHours = %d, want 48", cfg.PartialUploadExpiryHours)
@@ -387,8 +380,6 @@ func TestLoad_InvalidNumericValues(t *testing.T) {
 		{"negative quota", "QUOTA_LIMIT_GB", "-1", "QUOTA_LIMIT_GB must be 0"},
 		{"negative session expiry", "SESSION_EXPIRY_HOURS", "-1", "SESSION_EXPIRY_HOURS must be positive"},
 		{"zero session expiry", "SESSION_EXPIRY_HOURS", "0", "SESSION_EXPIRY_HOURS must be positive"},
-		{"negative chunk size", "CHUNK_SIZE", "500000", "CHUNK_SIZE must be between 1MB"},
-		{"chunk size too large", "CHUNK_SIZE", "100000000", "CHUNK_SIZE must be between 1MB"},
 		{"negative chunked threshold", "CHUNKED_UPLOAD_THRESHOLD", "-1", "CHUNKED_UPLOAD_THRESHOLD must be non-negative"},
 		{"negative partial expiry", "PARTIAL_UPLOAD_EXPIRY_HOURS", "-1", "PARTIAL_UPLOAD_EXPIRY_HOURS must be positive"},
 		{"zero partial expiry", "PARTIAL_UPLOAD_EXPIRY_HOURS", "0", "PARTIAL_UPLOAD_EXPIRY_HOURS must be positive"},
@@ -586,7 +577,6 @@ func TestValidate_EmptyRequiredFields(t *testing.T) {
 				rateLimitDownload:        50,
 				quotaLimitGB:             0,
 				SessionExpiryHours:       24,
-				ChunkSize:                10485760,
 				ChunkedUploadThreshold:   0,
 				PartialUploadExpiryHours: 24,
 			},
@@ -606,7 +596,6 @@ func TestValidate_EmptyRequiredFields(t *testing.T) {
 				rateLimitDownload:        50,
 				quotaLimitGB:             0,
 				SessionExpiryHours:       24,
-				ChunkSize:                10485760,
 				ChunkedUploadThreshold:   0,
 				PartialUploadExpiryHours: 24,
 			},
@@ -626,7 +615,6 @@ func TestValidate_EmptyRequiredFields(t *testing.T) {
 				rateLimitDownload:        50,
 				quotaLimitGB:             0,
 				SessionExpiryHours:       24,
-				ChunkSize:                10485760,
 				ChunkedUploadThreshold:   0,
 				PartialUploadExpiryHours: 24,
 			},
@@ -895,6 +883,21 @@ func TestSetMaxExpirationHours(t *testing.T) {
 				if cfg.GetMaxExpirationHours() != tt.hours {
 					t.Errorf("GetMaxExpirationHours() = %d, want %d", cfg.GetMaxExpirationHours(), tt.hours)
 				}
+			}
+		})
+	}
+}
+
+// TestLoad_RetiredChunkSizeIgnored: CHUNK_SIZE is retired. An old value,
+// even one the former 1-50 MB check rejected, must not stop the server from
+// starting.
+func TestLoad_RetiredChunkSizeIgnored(t *testing.T) {
+	for _, v := range []string{"20971520", "500000", "100000000", "not-a-number"} {
+		t.Run(v, func(t *testing.T) {
+			clearEnvVars(t)
+			t.Setenv("CHUNK_SIZE", v)
+			if _, err := Load(); err != nil {
+				t.Errorf("Load() with CHUNK_SIZE=%s: %v", v, err)
 			}
 		})
 	}

@@ -500,12 +500,13 @@ Initialize a chunked upload session for large files (>= CHUNKED_UPLOAD_THRESHOLD
 {
   "filename": "large-file.zip",
   "total_size": 262144000,
-  "chunk_size": 10485760,
   "expires_in_hours": 24,
   "max_downloads": 5,
   "password": "optional_password"
 }
 ```
+
+The server chooses the chunk size from `total_size`: 5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above that. A `chunk_size` in the request is ignored. A single upload may have at most 10,000 chunks.
 
 **Response** (200 OK):
 ```json
@@ -516,6 +517,8 @@ Initialize a chunked upload session for large files (>= CHUNKED_UPLOAD_THRESHOLD
   "expires_at": "2025-11-22T12:00:00Z"
 }
 ```
+
+Split the file by the `chunk_size` in this response. It is also returned by `GET /api/upload/status/{id}`.
 
 **See Also**: [CHUNKED_UPLOAD.md](CHUNKED_UPLOAD.md) for complete chunked upload documentation.
 
@@ -532,7 +535,7 @@ Upload a single chunk of a file.
 **Request**: `multipart/form-data`
 
 **Parameters**:
-- `chunk` (required): The chunk data (max size: CHUNK_SIZE)
+- `chunk` (required): The chunk data (exactly the `chunk_size` from the init response; the last chunk is the remainder)
 
 **Response** (200 OK):
 ```json
@@ -1364,14 +1367,17 @@ Retrieve current server configuration.
 **Response** (200 OK):
 ```json
 {
-  "chunk_size": 10485760,
-  "chunked_upload_threshold": 104857600,
-  "encryption_enabled": true,
-  "max_file_size": 104857600,
-  "read_timeout": 120,
-  "write_timeout": 120
+  "max_file_size_bytes": 104857600,
+  "default_expiration_hours": 24,
+  "max_expiration_hours": 168,
+  "rate_limit_upload": 10,
+  "rate_limit_download": 100,
+  "blocked_extensions": [".exe", ".bat"],
+  "quota_limit_gb": 0
 }
 ```
+
+These are the settings an admin can change at runtime. Chunk size is not configurable: the server picks it for each upload (see [Chunked Upload - Initialize](#chunked-upload---initialize)).
 
 ---
 
@@ -1393,9 +1399,7 @@ Recommend settings for a described environment. This only analyzes; the dashboar
   "deployment_type": "Internet",
   "user_load": "moderate",
   "storage_capacity": 500,
-  "using_cdn": true,
-  "cdn_timeout": 100,
-  "encryption_enabled": true
+  "using_cdn": true
 }
 ```
 
@@ -1404,25 +1408,25 @@ Recommend settings for a described environment. This only analyzes; the dashboar
 - `typical_file_size`: `small`, `medium`, `large` or `huge`.
 - `deployment_type`: `LAN`, `WAN` or `Internet`.
 - `user_load`: `light`, `moderate`, `heavy` or `very_heavy`.
-- `storage_capacity`: GB, `0` for unlimited. `cdn_timeout`: seconds, `0` if unknown.
+- `storage_capacity`: GB, `0` for unlimited.
+- `using_cdn`: whether the server is behind a CDN.
+
+The assistant reads anonymous mode, browser (end-to-end) encryption and malware scanning from the server, so you don't send them. It no longer recommends chunk size or timeouts, because the server handles both automatically.
 
 **Response** (200 OK):
 ```json
 {
   "recommendations": {
     "max_file_size": 1073741824,
-    "quota_limit_gb": 400,
+    "quota_limit_gb": 375,
     "default_expiration_hours": 168,
     "max_expiration_hours": 720,
     "rate_limit_upload": 15,
     "rate_limit_download": 150,
     "blocked_extensions": [".exe", ".bat", "..."],
-    "chunk_size": 10485760,
-    "read_timeout": 72,
-    "write_timeout": 72,
     "chunked_upload_threshold": 104857600,
     "partial_upload_expiry_hours": 24,
-    "session_expiry_hours": 48,
+    "session_expiry_hours": 8,
     "cleanup_interval_minutes": 60,
     "require_auth_for_upload": true,
     "https_enabled": true,
@@ -1439,7 +1443,9 @@ Recommend settings for a described environment. This only analyzes; the dashboar
 ```
 
 - `blocked_extensions` is the types already blocked plus a baseline of common executable and script types, so applying it never unblocks anything.
-- With `ANONYMOUS_MODE` on, the recommended default and max expiration never exceed the current ones, and `additional_recommendations` says so.
+- `quota_limit_gb` is 75% of `storage_capacity` (or `0` for unlimited storage).
+- `recommendations` and `current_config` no longer contain `chunk_size`, `read_timeout` or `write_timeout`.
+- With `ANONYMOUS_MODE` on, the recommended default and max expiration never exceed the current ones, it never recommends requiring login (`require_auth_for_upload`), it keeps `https_enabled` as it is, and it recommends at least 100 uploads and 500 downloads per hour, never lower than the current limits. `additional_recommendations` says so.
 - The first seven fields can be applied at runtime; the rest need environment variables and a restart.
 
 ---
@@ -1785,6 +1791,8 @@ Retrieve public-facing configuration (no authentication required).
   "drop_enabled": false
 }
 ```
+
+`chunk_size` is **deprecated** and always `10485760` (10 MiB). It is **not** the size to split a file by. The server picks the chunk size for each upload and returns it as `chunk_size` in the `POST /api/upload/init` response. Split by that value.
 
 `malware_scan_enabled` and `unscannable_uploads_rejected` reflect `FEATURE_MALWARE_SCAN` and `MALWARE_SCAN_REJECT_UNSCANNABLE` (ADR-015) — clients use them to decide whether to show scan-related upload messaging and whether to offer end-to-end encryption at all. `anonymous_mode`, `client_encryption_required` and `strip_metadata` tell clients to force end-to-end encryption, keep nothing identifying on the device, and strip metadata before encrypting (the server can't strip ciphertext). `drop_enabled` says whether the [no-JavaScript drop page](DROP_PAGE.md) is on at `/drop`.
 

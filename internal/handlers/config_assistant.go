@@ -10,18 +10,19 @@ import (
 	"github.com/fjmerc/safeshare/internal/config"
 )
 
-// ConfigAssistantRequest represents the user's environment input
+// ConfigAssistantRequest represents the admin's description of their
+// environment. Facts the server already knows (anonymous mode, client-side
+// encryption, malware scanning) are read from the configuration instead of
+// being asked.
 type ConfigAssistantRequest struct {
-	UploadSpeed       float64 `json:"upload_speed"`       // Mbps
-	DownloadSpeed     float64 `json:"download_speed"`     // Mbps
-	NetworkLatency    string  `json:"network_latency"`    // local, low, medium, high
-	TypicalFileSize   string  `json:"typical_file_size"`  // small, medium, large, huge
-	DeploymentType    string  `json:"deployment_type"`    // LAN, WAN, Internet
-	UserLoad          string  `json:"user_load"`          // light, moderate, heavy, very_heavy
-	StorageCapacity   int64   `json:"storage_capacity"`   // GB (0 = unlimited)
-	UsingCDN          bool    `json:"using_cdn"`          // Behind a CDN?
-	CDNTimeout        int     `json:"cdn_timeout"`        // CDN timeout in seconds (0 = unknown)
-	EncryptionEnabled bool    `json:"encryption_enabled"` // AES-256-GCM encryption active?
+	UploadSpeed     float64 `json:"upload_speed"`      // Mbps
+	DownloadSpeed   float64 `json:"download_speed"`    // Mbps
+	NetworkLatency  string  `json:"network_latency"`   // local, low, medium, high
+	TypicalFileSize string  `json:"typical_file_size"` // small, medium, large, huge
+	DeploymentType  string  `json:"deployment_type"`   // LAN, WAN, Internet
+	UserLoad        string  `json:"user_load"`         // light, moderate, heavy, very_heavy
+	StorageCapacity int64   `json:"storage_capacity"`  // GB (0 = unlimited)
+	UsingCDN        bool    `json:"using_cdn"`         // Behind a CDN?
 }
 
 // ConfigRecommendations represents the recommended configuration
@@ -36,9 +37,6 @@ type ConfigRecommendations struct {
 	BlockedExtensions      []string `json:"blocked_extensions"`       // list of extensions
 
 	// Performance settings (require restart)
-	ChunkSize                int64 `json:"chunk_size"`                  // bytes
-	ReadTimeout              int   `json:"read_timeout"`                // seconds
-	WriteTimeout             int   `json:"write_timeout"`               // seconds
 	ChunkedUploadThreshold   int64 `json:"chunked_upload_threshold"`    // bytes
 	PartialUploadExpiryHours int   `json:"partial_upload_expiry_hours"` // hours
 
@@ -63,6 +61,42 @@ type ConfigAnalysis struct {
 	Summary                   string            `json:"summary"`
 	Impacts                   map[string]string `json:"impacts"`
 	AdditionalRecommendations []string          `json:"additional_recommendations"`
+}
+
+// assistantServerFacts is what the server already knows about itself that
+// shapes the recommendations.
+type assistantServerFacts struct {
+	anonymous         bool  // ANONYMOUS_MODE (Ghost)
+	clientEncryption  bool  // REQUIRE_CLIENT_ENCRYPTION: every upload is encrypted in the browser
+	malwareScan       bool  // malware scanning enabled
+	rejectUnscannable bool  // MALWARE_SCAN_REJECT_UNSCANNABLE
+	scanMaxFileSize   int64 // CLAMAV_MAX_FILE_SIZE (0 = no limit)
+}
+
+// Service-wide rate limits suggested for anonymous mode behind Tor, where
+// every visitor shares one address and so one budget (docs/TOR_DEPLOYMENT.md).
+const (
+	anonymousModeMinRateLimitUpload   = 100
+	anonymousModeMinRateLimitDownload = 500
+)
+
+// browserEncryptionWarnBytes is where the upload page warns that encrypting
+// a file in the browser may exhaust the tab's memory.
+const browserEncryptionWarnBytes = 500 * 1024 * 1024
+
+func serverFactsFromConfig(cfg *config.Config) assistantServerFacts {
+	facts := assistantServerFacts{
+		anonymous:        cfg.IsAnonymousMode(),
+		clientEncryption: cfg.IsClientEncryptionRequired(),
+	}
+	if cfg.Features != nil {
+		facts.malwareScan = cfg.Features.IsMalwareScanEnabled()
+	}
+	if cfg.ClamAV != nil {
+		facts.rejectUnscannable = cfg.ClamAV.RejectUnscannable
+		facts.scanMaxFileSize = cfg.ClamAV.MaxFileSize
+	}
+	return facts
 }
 
 // AdminConfigAssistantHandler analyzes user environment and recommends optimal settings
@@ -94,7 +128,6 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Get current configuration
 		currentConfig := ConfigRecommendations{
 			// Immediate settings
 			MaxFileSize:            cfg.GetMaxFileSize(),
@@ -105,14 +138,11 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 			RateLimitDownload:      cfg.GetRateLimitDownload(),
 			BlockedExtensions:      cfg.GetBlockedExtensions(),
 
-			// Performance settings (immutable - from config)
-			ChunkSize:                cfg.ChunkSize,
-			ReadTimeout:              cfg.ReadTimeoutSeconds,
-			WriteTimeout:             cfg.WriteTimeoutSeconds,
+			// Performance settings (from environment, need a restart)
 			ChunkedUploadThreshold:   cfg.ChunkedUploadThreshold,
 			PartialUploadExpiryHours: cfg.PartialUploadExpiryHours,
 
-			// Operational settings (immutable - from config)
+			// Operational settings (from environment, need a restart)
 			SessionExpiryHours:     cfg.SessionExpiryHours,
 			CleanupIntervalMinutes: cfg.CleanupIntervalMinutes,
 			RequireAuthForUpload:   cfg.RequireAuthForUpload,
@@ -120,26 +150,19 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 			ChunkedUploadEnabled:   cfg.ChunkedUploadEnabled,
 			PublicURL:              cfg.PublicURL,
 		}
+		facts := serverFactsFromConfig(cfg)
 
-		// Calculate recommendations based on user environment
 		recommendations := calculateRecommendations(req)
+		notes, impacts := applyServerConstraints(&recommendations, currentConfig, facts)
 
-		// Never drop extensions the admin already blocks: applying the
-		// recommendations replaces the whole list.
-		recommendations.BlockedExtensions = mergeBlockedExtensions(currentConfig.BlockedExtensions, recommendations.BlockedExtensions)
-
-		// Anonymous (Ghost) mode relies on short retention; don't recommend
-		// loosening the expirations the operator chose.
-		ghostCapped := cfg.IsAnonymousMode() && capExpirationsForAnonymousMode(&recommendations, currentConfig)
-
-		// Generate analysis
 		analysis := generateAnalysis(req, currentConfig, recommendations)
-		if cfg.IsAnonymousMode() {
-			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-				anonymousModeExpirationNote(currentConfig, ghostCapped))
+		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations, notes...)
+		// A value set by one of this server's rules gets that rule as its
+		// explanation, not the generic one for the environment.
+		for key, impact := range impacts {
+			analysis.Impacts[key] = impact
 		}
 
-		// Build response
 		response := ConfigAssistantResponse{
 			Recommendations: recommendations,
 			CurrentConfig:   currentConfig,
@@ -157,6 +180,108 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// applyServerConstraints adjusts environment-based recommendations to what
+// this server's own configuration requires. It returns notes explaining the
+// adjustments, and an explanation for each recommendation it changed (keyed
+// like ConfigAnalysis.Impacts) to use instead of the generic one.
+func applyServerConstraints(rec *ConfigRecommendations, current ConfigRecommendations, facts assistantServerFacts) (notes []string, impacts map[string]string) {
+	impacts = make(map[string]string)
+
+	// Never drop extensions the admin already blocks: applying the
+	// recommendations replaces the whole list.
+	rec.BlockedExtensions = mergeBlockedExtensions(current.BlockedExtensions, rec.BlockedExtensions)
+
+	if facts.anonymous {
+		// Short retention is part of what protects uploaders.
+		if current.DefaultExpirationHours > 0 && current.MaxExpirationHours > 0 {
+			capped := capExpirationsForAnonymousMode(rec, current)
+			notes = append(notes, anonymousModeExpirationNote(current, capped))
+			if capped {
+				impacts["default_expiration_hours"] = "Kept at or below your current value: anonymous mode relies on short retention"
+				impacts["max_expiration_hours"] = "Kept at or below your current value: anonymous mode relies on short retention"
+			}
+		}
+
+		// Behind Tor every visitor shares one address, so the per-address
+		// limits are the whole service's budget. Never recommend lowering
+		// them, and never below the documented service-wide starting point.
+		upload := max(rec.RateLimitUpload, current.RateLimitUpload, anonymousModeMinRateLimitUpload)
+		download := max(rec.RateLimitDownload, current.RateLimitDownload, anonymousModeMinRateLimitDownload)
+		if upload != rec.RateLimitUpload || download != rec.RateLimitDownload {
+			rec.RateLimitUpload, rec.RateLimitDownload = upload, download
+			impacts["rate_limit_upload"] = "One budget for the whole service: every Tor visitor shares one address"
+			impacts["rate_limit_download"] = "One budget for the whole service: every Tor visitor shares one address"
+			notes = append(notes, fmt.Sprintf(
+				"Anonymous (Ghost) mode: every Tor visitor shares one address, so rate limits are one budget for the whole service. Recommended %d uploads and %d downloads an hour (never lower than your current limits).",
+				upload, download))
+		}
+
+		// Requiring accounts contradicts anonymous mode.
+		if rec.RequireAuthForUpload {
+			rec.RequireAuthForUpload = false
+			impacts["require_auth_for_upload"] = "Off in anonymous mode: accounts would identify uploaders"
+			notes = append(notes, "Anonymous (Ghost) mode: uploads are not set to require login, because accounts would identify uploaders.")
+		}
+
+		// Onion services are reached over http:// (Tor encrypts the
+		// connection), so secure-only cookies would break admin login.
+		if rec.HTTPSEnabled != current.HTTPSEnabled {
+			rec.HTTPSEnabled = current.HTTPSEnabled
+			impacts["https_enabled"] = "Left as it is: onion addresses use http:// (Tor encrypts the connection)"
+			notes = append(notes, "Anonymous (Ghost) mode: HTTPS_ENABLED is left as it is. Onion addresses use http:// because Tor already encrypts the connection, and HTTPS_ENABLED=true would make login cookies secure-only.")
+		}
+	}
+
+	// A file the malware scanner can't scan is refused outright when
+	// MALWARE_SCAN_REJECT_UNSCANNABLE is on; same test as the upload handlers.
+	switch {
+	case facts.malwareScan && facts.rejectUnscannable && facts.clientEncryption:
+		notes = append(notes, "Malware scanning rejects files it can't scan, and this server requires browser encryption, which makes every upload unscannable. Uploads will be refused until one of the two is turned off.")
+	case facts.malwareScan && facts.rejectUnscannable:
+		if facts.scanMaxFileSize > 0 && rec.MaxFileSize > facts.scanMaxFileSize {
+			rec.MaxFileSize = facts.scanMaxFileSize
+			impacts["max_file_size"] = "Limited to the largest file the malware scanner accepts (CLAMAV_MAX_FILE_SIZE)"
+			notes = append(notes, fmt.Sprintf(
+				"Max file size limited to %s: malware scanning rejects files larger than the scanner accepts (CLAMAV_MAX_FILE_SIZE).",
+				formatSizeForNote(facts.scanMaxFileSize)))
+		}
+	case facts.malwareScan && facts.clientEncryption:
+		notes = append(notes, "Uploads are encrypted in the browser, so the malware scanner can't read them: they are stored unscanned.")
+	case facts.malwareScan && facts.scanMaxFileSize > 0 && rec.MaxFileSize > facts.scanMaxFileSize:
+		notes = append(notes, fmt.Sprintf(
+			"Files larger than %s (CLAMAV_MAX_FILE_SIZE) are stored without a malware scan.",
+			formatSizeForNote(facts.scanMaxFileSize)))
+	}
+
+	// A single file can't be bigger than all the storage allowed.
+	if rec.QuotaLimitGB > 0 {
+		quotaBytes := rec.QuotaLimitGB * 1024 * 1024 * 1024
+		if rec.MaxFileSize > quotaBytes {
+			rec.MaxFileSize = quotaBytes
+			impacts["max_file_size"] = "Limited to the recommended storage quota: one file can't be bigger than all the storage"
+			notes = append(notes, fmt.Sprintf("Max file size limited to the recommended storage quota (%d GB).", rec.QuotaLimitGB))
+		}
+	}
+
+	if facts.clientEncryption && rec.MaxFileSize > browserEncryptionWarnBytes {
+		notes = append(notes, "Uploads are encrypted in the visitor's browser, which holds the file in memory: the upload page warns above 500 MB, and very large files can exhaust a browser tab. Padding also adds up to about 12% to the stored size.")
+	}
+
+	return notes, impacts
+}
+
+// formatSizeForNote renders a byte count for an analysis note.
+func formatSizeForNote(b int64) string {
+	const (
+		mib = 1024 * 1024
+		gib = 1024 * mib
+	)
+	if b >= gib && b%gib == 0 {
+		return fmt.Sprintf("%d GB", b/gib)
+	}
+	return fmt.Sprintf("%d MB", b/mib)
+}
+
 // calculateRecommendations generates optimal settings based on environment
 func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations {
 	rec := ConfigRecommendations{
@@ -170,17 +295,10 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	uploadSpeedMBps := req.UploadSpeed / 8.0
 	downloadSpeedMBps := req.DownloadSpeed / 8.0
 
-	// Calculate each configuration category using helper functions
 	rec.MaxFileSize = calculateMaxFileSize(req)
 	rec.QuotaLimitGB = calculateStorageQuota(req)
 	rec.DefaultExpirationHours, rec.MaxExpirationHours = calculateExpirationTimes(req)
 	rec.RateLimitUpload, rec.RateLimitDownload = calculateRateLimits(req, uploadSpeedMBps, downloadSpeedMBps)
-	rec.ChunkSize = calculateChunkSize(req, uploadSpeedMBps)
-
-	// Apply CDN constraints to chunk size if needed (must be done before timeout calculation)
-	rec.ChunkSize = applyCDNConstraints(req, uploadSpeedMBps, rec.ChunkSize)
-
-	rec.ReadTimeout, rec.WriteTimeout = calculateTimeouts(req, uploadSpeedMBps, rec.ChunkSize)
 	rec.ChunkedUploadThreshold, rec.PartialUploadExpiryHours = calculateChunkedUploadSettings(req, uploadSpeedMBps)
 	rec.SessionExpiryHours, rec.CleanupIntervalMinutes = calculateOperationalSettings(req)
 	rec.RequireAuthForUpload, rec.HTTPSEnabled, rec.PublicURL = calculateSecuritySettings(req)
@@ -257,14 +375,17 @@ func calculateMaxFileSize(req ConfigAssistantRequest) int64 {
 	}
 }
 
+// storageQuotaPercent is the share of the available storage recommended as
+// the quota, leaving headroom for partial uploads and the database.
+const storageQuotaPercent = 75
+
 // calculateStorageQuota determines the storage quota based on available capacity
 func calculateStorageQuota(req ConfigAssistantRequest) int64 {
 	if req.StorageCapacity <= 0 {
 		return 0 // unlimited
 	}
 
-	// Use 80% of available capacity as quota to leave headroom
-	quota := int64(float64(req.StorageCapacity) * 0.8)
+	quota := req.StorageCapacity * storageQuotaPercent / 100
 	if quota < 10 {
 		return req.StorageCapacity // use full capacity if < 10GB
 	}
@@ -288,7 +409,9 @@ func calculateExpirationTimes(req ConfigAssistantRequest) (defaultHours int, max
 	}
 }
 
-// calculateRateLimits determines upload and download rate limits based on load and bandwidth
+// calculateRateLimits determines upload and download rate limits based on load and bandwidth.
+// Each permitted upload may be MAX_FILE_SIZE: the server sizes the chunk
+// allowance from both settings, so large files don't need a higher upload limit.
 func calculateRateLimits(req ConfigAssistantRequest, uploadSpeedMBps, downloadSpeedMBps float64) (uploadLimit int, downloadLimit int) {
 	// Base limits on user load
 	switch req.UserLoad {
@@ -333,107 +456,6 @@ func calculateRateLimits(req ConfigAssistantRequest, uploadSpeedMBps, downloadSp
 	return uploadLimit, downloadLimit
 }
 
-// calculateChunkSize determines optimal chunk size based on bandwidth and latency
-// Range: 5MB - 30MB (within documented 1-50MB limit)
-func calculateChunkSize(req ConfigAssistantRequest, uploadSpeedMBps float64) int64 {
-	var chunkSize int64
-
-	// Smaller chunks for slow/unreliable connections provide better resume capability
-	// Larger chunks for fast connections reduce overhead
-	if req.NetworkLatency == "high" || uploadSpeedMBps < 2 {
-		chunkSize = 5 * 1024 * 1024 // 5MB - high latency or slow connection
-	} else if uploadSpeedMBps < 5 {
-		chunkSize = 8 * 1024 * 1024 // 8MB - medium-slow connection
-	} else if uploadSpeedMBps < 15 {
-		chunkSize = 10 * 1024 * 1024 // 10MB - medium connection (default)
-	} else if uploadSpeedMBps < 30 {
-		chunkSize = 20 * 1024 * 1024 // 20MB - fast connection
-	} else {
-		chunkSize = 30 * 1024 * 1024 // 30MB - very fast connection
-	}
-
-	// Adjust for large files - smaller chunks for better progress reporting
-	if req.TypicalFileSize == "huge" && chunkSize > 10*1024*1024 {
-		chunkSize = 10 * 1024 * 1024 // cap at 10MB for huge files
-	}
-
-	return chunkSize
-}
-
-// applyCDNConstraints adjusts chunk size to fit within CDN timeout limits
-func applyCDNConstraints(req ConfigAssistantRequest, uploadSpeedMBps float64, chunkSize int64) int64 {
-	if !req.UsingCDN || req.CDNTimeout <= 0 {
-		return chunkSize // no CDN or no timeout constraint
-	}
-
-	// Formula: ChunkSize <= (UploadSpeed * CDNTimeout * 0.6) to ensure completion
-	maxSafeChunkSize := int64(uploadSpeedMBps * float64(req.CDNTimeout) * 0.6 * 1024 * 1024)
-	if maxSafeChunkSize < 5*1024*1024 {
-		maxSafeChunkSize = 5 * 1024 * 1024 // minimum 5MB
-	}
-
-	if chunkSize > maxSafeChunkSize {
-		return maxSafeChunkSize
-	}
-	return chunkSize
-}
-
-// calculateTimeouts determines read and write timeouts with CDN and encryption considerations
-func calculateTimeouts(req ConfigAssistantRequest, uploadSpeedMBps float64, chunkSize int64) (readTimeout int, writeTimeout int) {
-	// Formula: (ChunkSize in MB / UploadSpeed in MBps) × SafetyFactor
-	chunkSizeMB := float64(chunkSize) / (1024 * 1024)
-	baseTimeout := int((chunkSizeMB / uploadSpeedMBps) * 3.0) // 3x safety factor
-
-	// Ensure minimum timeout
-	if baseTimeout < 60 {
-		baseTimeout = 60
-	}
-
-	// Add extra time for high latency or slow connections
-	switch req.NetworkLatency {
-	case "high":
-		readTimeout = baseTimeout * 2
-		writeTimeout = baseTimeout * 2
-	case "medium":
-		readTimeout = int(float64(baseTimeout) * 1.5)
-		writeTimeout = int(float64(baseTimeout) * 1.5)
-	default:
-		readTimeout = baseTimeout
-		writeTimeout = baseTimeout
-	}
-
-	// Apply timeout caps and minimums
-	readTimeout = applyTimeoutBounds(readTimeout, 60, 600)
-	writeTimeout = applyTimeoutBounds(writeTimeout, 60, 600)
-
-	// Apply CDN timeout constraints if behind a CDN
-	if req.UsingCDN && req.CDNTimeout > 0 {
-		maxAllowedTimeout := int(float64(req.CDNTimeout) * 0.8) // 80% for safety margin
-		readTimeout = min(readTimeout, maxAllowedTimeout)
-		writeTimeout = min(writeTimeout, maxAllowedTimeout)
-	}
-
-	// Apply encryption overhead if encryption is enabled
-	if req.EncryptionEnabled {
-		// Add 20% overhead for encryption/decryption processing
-		readTimeout = applyTimeoutBounds(int(float64(readTimeout)*1.2), 60, 600)
-		writeTimeout = applyTimeoutBounds(int(float64(writeTimeout)*1.2), 60, 600)
-	}
-
-	return readTimeout, writeTimeout
-}
-
-// applyTimeoutBounds ensures timeout is within specified min/max range
-func applyTimeoutBounds(timeout, minTimeout, maxTimeout int) int {
-	if timeout < minTimeout {
-		return minTimeout
-	}
-	if timeout > maxTimeout {
-		return maxTimeout
-	}
-	return timeout
-}
-
 // calculateChunkedUploadSettings determines chunked upload threshold and partial expiry hours
 func calculateChunkedUploadSettings(req ConfigAssistantRequest, uploadSpeedMBps float64) (threshold int64, expiryHours int) {
 	// Lower threshold = more files use chunked upload = better reliability
@@ -460,14 +482,16 @@ func calculateChunkedUploadSettings(req ConfigAssistantRequest, uploadSpeedMBps 
 
 // calculateOperationalSettings determines session expiry and cleanup interval
 func calculateOperationalSettings(req ConfigAssistantRequest) (sessionExpiryHours int, cleanupIntervalMinutes int) {
-	// Session expiry based on deployment type
+	// Login sessions: shorter the more exposed the server is. A stolen
+	// session cookie is worth less when it expires sooner. (The Hardened and
+	// Fortress profiles in docs/DEPLOYMENT_MODES.md use 8 and 4 hours.)
 	switch req.DeploymentType {
 	case "LAN":
-		sessionExpiryHours = 12 // shorter for internal networks
+		sessionExpiryHours = 24
 	case "WAN":
-		sessionExpiryHours = 24 // standard
+		sessionExpiryHours = 12
 	case "Internet":
-		sessionExpiryHours = 48 // longer for external users
+		sessionExpiryHours = 8
 	default:
 		sessionExpiryHours = 24
 	}
@@ -515,17 +539,11 @@ func generateAnalysis(req ConfigAssistantRequest, current, recommended ConfigRec
 		AdditionalRecommendations: []string{},
 	}
 
-	// Generate summary
 	analysis.Summary = generateAnalysisSummary(req)
-
-	// Generate impact descriptions for configuration changes
 	generateImpactDescriptions(req, current, recommended, &analysis)
-
-	// Generate additional recommendations based on environment
-	generateNetworkRecommendations(req, recommended, &analysis)
-	generateFileRecommendations(req, recommended, &analysis)
+	generateNetworkRecommendations(req, &analysis)
 	generateDeploymentRecommendations(req, recommended, &analysis)
-	generateCDNRecommendations(req, recommended, &analysis)
+	generateCDNRecommendations(req, &analysis)
 	generateResourceRecommendations(req, &analysis)
 
 	return analysis
@@ -562,7 +580,7 @@ func generateImpactDescriptions(req ConfigAssistantRequest, current, recommended
 
 	if current.QuotaLimitGB != recommended.QuotaLimitGB {
 		if recommended.QuotaLimitGB > 0 {
-			analysis.Impacts["quota_limit_gb"] = fmt.Sprintf("Set to 80%% of available capacity (%d GB)", req.StorageCapacity)
+			analysis.Impacts["quota_limit_gb"] = fmt.Sprintf("Set to %d%% of available capacity (%d GB)", storageQuotaPercent, req.StorageCapacity)
 		} else {
 			analysis.Impacts["quota_limit_gb"] = "Unlimited storage recommended based on your capacity"
 		}
@@ -586,42 +604,26 @@ func generateImpactDescriptions(req ConfigAssistantRequest, current, recommended
 		analysis.Impacts["rate_limit_download"] = fmt.Sprintf("Optimized for %s user load and %.1f Mbps download speed", req.UserLoad, req.DownloadSpeed)
 	}
 
-	// Performance settings impacts
 	generatePerformanceImpacts(req, current, recommended, analysis)
-
-	// Operational settings impacts
 	generateOperationalImpacts(req, current, recommended, analysis)
 }
 
 // generatePerformanceImpacts explains changes to performance-related settings
 func generatePerformanceImpacts(req ConfigAssistantRequest, current, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
-	if current.ChunkSize != recommended.ChunkSize {
-		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
-		analysis.Impacts["chunk_size"] = fmt.Sprintf("Optimized to %.0fMB for %.1f Mbps upload speed and %s latency", chunkSizeMB, req.UploadSpeed, req.NetworkLatency)
-	}
-
-	if current.ReadTimeout != recommended.ReadTimeout {
-		analysis.Impacts["read_timeout"] = fmt.Sprintf("Calculated based on chunk size and upload speed with safety margin (%d seconds)", recommended.ReadTimeout)
-	}
-
-	if current.WriteTimeout != recommended.WriteTimeout {
-		analysis.Impacts["write_timeout"] = fmt.Sprintf("Matched to read timeout for consistent behavior (%d seconds)", recommended.WriteTimeout)
-	}
-
 	if current.ChunkedUploadThreshold != recommended.ChunkedUploadThreshold {
 		thresholdMB := recommended.ChunkedUploadThreshold / (1024 * 1024)
 		analysis.Impacts["chunked_upload_threshold"] = fmt.Sprintf("Set to %dMB for optimal reliability with %s files", thresholdMB, req.TypicalFileSize)
 	}
 
 	if current.PartialUploadExpiryHours != recommended.PartialUploadExpiryHours {
-		analysis.Impacts["partial_upload_expiry_hours"] = fmt.Sprintf("Extended to %d hours for slower connections to complete large uploads", recommended.PartialUploadExpiryHours)
+		analysis.Impacts["partial_upload_expiry_hours"] = fmt.Sprintf("Set to %d hours so slower connections can finish large uploads", recommended.PartialUploadExpiryHours)
 	}
 }
 
 // generateOperationalImpacts explains changes to operational settings
 func generateOperationalImpacts(req ConfigAssistantRequest, current, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if current.SessionExpiryHours != recommended.SessionExpiryHours {
-		analysis.Impacts["session_expiry_hours"] = fmt.Sprintf("Adjusted to %d hours for %s deployment pattern", recommended.SessionExpiryHours, req.DeploymentType)
+		analysis.Impacts["session_expiry_hours"] = fmt.Sprintf("%d hours: shorter sessions limit the damage of a stolen login on a %s deployment", recommended.SessionExpiryHours, req.DeploymentType)
 	}
 
 	if current.CleanupIntervalMinutes != recommended.CleanupIntervalMinutes {
@@ -646,27 +648,10 @@ func generateOperationalImpacts(req ConfigAssistantRequest, current, recommended
 }
 
 // generateNetworkRecommendations adds recommendations based on network conditions
-func generateNetworkRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
+func generateNetworkRecommendations(req ConfigAssistantRequest, analysis *ConfigAnalysis) {
 	if req.NetworkLatency == "high" || req.NetworkLatency == "medium" {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			"Consider enabling TCP tuning for high-latency connections. See docs/TCP_TUNING.md for system-level optimizations.",
-		)
-	}
-
-	uploadSpeedMBps := req.UploadSpeed / 8
-	if uploadSpeedMBps < 5 {
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("Low upload bandwidth detected (%.1f MB/s). Consider CHUNK_SIZE=5MB for better reliability on slow connections.", uploadSpeedMBps),
-		)
-	}
-}
-
-// generateFileRecommendations adds recommendations for file size handling
-func generateFileRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
-	if req.TypicalFileSize == "large" || req.TypicalFileSize == "huge" {
-		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("For large files: CHUNK_SIZE=%.0fMB, READ_TIMEOUT=%ds, WRITE_TIMEOUT=%ds are calculated for your connection speed.", chunkSizeMB, recommended.ReadTimeout, recommended.WriteTimeout),
 		)
 	}
 }
@@ -674,8 +659,10 @@ func generateFileRecommendations(req ConfigAssistantRequest, recommended ConfigR
 // generateDeploymentRecommendations adds recommendations based on deployment type
 func generateDeploymentRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
 	if req.DeploymentType == "Internet" {
+		// The server extends each transfer's deadline with its size (up to 6
+		// hours), so the proxy in front must not cut long transfers short.
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("For public internet: Configure reverse proxy timeouts to at least %d seconds to match READ_TIMEOUT.", recommended.ReadTimeout),
+			"Reverse proxy: allow long-running requests. SafeShare gives each upload and download time in proportion to its size, up to 6 hours for a single-request transfer, so a proxy timeout shorter than a large transfer cuts it off. See docs/REVERSE_PROXY.md.",
 		)
 		if recommended.HTTPSEnabled {
 			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
@@ -686,37 +673,17 @@ func generateDeploymentRecommendations(req ConfigAssistantRequest, recommended C
 }
 
 // generateCDNRecommendations adds CDN-specific recommendations
-func generateCDNRecommendations(req ConfigAssistantRequest, recommended ConfigRecommendations, analysis *ConfigAnalysis) {
+func generateCDNRecommendations(req ConfigAssistantRequest, analysis *ConfigAnalysis) {
 	if !req.UsingCDN {
 		return
 	}
-
-	if req.CDNTimeout > 0 {
-		chunkSizeMB := float64(recommended.ChunkSize) / (1024 * 1024)
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("CDN detected (%ds timeout): Chunk size optimized to %.0fMB to ensure uploads complete within timeout limits.", req.CDNTimeout, chunkSizeMB),
-		)
-	}
-
 	analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-		"CDN detected: Set DOWNLOAD_URL to a DNS-only subdomain (bypassing CDN) for large file downloads. Example: downloads.yourdomain.com",
+		"CDN detected: CDNs can cut off long-running requests (Cloudflare's free plan gives the server 100 seconds to respond). Set DOWNLOAD_URL to a DNS-only subdomain that bypasses the CDN for large downloads. Example: downloads.yourdomain.com",
 	)
-
-	if req.CDNTimeout < 60 {
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			fmt.Sprintf("⚠️ CDN timeout is only %ds. Consider upgrading CDN tier or bypassing CDN for upload endpoints to support larger files.", req.CDNTimeout),
-		)
-	}
 }
 
-// generateResourceRecommendations adds recommendations for storage, load, and encryption
+// generateResourceRecommendations adds recommendations for storage and load
 func generateResourceRecommendations(req ConfigAssistantRequest, analysis *ConfigAnalysis) {
-	if req.EncryptionEnabled {
-		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			"Encryption enabled: Timeouts increased by 20% to account for AES-256-GCM encryption/decryption overhead.",
-		)
-	}
-
 	if req.UserLoad == "heavy" || req.UserLoad == "very_heavy" {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
 			"High user load detected. Monitor storage usage and consider implementing user quotas for fair resource allocation.",

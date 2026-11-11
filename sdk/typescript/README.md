@@ -251,7 +251,6 @@ const config = await client.getConfig();
 
 console.log(`Max file size: ${config.maxFileSize}`);
 console.log(`Chunk threshold: ${config.chunkUploadThreshold}`);
-console.log(`Chunk size: ${config.chunkSize}`);
 console.log(`Max expiration: ${config.maxExpirationHours} hours`);
 ```
 

@@ -8,6 +8,7 @@ This guide provides version-specific upgrade instructions for SafeShare. Always 
 - [Pre-Upgrade Checklist](#pre-upgrade-checklist)
 - [Version Numbering Note](#version-numbering-note)
 - [Version-Specific Upgrades](#version-specific-upgrades)
+  - [Upgrading to v1.25.x](#upgrading-to-v125x)
   - [Upgrading to v1.11.x](#upgrading-to-v111x)
   - [Upgrading to v1.10.x](#upgrading-to-v110x)
   - [Upgrading to v1.9.0](#upgrading-to-v190)
@@ -99,6 +100,16 @@ SafeShare's version numbers were reset in November 2025 from v2.8.3 to v1.0.0 (s
 ---
 
 ## Version-Specific Upgrades
+
+### Upgrading to v1.25.x
+
+No database migrations. Behaviour changes to review:
+
+- **`CHUNK_SIZE` can be removed.** The server now picks the chunk size for each upload from the file size: 5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above that. If `CHUNK_SIZE` is still set, SafeShare starts normally, ignores it, and logs a warning at startup. Delete it from your environment or compose file to silence the warning.
+- **Custom upload clients must split by the `chunk_size` in the `POST /api/upload/init` response** (also returned by `GET /api/upload/status/{id}`), not by the value from `GET /api/config`. The `chunk_size` in `/api/config` is deprecated and always `10485760`. A `chunk_size` sent in the init request is ignored. The bundled web client, CLI and SDKs already follow the server's value.
+- **Timeouts:** uploads and downloads get their own deadline based on their size (at least 64 KiB/s plus 60 seconds, capped at 6 hours). `READ_TIMEOUT` and `WRITE_TIMEOUT` only act as a minimum for that deadline and as the limit for ordinary requests. A reverse proxy in front of SafeShare must let downloads and single-request uploads run for up to 6 hours; each chunk of a chunked upload needs only minutes.
+- **Configuration Assistant:** it no longer recommends chunk size or timeouts, and no longer asks about CDN timeout or encryption at rest. It reads anonymous mode, browser encryption and malware scanning from the server. The `POST /admin/api/config-assistant/analyze` request and response changed accordingly (see [API_REFERENCE.md](API_REFERENCE.md)); scripts that call it must stop sending the removed fields.
+- Purge your CDN cache for `/assets/*` after upgrading.
 
 ### Upgrading to v1.11.x
 
@@ -369,9 +380,10 @@ docker run --rm \
 ```bash
 -e CHUNKED_UPLOAD_ENABLED=true           # Enable chunked uploads
 -e CHUNKED_UPLOAD_THRESHOLD=104857600    # 100MB threshold
--e CHUNK_SIZE=10485760                   # 10MB chunks
 -e PARTIAL_UPLOAD_EXPIRY_HOURS=24        # Cleanup abandoned uploads
 ```
+
+`CHUNK_SIZE` was part of this release but is now retired. The server picks the chunk size per upload and ignores the setting (see [Upgrading to v1.25.x](#upgrading-to-v125x)).
 
 #### Upgrade Steps
 

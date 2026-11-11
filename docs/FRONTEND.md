@@ -69,7 +69,7 @@ The dashboard (`dashboard.html`) has eleven tabs, with real-time statistics card
 | Backups | List, create, verify, restore, download, delete backups |
 | Audit Log | Filter, page, export (CSV/JSON Lines) and verify the tamper-evident log; adjust retention |
 | Settings | Storage quota, security settings, password change, system info |
-| Configuration Assistant | Recommends timeouts, chunk size and limits for your environment |
+| Configuration Assistant | Recommends file size, quota, expiration, rate limits and blocked file types for your environment (chunk size and timeouts are automatic) |
 
 The admin tab list supports arrow-key navigation. Destructive actions use confirmation dialogs.
 

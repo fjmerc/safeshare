@@ -8,12 +8,24 @@ You can configure SafeShare to accept 100 GB files, but that doesn't mean your i
 
 SafeShare uses chunked uploads to handle large files. Each chunk is a separate HTTP request that must complete before your infrastructure times out.
 
+SafeShare chooses the chunk size itself, per upload, from the file size:
+
+| File size | Chunk size |
+|-----------|------------|
+| Under 100 MiB | 5 MiB |
+| 100 MiB to under 1 GiB | 10 MiB |
+| 1 GiB and above | 20 MiB |
+
+You can't change it. The `CHUNK_SIZE` setting is retired and ignored.
+
+SafeShare also gives every upload and download its own deadline based on the transfer size (at least 64 KiB/s plus 60 seconds, capped at 6 hours). `READ_TIMEOUT` and `WRITE_TIMEOUT` only set a minimum for that deadline and the limit for ordinary requests. So SafeShare itself is not the limit. **The limit is whatever sits in front of it.**
+
 **The fundamental equation:**
 ```
 Chunk Upload Time < Infrastructure Timeout
 ```
 
-If a 15 MB chunk takes 35 seconds to upload, but your proxy times out at 30 seconds, **uploads will fail** no matter how you configure SafeShare.
+If a 20 MiB chunk takes 35 seconds to upload, but your proxy times out at 30 seconds, **uploads will fail** no matter how you configure SafeShare.
 
 ## Common Infrastructure Timeouts
 
@@ -21,7 +33,7 @@ Different infrastructure layers impose different timeout limits:
 
 | Layer | Typical Timeout | Configurable? | Impact |
 |-------|----------------|---------------|--------|
-| **SafeShare (direct)** | 120s (default) | ✅ Yes (`READ_TIMEOUT`) | Only applies if no proxy |
+| **SafeShare (direct)** | Scales with transfer size, up to 6 hours | ❌ Automatic (`READ_TIMEOUT`/`WRITE_TIMEOUT` are only a minimum) | Not the limiting layer |
 | **nginx** | 60s (default) | ✅ Yes (`proxy_read_timeout`) | Common reverse proxy |
 | **Apache** | 300s (default) | ✅ Yes (`ProxyTimeout`) | Common reverse proxy |
 | **Traefik** | 90s (default) | ✅ Yes (`respondingTimeouts.readTimeout`) | Docker-friendly proxy |
@@ -68,8 +80,8 @@ Shortest timeout: 30s (CDN wins)
 **Don't trust your internet plan specs.** Test real-world upload performance:
 
 ```bash
-# Create a test chunk (15 MB - SafeShare default)
-dd if=/dev/urandom of=test-chunk.bin bs=1M count=15
+# Create a test file the size of a large-file chunk (20 MiB)
+dd if=/dev/urandom of=test-chunk.bin bs=1M count=20
 
 # Time the upload
 time curl -X POST -F "file=@test-chunk.bin" https://your-domain.com/api/upload
@@ -77,7 +89,7 @@ time curl -X POST -F "file=@test-chunk.bin" https://your-domain.com/api/upload
 
 **Calculate your effective upload speed:**
 ```
-Effective Upload Speed = 15 MB ÷ (time in seconds)
+Effective Upload Speed = 20 MB ÷ (time in seconds)
 ```
 
 **Real-world speeds are typically 60-80% of advertised:**
@@ -94,8 +106,10 @@ Effective Upload Speed = 15 MB ÷ (time in seconds)
 
 **Formula:**
 ```
-Chunk Upload Time = CHUNK_SIZE ÷ Effective Upload Speed
+Chunk Upload Time = Chunk Size ÷ Effective Upload Speed
 ```
+
+Use 5 MB for files under 100 MiB, 10 MB under 1 GiB, and 20 MB above that.
 
 **Safety requirement:**
 ```
@@ -108,11 +122,13 @@ Use 70% of timeout as a safety margin for network variance and retries.
 
 | Upload Speed | Chunk Size | Upload Time | 30s timeout | 60s timeout | 120s timeout |
 |-------------|------------|-------------|-------------|-------------|--------------|
-| 0.5 MB/s | 15 MB | 30s | ❌ Fails | ⚠️ Risky | ✅ Safe |
+| 0.5 MB/s | 20 MB | 40s | ❌ Fails | ⚠️ Risky | ✅ Safe |
 | 0.5 MB/s | 10 MB | 20s | ✅ Safe | ✅ Safe | ✅ Safe |
-| 2 MB/s | 15 MB | 7.5s | ✅ Safe | ✅ Safe | ✅ Safe |
-| 5 MB/s | 15 MB | 3s | ✅ Safe | ✅ Safe | ✅ Safe |
+| 2 MB/s | 20 MB | 10s | ✅ Safe | ✅ Safe | ✅ Safe |
+| 5 MB/s | 20 MB | 4s | ✅ Safe | ✅ Safe | ✅ Safe |
 | 10 MB/s | 20 MB | 2s | ✅ Safe | ✅ Safe | ✅ Safe |
+
+If a shorter timeout in front of SafeShare can't be raised (for example a free CDN tier), the fix is to raise that timeout, bypass that layer for uploads, or limit file sizes. You can't shrink chunks to fit.
 
 ### Step 4: Determine Maximum Practical File Size
 
@@ -161,26 +177,24 @@ User → CDN (30-60s timeout) → nginx → SafeShare
 
 If CDN timeout is 30s:
 ```bash
-# Use smaller chunks to stay under timeout
-CHUNK_SIZE=10485760           # 10 MB
-MAX_FILE_SIZE=2147483648      # 2 GB (reasonable)
+# Chunks are 20 MB for files over 1 GiB, 10 MB below that.
+# Keep files under 1 GiB so chunks stay at 10 MB or less.
+MAX_FILE_SIZE=1073741824      # 1 GB
 
-# Requires upload speed > 0.5 MB/s for 10MB chunks
+# Requires upload speed > 0.5 MB/s for 10 MB chunks
 # 10 MB ÷ 0.5 MB/s = 20s (safe for 30s timeout)
 ```
 
 If CDN timeout is 60s:
 ```bash
-CHUNK_SIZE=15728640           # 15 MB (default)
 MAX_FILE_SIZE=5368709120      # 5 GB (reasonable)
 
-# Requires upload speed > 0.5 MB/s for 15MB chunks
-# 15 MB ÷ 0.5 MB/s = 30s (safe for 60s timeout)
+# Requires upload speed > 0.7 MB/s for 20 MB chunks (files over 1 GiB)
+# 20 MB ÷ 0.7 MB/s = 29s (safe for 60s timeout)
 ```
 
 **Red flag:** If your users consistently have < 0.5 MB/s upload, you'll need to:
-- Use even smaller chunks (5 MB)
-- Lower max file size to < 1 GB
+- Lower max file size to under 100 MiB (5 MB chunks)
 - Or bypass CDN for upload endpoint (see Advanced Solutions)
 
 ### Scenario B: Direct Connection with Configurable Reverse Proxy
@@ -203,11 +217,8 @@ proxy_read_timeout 300s;      # 5 minutes per chunk
 proxy_send_timeout 300s;
 client_max_body_size 50m;     # Slightly larger than chunk
 
-# SafeShare config
-CHUNK_SIZE=20971520           # 20 MB (larger chunks = fewer requests)
+# SafeShare config (chunk size and transfer deadlines are automatic)
 MAX_FILE_SIZE=53687091200     # 50 GB
-READ_TIMEOUT=300
-WRITE_TIMEOUT=300
 
 # Requires upload speed > 0.5 MB/s
 # 20 MB ÷ 0.5 MB/s = 40s (safe for 300s timeout)
@@ -249,10 +260,7 @@ gcloud compute backend-services update <name> \
 ```bash
 # Set load balancer timeout: 600s (10 minutes)
 # SafeShare config
-CHUNK_SIZE=20971520           # 20 MB
 MAX_FILE_SIZE=107374182400    # 100 GB
-READ_TIMEOUT=600
-WRITE_TIMEOUT=600
 ```
 
 ### Scenario D: No Proxy (Development/Internal Use)
@@ -264,11 +272,8 @@ User → SafeShare (direct)
 
 **Configuration strategy:**
 ```bash
-# Maximum flexibility - limited only by SafeShare timeouts
-CHUNK_SIZE=20971520           # 20 MB
+# Maximum flexibility - SafeShare sets each transfer's deadline from its size
 MAX_FILE_SIZE=107374182400    # 100 GB
-READ_TIMEOUT=600              # 10 minutes per chunk
-WRITE_TIMEOUT=600
 ```
 
 **Warning:** Only suitable for:
@@ -357,11 +362,8 @@ sftp user@server:/uploads/
 **Use when:** Users have varying connection speeds, you're using a CDN free tier
 
 ```bash
-MAX_FILE_SIZE=1073741824      # 1 GB - safe for most scenarios
-CHUNK_SIZE=10485760           # 10 MB - completes quickly
+MAX_FILE_SIZE=1073741824      # 1 GB - chunks stay at 10 MB or less
 CHUNKED_UPLOAD_THRESHOLD=52428800   # 50 MB
-READ_TIMEOUT=120
-WRITE_TIMEOUT=120
 ```
 
 **Works with:**
@@ -375,10 +377,7 @@ WRITE_TIMEOUT=120
 
 ```bash
 MAX_FILE_SIZE=10737418240     # 10 GB
-CHUNK_SIZE=15728640           # 15 MB - default
 CHUNKED_UPLOAD_THRESHOLD=104857600  # 100 MB
-READ_TIMEOUT=180
-WRITE_TIMEOUT=180
 ```
 
 **Works with:**
@@ -392,10 +391,7 @@ WRITE_TIMEOUT=180
 
 ```bash
 MAX_FILE_SIZE=107374182400    # 100 GB
-CHUNK_SIZE=20971520           # 20 MB - larger chunks
 CHUNKED_UPLOAD_THRESHOLD=104857600  # 100 MB
-READ_TIMEOUT=600              # 10 minutes per chunk
-WRITE_TIMEOUT=600
 ```
 
 **Requires:**
@@ -408,8 +404,8 @@ WRITE_TIMEOUT=600
 ### Test Your Configuration Before Going Live
 
 ```bash
-# 1. Test chunk upload time
-dd if=/dev/urandom of=test-chunk.bin bs=1M count=15
+# 1. Test chunk upload time (20 MB is the largest chunk)
+dd if=/dev/urandom of=test-chunk.bin bs=1M count=20
 time curl -X POST -F "file=@test-chunk.bin" https://your-domain.com/api/upload
 
 # Should complete in < 70% of your shortest timeout

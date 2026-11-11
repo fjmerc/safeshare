@@ -342,7 +342,6 @@ config, err := client.GetConfig(ctx)
 
 fmt.Printf("Max file size: %d\n", config.MaxFileSize)
 fmt.Printf("Chunk threshold: %d\n", config.ChunkUploadThreshold)
-fmt.Printf("Chunk size: %d\n", config.ChunkSize)
 fmt.Printf("Max expiration: %d hours\n", config.MaxExpirationHours)
 ```
 

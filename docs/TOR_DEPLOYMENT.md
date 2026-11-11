@@ -281,16 +281,12 @@ torsocks curl -s -F "file=@test.txt" http://<onion>.onion/api/upload
 |--------|--------|------------|
 | **Latency** | Tor adds 200-500ms per hop (3 hops = 0.6-1.5s) | Expected — no mitigation needed |
 | **Throughput** | Tor circuits typically sustain 1-5 MB/s | Set reasonable file size limits |
-| **Large files** | Uploads >100MB may time out or be slow | Consider increasing `READ_TIMEOUT` and `WRITE_TIMEOUT` |
-| **Chunked uploads** | Work normally over Tor | Smaller chunk sizes (5MB) may be more reliable |
+| **Large files** | Uploads >100MB are slow | Set a reasonable `MAX_FILE_SIZE`. SafeShare gives each upload and download a deadline based on its size, so you don't need to raise timeouts |
+| **Chunked uploads** | Work normally over Tor | The server picks the chunk size per upload (5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above) |
 
-### Recommended timeout settings for Tor
+### Timeout settings for Tor
 
-```yaml
-environment:
-  - READ_TIMEOUT=300    # 5 minutes
-  - WRITE_TIMEOUT=300   # 5 minutes
-```
+You don't need to change timeouts for Tor. Each upload and download gets a deadline from its size (at least 64 KiB/s plus 60 seconds, capped at 6 hours). `READ_TIMEOUT` and `WRITE_TIMEOUT` only act as a minimum and as the limit for ordinary requests.
 
 ## Backup Considerations
 
@@ -327,8 +323,7 @@ SafeShare has not had an independent security audit. Sources facing a government
 - Include `http://` prefix (not `https://` — Tor already encrypts end-to-end)
 
 ### Slow uploads/downloads
-- Increase `READ_TIMEOUT` and `WRITE_TIMEOUT` to 300+ seconds
-- Reduce `CHUNK_SIZE` to 5MB for more reliable chunked uploads
+- Transfer deadlines scale with file size, so a slow circuit doesn't need timeout changes. A stalled upload (no data for 60 seconds) is cut off with `408 UPLOAD_TIMEOUT`; retry it
 - Tor throughput varies — retry at different times of day
 
 ### Lost .onion address

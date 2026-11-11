@@ -182,7 +182,9 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	// The two modes keep separate counts, so carry the count across instead
 	// of starting the bucket afresh: moving to per-minute counting folds
 	// the timestamps in, and a bucket with per-minute counts keeps using
-	// them until they age out of the hour.
+	// them until they age out of the hour. So a bucket used at least once
+	// an hour stays per-minute after its limit drops back; that is
+	// deliberate (minute granularity is fine at any limit).
 	if limit > coarseLimitThreshold || record.coarseActive(now.Unix()/60) {
 		record.foldTimestampsIntoCoarse(now)
 		return record.checkCoarse(now, limit)
