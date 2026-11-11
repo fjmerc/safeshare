@@ -35,6 +35,8 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-11
+
 ### Changed
 
 - Configuration Assistant (admin dashboard) gives advice that matches how SafeShare works today:
