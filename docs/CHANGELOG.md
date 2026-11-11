@@ -39,14 +39,14 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 - Configuration Assistant (admin dashboard) gives advice that matches how SafeShare works today:
   - It no longer recommends a chunk size or HTTP timeouts. The server already sizes chunks per upload, and gives each transfer time in proportion to its size, so that advice changed nothing. The CDN-timeout and "encryption at rest" questions are gone with it.
-  - It reads anonymous mode, browser encryption and malware scanning from the server instead of asking. In anonymous (Ghost) mode it never recommends requiring login, leaves `HTTPS_ENABLED` as it is (onion addresses use `http://`), and recommends rate limits of at least 100 uploads and 500 downloads an hour without ever lowering your current ones, since all Tor visitors share one budget. When malware scanning rejects files it can't scan, the recommended maximum file size stays within the scanner's limit.
+  - It reads anonymous mode, browser encryption and malware scanning from the server instead of asking. In anonymous (Ghost) mode it never recommends requiring login, leaves `HTTPS_ENABLED` as it is (onion addresses use `http://`), and recommends rate limits of at least 100 uploads and 500 downloads an hour without ever lowering your current ones, since all Tor visitors share one budget. When malware scanning rejects files it can't scan, the recommended maximum file size stays within the scanner's limit. It also never exceeds the recommended storage quota.
   - Login sessions: shorter on more exposed servers (24 hours on a LAN, 12 on a WAN, 8 on the internet). It used to recommend the opposite.
   - The storage quota recommendation is 75% of the space you enter, instead of 80%.
   - The proxy advice now says to allow long transfers (up to 6 hours), instead of a timeout based on the old chunk-size formula.
 
 ### Deprecated
 
-- `CHUNK_SIZE` is retired. The server has always chosen the chunk size per upload (5 MB under 100 MB, 10 MB up to 1 GB, 20 MB above), so the setting had no effect. It is still accepted so existing deployments start, with a warning in the log; remove it at your convenience. Its old 1–50 MB range check no longer applies. `/api/config` keeps reporting `chunk_size` (always 10 MB) for clients that read it; the size to split a file by is the `chunk_size` in the `/api/upload/init` response.
+- `CHUNK_SIZE` is retired. Since late 2025 the server has chosen the chunk size per upload (5 MB under 100 MB, 10 MB up to 1 GB, 20 MB above), so the setting had no effect. It is still accepted so existing deployments start, with a warning in the log; remove it at your convenience. Its old 1–50 MB range check no longer applies. `/api/config` keeps reporting `chunk_size` (always 10 MB) for clients that read it; the size to split a file by is the `chunk_size` in the `/api/upload/init` response.
 
 ### Fixed
 
