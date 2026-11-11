@@ -352,7 +352,10 @@ export interface PublicConfig {
   maxFileSize: number;
   /** Threshold for chunked uploads in bytes */
   chunkUploadThreshold: number;
-  /** Chunk size for chunked uploads in bytes */
+  /**
+   * @deprecated Always 10 MiB. The server picks the chunk size per upload
+   * (5, 10 or 20 MiB by file size) and returns it when the upload starts.
+   */
   chunkSize: number;
   /** Maximum expiration hours allowed */
   maxExpirationHours: number;

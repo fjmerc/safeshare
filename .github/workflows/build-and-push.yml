@@ -442,6 +442,9 @@ jobs:
   # tests fail instead of skipping the browser runs if Playwright is missing.
   js-test:
     runs-on: ubuntu-latest
+    # Normally about a minute. Without a limit, a stalled apt/browser download
+    # on the runner hangs for GitHub's 6-hour default.
+    timeout-minutes: 30
     permissions:
       contents: read
     env:

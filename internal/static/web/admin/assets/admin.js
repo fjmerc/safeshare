@@ -1933,17 +1933,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentRecommendations = null;
     let lastAnalysisRequest = null;
 
-    // Show/hide CDN timeout field based on checkbox
-    document.getElementById('usingCDN')?.addEventListener('change', (e) => {
-        const cdnTimeoutGroup = document.getElementById('cdnTimeoutGroup');
-        if (e.target.checked) {
-            cdnTimeoutGroup.style.display = 'block';
-        } else {
-            cdnTimeoutGroup.style.display = 'none';
-            document.getElementById('cdnTimeout').value = '0';
-        }
-    });
-
     // Configuration Assistant form submission
     document.getElementById('configAssistantForm')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1957,9 +1946,7 @@ document.addEventListener('DOMContentLoaded', () => {
             deployment_type: formData.get('deployment_type'),
             user_load: formData.get('user_load'),
             storage_capacity: parseInt(formData.get('storage_capacity')) || 0,
-            using_cdn: document.getElementById('usingCDN').checked,
-            cdn_timeout: parseInt(formData.get('cdn_timeout')) || 0,
-            encryption_enabled: document.getElementById('encryptionEnabled').checked
+            using_cdn: document.getElementById('usingCDN').checked
         };
 
         try {
@@ -2019,7 +2006,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Prepare storage settings update
             const storageFormData = new FormData();
             storageFormData.append('quota_gb', recommendations.quota_limit_gb);
-            storageFormData.append('max_file_size_mb', Math.max(1, Math.round(recommendations.max_file_size / (1024 * 1024))));
+            storageFormData.append('max_file_size_mb', Math.max(1, Math.floor(recommendations.max_file_size / (1024 * 1024))));
             storageFormData.append('default_expiration_hours', recommendations.default_expiration_hours);
             storageFormData.append('max_expiration_hours', recommendations.max_expiration_hours);
 
@@ -2143,27 +2130,6 @@ function displayRecommendations(data) {
 
     // Performance Settings (require restart)
     const performanceComparisons = [
-        {
-            setting: 'Chunk Size',
-            current: formatBytes(current_config.chunk_size),
-            recommended: formatBytes(recommendations.chunk_size),
-            impact: analysis.impacts.chunk_size || 'Optimized for network speed',
-            changed: current_config.chunk_size !== recommendations.chunk_size
-        },
-        {
-            setting: 'Read Timeout',
-            current: current_config.read_timeout + ' seconds',
-            recommended: recommendations.read_timeout + ' seconds',
-            impact: analysis.impacts.read_timeout || 'Based on chunk size and upload speed',
-            changed: current_config.read_timeout !== recommendations.read_timeout
-        },
-        {
-            setting: 'Write Timeout',
-            current: current_config.write_timeout + ' seconds',
-            recommended: recommendations.write_timeout + ' seconds',
-            impact: analysis.impacts.write_timeout || 'Matched to read timeout',
-            changed: current_config.write_timeout !== recommendations.write_timeout
-        },
         {
             setting: 'Chunked Upload Threshold',
             current: formatBytes(current_config.chunked_upload_threshold),
@@ -2302,13 +2268,6 @@ function generateEnvFileContent(recommendations) {
     envLines.push('# ========================================');
     envLines.push('# SafeShare Performance Settings');
     envLines.push('# ========================================');
-    envLines.push('');
-    envLines.push('# Chunk Size for Uploads');
-    envLines.push(`CHUNK_SIZE=${recommendations.chunk_size}`);
-    envLines.push('');
-    envLines.push('# HTTP Timeouts (seconds)');
-    envLines.push(`READ_TIMEOUT=${recommendations.read_timeout}`);
-    envLines.push(`WRITE_TIMEOUT=${recommendations.write_timeout}`);
     envLines.push('');
     envLines.push('# Chunked Upload Configuration');
     envLines.push(`CHUNKED_UPLOAD_THRESHOLD=${recommendations.chunked_upload_threshold}`);

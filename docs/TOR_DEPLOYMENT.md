@@ -31,7 +31,7 @@ services:
       - WRITE_TIMEOUT=300
       # --- Limits: behind Tor every visitor shares one address, so each
       #     per-IP limit below is a ceiling for the whole service ---
-      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (chunks: 10x this)
+      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (each may be MAX_FILE_SIZE)
       - RATE_LIMIT_DOWNLOAD=500        # downloads/hour for everyone
       - MAX_ENCRYPTED_DOWNLOADS_PER_IP=0
       - MAX_INFLIGHT_PER_IP_PER_FILE=0
@@ -149,7 +149,7 @@ This limitation is inherent to not being able to distinguish visitors behind a s
 
 ### Upload and download rate limits
 
-`RATE_LIMIT_UPLOAD` (default 10/hour) and `RATE_LIMIT_DOWNLOAD` (default 50/hour) are counted per apparent client IP. Chunked uploads are allowed 10× the upload limit in chunk and completion requests, and status polling 600×. Claim-code lookups (`/api/claim/{code}/info`, which the download page makes before each download) are allowed 2× the download limit. Behind Tor all of these are one budget for every visitor combined. A single 1 GB upload in 10 MB chunks uses 100 chunk requests, so with the defaults it would use the whole service's chunk budget for an hour. Set these as service-wide ceilings, for example `RATE_LIMIT_UPLOAD=100` and `RATE_LIMIT_DOWNLOAD=500`, and use `QUOTA_LIMIT_GB` to cap disk use.
+`RATE_LIMIT_UPLOAD` (default 10/hour) and `RATE_LIMIT_DOWNLOAD` (default 50/hour) are counted per apparent client IP. Chunked uploads get enough chunk requests for that many uploads of `MAX_FILE_SIZE` each (plus a quarter and 10 more for retries), 10× the upload limit in completion requests, and 600× in status polling. Claim-code lookups (`/api/claim/{code}/info`, which the download page makes before each download) are allowed 2× the download limit. Behind Tor all of these are one budget for every visitor combined. With the default of 10 uploads an hour, the whole service can take 10 uploads an hour between all visitors. Set these as service-wide ceilings, for example `RATE_LIMIT_UPLOAD=100` and `RATE_LIMIT_DOWNLOAD=500`, and use `QUOTA_LIMIT_GB` to cap disk use.
 
 ### Login lockout and hidden services
 
@@ -281,16 +281,12 @@ torsocks curl -s -F "file=@test.txt" http://<onion>.onion/api/upload
 |--------|--------|------------|
 | **Latency** | Tor adds 200-500ms per hop (3 hops = 0.6-1.5s) | Expected — no mitigation needed |
 | **Throughput** | Tor circuits typically sustain 1-5 MB/s | Set reasonable file size limits |
-| **Large files** | Uploads >100MB may time out or be slow | Consider increasing `READ_TIMEOUT` and `WRITE_TIMEOUT` |
-| **Chunked uploads** | Work normally over Tor | Smaller chunk sizes (5MB) may be more reliable |
+| **Large files** | Uploads >100MB are slow | Set a reasonable `MAX_FILE_SIZE`. SafeShare gives each upload and download a deadline based on its size, so you don't need to raise timeouts |
+| **Chunked uploads** | Work normally over Tor | The server picks the chunk size per upload (5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above) |
 
-### Recommended timeout settings for Tor
+### Timeout settings for Tor
 
-```yaml
-environment:
-  - READ_TIMEOUT=300    # 5 minutes
-  - WRITE_TIMEOUT=300   # 5 minutes
-```
+You don't need to change timeouts for Tor. Each upload and download gets a deadline from its size (at least 64 KiB/s plus 60 seconds, capped at 6 hours). `READ_TIMEOUT` and `WRITE_TIMEOUT` only act as a minimum and as the limit for ordinary requests.
 
 ## Backup Considerations
 
@@ -327,8 +323,7 @@ SafeShare has not had an independent security audit. Sources facing a government
 - Include `http://` prefix (not `https://` — Tor already encrypts end-to-end)
 
 ### Slow uploads/downloads
-- Increase `READ_TIMEOUT` and `WRITE_TIMEOUT` to 300+ seconds
-- Reduce `CHUNK_SIZE` to 5MB for more reliable chunked uploads
+- Transfer deadlines scale with file size, so a slow circuit doesn't need timeout changes. A stalled upload (no data for 60 seconds) is cut off with `408 UPLOAD_TIMEOUT`; retry it
 - Tor throughput varies — retry at different times of day
 
 ### Lost .onion address

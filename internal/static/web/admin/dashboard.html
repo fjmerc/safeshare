@@ -1232,19 +1232,7 @@
                             <small>Check if SafeShare is behind a Content Delivery Network</small>
                         </div>
 
-                        <div class="form-group" id="cdnTimeoutGroup" style="display: none;">
-                            <label for="cdnTimeout">CDN Timeout Limit (seconds)</label>
-                            <input type="number" id="cdnTimeout" name="cdn_timeout" min="0" step="1" value="0">
-                            <small>Enter CDN timeout in seconds (e.g., 30, 60, 100). Leave 0 if unknown. Common values: Cloudflare Free=100s, Most CDNs=30-60s</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="encryptionEnabled">
-                                <input class="check-inline" type="checkbox" id="encryptionEnabled" name="encryption_enabled">
-                                Encryption at Rest Enabled (ENCRYPTION_KEY set)
-                            </label>
-                            <small>Check if you have AES-256-GCM encryption enabled with ENCRYPTION_KEY environment variable</small>
-                        </div>
+                        <p class="help-text">Anonymous mode, browser encryption and malware scanning are read from this server's settings.</p>
 
                         <div class="button-group">
                             <button type="submit" class="btn-primary">

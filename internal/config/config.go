@@ -127,7 +127,6 @@ type Config struct {
 	EnforceAPITokenScopes       bool // ENFORCE_API_TOKEN_SCOPES (default true): API tokens may only use routes their scopes allow. false skips the scope checks; account-security routes stay browser-session only either way
 	ChunkedUploadEnabled        bool
 	ChunkedUploadThreshold      int64
-	ChunkSize                   int64
 	PartialUploadExpiryHours    int
 	MaxFilesPerBundle           int // most files one bundle may hold (MAX_FILES_PER_BUNDLE, 1-100)
 	ReadTimeoutSeconds          int
@@ -186,7 +185,6 @@ func Load() (*Config, error) {
 		EnforceAPITokenScopes:       getEnvBool("ENFORCE_API_TOKEN_SCOPES", true),
 		ChunkedUploadEnabled:        getEnvBool("CHUNKED_UPLOAD_ENABLED", true),
 		ChunkedUploadThreshold:      getEnvInt64("CHUNKED_UPLOAD_THRESHOLD", 104857600), // 100MB
-		ChunkSize:                   getEnvInt64("CHUNK_SIZE", 10485760),                // 10MB (was 5MB)
 		PartialUploadExpiryHours:    getEnvInt("PARTIAL_UPLOAD_EXPIRY_HOURS", 24),
 		MaxFilesPerBundle:           getEnvInt("MAX_FILES_PER_BUNDLE", 10),
 		ReadTimeoutSeconds:          getEnvInt("READ_TIMEOUT", 120),  // 2 minutes (was 15s)
@@ -289,6 +287,13 @@ func Load() (*Config, error) {
 	}
 	if cfg.MaxFilesPerBundle < 1 || cfg.MaxFilesPerBundle > 100 {
 		return nil, fmt.Errorf("configuration validation failed: MAX_FILES_PER_BUNDLE must be between 1 and 100, got %d", cfg.MaxFilesPerBundle)
+	}
+
+	// CHUNK_SIZE is retired: the server sizes chunks itself, by file size
+	// (utils.CalculateOptimalChunkSize). It's still accepted, so an old
+	// setting can't stop the server from starting.
+	if v, ok := os.LookupEnv("CHUNK_SIZE"); ok && v != "" {
+		slog.Warn("CHUNK_SIZE is no longer used and can be removed: chunked uploads use 5 MB chunks below 100 MB, 10 MB up to 1 GB and 20 MB above, chosen per file")
 	}
 
 	if cfg.Features.IsMalwareScanEnabled() && cfg.ClamAV.AllowUnverified {
@@ -881,10 +886,6 @@ func (c *Config) validateEncryptionKey() error {
 
 // validateChunkedUploadSettings validates chunked upload configuration parameters
 func (c *Config) validateChunkedUploadSettings() error {
-	if c.ChunkSize < 1048576 || c.ChunkSize > 52428800 {
-		return fmt.Errorf("CHUNK_SIZE must be between 1MB (1048576) and 50MB (52428800), got %d", c.ChunkSize)
-	}
-
 	if c.ChunkedUploadThreshold < 0 {
 		return fmt.Errorf("CHUNKED_UPLOAD_THRESHOLD must be non-negative, got %d", c.ChunkedUploadThreshold)
 	}

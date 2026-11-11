@@ -44,73 +44,39 @@ Chunks are stored on the filesystem at:
 |---------------------|---------|-------------|
 | `CHUNKED_UPLOAD_ENABLED` | `true` | Enable/disable chunked uploads |
 | `CHUNKED_UPLOAD_THRESHOLD` | `104857600` (100MB) | Files >= this size use chunked upload |
-| `CHUNK_SIZE` | `10485760` (10MB) | Size of each chunk |
 | `PARTIAL_UPLOAD_EXPIRY_HOURS` | `24` | Hours before abandoned uploads are cleaned up |
-| `READ_TIMEOUT` | `120` | HTTP read timeout in seconds |
-| `WRITE_TIMEOUT` | `120` | HTTP write timeout in seconds |
+| `READ_TIMEOUT` | `120` | HTTP read timeout in seconds for ordinary requests. Also the minimum deadline for chunk uploads and downloads |
+| `WRITE_TIMEOUT` | `120` | HTTP write timeout in seconds for ordinary requests. Also the minimum deadline for chunk uploads and downloads |
+
+`CHUNK_SIZE` is retired. The server picks the chunk size for each upload from the file size: 5 MiB for files under 100 MiB, 10 MiB under 1 GiB, and 20 MiB above that. If `CHUNK_SIZE` is still set, the server starts normally, ignores it, and logs a warning. You can remove it.
 | `ASSEMBLY_WORKERS_MAX` | `10` | Max concurrent assembly workers (SH-1.4); `/complete` returns `503 ASSEMBLY_BUSY` beyond this |
 | `ASSEMBLY_LEASE_TTL` | `2m` | How long an assembly worker's lease is valid before it must renew (heartbeat) or be eligible for takeover by recovery (ADR-016). Bounds: 30s–30m. |
 | `ASSEMBLY_MAX_ATTEMPTS` | `5` | Max times a single chunked upload will be (re)attempted — via retry after a transient failure, or takeover after a crashed/stalled worker — before it's marked terminally failed with `ASSEMBLY_RETRIES_EXHAUSTED` (ADR-016). Bounds: 1–20. |
 | `ASSEMBLY_SHUTDOWN_GRACE` | `30s` | How long graceful shutdown waits for in-progress assembly workers to finish (or yield their lease) before asking them to abandon their current step (ADR-016). Bounds: 5s–5m. |
 
-### ⚠️ HTTP Timeout Configuration for Very Large Files or Slow Networks
+### Chunk Size and Timeouts for Large Files or Slow Networks
 
-**The new defaults (120s timeouts, 10MB chunks) work well for most use cases, including multi-GB files over typical networks. However, if you have very slow upload speeds (<1 MB/s) or use very large chunks, you may need to adjust these settings.**
+You don't need to tune chunk size or timeouts for large files or slow networks.
 
-**The Problem (mostly solved by v2.3.0+ defaults):**
-- Previous default HTTP timeouts were **15 seconds**
-- Large chunks (50MB) over slow networks could take **longer than 15 seconds** to upload
-- This caused **HTTP 413 (Request Entity Too Large)** errors or **ERR_CONNECTION_RESET** errors
-- **Now fixed:** Defaults are 120s timeouts with 10MB chunks
+- **Chunk size is automatic.** The server picks it per upload from the file size (5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above) and returns it as `chunk_size` in the `/api/upload/init` response. Clients must split the file by that value.
+- **Each chunk request gets its own deadline** based on its size, assuming at least 64 KiB/s plus 60 seconds, capped at 6 hours. `READ_TIMEOUT` and `WRITE_TIMEOUT` act only as a minimum for this deadline and as the limit for ordinary requests.
+- **A stalled upload is still cut off.** A request body that sends nothing for 60 seconds, or averages under 4 KiB/s, is rejected with `408 UPLOAD_TIMEOUT`.
 
-**Solution Options:**
+**Reverse proxy:** The proxy in front of SafeShare must accept request bodies at least as large as one chunk (20 MiB) and let each chunk request run for as long as SafeShare allows it: about 6 minutes for a 20 MiB chunk at the 64 KiB/s floor. Downloads and single-request uploads of large files can run up to 6 hours, so give those routes the longer timeout. Examples:
+- **nginx**: `client_max_body_size 100m;`, `proxy_read_timeout 6h;` and `proxy_send_timeout 6h;`
+- **Apache**: `LimitRequestBody 104857600` and `ProxyTimeout 21600`
+- **Traefik**: `respondingTimeouts.readTimeout=0` (no limit) on the entrypoint
 
-**Option 1: Increase Timeouts (Recommended for Large Files)**
-```bash
-docker run -d \
-  -e READ_TIMEOUT=120 \
-  -e WRITE_TIMEOUT=120 \
-  -e CHUNK_SIZE=10485760 \
-  # ... other options
-  safeshare:latest
-```
-- `READ_TIMEOUT=120` allows 2 minutes per chunk upload
-- `CHUNK_SIZE=10485760` (10MB) balances speed and reliability
-- Suitable for multi-GB files over typical network speeds
+See `docs/REVERSE_PROXY.md` for full configurations.
 
-**Option 2: Smaller Chunks (Quick Fix)**
-```bash
-docker run -d \
-  -e CHUNK_SIZE=5242880 \
-  # ... other options (default 15s timeouts)
-  safeshare:latest
-```
-- 5MB chunks upload faster, fit within 15-second timeout
-- More chunks = more overhead, but works with default timeouts
-
-**Option 3: Reverse Proxy Considerations**
-If running behind nginx/Apache/Traefik, also configure:
-- **nginx**: `client_max_body_size 100m;` and `proxy_read_timeout 120s;`
-- **Apache**: `LimitRequestBody 104857600` and `ProxyTimeout 120`
-- **Traefik**: `respondingTimeouts.readTimeout=120s`
-
-**Recommended Production Config for Large Files (up to 8GB):**
+**Example production config for large files (up to 8GB):**
 ```bash
 docker run -d --name safeshare -p 8080:8080 \
   -e MAX_FILE_SIZE=8589934592 \
-  -e CHUNK_SIZE=10485760 \
-  -e READ_TIMEOUT=120 \
-  -e WRITE_TIMEOUT=120 \
   -v safeshare-data:/app/data \
   -v safeshare-uploads:/app/uploads \
   safeshare:latest
 ```
-
-**How to Calculate Required Timeout:**
-```
-Required Timeout (seconds) = (CHUNK_SIZE in MB) / (Upload Speed in MB/s) × 2
-```
-Example: 10MB chunk at 1MB/s = 10/1 × 2 = 20 seconds minimum
 
 ## API Endpoints
 
@@ -123,27 +89,29 @@ Initialize a chunked upload session.
 {
   "filename": "large-file.zip",
   "total_size": 26214400000,
-  "chunk_size": 5242880,
   "expires_in_hours": 24,
   "max_downloads": 5,
   "password": "optional"
 }
 ```
 
+The server chooses the chunk size. A `chunk_size` in the request is ignored.
+
 **Response:**
 ```json
 {
   "upload_id": "550e8400-e29b-41d4-a716-446655440000",
-  "chunk_size": 5242880,
-  "total_chunks": 5000,
+  "chunk_size": 20971520,
+  "total_chunks": 1250,
   "expires_at": "2025-11-07T12:00:00Z"
 }
 ```
 
+Split the file by the `chunk_size` in this response. Every chunk except the last must be exactly that size. The last chunk holds the remainder.
+
 **Validation:**
 - `total_size` <= `MAX_FILE_SIZE`
-- `chunk_size` between 1MB and 50MB
-- `total_chunks` (calculated) <= 10,000
+- `total_chunks` (calculated from the chosen chunk size) <= 10,000
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
 - Checks disk space and quota before accepting
 
@@ -276,21 +244,21 @@ The official Go, TypeScript, and Python SDKs, and the bundled web client, automa
 ### curl Example
 
 ```bash
-# 1. Initialize upload (15MB file, 3 chunks of 5MB each)
+# 1. Initialize upload (15MB file; the server chooses the chunk size)
 RESPONSE=$(curl -s -X POST http://localhost:8080/api/upload/init \
   -H "Content-Type: application/json" \
   -d '{
     "filename": "test-file.dat",
     "total_size": 15728640,
-    "chunk_size": 5242880,
     "expires_in_hours": 24,
     "max_downloads": 5
   }')
 
 UPLOAD_ID=$(echo $RESPONSE | jq -r '.upload_id')
-echo "Upload ID: $UPLOAD_ID"
+CHUNK_SIZE=$(echo $RESPONSE | jq -r '.chunk_size')   # 5242880 for a 15MB file
+echo "Upload ID: $UPLOAD_ID, chunk size: $CHUNK_SIZE"
 
-# 2. Create test chunks
+# 2. Create test chunks (3 chunks of 5MB, matching chunk_size above)
 dd if=/dev/urandom of=/tmp/chunk0 bs=1M count=5
 dd if=/dev/urandom of=/tmp/chunk1 bs=1M count=5
 dd if=/dev/urandom of=/tmp/chunk2 bs=1M count=5
@@ -336,7 +304,7 @@ Logs example:
 ## Security
 
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Rate limiting per client IP (per hour, based on `RATE_LIMIT_UPLOAD`): `/init` at the upload limit, `/chunk` and `/complete` at 10× it, and `/status` at 600× it (6,000/hour by default - well above the ~1,800/hour a client polling every 2 seconds sends)
+- Rate limiting per client IP (per hour, based on `RATE_LIMIT_UPLOAD`): `/init` at the upload limit, `/chunk` at enough chunks for that many `MAX_FILE_SIZE` uploads plus a quarter and 10 more for retries (never under 10× the upload limit), `/complete` at 10× it, and `/status` at 600× it (6,000/hour by default - well above the ~1,800/hour a client polling every 2 seconds sends)
 - A request body that stops arriving for 60 seconds, or averages under 4 KiB/s, is cut off with `408 UPLOAD_TIMEOUT` rather than held open until the full transfer deadline
 - Validates:
   - upload_id (UUID format)
@@ -406,20 +374,17 @@ class ChunkedUploader {
   async upload(file, options = {}) {
     const { expiresInHours = 24, maxDownloads = 0, password = null } = options;
 
-    // Fetch server config
-    const config = await this.fetchConfig();
-    const chunkSize = config.chunk_size || 10 * 1024 * 1024;
-
-    // Initialize upload
-    const initResponse = await this.initUpload(file, chunkSize, expiresInHours, maxDownloads, password);
+    // Initialize upload. The server chooses the chunk size.
+    const initResponse = await this.initUpload(file, expiresInHours, maxDownloads, password);
     this.uploadId = initResponse.upload_id;
     this.totalChunks = initResponse.total_chunks;
+    this.chunkSize = initResponse.chunk_size;
 
     // Persist for resume capability
     this.saveProgress(file.name);
 
-    // Upload chunks with concurrency control
-    const chunks = this.createChunks(file, chunkSize);
+    // Upload chunks with concurrency control, split by the server's chunk_size
+    const chunks = this.createChunks(file, this.chunkSize);
     await this.uploadChunksWithConcurrency(chunks);
 
     if (this.isCancelled) {
@@ -433,17 +398,10 @@ class ChunkedUploader {
     return result;
   }
 
-  async fetchConfig() {
-    const response = await fetch(`${this.baseUrl}/api/config`);
-    if (!response.ok) throw new Error('Failed to fetch config');
-    return response.json();
-  }
-
-  async initUpload(file, chunkSize, expiresInHours, maxDownloads, password) {
+  async initUpload(file, expiresInHours, maxDownloads, password) {
     const body = {
       filename: file.name,
       total_size: file.size,
-      chunk_size: chunkSize,
       expires_in_hours: expiresInHours,
       max_downloads: maxDownloads,
     };
@@ -637,7 +595,8 @@ class ChunkedUploader {
     this.totalChunks = savedProgress.totalChunks;
     this.chunksUploaded = new Set(savedProgress.chunksUploaded);
 
-    // Verify upload still exists on server
+    // Verify upload still exists on server and read its chunk size
+    let status;
     try {
       const response = await fetch(
         `${this.baseUrl}/api/upload/status/${this.uploadId}`,
@@ -646,15 +605,16 @@ class ChunkedUploader {
       if (!response.ok) {
         throw new Error('Upload expired');
       }
+      status = await response.json();
     } catch {
       // Upload expired, start fresh
       this.clearProgress(file.name);
       return this.upload(file);
     }
 
-    const config = await this.fetchConfig();
-    const chunkSize = config.chunk_size || 10 * 1024 * 1024;
-    const chunks = this.createChunks(file, chunkSize);
+    // Split by the chunk_size the server chose for this upload
+    this.chunkSize = status.chunk_size;
+    const chunks = this.createChunks(file, this.chunkSize);
 
     await this.uploadChunksWithConcurrency(chunks);
 
@@ -758,19 +718,16 @@ class ChunkedUploader:
         file_size = file_path.stat().st_size
         filename = file_path.name
 
-        # Get server config
-        config = self._get_config()
-        chunk_size = config.get('chunk_size', 10 * 1024 * 1024)
-
-        # Initialize upload
+        # Initialize upload. The server chooses the chunk size.
         init_data = self._init_upload(
-            filename, file_size, chunk_size,
+            filename, file_size,
             expires_in_hours, max_downloads, password
         )
         upload_id = init_data['upload_id']
         total_chunks = init_data['total_chunks']
+        chunk_size = init_data['chunk_size']
 
-        # Create chunk list
+        # Create chunk list, split by the server's chunk_size
         chunks = self._create_chunks(file_path, chunk_size)
         chunks_uploaded = set()
 
@@ -808,16 +765,10 @@ class ChunkedUploader:
         result = self._complete_upload(upload_id)
         return result
 
-    def _get_config(self) -> dict:
-        resp = self.session.get(f"{self.base_url}/api/config")
-        resp.raise_for_status()
-        return resp.json()
-
     def _init_upload(
         self,
         filename: str,
         total_size: int,
-        chunk_size: int,
         expires_in_hours: int,
         max_downloads: int,
         password: Optional[str],
@@ -825,7 +776,6 @@ class ChunkedUploader:
         data = {
             'filename': filename,
             'total_size': total_size,
-            'chunk_size': chunk_size,
             'expires_in_hours': expires_in_hours,
             'max_downloads': max_downloads,
         }
@@ -988,21 +938,14 @@ func (u *ChunkedUploader) Upload(filePath string, expiresInHours int) (*Complete
 	totalSize := stat.Size()
 	filename := filepath.Base(filePath)
 
-	// Get server config
-	config, err := u.getConfig()
-	if err != nil {
-		return nil, fmt.Errorf("get config: %w", err)
-	}
-	chunkSize := config["chunk_size"].(float64)
-
-	// Initialize upload
-	initResp, err := u.initUpload(filename, totalSize, int64(chunkSize), expiresInHours)
+	// Initialize upload. The server chooses the chunk size.
+	initResp, err := u.initUpload(filename, totalSize, expiresInHours)
 	if err != nil {
 		return nil, fmt.Errorf("init upload: %w", err)
 	}
 
-	// Upload chunks with concurrency
-	err = u.uploadChunks(file, initResp.UploadID, initResp.TotalChunks, int64(chunkSize), totalSize)
+	// Upload chunks with concurrency, split by the server's chunk_size
+	err = u.uploadChunks(file, initResp.UploadID, initResp.TotalChunks, initResp.ChunkSize, totalSize)
 	if err != nil {
 		return nil, fmt.Errorf("upload chunks: %w", err)
 	}
@@ -1016,25 +959,10 @@ func (u *ChunkedUploader) Upload(filePath string, expiresInHours int) (*Complete
 	return result, nil
 }
 
-func (u *ChunkedUploader) getConfig() (map[string]interface{}, error) {
-	resp, err := u.Client.Get(u.BaseURL + "/api/config")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var config map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
-		return nil, err
-	}
-	return config, nil
-}
-
-func (u *ChunkedUploader) initUpload(filename string, totalSize, chunkSize int64, expiresInHours int) (*InitResponse, error) {
+func (u *ChunkedUploader) initUpload(filename string, totalSize int64, expiresInHours int) (*InitResponse, error) {
 	body := map[string]interface{}{
 		"filename":         filename,
 		"total_size":       totalSize,
-		"chunk_size":       chunkSize,
 		"expires_in_hours": expiresInHours,
 		"max_downloads":    0,
 	}
@@ -1220,7 +1148,6 @@ FILE_PATH="$1"
 EXPIRES_IN_HOURS="${2:-24}"
 BASE_URL="${SAFESHARE_URL:-http://localhost:8080}"
 API_TOKEN="${SAFESHARE_TOKEN}"
-CONCURRENT_UPLOADS=3
 
 if [ -z "$FILE_PATH" ]; then
     echo "Usage: $0 <file_path> [expires_in_hours]"
@@ -1238,19 +1165,8 @@ FILE_SIZE=$(stat -f%z "$FILE_PATH" 2>/dev/null || stat -c%s "$FILE_PATH" 2>/dev/
 
 echo "File: $FILENAME ($FILE_SIZE bytes)"
 
-# Fetch server config
-echo "Fetching server config..."
-CONFIG=$(curl -s "$BASE_URL/api/config")
-CHUNK_SIZE=$(echo "$CONFIG" | jq -r '.chunk_size // 10485760')
-
-echo "Chunk size: $CHUNK_SIZE bytes"
-
-# Initialize upload
+# Initialize upload. The server chooses the chunk size and returns it.
 echo "Initializing upload..."
-AUTH_HEADER=""
-if [ -n "$API_TOKEN" ]; then
-    AUTH_HEADER="Authorization: Bearer $API_TOKEN"
-fi
 
 INIT_RESPONSE=$(curl -s -X POST "$BASE_URL/api/upload/init" \
     -H "Content-Type: application/json" \
@@ -1258,13 +1174,13 @@ INIT_RESPONSE=$(curl -s -X POST "$BASE_URL/api/upload/init" \
     -d "{
         \"filename\": \"$FILENAME\",
         \"total_size\": $FILE_SIZE,
-        \"chunk_size\": $CHUNK_SIZE,
         \"expires_in_hours\": $EXPIRES_IN_HOURS,
         \"max_downloads\": 0
     }")
 
 UPLOAD_ID=$(echo "$INIT_RESPONSE" | jq -r '.upload_id')
 TOTAL_CHUNKS=$(echo "$INIT_RESPONSE" | jq -r '.total_chunks')
+CHUNK_SIZE=$(echo "$INIT_RESPONSE" | jq -r '.chunk_size')
 
 if [ "$UPLOAD_ID" = "null" ] || [ -z "$UPLOAD_ID" ]; then
     echo "Error: Failed to initialize upload"
@@ -1274,14 +1190,15 @@ fi
 
 echo "Upload ID: $UPLOAD_ID"
 echo "Total chunks: $TOTAL_CHUNKS"
+echo "Chunk size: $CHUNK_SIZE bytes"
 
 # Create temporary directory for chunks
 CHUNK_DIR=$(mktemp -d)
-trap "rm -rf $CHUNK_DIR" EXIT
+trap 'rm -rf "$CHUNK_DIR"' EXIT
 
 # Split file into chunks
 echo "Splitting file into chunks..."
-split -b $CHUNK_SIZE "$FILE_PATH" "$CHUNK_DIR/chunk_"
+split -b "$CHUNK_SIZE" "$FILE_PATH" "$CHUNK_DIR/chunk_"
 
 # Upload chunks with progress
 echo "Uploading chunks..."
@@ -1378,7 +1295,7 @@ Test results:
 | `CHUNK_TOO_LARGE` | 413 | Chunk exceeds size limit |
 | `UPLOAD_TIMEOUT` | 408 | The chunk's body stopped arriving (no data for 60 seconds, or under 4 KiB/s on average); retry the chunk |
 | `INSUFFICIENT_STORAGE` | 507 | Not enough disk space to store the chunk |
-| `CHUNK_SIZE_MISMATCH` | 400 | Chunk size doesn't match expected |
+| `CHUNK_SIZE_MISMATCH` | 400 | Chunk size doesn't match the `chunk_size` returned by `/init` (the last chunk must be the exact remainder) |
 | `UPLOAD_NOT_ACCEPTING` | 409 | Upload is being assembled (or assembly failed); chunks can no longer be written |
 | `CHUNK_CONFLICT` | 409 | Chunk was already uploaded with different content |
 | `MISSING_CHUNKS` | 400 | `/complete` called before all chunks arrived (`missing_chunks` lists them) |
@@ -1421,118 +1338,58 @@ The official SDKs and the bundled web client automatically retry a `retryable: t
 - Browser console shows "Request Entity Too Large"
 
 **Causes:**
-1. **HTTP timeout too short** - Default 15-second timeout
-2. **Reverse proxy body size limit** - nginx/Apache/Traefik
-3. **Network too slow** - Chunks take longer than timeout to upload
+1. **Reverse proxy body size limit** - nginx/Apache/Traefik rejects the chunk before it reaches SafeShare
+2. **Reverse proxy timeout** - the proxy gives up on a slow chunk
+3. **Client not splitting by `chunk_size`** - a chunk larger than the `chunk_size` from `/init` is rejected
 
 **Solutions:**
 
-**1. Increase HTTP Timeouts (Most Common Fix)**
-```bash
-docker run -d \
-  -e READ_TIMEOUT=120 \
-  -e WRITE_TIMEOUT=120 \
-  safeshare:latest
-```
+**1. Split by the `chunk_size` from `/init`.** The server picks 5, 10 or 20 MiB depending on file size. Don't use a fixed size or the value from `/api/config`.
 
-**2. Reduce Chunk Size**
-```bash
-docker run -d \
-  -e CHUNK_SIZE=5242880 \
-  safeshare:latest
-```
-
-**3. Configure Reverse Proxy** (if applicable)
+**2. Configure the reverse proxy** (if applicable). It must accept bodies of at least 20 MiB, let a chunk request run for several minutes, and let downloads and single-request uploads run for up to 6 hours:
 ```nginx
 # nginx
 client_max_body_size 100m;
-proxy_read_timeout 120s;
-proxy_send_timeout 120s;
+proxy_read_timeout 6h;
+proxy_send_timeout 6h;
 ```
+
+You don't need to raise `READ_TIMEOUT` or `WRITE_TIMEOUT` for large chunks. SafeShare gives each chunk request a deadline based on its size.
 
 ### ERR_CONNECTION_RESET or ERR_EMPTY_RESPONSE
 
 **Symptoms:**
 - Browser shows "connection reset" errors
 - Some chunks upload successfully, then failures start
-- Server logs show request duration exactly 15 seconds
 
-**Cause:** HTTP timeout reached before chunk upload completes
+**Cause:** Usually a reverse proxy or load balancer closing the connection before the chunk finishes. SafeShare itself allows at least 64 KiB/s plus 60 seconds per chunk request, capped at 6 hours.
 
-**Solution:** Increase `READ_TIMEOUT` and `WRITE_TIMEOUT`:
-```bash
-docker run -d \
-  -e READ_TIMEOUT=180 \
-  -e WRITE_TIMEOUT=180 \
-  safeshare:latest
-```
+**Solution:** Raise the proxy's read, send and idle timeouts (see above). If the connection stalls completely (no data for 60 seconds), SafeShare returns `408 UPLOAD_TIMEOUT`; retry the chunk.
 
 ### Upload Initialization Succeeds but All Chunks Fail
 
 **Symptoms:**
 - `/api/upload/init` returns success with upload_id
 - All chunk uploads fail with 413 or timeouts
-- File size > MAX_FILE_SIZE but init didn't reject it
 
-**Cause:** `MAX_FILE_SIZE` was increased via admin settings but timeouts weren't
+**Cause:** Almost always the reverse proxy: its body size limit or timeout is lower than one chunk needs.
 
-**Solution:** Match timeouts to file size:
-```bash
-# For 8GB files with 10MB chunks at ~5MB/s
-# Each chunk takes ~2 seconds, add 2x safety margin = 4 seconds
-# Use 120 seconds to be safe
-docker run -d \
-  -e MAX_FILE_SIZE=8589934592 \
-  -e CHUNK_SIZE=10485760 \
-  -e READ_TIMEOUT=120 \
-  -e WRITE_TIMEOUT=120 \
-  safeshare:latest
-```
+**Solution:** Check the proxy limits above. Test with a direct request to SafeShare (bypassing the proxy) to confirm.
 
-### Calculating Appropriate Timeout
+### Checking Your Upload Speed
 
-**Formula:**
-```
-Timeout (seconds) = (CHUNK_SIZE in MB / Upload Speed in MB/s) × Safety Factor
-```
-
-**Safety Factor:** 2-3x (accounts for network variance, processing overhead)
-
-**Examples:**
-| Chunk Size | Upload Speed | Calculation | Recommended Timeout |
-|-----------|-------------|-------------|-------------------|
-| 5MB | 1 MB/s | (5/1) × 2 | 10-15s (default OK) |
-| 10MB | 1 MB/s | (10/1) × 2 | 20-30s |
-| 50MB | 5 MB/s | (50/5) × 2 | 20-30s |
-| 10MB | 0.5 MB/s | (10/0.5) × 2 | 40-60s |
-
-**Network Speed Test:**
 ```bash
 # Test actual upload speed to your server
 time curl -X POST -F "file=@10mb-test.file" http://your-server:8080/api/upload
-# If it takes 15+ seconds for 10MB, increase timeouts
 ```
-
-### Server Logs Show 413 but Browser Sees Connection Reset
-
-**Cause:** Timeout expires during request body reading, server returns 413, but browser already gave up
-
-**Solution:** Increase both server timeout AND chunk size:
-```bash
-docker run -d \
-  -e READ_TIMEOUT=180 \
-  -e CHUNK_SIZE=5242880 \
-  safeshare:latest
-```
+SafeShare needs no timeout changes for any speed above 64 KiB/s. Slower than that, large chunks may exceed their deadline.
 
 ### Production Deployment Checklist
 
 Before deploying for large file uploads (>1GB), verify:
 
 - [ ] `MAX_FILE_SIZE` set to desired limit (bytes)
-- [ ] `READ_TIMEOUT` ≥ (CHUNK_SIZE / slowest_upload_speed) × 2
-- [ ] `WRITE_TIMEOUT` ≥ same as READ_TIMEOUT
-- [ ] `CHUNK_SIZE` between 5-10MB for reliability
-- [ ] Reverse proxy (if used) configured for large bodies and long timeouts
+- [ ] `CHUNK_SIZE` removed from your config (it is ignored)
+- [ ] Reverse proxy (if used) allows request bodies of at least 20 MiB, chunk requests of several minutes, and downloads and single-request uploads of up to 6 hours
 - [ ] Test upload with target file size from slowest expected network
 - [ ] Monitor server logs for 413/timeout errors during testing

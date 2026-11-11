@@ -369,3 +369,34 @@ func TestConcurrentUploads(t *testing.T) {
 		t.Errorf("GetActiveCount() = %d, want 0 after finishing all", tracker.GetActiveCount())
 	}
 }
+
+// TestStartUpload_SameIDTwice is a regression test: a second StartUpload with
+// an ID still in progress overwrote the entry, so the first FinishUpload
+// removed it and the second found nothing to finish. The WaitGroup kept one
+// count forever and every later graceful shutdown hit its timeout.
+func TestStartUpload_SameIDTwice(t *testing.T) {
+	tracker := NewUploadTracker()
+
+	for i := 1; i <= 2; i++ {
+		if !tracker.StartUpload("chunk-u1-3", "", 0) {
+			t.Fatalf("StartUpload %d refused", i)
+		}
+	}
+	if got := tracker.GetActiveCount(); got != 1 {
+		t.Errorf("active entries with one ID in use twice = %d, want 1", got)
+	}
+
+	tracker.FinishUpload("chunk-u1-3")
+	if got := tracker.GetActiveCount(); got != 1 {
+		t.Errorf("after one of two finished: active = %d, want 1 (the other is still running)", got)
+	}
+	tracker.FinishUpload("chunk-u1-3")
+	if got := tracker.GetActiveCount(); got != 0 {
+		t.Errorf("after both finished: active = %d, want 0", got)
+	}
+
+	tracker.BeginShutdown()
+	if !tracker.WaitForUploads(time.Second) {
+		t.Error("WaitForUploads timed out: a WaitGroup count leaked")
+	}
+}

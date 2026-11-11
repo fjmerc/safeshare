@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,9 +16,29 @@ import (
 type ConfigProvider interface {
 	GetRateLimitUpload() int
 	GetRateLimitDownload() int
+	GetMaxFileSize() int64
 	GetTrustProxyHeaders() string
 	GetTrustedProxyIPs() string
 	IsAnonymousMode() bool
+}
+
+// chunkRequestLimit is the hourly limit on chunk requests per client
+// address. RATE_LIMIT_UPLOAD allows that many uploads an hour and
+// MAX_FILE_SIZE says how big each may be, so the chunk allowance covers that
+// many maximum-size uploads plus room for retries: a quarter more chunks,
+// plus 10. It is never below the old fixed allowance of 10 chunks per
+// permitted upload. A fixed multiple of the upload limit broke large uploads:
+// at 10 uploads an hour that allowed 100 chunks, but a 2 GB file is 103
+// chunks of 20 MB, so it ran out partway through.
+func chunkRequestLimit(cfg ConfigProvider) int {
+	uploads := int64(max(cfg.GetRateLimitUpload(), 0))
+	perUpload := utils.MaxChunksForFileSize(cfg.GetMaxFileSize())
+	perUpload += perUpload/4 + 10 // retries; also keeps it at least 10
+	// The upload limit has no upper bound; saturate rather than overflow.
+	if uploads > math.MaxInt32/perUpload {
+		return math.MaxInt32
+	}
+	return int(uploads * perUpload)
 }
 
 // requestRecord tracks requests for an IP
@@ -156,7 +177,16 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	record.mu.Lock()
 	defer record.mu.Unlock()
 
-	if limit > coarseLimitThreshold {
+	// A bucket's limit can cross coarseLimitThreshold at runtime (limits
+	// derived from admin-editable settings, such as chunkRequestLimit).
+	// The two modes keep separate counts, so carry the count across instead
+	// of starting the bucket afresh: moving to per-minute counting folds
+	// the timestamps in, and a bucket with per-minute counts keeps using
+	// them until they age out of the hour. So a bucket used at least once
+	// an hour stays per-minute after its limit drops back; that is
+	// deliberate (minute granularity is fine at any limit).
+	if limit > coarseLimitThreshold || record.coarseActive(now.Unix()/60) {
+		record.foldTimestampsIntoCoarse(now)
 		return record.checkCoarse(now, limit)
 	}
 
@@ -184,6 +214,32 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	// Add current timestamp
 	record.timestamps = append(record.timestamps, now)
 	return true
+}
+
+// foldTimestampsIntoCoarse moves r's per-request timestamps from the last
+// hour into its per-minute counts and clears them. Caller holds r.mu.
+func (r *requestRecord) foldTimestampsIntoCoarse(now time.Time) {
+	if len(r.timestamps) == 0 {
+		return
+	}
+	if r.coarse == nil {
+		r.coarse = &coarseWindow{}
+	}
+	c := r.coarse
+	nowMinute := now.Unix() / 60
+	for _, ts := range r.timestamps {
+		minute := ts.Unix() / 60
+		if !inWindow(nowMinute, minute) {
+			continue
+		}
+		slot := minute % 60
+		if c.minutes[slot] != minute {
+			c.minutes[slot] = minute
+			c.counts[slot] = 0
+		}
+		c.counts[slot]++
+	}
+	r.timestamps = nil
 }
 
 // checkCoarse is checkLimit's per-minute-count variant (see
@@ -249,14 +305,14 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/chunk/") {
-				// Rate limit chunk uploads (more lenient: 10x upload limit)
-				// Rationale: Single file can have hundreds of chunks
-				limit = rl.config.GetRateLimitUpload() * 10
+				// Enough chunks for RATE_LIMIT_UPLOAD maximum-size uploads
+				// (see chunkRequestLimit).
+				limit = chunkRequestLimit(rl.config)
 				limitType = "chunk"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/complete/") {
 				// SH-1.4: rate-limit the complete endpoint so a single IP
 				// cannot generate a DB-write storm via repeated saturation
-				// 503s. Same 10× lenient cap as chunk uploads — a polite
+				// 503s. 10× the upload limit (the old chunk cap) — a polite
 				// client polling complete on a many-chunk upload after
 				// reconnect should not get throttled, but a malicious client
 				// spamming the endpoint will. The previous "already rate

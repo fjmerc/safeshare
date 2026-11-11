@@ -91,7 +91,7 @@ services:
       - WRITE_TIMEOUT=300
       # --- Limits: behind Tor every visitor shares one address, so each
       #     per-IP limit below is a ceiling for the whole service ---
-      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (chunks: 10x this)
+      - RATE_LIMIT_UPLOAD=100          # uploads/hour for everyone (each may be MAX_FILE_SIZE)
       - RATE_LIMIT_DOWNLOAD=500        # downloads/hour for everyone
       - MAX_ENCRYPTED_DOWNLOADS_PER_IP=0
       - MAX_INFLIGHT_PER_IP_PER_FILE=0

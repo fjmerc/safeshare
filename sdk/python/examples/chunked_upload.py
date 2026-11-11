@@ -76,7 +76,6 @@ def main():
         config = client.get_config()
         if file_size >= config.chunked_upload_threshold:
             print(f"Using chunked upload (threshold: {format_size(config.chunked_upload_threshold)})")
-            print(f"Chunk size: {format_size(config.chunk_size)}")
         else:
             print("Using simple upload")
 

@@ -694,7 +694,7 @@ The dashboard has eleven tabs (`internal/static/web/admin/dashboard.html`):
 **Backups Tab**: Backup list, create, verify, restore, download and delete (schedules and run history are managed through the admin API only; see [BACKUP_RESTORE.md](BACKUP_RESTORE.md))
 **Audit Log Tab**: Filter, page through, export (CSV or JSON Lines) and verify the audit log; adjust retention
 **Settings Tab**: Dynamic settings updates (storage, security, password, system info)
-**Configuration Assistant Tab**: Questionnaire that recommends timeouts, chunk size and limits for your network and file sizes
+**Configuration Assistant Tab**: Questionnaire that recommends file size, quota, expiration, rate limits and blocked file types for your network and file sizes. It doesn't recommend chunk size or timeouts (the server handles both automatically). It reads anonymous mode, browser encryption and malware scanning from the server. In anonymous mode it never recommends requiring login, keeps `HTTPS_ENABLED` as it is, and recommends rate limits of at least 100 uploads and 500 downloads per hour and never lower than the current ones.
 **Real-time Stats**: Total files, storage used, quota usage, blocked IPs, total users
 
 ---
@@ -865,7 +865,8 @@ Authenticated Origin Pulls or Cloudflare Tunnel exclusivity to fully close).
 ### Chunked Upload
 - `CHUNKED_UPLOAD_ENABLED`: Enable/disable chunked upload support (default: true)
 - `CHUNKED_UPLOAD_THRESHOLD`: Files >= this size use chunked upload in bytes (default: 100MB)
-- `CHUNK_SIZE`: Size of each chunk in bytes (default: 5MB)
+- Chunk size is not configurable. The server picks it per upload from the file size (5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above; see `internal/utils/chunks.go`) and returns it as `chunk_size` in the `/api/upload/init` response. Clients split the file by that value. A single upload may have at most 10,000 chunks. `CHUNK_SIZE` is retired: if set, it is ignored and a warning is logged at startup. `chunk_size` in `GET /api/config` is deprecated and always 10 MiB.
+- `READ_TIMEOUT` / `WRITE_TIMEOUT`: Limits for ordinary requests (default: 120 seconds). Uploads and downloads get their own deadline from their size (see Upload Flow) and use these values only as a minimum.
 - `PARTIAL_UPLOAD_EXPIRY_HOURS`: Hours before abandoned uploads are cleaned up (default: 24)
 - `MAX_FILES_PER_BUNDLE`: Most files one bundle (several files under one link) may hold, 1-100 (default: 10)
 - `ENFORCE_API_TOKEN_SCOPES`: API tokens may only use the routes their scopes allow; account-security routes need a browser session (default: true). See `internal/middleware/token_policy.go`
@@ -988,7 +989,7 @@ Tracks upload sessions with upload_id (UUID), filename, total_size, chunk_size, 
 4. Return claim code to user
 ```
 
-The request body is read under an idle/minimum-rate deadline (`internal/handlers/upload_stream.go`): no bytes for 60 seconds, or an average under 4 KiB/s, ends the request with `408 UPLOAD_TIMEOUT`. The overall per-request deadline scales with the expected size (assuming at least 64 KiB/s, plus 60 seconds, capped at 6 hours).
+The request body is read under an idle/minimum-rate deadline (`internal/handlers/upload_stream.go`): no bytes for 60 seconds, or an average under 4 KiB/s, ends the request with `408 UPLOAD_TIMEOUT`. The overall per-request deadline scales with the expected size (assuming at least 64 KiB/s, plus 60 seconds, capped at 6 hours). Downloads get a deadline the same way. `READ_TIMEOUT` and `WRITE_TIMEOUT` act only as a minimum for these deadlines and as the limit for ordinary requests. A reverse proxy in front must let downloads and single-request uploads run for up to 6 hours; a chunk request needs only minutes.
 
 **Chunked Upload** (files >= threshold):
 ```
@@ -1010,7 +1011,7 @@ Assembly (step 6) runs asynchronously in a background worker, guarded by a lease
 
 ### Security Features
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Per-IP rate limiting on every step: `/init` at `RATE_LIMIT_UPLOAD`, `/chunk` and `/complete` at 10x it, `/status` at 600x it (never under 6,000/hour). Each has its own bucket
+- Per-IP rate limiting on every step: `/init` at `RATE_LIMIT_UPLOAD`, `/chunk` at enough chunks for that many maximum-size uploads (plus a quarter and 10 more for retries, never under 10x the upload limit), `/complete` at 10x it, `/status` at 600x it (never under 6,000/hour). Each has its own bucket
 - Validates upload_id, chunk_number, chunk_size
 - File extension blocking applied
 - Disk space validation before accepting chunks

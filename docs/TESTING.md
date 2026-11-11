@@ -51,27 +51,27 @@ go test ./internal/handlers/ -run TestUploadHandler_ValidUpload
 #### Run Tests with Coverage
 
 ```bash
-# Use the provided script
+# Use the provided script (runs in Docker; no local Go needed)
 ./scripts/run-tests.sh
-
-# Or manually
-go test ./... -cover -coverprofile=coverage.out
-go tool cover -html=coverage.out
 ```
+
+It runs the same packages and coverage check as CI's `test` job: everything under `./internal/` except `internal/repository/postgres` and `internal/storage/s3`, which need live services (`scripts/test-postgres.sh`, `scripts/test-minio.sh`). It fails if total coverage is below 60% (`THRESHOLD=70 ./scripts/run-tests.sh` to change that). The Go image comes from the `toolchain` line in `go.mod`; set `GO_IMAGE` to override it. Module and build caches are kept in the `safeshare-gomod` and `safeshare-gocache` Docker volumes, so later runs are faster.
 
 **Output:**
 - Terminal: Coverage summary by package
-- `coverage.html`: Detailed line-by-line coverage visualization
+- `coverage.out` and `coverage.html` (both gitignored): Detailed line-by-line coverage
 
 #### Run Tests with Race Detection
 
 ```bash
-# Use the provided script
+# CI's race set: internal/handlers plus the core packages
 ./scripts/run-tests-race.sh
 
-# Or manually
-go test ./... -race
+# Or just the packages you changed
+./scripts/run-tests-race.sh ./internal/config ./internal/handlers
 ```
+
+`internal/handlers` takes 20 to 50 minutes under `-race`, so the default timeout is 90 minutes (`RACE_TIMEOUT=2h` to change it). `internal/benchmarks` is left out of the default set because its timing limits don't hold under the race detector.
 
 **Important:** Always run race detection before deploying to production.
 
@@ -372,38 +372,13 @@ Before committing, run:
 
 # 2. Run race detector
 ./scripts/run-tests-race.sh
-
-# 3. Check coverage threshold
-go test ./... -cover | grep "coverage:"
 ```
+
+`run-tests.sh` already fails when coverage drops below 60%.
 
 ### CI/CD Pipeline
 
-Recommended GitHub Actions workflow:
-
-```yaml
-name: Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
-      - name: Run tests with coverage
-        run: ./scripts/run-tests.sh
-
-      - name: Run race detector
-        run: ./scripts/run-tests-race.sh
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./coverage.out
-```
+The real pipeline is `.github/workflows/build-and-push.yml`. On every pull request it runs the unit tests with the 60% coverage check (`test`), the race detector (`race`, with `internal/handlers` split into four shards), the PostgreSQL and MinIO integration tests, the JavaScript tests, govulncheck and a reproducible-build check. The scripts above mirror the `test` and `race` jobs so you can run the same checks locally.
 
 ## Troubleshooting
 
