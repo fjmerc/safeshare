@@ -40,25 +40,65 @@ const (
 	chunkBufferSize = 20 * 1024 * 1024
 )
 
+// Chunk size bands used by CalculateOptimalChunkSize, shared with
+// MaxChunksForFileSize so the two can't drift apart.
+const (
+	smallChunkSize  = 5 * 1024 * 1024  // files under smallFileLimit
+	mediumChunkSize = 10 * 1024 * 1024 // files under mediumFileLimit
+	largeChunkSize  = 20 * 1024 * 1024 // everything larger
+
+	smallFileLimit  = 100 * 1024 * 1024
+	mediumFileLimit = 1024 * 1024 * 1024
+)
+
+// MaxChunksPerUpload is the most chunks a single chunked upload may have;
+// /api/upload/init refuses files that would need more.
+const MaxChunksPerUpload = 10000
+
 // CalculateOptimalChunkSize determines the best chunk size based on file size
 // Optimizes for both network efficiency and failure recovery
 func CalculateOptimalChunkSize(fileSize int64) int64 {
-	const minChunk = 5 * 1024 * 1024      // 5MB
-	const defaultChunk = 10 * 1024 * 1024 // 10MB
-	const maxChunk = 20 * 1024 * 1024     // 20MB
-
 	// Files < 100MB: 5MB chunks (faster retry on failure)
-	if fileSize < 100*1024*1024 {
-		return minChunk
+	if fileSize < smallFileLimit {
+		return smallChunkSize
 	}
 
 	// Files 100MB-1GB: 10MB chunks (balanced)
-	if fileSize < 1*1024*1024*1024 {
-		return defaultChunk
+	if fileSize < mediumFileLimit {
+		return mediumChunkSize
 	}
 
 	// Files > 1GB: 20MB chunks (reduce HTTP overhead)
-	return maxChunk
+	return largeChunkSize
+}
+
+// MaxChunksForFileSize returns the most chunks any file of at most maxSize
+// bytes can need under CalculateOptimalChunkSize, capped at
+// MaxChunksPerUpload. The count is not monotonic in file size: chunks get
+// bigger at each band edge, so a file just under a band limit can need more
+// chunks than maxSize itself (with a 1 GiB maximum, a 1 GiB file is 52 chunks
+// but one byte less is 103). Each band's largest allowed size is checked.
+func MaxChunksForFileSize(maxSize int64) int64 {
+	if maxSize <= 0 {
+		return 0
+	}
+	// Ceiling division without size+chunk-1, which overflows near MaxInt64.
+	chunksFor := func(size, chunk int64) int64 {
+		n := size / chunk
+		if size%chunk != 0 {
+			n++
+		}
+		return n
+	}
+
+	most := chunksFor(min(maxSize, smallFileLimit-1), smallChunkSize)
+	if maxSize >= smallFileLimit {
+		most = max(most, chunksFor(min(maxSize, mediumFileLimit-1), mediumChunkSize))
+	}
+	if maxSize >= mediumFileLimit {
+		most = max(most, chunksFor(maxSize, largeChunkSize))
+	}
+	return min(most, MaxChunksPerUpload)
 }
 
 // GetPartialUploadDir returns the directory path for partial uploads

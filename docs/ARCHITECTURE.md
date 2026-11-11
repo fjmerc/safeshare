@@ -1010,7 +1010,7 @@ Assembly (step 6) runs asynchronously in a background worker, guarded by a lease
 
 ### Security Features
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Per-IP rate limiting on every step: `/init` at `RATE_LIMIT_UPLOAD`, `/chunk` and `/complete` at 10x it, `/status` at 600x it (never under 6,000/hour). Each has its own bucket
+- Per-IP rate limiting on every step: `/init` at `RATE_LIMIT_UPLOAD`, `/chunk` at enough chunks for that many maximum-size uploads (plus a quarter and 10 more for retries, never under 10x the upload limit), `/complete` at 10x it, `/status` at 600x it (never under 6,000/hour). Each has its own bucket
 - Validates upload_id, chunk_number, chunk_size
 - File extension blocking applied
 - Disk space validation before accepting chunks

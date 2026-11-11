@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,9 +16,29 @@ import (
 type ConfigProvider interface {
 	GetRateLimitUpload() int
 	GetRateLimitDownload() int
+	GetMaxFileSize() int64
 	GetTrustProxyHeaders() string
 	GetTrustedProxyIPs() string
 	IsAnonymousMode() bool
+}
+
+// chunkRequestLimit is the hourly limit on chunk requests per client
+// address. RATE_LIMIT_UPLOAD allows that many uploads an hour and
+// MAX_FILE_SIZE says how big each may be, so the chunk allowance covers that
+// many maximum-size uploads plus room for retries: a quarter more chunks,
+// plus 10. It is never below the old fixed allowance of 10 chunks per
+// permitted upload. A fixed multiple of the upload limit broke large uploads:
+// at 10 uploads an hour that allowed 100 chunks, but a 2 GB file is 103
+// chunks of 20 MB, so it ran out partway through.
+func chunkRequestLimit(cfg ConfigProvider) int {
+	uploads := int64(max(cfg.GetRateLimitUpload(), 0))
+	perUpload := utils.MaxChunksForFileSize(cfg.GetMaxFileSize())
+	perUpload += perUpload/4 + 10 // retries; also keeps it at least 10
+	// The upload limit has no upper bound; saturate rather than overflow.
+	if uploads > math.MaxInt32/perUpload {
+		return math.MaxInt32
+	}
+	return int(uploads * perUpload)
 }
 
 // requestRecord tracks requests for an IP
@@ -249,14 +270,14 @@ func RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/chunk/") {
-				// Rate limit chunk uploads (more lenient: 10x upload limit)
-				// Rationale: Single file can have hundreds of chunks
-				limit = rl.config.GetRateLimitUpload() * 10
+				// Enough chunks for RATE_LIMIT_UPLOAD maximum-size uploads
+				// (see chunkRequestLimit).
+				limit = chunkRequestLimit(rl.config)
 				limitType = "chunk"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/complete/") {
 				// SH-1.4: rate-limit the complete endpoint so a single IP
 				// cannot generate a DB-write storm via repeated saturation
-				// 503s. Same 10× lenient cap as chunk uploads — a polite
+				// 503s. 10× the upload limit (the old chunk cap) — a polite
 				// client polling complete on a many-chunk upload after
 				// reconnect should not get throttled, but a malicious client
 				// spamming the endpoint will. The previous "already rate

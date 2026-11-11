@@ -56,6 +56,9 @@ class ChunkedUploader {
         this.isCompleted = false;
         this.isCompleting = false;
         this.completionPromise = null;
+        // The chunk-upload run in progress, if any: { reported } is set once
+        // one of its parallel chunks has emitted 'error'; see _reportError.
+        this._chunkRun = null;
 
         // Progress tracking
         this.startTime = null;
@@ -340,6 +343,18 @@ class ChunkedUploader {
      * @returns {Promise<void>}
      */
     async uploadAllChunks() {
+        // A fresh run each call: complete() can call this again to re-upload
+        // missing chunks, and that run's failure must still be reported.
+        const run = { reported: false };
+        this._chunkRun = run;
+        try {
+            await this._uploadPendingChunks();
+        } finally {
+            if (this._chunkRun === run) this._chunkRun = null;
+        }
+    }
+
+    async _uploadPendingChunks() {
         const pending = [];
         for (let i = 0; i < this.totalChunks; i++) {
             // Skip already uploaded chunks (for resume)
@@ -658,6 +673,11 @@ class ChunkedUploader {
                     throw error;
                 }
 
+                // Already shown to the page (see _retryFailedAssembly): final.
+                if (error.reported) {
+                    throw error;
+                }
+
                 // Server reported a final outcome (failed status, bad completion):
                 // rethrow immediately. Matching on message text missed the
                 // server's actual failure messages, so real failures were
@@ -744,6 +764,12 @@ class ChunkedUploader {
             return true;
         } catch (error) {
             if (this._isCancellation(error)) {
+                throw error;
+            }
+            // Already shown to the page (e.g. re-uploading missing chunks hit
+            // the rate limit): the page has reset, so stop here rather than
+            // carrying on in the background and reporting again or completing.
+            if (error.reported) {
                 throw error;
             }
             // A definitively terminal server response (retryRecommended
@@ -1077,10 +1103,18 @@ class ChunkedUploader {
      * @returns {Error} the same error, for `throw this._reportError(...)`
      */
     _reportError(error, data) {
-        if (!error.reported) {
+        if (error.reported) return error;
+        // Chunks upload in parallel, so one server refusal (a rate limit, say)
+        // fails every chunk in flight: within one chunk-upload run, only the
+        // first is emitted. The others are marked reported because the page
+        // has already been told about this failure. Errors outside a run
+        // (init, assembly, completion) are always emitted.
+        const run = this._chunkRun;
+        if (!(run && run.reported)) {
             this.emit('error', data);
-            error.reported = true;
+            if (run) run.reported = true;
         }
+        error.reported = true;
         return error;
     }
 

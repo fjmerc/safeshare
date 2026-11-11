@@ -116,8 +116,13 @@ func DBRateLimitMiddleware(rl *DBRateLimiter) func(http.Handler) http.Handler {
 				limit = rl.config.GetRateLimitUpload()
 				limitType = "upload"
 			} else if strings.HasPrefix(r.URL.Path, "/api/upload/chunk/") {
-				// Rate limit chunk uploads (more lenient: 10x upload limit)
-				limit = min(rl.config.GetRateLimitUpload()*10, maxDBRateLimit)
+				// Enough chunks for RATE_LIMIT_UPLOAD maximum-size uploads
+				// (see chunkRequestLimit), clamped to what the repository
+				// accepts. The clamp can make this smaller than the in-memory
+				// limiter's (10000 chunks is about 10 uploads of 15 GiB), but
+				// it always covers at least one maximum-size upload: one is
+				// never more than 10000 chunks plus retries.
+				limit = min(chunkRequestLimit(rl.config), maxDBRateLimit)
 				limitType = "chunk"
 			} else if strings.HasPrefix(r.URL.Path, "/api/claim/") && strings.HasSuffix(r.URL.Path, "/info") {
 				// Claim-code existence check: limited like the in-memory

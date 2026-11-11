@@ -336,7 +336,7 @@ Logs example:
 ## Security
 
 - Respects `REQUIRE_AUTH_FOR_UPLOAD` setting
-- Rate limiting per client IP (per hour, based on `RATE_LIMIT_UPLOAD`): `/init` at the upload limit, `/chunk` and `/complete` at 10× it, and `/status` at 600× it (6,000/hour by default - well above the ~1,800/hour a client polling every 2 seconds sends)
+- Rate limiting per client IP (per hour, based on `RATE_LIMIT_UPLOAD`): `/init` at the upload limit, `/chunk` at enough chunks for that many `MAX_FILE_SIZE` uploads plus a quarter and 10 more for retries (never under 10× the upload limit), `/complete` at 10× it, and `/status` at 600× it (6,000/hour by default - well above the ~1,800/hour a client polling every 2 seconds sends)
 - A request body that stops arriving for 60 seconds, or averages under 4 KiB/s, is cut off with `408 UPLOAD_TIMEOUT` rather than held open until the full transfer deadline
 - Validates:
   - upload_id (UUID format)

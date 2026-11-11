@@ -1854,7 +1854,8 @@ All endpoints return consistent error format:
 SafeShare implements IP-based rate limiting:
 
 - **Uploads**: Configurable (default: 10 per hour per IP). Applies to `/api/upload` and `/api/upload/init`
-- **Chunk uploads**: 10x the upload limit (`/api/upload/chunk/...` and `/api/upload/complete/...`, each counted separately per IP)
+- **Chunk uploads** (`/api/upload/chunk/...`): enough chunks for `RATE_LIMIT_UPLOAD` uploads of `MAX_FILE_SIZE` each, plus a quarter more and 10 more for retries (never less than 10x the upload limit), counted per IP
+- **Upload completion** (`/api/upload/complete/...`): 10x the upload limit, counted separately per IP
 - **Upload status**: 600x the upload limit, never under 6,000 per hour (`/api/upload/status/...`)
 - **Downloads**: Configurable (default: 50 per hour per IP)
 - **Admin Login**: 5 attempts per 15 minutes per IP

@@ -29,6 +29,14 @@ type activeUpload struct {
 	StartTime time.Time
 	Filename  string
 	Size      int64
+
+	// refs counts requests currently registered under ID. Two concurrent
+	// requests can share an ID (the same chunk sent twice, or a request
+	// still running after the client gave up on it); each holds one count
+	// on the WaitGroup, and the entry goes when the last one finishes.
+	// Overwriting the entry instead left one count that FinishUpload never
+	// released, so every later graceful shutdown waited out its timeout.
+	refs int
 }
 
 // NewUploadTracker creates a new UploadTracker.
@@ -50,11 +58,16 @@ func (ut *UploadTracker) StartUpload(id, filename string, size int64) bool {
 		return false
 	}
 
-	ut.activeUploads[id] = &activeUpload{
-		ID:        id,
-		StartTime: time.Now(),
-		Filename:  filename,
-		Size:      size,
+	if existing, ok := ut.activeUploads[id]; ok {
+		existing.refs++
+	} else {
+		ut.activeUploads[id] = &activeUpload{
+			ID:        id,
+			StartTime: time.Now(),
+			Filename:  filename,
+			Size:      size,
+			refs:      1,
+		}
 	}
 	ut.wg.Add(1)
 
@@ -73,8 +86,11 @@ func (ut *UploadTracker) FinishUpload(id string) {
 	ut.mu.Lock()
 	defer ut.mu.Unlock()
 
-	if _, exists := ut.activeUploads[id]; exists {
-		delete(ut.activeUploads, id)
+	if u, exists := ut.activeUploads[id]; exists {
+		u.refs--
+		if u.refs <= 0 {
+			delete(ut.activeUploads, id)
+		}
 		ut.wg.Done()
 
 		slog.Debug("upload finished",
