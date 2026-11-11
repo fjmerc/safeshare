@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Go 1.27.4** (from 1.27.3) fixes GO-2026-6859 in `net/http`, which the server reaches through its HTTP handling and the S3 storage client.
+
 ### Fixed
 
 - Admin dashboard: **Configuration Assistant → Apply** no longer fails when the recommended default expiration is longer than your current maximum (for example on a Ghost-mode server with a 24-hour maximum). Saving storage settings now checks every value before changing any, so a rejected value no longer leaves the others half-applied. This also lets the regular **Storage** settings form raise the default and maximum expiration in one save.
