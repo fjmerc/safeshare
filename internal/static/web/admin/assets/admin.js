@@ -1000,10 +1000,29 @@ async function unblockIP(ipAddress) {
     }
 }
 
-// Update storage settings
-async function updateStorageSettings(formData) {
+// Read a settings endpoint's reply. Errors come back as plain text
+// (http.Error), successes as JSON, so don't assume JSON.
+async function readSettingsResponse(response, fallbackMessage) {
+    const text = await response.text();
+    let data = null;
     try {
-        const response = await fetch('/admin/api/settings/storage', {
+        data = JSON.parse(text);
+    } catch (e) {
+        data = null;
+    }
+    if (response.ok && data && data.success) {
+        return { ok: true, message: data.message };
+    }
+    const message = (data && (data.message || data.error)) || text.trim() || fallbackMessage;
+    return { ok: false, message };
+}
+
+// Save one group of settings. Returns { ok, message }. With { silent: true }
+// it shows no toast, so the caller can report the outcome itself.
+async function saveSettings(url, formData, fallbackMessage, options = {}) {
+    let result;
+    try {
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -1011,49 +1030,35 @@ async function updateStorageSettings(formData) {
             },
             body: new URLSearchParams(formData)
         });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showSuccess(data.message);
-            loadDashboardData(currentPage, searchTerm);
-            // Clear unsaved changes flag and update original values
-            captureOriginalSettingsValues();
-        } else {
-            showError(data.message || 'Failed to update storage settings');
-        }
+        result = await readSettingsResponse(response, fallbackMessage);
     } catch (error) {
-        console.error('Error updating storage settings:', error);
-        showError('Failed to update storage settings');
+        console.error(fallbackMessage + ':', error);
+        result = { ok: false, message: fallbackMessage };
     }
+
+    if (result.ok) {
+        loadDashboardData(currentPage, searchTerm);
+        // Clear unsaved changes flag and update original values
+        captureOriginalSettingsValues();
+    }
+    if (!options.silent) {
+        if (result.ok) {
+            showSuccess(result.message);
+        } else {
+            showError(result.message);
+        }
+    }
+    return result;
+}
+
+// Update storage settings
+async function updateStorageSettings(formData, options = {}) {
+    return saveSettings('/admin/api/settings/storage', formData, 'Failed to update storage settings', options);
 }
 
 // Update security settings
-async function updateSecuritySettings(formData) {
-    try {
-        const response = await fetch('/admin/api/settings/security', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-CSRF-Token': getCSRFToken()
-            },
-            body: new URLSearchParams(formData)
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showSuccess(data.message);
-            loadDashboardData(currentPage, searchTerm);
-            // Clear unsaved changes flag and update original values
-            captureOriginalSettingsValues();
-        } else {
-            showError(data.message || 'Failed to update security settings');
-        }
-    } catch (error) {
-        console.error('Error updating security settings:', error);
-        showError('Failed to update security settings');
-    }
+async function updateSecuritySettings(formData, options = {}) {
+    return saveSettings('/admin/api/settings/security', formData, 'Failed to update security settings', options);
 }
 
 // Change admin password
@@ -1924,8 +1929,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============ Configuration Assistant Event Listeners ============
 
-    // Global variable to store recommendations
+    // Global variables to store recommendations and the answers behind them
     let currentRecommendations = null;
+    let lastAnalysisRequest = null;
 
     // Show/hide CDN timeout field based on checkbox
     document.getElementById('usingCDN')?.addEventListener('change', (e) => {
@@ -1957,23 +1963,11 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         try {
-            const response = await fetch('/admin/api/config-assistant/analyze', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-Token': getCSRFToken()
-                },
-                body: JSON.stringify(requestData)
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to get recommendations');
-            }
+            const data = await requestConfigAnalysis(requestData);
 
             // Store recommendations globally
             currentRecommendations = data;
+            lastAnalysisRequest = requestData;
 
             // Display recommendations
             displayRecommendations(data);
@@ -2008,18 +2002,34 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!confirmed) return;
 
         try {
+            // The recommendations merge in your current blocked file types
+            // and (in anonymous mode) your current expirations. Re-run the
+            // analysis so a settings change made since then isn't undone.
+            const fresh = await requestConfigAnalysis(lastAnalysisRequest);
+            if (JSON.stringify(fresh.recommendations) !== JSON.stringify(currentRecommendations.recommendations)) {
+                currentRecommendations = fresh;
+                displayRecommendations(fresh);
+                showError('Your settings changed since the analysis. The recommendations have been updated; review them and press Apply again.');
+                return;
+            }
+
             // Apply recommendations via existing settings endpoints
             const recommendations = currentRecommendations.recommendations;
 
             // Prepare storage settings update
             const storageFormData = new FormData();
             storageFormData.append('quota_gb', recommendations.quota_limit_gb);
-            storageFormData.append('max_file_size_mb', recommendations.max_file_size / (1024 * 1024));
+            storageFormData.append('max_file_size_mb', Math.max(1, Math.round(recommendations.max_file_size / (1024 * 1024))));
             storageFormData.append('default_expiration_hours', recommendations.default_expiration_hours);
             storageFormData.append('max_expiration_hours', recommendations.max_expiration_hours);
 
-            // Update storage settings
-            await updateStorageSettings(storageFormData);
+            // Update storage settings. The server checks every field before
+            // changing any, so a failure here means nothing was applied.
+            const storageResult = await updateStorageSettings(storageFormData, { silent: true });
+            if (!storageResult.ok) {
+                showError('No settings were changed. Storage settings were rejected: ' + storageResult.message);
+                return;
+            }
 
             // Prepare security settings update
             const securityFormData = new FormData();
@@ -2028,7 +2038,12 @@ document.addEventListener('DOMContentLoaded', () => {
             securityFormData.append('blocked_extensions', recommendations.blocked_extensions.join(','));
 
             // Update security settings
-            await updateSecuritySettings(securityFormData);
+            const securityResult = await updateSecuritySettings(securityFormData, { silent: true });
+            if (!securityResult.ok) {
+                showError('Storage settings were applied, but security settings were rejected: ' + securityResult.message);
+                await loadConfigValues();
+                return;
+            }
 
             showSuccess('Recommended settings applied successfully!');
 
@@ -2040,13 +2055,38 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('recommendationsSection').style.display = 'none';
 
         } catch (error) {
+            // Saves report failures without throwing, so anything caught here
+            // happened before a save: nothing was applied.
             console.error('Failed to apply recommendations:', error);
-            showError('Failed to apply some recommendations. Please check the logs.');
+            showError('Recommendations were not applied: ' + (error.message || 'unknown error'));
         }
     });
 });
 
 // ============ Configuration Assistant Helper Functions ============
+
+// Ask the server for recommendations. Throws with the server's message on failure.
+async function requestConfigAnalysis(requestData) {
+    const response = await fetch('/admin/api/config-assistant/analyze', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCSRFToken()
+        },
+        body: JSON.stringify(requestData)
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+        data = JSON.parse(text);
+    } catch (e) {
+        data = null;
+    }
+    if (!response.ok || !data) {
+        throw new Error((data && data.error) || text.trim() || 'Failed to get recommendations');
+    }
+    return data;
+}
 
 function displayRecommendations(data) {
     const { recommendations, current_config, analysis } = data;
