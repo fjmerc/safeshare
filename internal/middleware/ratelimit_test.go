@@ -1078,3 +1078,45 @@ func TestRateLimiter_ChunksCoverMaxSizeUpload(t *testing.T) {
 		})
 	}
 }
+
+// TestRateLimiter_CountSurvivesThresholdCrossing is a regression test: the
+// exact (timestamp) and per-minute modes kept separate counts, so when a
+// bucket's limit crossed coarseLimitThreshold (an admin raising
+// MAX_FILE_SIZE or RATE_LIMIT_UPLOAD moves the chunk limit) every client got
+// a fresh budget for that hour.
+func TestRateLimiter_CountSurvivesThresholdCrossing(t *testing.T) {
+	const ip = "192.168.1.9"
+	allowed := func(rl *RateLimiter, limit, n int) int {
+		ok := 0
+		for i := 0; i < n; i++ {
+			if rl.checkLimit(ip, "chunk", limit) {
+				ok++
+			}
+		}
+		return ok
+	}
+
+	t.Run("exact to per-minute", func(t *testing.T) {
+		rl := NewRateLimiter(&mockConfigProvider{uploadLimit: 1, downloadLimit: 1})
+		defer rl.Stop()
+		if got := allowed(rl, 500, 400); got != 400 {
+			t.Fatalf("under the 500 limit: allowed %d of 400", got)
+		}
+		// Raised to 2000: 400 are already spent this hour, so 1600 remain.
+		if got := allowed(rl, 2000, 2000); got != 1600 {
+			t.Errorf("after raising the limit to 2000: allowed %d more, want 1600", got)
+		}
+	})
+
+	t.Run("per-minute to exact", func(t *testing.T) {
+		rl := NewRateLimiter(&mockConfigProvider{uploadLimit: 1, downloadLimit: 1})
+		defer rl.Stop()
+		if got := allowed(rl, 2000, 1500); got != 1500 {
+			t.Fatalf("under the 2000 limit: allowed %d of 1500", got)
+		}
+		// Lowered to 500 with 1500 already spent: nothing more this hour.
+		if got := allowed(rl, 500, 10); got != 0 {
+			t.Errorf("after lowering the limit to 500: allowed %d more, want 0", got)
+		}
+	})
+}

@@ -177,7 +177,14 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	record.mu.Lock()
 	defer record.mu.Unlock()
 
-	if limit > coarseLimitThreshold {
+	// A bucket's limit can cross coarseLimitThreshold at runtime (limits
+	// derived from admin-editable settings, such as chunkRequestLimit).
+	// The two modes keep separate counts, so carry the count across instead
+	// of starting the bucket afresh: moving to per-minute counting folds
+	// the timestamps in, and a bucket with per-minute counts keeps using
+	// them until they age out of the hour.
+	if limit > coarseLimitThreshold || record.coarseActive(now.Unix()/60) {
+		record.foldTimestampsIntoCoarse(now)
 		return record.checkCoarse(now, limit)
 	}
 
@@ -205,6 +212,32 @@ func (rl *RateLimiter) checkLimit(ip, limitType string, limit int) bool {
 	// Add current timestamp
 	record.timestamps = append(record.timestamps, now)
 	return true
+}
+
+// foldTimestampsIntoCoarse moves r's per-request timestamps from the last
+// hour into its per-minute counts and clears them. Caller holds r.mu.
+func (r *requestRecord) foldTimestampsIntoCoarse(now time.Time) {
+	if len(r.timestamps) == 0 {
+		return
+	}
+	if r.coarse == nil {
+		r.coarse = &coarseWindow{}
+	}
+	c := r.coarse
+	nowMinute := now.Unix() / 60
+	for _, ts := range r.timestamps {
+		minute := ts.Unix() / 60
+		if !inWindow(nowMinute, minute) {
+			continue
+		}
+		slot := minute % 60
+		if c.minutes[slot] != minute {
+			c.minutes[slot] = minute
+			c.counts[slot] = 0
+		}
+		c.counts[slot]++
+	}
+	r.timestamps = nil
 }
 
 // checkCoarse is checkLimit's per-minute-count variant (see
