@@ -133,8 +133,8 @@
 ```json
 {
   "upload_id": "550e8400-e29b-41d4-a716-446655440000",
-  "chunk_size": 5242880,
-  "total_chunks": 20,
+  "chunk_size": 10485760,
+  "total_chunks": 10,
   "expires_at": "2025-11-15T20:00:00Z"
 }
 ```

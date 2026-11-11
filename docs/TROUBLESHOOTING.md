@@ -658,11 +658,8 @@ See [REVERSE_PROXY.md](REVERSE_PROXY.md) for detailed configurations.
    - HTTP/2 allows higher concurrency (12 vs 6 workers)
    - Ensure HTTPS is properly configured
 
-2. **Adjust chunk size:**
-   ```bash
-   # Increase chunk size for fast networks
-   docker run -e CHUNK_SIZE=20971520 safeshare:latest  # 20MB
-   ```
+2. **Chunk size is automatic:**
+   The server picks it per upload (5 MiB under 100 MiB, 10 MiB under 1 GiB, 20 MiB above). There is no setting to change it. If `CHUNK_SIZE` is still set, remove it; it is ignored.
 
 3. **Check server resources:**
    - CPU for encryption
@@ -905,8 +902,8 @@ curl http://localhost:8080/health | jq .status_details
    ```python
    config = client.get_config()
    print(f"Chunk threshold: {config.chunked_upload_threshold}")
-   print(f"Chunk size: {config.chunk_size}")
    ```
+   The chunk size is chosen by the server per upload and returned by the init call, not by `get_config()`.
 
 2. **Enable debug logging:**
    ```python

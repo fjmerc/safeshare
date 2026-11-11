@@ -223,6 +223,8 @@ class PublicConfig(BaseModel):
     max_expiration_hours: int
     chunked_upload_enabled: bool
     chunked_upload_threshold: int
+    # Deprecated: always 10 MiB. The server picks the chunk size per upload
+    # and returns it in ChunkedUploadSession.chunk_size.
     chunk_size: int
     require_auth_for_upload: bool
     anonymous_mode: bool = False

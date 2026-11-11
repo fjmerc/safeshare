@@ -258,7 +258,9 @@ type PublicConfig struct {
 	MaxFileSize int64 `json:"max_file_size"`
 	// ChunkUploadThreshold is when to use chunked upload.
 	ChunkUploadThreshold int64 `json:"chunked_upload_threshold"`
-	// ChunkSize is the size of each chunk.
+	// Deprecated: ChunkSize is always 10 MiB. The server picks the chunk
+	// size per upload (5, 10 or 20 MiB by file size) and returns it when the
+	// upload starts, in ChunkedUploadSession.ChunkSize.
 	ChunkSize int64 `json:"chunk_size"`
 	// MaxExpirationHours is the maximum expiration time.
 	MaxExpirationHours int `json:"max_expiration_hours"`

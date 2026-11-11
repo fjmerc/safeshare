@@ -49,7 +49,6 @@ Example:
 			}
 			fmt.Printf("%-25s %s\n", "Max File Size:", formatBytes(config.MaxFileSize))
 			fmt.Printf("%-25s %s\n", "Chunked Upload Threshold:", formatBytes(config.ChunkUploadThreshold))
-			fmt.Printf("%-25s %s\n", "Chunk Size:", formatBytes(config.ChunkSize))
 			fmt.Printf("%-25s %d hours\n", "Max Expiration:", config.MaxExpirationHours)
 			fmt.Printf("%-25s %v\n", "Registration Enabled:", config.RegistrationEnabled)
 			fmt.Printf("%-25s %v\n", "Ghost (anonymous) Mode:", config.AnonymousMode)

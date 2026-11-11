@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fjmerc/safeshare/internal/config"
@@ -12,9 +13,6 @@ import (
 
 func TestAdminConfigAssistantHandler(t *testing.T) {
 	cfg := &config.Config{
-		ChunkSize:                10 * 1024 * 1024,
-		ReadTimeoutSeconds:       120,
-		WriteTimeoutSeconds:      120,
 		ChunkedUploadThreshold:   100 * 1024 * 1024,
 		PartialUploadExpiryHours: 24,
 		SessionExpiryHours:       24,
@@ -27,15 +25,14 @@ func TestAdminConfigAssistantHandler(t *testing.T) {
 
 	t.Run("valid request", func(t *testing.T) {
 		reqBody := ConfigAssistantRequest{
-			UploadSpeed:       100,
-			DownloadSpeed:     200,
-			NetworkLatency:    "low",
-			TypicalFileSize:   "medium",
-			DeploymentType:    "Internet",
-			UserLoad:          "moderate",
-			StorageCapacity:   500,
-			UsingCDN:          false,
-			EncryptionEnabled: false,
+			UploadSpeed:     100,
+			DownloadSpeed:   200,
+			NetworkLatency:  "low",
+			TypicalFileSize: "medium",
+			DeploymentType:  "Internet",
+			UserLoad:        "moderate",
+			StorageCapacity: 500,
+			UsingCDN:        false,
 		}
 		body, _ := json.Marshal(reqBody)
 
@@ -106,16 +103,14 @@ func TestAdminConfigAssistantHandler(t *testing.T) {
 
 	t.Run("with CDN settings", func(t *testing.T) {
 		reqBody := ConfigAssistantRequest{
-			UploadSpeed:       50,
-			DownloadSpeed:     100,
-			NetworkLatency:    "medium",
-			TypicalFileSize:   "large",
-			DeploymentType:    "Internet",
-			UserLoad:          "heavy",
-			StorageCapacity:   1000,
-			UsingCDN:          true,
-			CDNTimeout:        120,
-			EncryptionEnabled: true,
+			UploadSpeed:     50,
+			DownloadSpeed:   100,
+			NetworkLatency:  "medium",
+			TypicalFileSize: "large",
+			DeploymentType:  "Internet",
+			UserLoad:        "heavy",
+			StorageCapacity: 1000,
+			UsingCDN:        true,
 		}
 		body, _ := json.Marshal(reqBody)
 
@@ -172,9 +167,9 @@ func TestCalculateStorageQuota(t *testing.T) {
 	}{
 		{"unlimited", 0, 0},
 		{"negative", -10, 0},
-		{"small capacity", 5, 5},           // < 10GB uses full capacity
-		{"normal capacity", 100, 80},       // 80% of 100
-		{"large capacity", 1000, 800},      // 80% of 1000
+		{"small capacity", 5, 5},      // < 10GB uses full capacity
+		{"normal capacity", 100, 75},  // 75% of 100
+		{"large capacity", 1000, 750}, // 75% of 1000
 	}
 
 	for _, tt := range tests {
@@ -218,20 +213,20 @@ func TestCalculateExpirationTimes(t *testing.T) {
 
 func TestCalculateRateLimits(t *testing.T) {
 	tests := []struct {
-		name          string
-		userLoad      string
-		uploadMBps    float64
-		downloadMBps  float64
-		wantUpload    int
-		wantDownload  int
+		name         string
+		userLoad     string
+		uploadMBps   float64
+		downloadMBps float64
+		wantUpload   int
+		wantDownload int
 	}{
 		{"light load", "light", 10, 50, 20, 200},
 		{"moderate load", "moderate", 10, 50, 15, 150},
 		{"heavy load", "heavy", 10, 50, 10, 100},
 		{"very heavy load", "very_heavy", 10, 50, 5, 50},
 		{"default load", "unknown", 10, 50, 10, 100},
-		{"low bandwidth", "light", 2, 5, 10, 100},  // upload reduced by half
-		{"high bandwidth light", "light", 60, 150, 30, 300}, // increased by 1.5x
+		{"low bandwidth", "light", 2, 5, 10, 100},                 // upload reduced by half
+		{"high bandwidth light", "light", 60, 150, 30, 300},       // increased by 1.5x
 		{"high bandwidth moderate", "moderate", 60, 150, 22, 225}, // increased by 1.5x
 	}
 
@@ -246,128 +241,6 @@ func TestCalculateRateLimits(t *testing.T) {
 				t.Errorf("download limit = %d, want %d", gotDownload, tt.wantDownload)
 			}
 		})
-	}
-}
-
-func TestCalculateChunkSize(t *testing.T) {
-	tests := []struct {
-		name         string
-		latency      string
-		uploadMBps   float64
-		fileSize     string
-		wantChunkMB  int64
-	}{
-		{"high latency", "high", 10, "medium", 5},
-		{"slow connection", "low", 1, "medium", 5},
-		{"medium-slow", "low", 3, "medium", 8},
-		{"medium connection", "low", 10, "medium", 10},
-		{"fast connection", "low", 20, "medium", 20},
-		{"very fast", "low", 50, "medium", 30},
-		{"huge files cap", "low", 50, "huge", 10}, // capped at 10MB for huge files
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := ConfigAssistantRequest{
-				NetworkLatency:  tt.latency,
-				TypicalFileSize: tt.fileSize,
-			}
-			got := calculateChunkSize(req, tt.uploadMBps)
-			wantBytes := tt.wantChunkMB * 1024 * 1024
-			if got != wantBytes {
-				t.Errorf("chunk size = %d MB, want %d MB", got/(1024*1024), tt.wantChunkMB)
-			}
-		})
-	}
-}
-
-func TestApplyCDNConstraints(t *testing.T) {
-	tests := []struct {
-		name        string
-		usingCDN    bool
-		cdnTimeout  int
-		uploadMBps  float64
-		chunkSize   int64
-		wantChunk   int64
-	}{
-		{"no CDN", false, 0, 10, 20 * 1024 * 1024, 20 * 1024 * 1024},
-		{"CDN no timeout", true, 0, 10, 20 * 1024 * 1024, 20 * 1024 * 1024},
-		{"CDN allows larger", true, 120, 10, 10 * 1024 * 1024, 10 * 1024 * 1024},
-		{"CDN constrains", true, 30, 5, 100 * 1024 * 1024, int64(5 * 30 * 0.6 * 1024 * 1024)}, // input 100MB, constrained to ~90MB
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := ConfigAssistantRequest{
-				UsingCDN:   tt.usingCDN,
-				CDNTimeout: tt.cdnTimeout,
-			}
-			got := applyCDNConstraints(req, tt.uploadMBps, tt.chunkSize)
-			if got != tt.wantChunk {
-				t.Errorf("chunk size = %d, want %d", got, tt.wantChunk)
-			}
-		})
-	}
-}
-
-func TestCalculateTimeouts(t *testing.T) {
-	tests := []struct {
-		name        string
-		latency     string
-		uploadMBps  float64
-		chunkSize   int64
-		encryption  bool
-		usingCDN    bool
-		cdnTimeout  int
-	}{
-		{"low latency", "low", 10, 10 * 1024 * 1024, false, false, 0},
-		{"medium latency", "medium", 10, 10 * 1024 * 1024, false, false, 0},
-		{"high latency", "high", 10, 10 * 1024 * 1024, false, false, 0},
-		{"with encryption", "low", 10, 10 * 1024 * 1024, true, false, 0},
-		{"with CDN", "low", 10, 10 * 1024 * 1024, false, true, 120}, // CDN timeout 120s -> max 96s after 0.8 safety factor
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := ConfigAssistantRequest{
-				NetworkLatency:    tt.latency,
-				EncryptionEnabled: tt.encryption,
-				UsingCDN:          tt.usingCDN,
-				CDNTimeout:        tt.cdnTimeout,
-			}
-			readTimeout, writeTimeout := calculateTimeouts(req, tt.uploadMBps, tt.chunkSize)
-
-			// Verify timeouts are within bounds
-			if readTimeout < 60 || readTimeout > 600 {
-				t.Errorf("read timeout = %d, want between 60 and 600", readTimeout)
-			}
-			if writeTimeout < 60 || writeTimeout > 600 {
-				t.Errorf("write timeout = %d, want between 60 and 600", writeTimeout)
-			}
-		})
-	}
-}
-
-func TestApplyTimeoutBounds(t *testing.T) {
-	tests := []struct {
-		timeout    int
-		minTimeout int
-		maxTimeout int
-		want       int
-	}{
-		{50, 60, 600, 60},   // below min
-		{700, 60, 600, 600}, // above max
-		{120, 60, 600, 120}, // within bounds
-		{60, 60, 600, 60},   // at min
-		{600, 60, 600, 600}, // at max
-	}
-
-	for _, tt := range tests {
-		got := applyTimeoutBounds(tt.timeout, tt.minTimeout, tt.maxTimeout)
-		if got != tt.want {
-			t.Errorf("applyTimeoutBounds(%d, %d, %d) = %d, want %d",
-				tt.timeout, tt.minTimeout, tt.maxTimeout, got, tt.want)
-		}
 	}
 }
 
@@ -406,9 +279,10 @@ func TestCalculateOperationalSettings(t *testing.T) {
 		userLoad        string
 		wantSession     int
 	}{
-		{"LAN", "LAN", 100, "light", 12},
-		{"WAN", "WAN", 100, "light", 24},
-		{"Internet", "Internet", 100, "light", 48},
+		// More exposed deployments get shorter login sessions.
+		{"LAN", "LAN", 100, "light", 24},
+		{"WAN", "WAN", 100, "light", 12},
+		{"Internet", "Internet", 100, "light", 8},
 		{"default", "unknown", 100, "light", 24},
 	}
 
@@ -467,9 +341,9 @@ func TestCalculateSecuritySettings(t *testing.T) {
 
 func TestGenerateAnalysisSummary(t *testing.T) {
 	tests := []struct {
-		name    string
-		req     ConfigAssistantRequest
-		wantIn  string
+		name   string
+		req    ConfigAssistantRequest
+		wantIn string
 	}{
 		{
 			"Internet deployment",
@@ -503,36 +377,16 @@ func TestGenerateAnalysisSummary(t *testing.T) {
 	}
 }
 
-func TestMinFunction(t *testing.T) {
-	tests := []struct {
-		a, b, want int
-	}{
-		{5, 10, 5},
-		{10, 5, 5},
-		{5, 5, 5},
-		{-5, 5, -5},
-		{0, 0, 0},
-	}
-
-	for _, tt := range tests {
-		got := min(tt.a, tt.b)
-		if got != tt.want {
-			t.Errorf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
-		}
-	}
-}
-
 func TestCalculateRecommendations(t *testing.T) {
 	req := ConfigAssistantRequest{
-		UploadSpeed:       100,
-		DownloadSpeed:     200,
-		NetworkLatency:    "low",
-		TypicalFileSize:   "medium",
-		DeploymentType:    "Internet",
-		UserLoad:          "moderate",
-		StorageCapacity:   500,
-		UsingCDN:          false,
-		EncryptionEnabled: false,
+		UploadSpeed:     100,
+		DownloadSpeed:   200,
+		NetworkLatency:  "low",
+		TypicalFileSize: "medium",
+		DeploymentType:  "Internet",
+		UserLoad:        "moderate",
+		StorageCapacity: 500,
+		UsingCDN:        false,
 	}
 
 	rec := calculateRecommendations(req)
@@ -541,14 +395,8 @@ func TestCalculateRecommendations(t *testing.T) {
 	if rec.MaxFileSize <= 0 {
 		t.Error("max file size should be > 0")
 	}
-	if rec.ChunkSize <= 0 {
-		t.Error("chunk size should be > 0")
-	}
-	if rec.ReadTimeout <= 0 {
-		t.Error("read timeout should be > 0")
-	}
-	if rec.WriteTimeout <= 0 {
-		t.Error("write timeout should be > 0")
+	if rec.ChunkedUploadThreshold <= 0 {
+		t.Error("chunked upload threshold should be > 0")
 	}
 	if len(rec.BlockedExtensions) == 0 {
 		t.Error("blocked extensions should not be empty")
@@ -557,16 +405,14 @@ func TestCalculateRecommendations(t *testing.T) {
 
 func TestGenerateAnalysis(t *testing.T) {
 	req := ConfigAssistantRequest{
-		UploadSpeed:       100,
-		DownloadSpeed:     200,
-		NetworkLatency:    "low",
-		TypicalFileSize:   "medium",
-		DeploymentType:    "Internet",
-		UserLoad:          "moderate",
-		StorageCapacity:   500,
-		UsingCDN:          true,
-		CDNTimeout:        60,
-		EncryptionEnabled: true,
+		UploadSpeed:     100,
+		DownloadSpeed:   200,
+		NetworkLatency:  "low",
+		TypicalFileSize: "medium",
+		DeploymentType:  "Internet",
+		UserLoad:        "moderate",
+		StorageCapacity: 500,
+		UsingCDN:        true,
 	}
 
 	current := ConfigRecommendations{
@@ -574,7 +420,6 @@ func TestGenerateAnalysis(t *testing.T) {
 		QuotaLimitGB:           0,
 		DefaultExpirationHours: 24,
 		MaxExpirationHours:     168,
-		ChunkSize:              5 * 1024 * 1024,
 	}
 
 	recommended := calculateRecommendations(req)
@@ -584,7 +429,7 @@ func TestGenerateAnalysis(t *testing.T) {
 		t.Error("analysis summary should not be empty")
 	}
 	if len(analysis.AdditionalRecommendations) == 0 {
-		t.Error("should have additional recommendations for CDN and encryption")
+		t.Error("should have additional recommendations for CDN and the reverse proxy")
 	}
 }
 
@@ -633,17 +478,11 @@ func TestGeneratePerformanceImpacts(t *testing.T) {
 	}
 
 	current := ConfigRecommendations{
-		ChunkSize:                5 * 1024 * 1024,
-		ReadTimeout:              60,
-		WriteTimeout:             60,
 		ChunkedUploadThreshold:   50 * 1024 * 1024,
 		PartialUploadExpiryHours: 24,
 	}
 
 	recommended := ConfigRecommendations{
-		ChunkSize:                10 * 1024 * 1024,
-		ReadTimeout:              120,
-		WriteTimeout:             120,
 		ChunkedUploadThreshold:   100 * 1024 * 1024,
 		PartialUploadExpiryHours: 48,
 	}
@@ -654,8 +493,8 @@ func TestGeneratePerformanceImpacts(t *testing.T) {
 
 	generatePerformanceImpacts(req, current, recommended, analysis)
 
-	if len(analysis.Impacts) == 0 {
-		t.Error("should have performance impact descriptions")
+	if len(analysis.Impacts) != 2 {
+		t.Errorf("performance impacts = %v, want threshold and partial expiry", analysis.Impacts)
 	}
 }
 
@@ -672,7 +511,7 @@ func TestGenerateOperationalImpacts(t *testing.T) {
 	}
 
 	recommended := ConfigRecommendations{
-		SessionExpiryHours:     48,
+		SessionExpiryHours:     8,
 		CleanupIntervalMinutes: 60,
 		RequireAuthForUpload:   true,
 		HTTPSEnabled:           true,
@@ -691,63 +530,18 @@ func TestGenerateOperationalImpacts(t *testing.T) {
 
 func TestGenerateNetworkRecommendations(t *testing.T) {
 	t.Run("high latency", func(t *testing.T) {
-		req := ConfigAssistantRequest{NetworkLatency: "high"}
-		rec := ConfigRecommendations{}
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateNetworkRecommendations(req, rec, analysis)
-
+		generateNetworkRecommendations(ConfigAssistantRequest{NetworkLatency: "high"}, analysis)
 		if len(analysis.AdditionalRecommendations) == 0 {
 			t.Error("should have TCP tuning recommendation for high latency")
 		}
 	})
 
-	t.Run("slow upload", func(t *testing.T) {
-		req := ConfigAssistantRequest{
-			UploadSpeed:    16, // 16 Mbps = 2 MBps
-			NetworkLatency: "low",
-		}
-		rec := ConfigRecommendations{}
+	t.Run("low latency", func(t *testing.T) {
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateNetworkRecommendations(req, rec, analysis)
-
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have recommendation for slow upload")
-		}
-	})
-}
-
-func TestGenerateFileRecommendations(t *testing.T) {
-	t.Run("large files", func(t *testing.T) {
-		req := ConfigAssistantRequest{TypicalFileSize: "large"}
-		rec := ConfigRecommendations{
-			ChunkSize:    10 * 1024 * 1024,
-			ReadTimeout:  120,
-			WriteTimeout: 120,
-		}
-		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateFileRecommendations(req, rec, analysis)
-
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have recommendation for large files")
-		}
-	})
-
-	t.Run("huge files", func(t *testing.T) {
-		req := ConfigAssistantRequest{TypicalFileSize: "huge"}
-		rec := ConfigRecommendations{
-			ChunkSize:    10 * 1024 * 1024,
-			ReadTimeout:  120,
-			WriteTimeout: 120,
-		}
-		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateFileRecommendations(req, rec, analysis)
-
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have recommendation for huge files")
+		generateNetworkRecommendations(ConfigAssistantRequest{NetworkLatency: "low", UploadSpeed: 16}, analysis)
+		if len(analysis.AdditionalRecommendations) != 0 {
+			t.Errorf("unexpected recommendations: %v", analysis.AdditionalRecommendations)
 		}
 	})
 }
@@ -755,16 +549,16 @@ func TestGenerateFileRecommendations(t *testing.T) {
 func TestGenerateDeploymentRecommendations(t *testing.T) {
 	t.Run("Internet with HTTPS", func(t *testing.T) {
 		req := ConfigAssistantRequest{DeploymentType: "Internet"}
-		rec := ConfigRecommendations{
-			ReadTimeout:  120,
-			HTTPSEnabled: true,
-		}
+		rec := ConfigRecommendations{HTTPSEnabled: true}
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
 
 		generateDeploymentRecommendations(req, rec, analysis)
 
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have recommendations for Internet deployment")
+		if len(analysis.AdditionalRecommendations) != 2 {
+			t.Fatalf("recommendations = %v, want proxy and HTTPS advice", analysis.AdditionalRecommendations)
+		}
+		if !strings.Contains(analysis.AdditionalRecommendations[0], "6 hours") {
+			t.Errorf("proxy advice should say transfers can take up to 6 hours: %q", analysis.AdditionalRecommendations[0])
 		}
 	})
 
@@ -775,66 +569,31 @@ func TestGenerateDeploymentRecommendations(t *testing.T) {
 
 		generateDeploymentRecommendations(req, rec, analysis)
 
-		// LAN should not trigger Internet recommendations
-		// (depending on implementation)
+		if len(analysis.AdditionalRecommendations) != 0 {
+			t.Errorf("LAN should get no Internet recommendations: %v", analysis.AdditionalRecommendations)
+		}
 	})
 }
 
 func TestGenerateCDNRecommendations(t *testing.T) {
 	t.Run("no CDN", func(t *testing.T) {
-		req := ConfigAssistantRequest{UsingCDN: false}
-		rec := ConfigRecommendations{}
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateCDNRecommendations(req, rec, analysis)
-
-		// Should not add recommendations when not using CDN
-	})
-
-	t.Run("CDN with timeout", func(t *testing.T) {
-		req := ConfigAssistantRequest{
-			UsingCDN:   true,
-			CDNTimeout: 60,
-		}
-		rec := ConfigRecommendations{ChunkSize: 10 * 1024 * 1024}
-		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateCDNRecommendations(req, rec, analysis)
-
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have CDN recommendations")
+		generateCDNRecommendations(ConfigAssistantRequest{UsingCDN: false}, analysis)
+		if len(analysis.AdditionalRecommendations) != 0 {
+			t.Errorf("unexpected recommendations: %v", analysis.AdditionalRecommendations)
 		}
 	})
 
-	t.Run("CDN with short timeout", func(t *testing.T) {
-		req := ConfigAssistantRequest{
-			UsingCDN:   true,
-			CDNTimeout: 30, // < 60 seconds
-		}
-		rec := ConfigRecommendations{ChunkSize: 10 * 1024 * 1024}
+	t.Run("CDN", func(t *testing.T) {
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateCDNRecommendations(req, rec, analysis)
-
-		// Should warn about short timeout
-		if len(analysis.AdditionalRecommendations) < 2 {
-			t.Error("should have warning about short CDN timeout")
+		generateCDNRecommendations(ConfigAssistantRequest{UsingCDN: true}, analysis)
+		if len(analysis.AdditionalRecommendations) != 1 || !strings.Contains(analysis.AdditionalRecommendations[0], "DOWNLOAD_URL") {
+			t.Errorf("want the DOWNLOAD_URL advice, got %v", analysis.AdditionalRecommendations)
 		}
 	})
 }
 
 func TestGenerateResourceRecommendations(t *testing.T) {
-	t.Run("encryption enabled", func(t *testing.T) {
-		req := ConfigAssistantRequest{EncryptionEnabled: true}
-		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
-
-		generateResourceRecommendations(req, analysis)
-
-		if len(analysis.AdditionalRecommendations) == 0 {
-			t.Error("should have encryption recommendation")
-		}
-	})
-
 	t.Run("heavy load", func(t *testing.T) {
 		req := ConfigAssistantRequest{UserLoad: "heavy"}
 		analysis := &ConfigAnalysis{AdditionalRecommendations: []string{}}
