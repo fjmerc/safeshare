@@ -22,6 +22,7 @@ SafeShare-Planning
 # Coverage test files
 *.out
 *.test
+coverage.html
 
 # safeshare-cli release builds (scripts/build-cli.sh)
 /dist/
