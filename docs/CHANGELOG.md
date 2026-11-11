@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Security
+
+- **Go 1.27.4** (from 1.27.3) fixes GO-2026-6859 in `net/http`, which the server reaches through its HTTP handling and the S3 storage client.
+
 ## [1.24.0] - 2026-11-10
 
 ### Changed

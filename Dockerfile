@@ -3,7 +3,7 @@
 # (GOARCH below), so a multi-platform build doesn't compile Go under
 # emulation. Go gives the same binary whichever machine compiles it, which
 # scripts/verify-image.sh checks.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS builder
 ARG TARGETARCH
 
 WORKDIR /build
