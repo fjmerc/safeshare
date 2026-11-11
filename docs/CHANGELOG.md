@@ -35,6 +35,22 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+## [1.24.1] - 2026-11-11
+
+### Security
+
+- **Go 1.27.4** (from 1.27.3) fixes GO-2026-6859 in `net/http`, which the server reaches through its HTTP handling and the S3 storage client.
+
+### Fixed
+
+- Admin dashboard: **Configuration Assistant → Apply** no longer fails when the recommended default expiration is longer than your current maximum (for example on a Ghost-mode server with a 24-hour maximum). Saving storage settings now checks every value before changing any, so a rejected value no longer leaves the others half-applied. This also lets the regular **Storage** settings form raise the default and maximum expiration in one save.
+- Admin dashboard: **Apply** no longer reports success when a save was rejected. It now stops and says which settings were applied and why the rest were refused.
+- Configuration Assistant: applying recommendations keeps the file types you already block and adds the recommended ones, instead of replacing your list. The results page now has a **Blocked File Types** row that names exactly which types **Apply Immediate Settings** will add.
+- Configuration Assistant: with `ANONYMOUS_MODE` on, it no longer recommends raising your expiration limits, and it says why. The encryption note no longer shows a stray "%%".
+- Configuration Assistant: **Apply** checks the recommendations against your settings as they are now. If you changed blocked file types or expirations after pressing Analyze, it shows updated recommendations instead of undoing your change.
+- A default expiration saved in the dashboard that is longer than the `MAX_EXPIRATION_HOURS` environment value no longer reverts to the environment value on restart.
+- Storage quotas too large to convert to bytes (over about 8.5 billion GB) are now refused. Before, they wrapped around and could block every upload.
+
 ## [1.24.0] - 2026-11-10
 
 ### Changed

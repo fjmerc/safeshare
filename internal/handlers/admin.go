@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -1254,13 +1255,92 @@ func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *conf
 			}
 		}()
 
-		// Update storage quota
-		if quotaGB := r.FormValue("quota_gb"); quotaGB != "" {
-			quota, err := strconv.ParseInt(quotaGB, 10, 64)
-			if err != nil || quota < 0 {
+		// Parse and validate every field before changing anything, so a
+		// rejected field never leaves the settings half-applied.
+		quotaStr := r.FormValue("quota_gb")
+		maxFileSizeStr := r.FormValue("max_file_size_mb")
+		defaultExpStr := r.FormValue("default_expiration_hours")
+		maxExpStr := r.FormValue("max_expiration_hours")
+
+		var quota, sizeMB int64
+		if quotaStr != "" {
+			v, err := strconv.ParseInt(quotaStr, 10, 64)
+			if err != nil || v < 0 || v > config.MaxQuotaLimitGB {
 				http.Error(w, "Invalid quota_gb - must be non-negative integer", http.StatusBadRequest)
 				return
 			}
+			quota = v
+		}
+		if maxFileSizeStr != "" {
+			v, err := strconv.ParseInt(maxFileSizeStr, 10, 64)
+			// Upper bound keeps the MB -> bytes conversion from overflowing.
+			if err != nil || v <= 0 || v > math.MaxInt64/(1024*1024) {
+				http.Error(w, "Invalid max_file_size_mb - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			sizeMB = v
+		}
+		var newDefaultExp, newMaxExp *int
+		if defaultExpStr != "" {
+			v, err := strconv.Atoi(defaultExpStr)
+			if err != nil || v <= 0 {
+				http.Error(w, "Invalid default_expiration_hours - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			newDefaultExp = &v
+		}
+		if maxExpStr != "" {
+			v, err := strconv.Atoi(maxExpStr)
+			if err != nil || v <= 0 {
+				http.Error(w, "Invalid max_expiration_hours - must be positive integer", http.StatusBadRequest)
+				return
+			}
+			newMaxExp = &v
+		}
+
+		// Expiration goes first: its default <= max check is the only one
+		// left that can refuse, and it runs against the live values under the
+		// config lock. The quota and file size setters below repeat checks
+		// already made above, so once expiration succeeds they can't fail;
+		// keep it that way, or a rejection could leave a half-applied save.
+		if newDefaultExp != nil || newMaxExp != nil {
+			appliedDefault, appliedMax, err := cfg.UpdateExpirationHours(newDefaultExp, newMaxExp)
+			if err != nil {
+				http.Error(w, "Expiration: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			// Persist to database for restart persistence
+			if newDefaultExp != nil {
+				if err := repos.Settings.UpdateDefaultExpiration(ctx, appliedDefault); err != nil {
+					slog.Error("failed to persist default expiration setting to database",
+						"error", err,
+						"default_expiration_hours", appliedDefault,
+					)
+					// Don't fail the request - config is updated, just log the error
+				}
+				updates["default_expiration_hours"] = map[string]int{
+					"old": oldDefaultExpiration,
+					"new": appliedDefault,
+				}
+			}
+			if newMaxExp != nil {
+				if err := repos.Settings.UpdateMaxExpiration(ctx, appliedMax); err != nil {
+					slog.Error("failed to persist max expiration setting to database",
+						"error", err,
+						"max_expiration_hours", appliedMax,
+					)
+					// Don't fail the request - config is updated, just log the error
+				}
+				updates["max_expiration_hours"] = map[string]int{
+					"old": oldMaxExpiration,
+					"new": appliedMax,
+				}
+			}
+		}
+
+		// Update storage quota
+		if quotaStr != "" {
 			if err := cfg.SetQuotaLimitGB(quota); err != nil {
 				http.Error(w, "Storage quota: "+err.Error(), http.StatusBadRequest)
 				return
@@ -1282,12 +1362,7 @@ func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *conf
 		}
 
 		// Update max file size (in MB, convert to bytes)
-		if maxFileSizeMB := r.FormValue("max_file_size_mb"); maxFileSizeMB != "" {
-			sizeMB, err := strconv.ParseInt(maxFileSizeMB, 10, 64)
-			if err != nil || sizeMB <= 0 {
-				http.Error(w, "Invalid max_file_size_mb - must be positive integer", http.StatusBadRequest)
-				return
-			}
+		if maxFileSizeStr != "" {
 			sizeBytes := sizeMB * 1024 * 1024
 			if err := cfg.SetMaxFileSize(sizeBytes); err != nil {
 				http.Error(w, "Max file size: "+err.Error(), http.StatusBadRequest)
@@ -1306,60 +1381,6 @@ func AdminUpdateStorageSettingsHandler(repos *repository.Repositories, cfg *conf
 			updates["max_file_size_mb"] = map[string]int64{
 				"old": oldMaxFileSize / 1024 / 1024,
 				"new": sizeMB,
-			}
-		}
-
-		// Update default expiration
-		if defaultExpStr := r.FormValue("default_expiration_hours"); defaultExpStr != "" {
-			hours, err := strconv.Atoi(defaultExpStr)
-			if err != nil || hours <= 0 {
-				http.Error(w, "Invalid default_expiration_hours - must be positive integer", http.StatusBadRequest)
-				return
-			}
-			if err := cfg.SetDefaultExpirationHours(hours); err != nil {
-				http.Error(w, "Default expiration: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			// Persist to database for restart persistence
-			if err := repos.Settings.UpdateDefaultExpiration(ctx, hours); err != nil {
-				slog.Error("failed to persist default expiration setting to database",
-					"error", err,
-					"default_expiration_hours", hours,
-				)
-				// Don't fail the request - config is updated, just log the error
-			}
-
-			updates["default_expiration_hours"] = map[string]int{
-				"old": oldDefaultExpiration,
-				"new": hours,
-			}
-		}
-
-		// Update max expiration
-		if maxExpStr := r.FormValue("max_expiration_hours"); maxExpStr != "" {
-			hours, err := strconv.Atoi(maxExpStr)
-			if err != nil || hours <= 0 {
-				http.Error(w, "Invalid max_expiration_hours - must be positive integer", http.StatusBadRequest)
-				return
-			}
-			if err := cfg.SetMaxExpirationHours(hours); err != nil {
-				http.Error(w, "Max expiration: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			// Persist to database for restart persistence
-			if err := repos.Settings.UpdateMaxExpiration(ctx, hours); err != nil {
-				slog.Error("failed to persist max expiration setting to database",
-					"error", err,
-					"max_expiration_hours", hours,
-				)
-				// Don't fail the request - config is updated, just log the error
-			}
-
-			updates["max_expiration_hours"] = map[string]int{
-				"old": oldMaxExpiration,
-				"new": hours,
 			}
 		}
 

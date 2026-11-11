@@ -900,6 +900,91 @@ func TestSetMaxExpirationHours(t *testing.T) {
 	}
 }
 
+// TestSetExpirationHours tests updating default and max expiration together
+func TestSetExpirationHours(t *testing.T) {
+	clearEnvVars(t)
+	cfg, _ := Load()
+
+	tests := []struct {
+		name        string
+		def, max    int
+		wantErr     bool
+		errMsg      string
+		wantDefault int
+		wantMax     int
+	}{
+		// Raising the default above the old max works when both change at once.
+		{"raise both", 168, 720, false, "", 168, 720},
+		{"lower both", 1, 24, false, "", 1, 24},
+		{"equal", 24, 24, false, "", 24, 24},
+		{"default above max", 48, 24, true, "cannot exceed max expiration", 24, 24},
+		{"zero default", 0, 24, true, "must be positive", 24, 24},
+		{"zero max", 1, 0, true, "must be positive", 24, 24},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := cfg.SetExpirationHours(tt.def, tt.max)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("SetExpirationHours(%d, %d) succeeded, want error", tt.def, tt.max)
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %v, want containing %q", err, tt.errMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("SetExpirationHours(%d, %d) failed: %v", tt.def, tt.max, err)
+			}
+			if d, m := cfg.GetDefaultExpirationHours(), cfg.GetMaxExpirationHours(); d != tt.wantDefault || m != tt.wantMax {
+				t.Errorf("after call: default=%d max=%d, want %d/%d", d, m, tt.wantDefault, tt.wantMax)
+			}
+		})
+	}
+}
+
+// TestUpdateExpirationHoursPartial checks that a nil value keeps the live one.
+func TestUpdateExpirationHoursPartial(t *testing.T) {
+	clearEnvVars(t)
+	cfg, _ := Load()
+	if err := cfg.SetExpirationHours(1, 24); err != nil {
+		t.Fatalf("SetExpirationHours: %v", err)
+	}
+
+	newMax := 48
+	d, m, err := cfg.UpdateExpirationHours(nil, &newMax)
+	if err != nil || d != 1 || m != 48 {
+		t.Fatalf("max only: got %d/%d err=%v, want 1/48", d, m, err)
+	}
+
+	newDefault := 72
+	if _, _, err := cfg.UpdateExpirationHours(&newDefault, nil); err == nil {
+		t.Fatal("default above live max: want error")
+	}
+	if cfg.GetDefaultExpirationHours() != 1 || cfg.GetMaxExpirationHours() != 48 {
+		t.Errorf("rejected update changed values to %d/%d", cfg.GetDefaultExpirationHours(), cfg.GetMaxExpirationHours())
+	}
+
+	bad := 0
+	if _, _, err := cfg.UpdateExpirationHours(nil, &bad); err == nil {
+		t.Error("zero max: want error")
+	}
+}
+
+// TestSetQuotaLimitGBOverflow checks the quota can't overflow when converted to bytes.
+func TestSetQuotaLimitGBOverflow(t *testing.T) {
+	clearEnvVars(t)
+	cfg, _ := Load()
+	if err := cfg.SetQuotaLimitGB(MaxQuotaLimitGB); err != nil {
+		t.Errorf("SetQuotaLimitGB(max) failed: %v", err)
+	}
+	if err := cfg.SetQuotaLimitGB(MaxQuotaLimitGB + 1); err == nil {
+		t.Error("SetQuotaLimitGB(max+1) succeeded, want error")
+	}
+	if cfg.GetQuotaLimitGB() != MaxQuotaLimitGB {
+		t.Errorf("quota = %d after rejected update, want %d", cfg.GetQuotaLimitGB(), MaxQuotaLimitGB)
+	}
+}
+
 // TestSetBlockedExtensions tests SetBlockedExtensions with normalization
 func TestSetBlockedExtensions(t *testing.T) {
 	clearEnvVars(t)

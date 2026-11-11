@@ -1299,19 +1299,31 @@ Modify storage-related configuration at runtime.
 
 **Authentication**: Required (admin session + CSRF token)
 
-**Request Body** (JSON):
+**Request Body** (`application/x-www-form-urlencoded`). Every field is optional, but at least one is required:
+
+| Field | Meaning |
+|-------|---------|
+| `quota_gb` | Total storage quota in GB; `0` means unlimited. At most 8589934591. |
+| `max_file_size_mb` | Largest upload in MB (positive). |
+| `default_expiration_hours` | Default file lifetime in hours (positive). |
+| `max_expiration_hours` | Longest lifetime a user may choose, in hours (positive). |
+
+```
+quota_gb=100&max_file_size_mb=200&default_expiration_hours=48&max_expiration_hours=336
+```
+
+The request is checked as a whole before anything changes: if any field is invalid, or the default would exceed the max (counting the max already in effect when only one of the two is sent), the server answers `400` with a plain-text reason and applies nothing. Default and max expiration can be raised or lowered together in one request.
+
+**Response** (200 OK):
 ```json
 {
-  "quota_gb": 100,
-  "max_file_size_bytes": 209715200,
-  "default_expiration_hours": 48,
-  "max_expiration_hours": 336
+  "success": true,
+  "message": "Storage settings updated successfully",
+  "updates": { "default_expiration_hours": { "old": 24, "new": 48 } }
 }
 ```
 
-**Response**: 200 OK
-
-**Note**: Settings persist to database and survive restarts.
+**Note**: Settings persist to the database and survive restarts.
 
 ---
 
@@ -1323,16 +1335,21 @@ Modify security-related configuration at runtime.
 
 **Authentication**: Required (admin session + CSRF token)
 
-**Request Body** (JSON):
-```json
-{
-  "rate_limit_upload": 20,
-  "rate_limit_download": 100,
-  "blocked_extensions": [".exe", ".bat", ".cmd"]
-}
+**Request Body** (`application/x-www-form-urlencoded`). Every field is optional, but at least one is required:
+
+| Field | Meaning |
+|-------|---------|
+| `rate_limit_upload` | Uploads per IP per hour (positive). |
+| `rate_limit_download` | Downloads per IP per hour (positive). |
+| `blocked_extensions` | Comma-separated list. It **replaces** the whole list; entries are lowercased and given a leading `.`. |
+
+```
+rate_limit_upload=20&rate_limit_download=100&blocked_extensions=.exe,.bat,.cmd
 ```
 
-**Response**: 200 OK
+Fields are applied in the order above; if a later field is rejected (`400`, plain text), earlier ones in the same request have already been applied.
+
+**Response** (200 OK): `{"success": true, "message": "Security settings updated successfully", "updates": {...}}`
 
 ---
 
@@ -1360,7 +1377,7 @@ Retrieve current server configuration.
 
 ### Configuration Assistant
 
-Analyze deployment environment and get optimized configuration recommendations.
+Recommend settings for a described environment. This only analyzes; the dashboard's **Apply Immediate Settings** button then saves the immediate settings through the storage and security endpoints above.
 
 **Endpoint**: `POST /admin/api/config-assistant/analyze`
 
@@ -1369,31 +1386,61 @@ Analyze deployment environment and get optimized configuration recommendations.
 **Request Body** (JSON):
 ```json
 {
-  "storage_type": "network",
-  "network_speed_mbps": 100,
-  "cdn_used": true,
-  "cdn_timeout_seconds": 100,
-  "average_file_size_mb": 500,
-  "concurrent_users": 50,
-  "network_latency_ms": 50
+  "upload_speed": 100,
+  "download_speed": 200,
+  "network_latency": "low",
+  "typical_file_size": "medium",
+  "deployment_type": "Internet",
+  "user_load": "moderate",
+  "storage_capacity": 500,
+  "using_cdn": true,
+  "cdn_timeout": 100,
+  "encryption_enabled": true
 }
 ```
+
+- `upload_speed`, `download_speed`: Mbps, must be positive.
+- `network_latency`: `local`, `low`, `medium` or `high`.
+- `typical_file_size`: `small`, `medium`, `large` or `huge`.
+- `deployment_type`: `LAN`, `WAN` or `Internet`.
+- `user_load`: `light`, `moderate`, `heavy` or `very_heavy`.
+- `storage_capacity`: GB, `0` for unlimited. `cdn_timeout`: seconds, `0` if unknown.
 
 **Response** (200 OK):
 ```json
 {
   "recommendations": {
-    "chunk_size": 20971520,
-    "read_timeout": 200,
-    "write_timeout": 200,
-    "max_file_size": 5368709120
+    "max_file_size": 1073741824,
+    "quota_limit_gb": 400,
+    "default_expiration_hours": 168,
+    "max_expiration_hours": 720,
+    "rate_limit_upload": 15,
+    "rate_limit_download": 150,
+    "blocked_extensions": [".exe", ".bat", "..."],
+    "chunk_size": 10485760,
+    "read_timeout": 72,
+    "write_timeout": 72,
+    "chunked_upload_threshold": 104857600,
+    "partial_upload_expiry_hours": 24,
+    "session_expiry_hours": 48,
+    "cleanup_interval_minutes": 60,
+    "require_auth_for_upload": true,
+    "https_enabled": true,
+    "chunked_upload_enabled": true,
+    "public_url": ""
   },
-  "current_settings": {...},
-  "immediate_settings": {...},
-  "restart_required_settings": {...},
-  "reasoning": [...]
+  "current_config": { "...": "same fields, current values" },
+  "analysis": {
+    "summary": "Optimized for Internet deployment with low-latency connectivity, medium file sizes, and moderate user load.",
+    "impacts": { "max_file_size": "Increased to accommodate your typical file sizes" },
+    "additional_recommendations": ["..."]
+  }
 }
 ```
+
+- `blocked_extensions` is the types already blocked plus a baseline of common executable and script types, so applying it never unblocks anything.
+- With `ANONYMOUS_MODE` on, the recommended default and max expiration never exceed the current ones, and `additional_recommendations` says so.
+- The first seven fields can be applied at runtime; the rest need environment variables and a restart.
 
 ---
 

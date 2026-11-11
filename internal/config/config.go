@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -433,6 +434,42 @@ func (c *Config) SetMaxExpirationHours(hours int) error {
 	return nil
 }
 
+// SetExpirationHours updates the default and max expiration together, so a
+// change that raises (or lowers) both doesn't trip the default <= max check
+// halfway through, as setting them one at a time can.
+func (c *Config) SetExpirationHours(defaultHours, maxHours int) error {
+	_, _, err := c.UpdateExpirationHours(&defaultHours, &maxHours)
+	return err
+}
+
+// UpdateExpirationHours changes the default and/or max expiration (nil leaves
+// that value as it is) and checks default <= max against the values in effect
+// under the same lock, so a concurrent change to the other value is neither
+// overwritten nor missed. It returns the resulting default and max.
+func (c *Config) UpdateExpirationHours(defaultHours, maxHours *int) (int, int, error) {
+	if defaultHours != nil && *defaultHours <= 0 {
+		return 0, 0, fmt.Errorf("default expiration hours must be positive, got %d", *defaultHours)
+	}
+	if maxHours != nil && *maxHours <= 0 {
+		return 0, 0, fmt.Errorf("max expiration hours must be positive, got %d", *maxHours)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	newDefault, newMax := c.defaultExpirationHours, c.maxExpirationHours
+	if defaultHours != nil {
+		newDefault = *defaultHours
+	}
+	if maxHours != nil {
+		newMax = *maxHours
+	}
+	if newDefault > newMax {
+		return 0, 0, fmt.Errorf("default expiration (%d) cannot exceed max expiration (%d)", newDefault, newMax)
+	}
+	c.defaultExpirationHours = newDefault
+	c.maxExpirationHours = newMax
+	return newDefault, newMax, nil
+}
+
 func (c *Config) SetBlockedExtensions(extensions []string) error {
 	if extensions == nil {
 		return fmt.Errorf("blocked extensions cannot be nil")
@@ -474,9 +511,16 @@ func (c *Config) SetRateLimitDownload(limit int) error {
 	return nil
 }
 
+// MaxQuotaLimitGB is the largest quota whose size in bytes fits in an int64.
+const MaxQuotaLimitGB = math.MaxInt64 / (1024 * 1024 * 1024)
+
 func (c *Config) SetQuotaLimitGB(quota int64) error {
 	if quota < 0 {
 		return fmt.Errorf("quota limit must be 0 (unlimited) or positive, got %d", quota)
+	}
+	// Callers convert to bytes (quota * 1 GiB); larger values would overflow.
+	if quota > MaxQuotaLimitGB {
+		return fmt.Errorf("quota limit must be at most %d GB, got %d", MaxQuotaLimitGB, quota)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
