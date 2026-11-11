@@ -127,6 +127,12 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 			http.Error(w, "Invalid speed values", http.StatusBadRequest)
 			return
 		}
+		// Beyond the largest quota the server accepts, the GB arithmetic
+		// below would overflow.
+		if req.StorageCapacity < 0 || req.StorageCapacity > config.MaxQuotaLimitGB {
+			http.Error(w, "Invalid storage capacity", http.StatusBadRequest)
+			return
+		}
 
 		currentConfig := ConfigRecommendations{
 			// Immediate settings

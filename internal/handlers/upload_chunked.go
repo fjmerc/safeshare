@@ -165,8 +165,8 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 			return
 		}
 
-		// Calculate optimal chunk size based on file size
-		// Falls back to configured chunk size if dynamic sizing is disabled
+		// The server picks the chunk size from the file size (5/10/20 MiB);
+		// any chunk_size in the request is ignored.
 		chunkSize := utils.CalculateOptimalChunkSize(req.TotalSize)
 
 		// Calculate total chunks using optimal chunk size (P1 security fix: prevent integer overflow)

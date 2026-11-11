@@ -310,3 +310,15 @@ func TestAdminConfigAssistant_ConstrainedValuesExplainedByTheirRule(t *testing.T
 		}
 	}
 }
+
+func TestAdminConfigAssistant_RejectsAbsurdStorageCapacity(t *testing.T) {
+	cfg := testutil.SetupTestConfig(t)
+	for _, capacity := range []int64{-1, 1 << 40} {
+		body, _ := json.Marshal(ConfigAssistantRequest{UploadSpeed: 100, DownloadSpeed: 100, StorageCapacity: capacity})
+		rr := httptest.NewRecorder()
+		AdminConfigAssistantHandler(cfg).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/admin/api/config-assistant/analyze", bytes.NewReader(body)))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("storage_capacity %d: status %d, want 400", capacity, rr.Code)
+		}
+	}
+}
