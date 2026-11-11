@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +26,16 @@ type mockConfigProvider struct {
 	trustedProxyIPs   string
 
 	anonymousMode bool
+
+	// maxFileSize feeds the chunk allowance (chunkRequestLimit). Zero keeps
+	// the old 10-chunks-per-upload allowance existing tests expect.
+	maxFileSize int64
+}
+
+func (m *mockConfigProvider) GetMaxFileSize() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.maxFileSize
 }
 
 func (m *mockConfigProvider) GetRateLimitUpload() int {
@@ -992,4 +1004,119 @@ func TestRateLimiter_DropCountsAsUpload(t *testing.T) {
 	if code := send(http.MethodPost, "/drop"); code != http.StatusTooManyRequests {
 		t.Errorf("4th upload-bucket request: status %d, want 429", code)
 	}
+}
+
+func TestChunkRequestLimit(t *testing.T) {
+	const GiB = int64(1024 * 1024 * 1024)
+	tests := []struct {
+		name        string
+		uploadLimit int
+		maxFileSize int64
+		want        int
+	}{
+		// No maximum known: the old allowance of 10 chunks per upload.
+		{"no max file size", 10, 0, 100},
+		// 103 chunks for a file just under 1 GiB, +25 +10 for retries.
+		{"1 GiB max, 1 upload an hour", 1, GiB, 138},
+		// A large-file server: 768 chunks for 15 GiB, +192 +10.
+		{"15 GiB max, 50 uploads an hour", 50, 15 * GiB, 50 * 970},
+		// One chunk, +0 +10: never below the old 10 per upload.
+		{"tiny max keeps at least 10 per upload", 3, 1, 33},
+		{"saturates instead of overflowing", math.MaxInt32, 15 * GiB, math.MaxInt32},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfigProvider{uploadLimit: tt.uploadLimit, maxFileSize: tt.maxFileSize}
+			if got := chunkRequestLimit(cfg); got != tt.want {
+				t.Errorf("chunkRequestLimit = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRateLimiter_ChunksCoverMaxSizeUpload is a regression test: the chunk
+// allowance was a fixed 10 per permitted upload, so a large upload ran out
+// of chunks partway through (here a 60 MB file is 12 chunks, but one upload
+// an hour allowed only 10).
+func TestRateLimiter_ChunksCoverMaxSizeUpload(t *testing.T) {
+	tests := []struct {
+		name        string
+		uploadLimit int
+		maxFileSize int64
+	}{
+		// 12 chunks of 5 MB: 12+3+10 = 25 an hour, under the per-minute
+		// threshold, so every request is timestamped.
+		{"exact window", 1, 60 * 1024 * 1024},
+		// 50 x 970 = 48500 an hour: per-minute counting.
+		{"per-minute window", 50, 15 * 1024 * 1024 * 1024},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &mockConfigProvider{uploadLimit: tt.uploadLimit, downloadLimit: 5, maxFileSize: tt.maxFileSize}
+			rl := NewRateLimiter(cfg)
+			defer rl.Stop()
+			handler := RateLimitMiddleware(rl)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			do := func(path string) int {
+				req := httptest.NewRequest(http.MethodPost, path, nil)
+				req.RemoteAddr = "192.168.1.7:12345"
+				rr := httptest.NewRecorder()
+				handler.ServeHTTP(rr, req)
+				return rr.Code
+			}
+
+			limit := chunkRequestLimit(cfg)
+			for i := 0; i < limit; i++ {
+				if code := do("/api/upload/chunk/abc/" + strconv.Itoa(i%1000)); code != http.StatusOK {
+					t.Fatalf("chunk request %d of %d: got status %d, want 200", i+1, limit, code)
+				}
+			}
+			if code := do("/api/upload/chunk/abc/0"); code != http.StatusTooManyRequests {
+				t.Errorf("chunk request over the allowance: got status %d, want 429", code)
+			}
+		})
+	}
+}
+
+// TestRateLimiter_CountSurvivesThresholdCrossing is a regression test: the
+// exact (timestamp) and per-minute modes kept separate counts, so when a
+// bucket's limit crossed coarseLimitThreshold (an admin raising
+// MAX_FILE_SIZE or RATE_LIMIT_UPLOAD moves the chunk limit) every client got
+// a fresh budget for that hour.
+func TestRateLimiter_CountSurvivesThresholdCrossing(t *testing.T) {
+	const ip = "192.168.1.9"
+	allowed := func(rl *RateLimiter, limit, n int) int {
+		ok := 0
+		for i := 0; i < n; i++ {
+			if rl.checkLimit(ip, "chunk", limit) {
+				ok++
+			}
+		}
+		return ok
+	}
+
+	t.Run("exact to per-minute", func(t *testing.T) {
+		rl := NewRateLimiter(&mockConfigProvider{uploadLimit: 1, downloadLimit: 1})
+		defer rl.Stop()
+		if got := allowed(rl, 500, 400); got != 400 {
+			t.Fatalf("under the 500 limit: allowed %d of 400", got)
+		}
+		// Raised to 2000: 400 are already spent this hour, so 1600 remain.
+		if got := allowed(rl, 2000, 2000); got != 1600 {
+			t.Errorf("after raising the limit to 2000: allowed %d more, want 1600", got)
+		}
+	})
+
+	t.Run("per-minute to exact", func(t *testing.T) {
+		rl := NewRateLimiter(&mockConfigProvider{uploadLimit: 1, downloadLimit: 1})
+		defer rl.Stop()
+		if got := allowed(rl, 2000, 1500); got != 1500 {
+			t.Fatalf("under the 2000 limit: allowed %d of 1500", got)
+		}
+		// Lowered to 500 with 1500 already spent: nothing more this hour.
+		if got := allowed(rl, 500, 10); got != 0 {
+			t.Errorf("after lowering the limit to 500: allowed %d more, want 0", got)
+		}
+	})
 }

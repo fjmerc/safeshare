@@ -35,6 +35,12 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- Large uploads no longer stop partway because of the upload rate limit. Each piece of a large upload counted against a fixed allowance of 10 pieces per permitted upload, so on a server allowing 10 uploads an hour and files over 2 GB, a 2 GB file (103 pieces) sent within the hour stopped partway. The allowance now follows from `RATE_LIMIT_UPLOAD` and `MAX_FILE_SIZE`: enough for that many uploads of the maximum size each hour, with room for retries. Behind Tor, where every visitor shares one address, it is still one budget for the whole service.
+- When the upload limit is reached, the upload page now says so once, in plain words, and keeps the message up long enough to read. It used to show a technical message once per piece in flight. If this happens while the server is re-requesting missing pieces, the upload now stops, instead of carrying on in the background after the page has reset.
+- Server shutdown no longer waits out its full grace period after the same upload piece was sent twice at once.
+
 ## [1.24.1] - 2026-11-11
 
 ### Security

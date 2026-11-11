@@ -177,7 +177,7 @@ func UploadInitHandler(repos *repository.Repositories, cfg *config.Config) http.
 		}
 
 		// Validate total chunks BEFORE converting to int (prevent overflow bypass)
-		if totalChunks64 > 10000 {
+		if totalChunks64 > utils.MaxChunksPerUpload {
 			sendSmartError(w,
 				"File requires too many chunks (maximum 10,000). Try increasing chunk size.",
 				"TOO_MANY_CHUNKS",

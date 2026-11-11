@@ -30,8 +30,10 @@ info:
     - Uploads: Configurable (default: 10/hour)
     - Downloads: Configurable (default: 50/hour)
     - Login attempts: 5 per 15 minutes
-    - Chunked upload: `/init` at the upload limit, `/chunk` and `/complete` at
-      10x it, `/status` at 600x it (never under 6000/hour)
+    - Chunked upload: `/init` at the upload limit, `/chunk` at enough chunks for
+      that many `MAX_FILE_SIZE` uploads plus a quarter and 10 more for retries
+      (never under 10x it), `/complete` at 10x it, `/status` at 600x it (never
+      under 6000/hour)
 
     When rate limited, endpoints return `429 Too Many Requests`.
 
@@ -557,7 +559,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '429':
-          description: Rate limit exceeded (10x the upload limit)
+          description: Rate limit exceeded (enough chunks for RATE_LIMIT_UPLOAD maximum-size uploads an hour)
           content:
             application/json:
               schema:

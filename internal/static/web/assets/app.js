@@ -1264,7 +1264,7 @@
         } catch (error) {
             bundleUploading = false;
             let message = (error && error.metadataAbort) ? error.message
-                : (ghostErrorMessage(error && error.code) || (error && error.message) || 'Upload failed');
+                : (knownErrorMessage(error && error.code) || (error && error.message) || 'Upload failed');
             if (error && error.code === 'PAYLOAD_TOO_LARGE') {
                 message = 'A file is too large to upload encrypted.';
             }
@@ -1387,8 +1387,14 @@
         return result.data;
     }
 
-    // Human messages for Ghost mode server rejections; null when not one of them
-    function ghostErrorMessage(code) {
+    // Plain-language messages for server error codes that the raw server
+    // message explains poorly. Returns null for codes without one.
+    function knownErrorMessage(code) {
+        if (code === 'RATE_LIMIT_EXCEEDED') {
+            // Worded about the server, not "you": behind Tor every visitor
+            // shares one budget.
+            return 'This server has reached its upload limit for the hour, so the upload was stopped. Please try again later.';
+        }
         if (code === 'CLIENT_ENCRYPTION_REQUIRED') {
             return 'This server only accepts files encrypted in your browser. Reload the page and try again, using a browser that supports encryption.';
         }
@@ -1492,8 +1498,8 @@
                         showToast(`Upload rejected: ${error.error}`, 'error', 6000);
                     } else if (error.code === 'SCAN_UNAVAILABLE') {
                         showToast('Malware scanning is temporarily unavailable. Please try again shortly.', 'error', 5000);
-                    } else if (ghostErrorMessage(error.code)) {
-                        showToast(ghostErrorMessage(error.code), 'error', 7000);
+                    } else if (knownErrorMessage(error.code)) {
+                        showToast(knownErrorMessage(error.code), 'error', 7000);
                     } else if (error.code === 'UNSCANNABLE_UPLOAD') {
                         showToast('This file cannot be scanned for malware (end-to-end encrypted or too large) and this server requires all uploads to be scanned.', 'error', 6000);
                     } else {
@@ -1585,8 +1591,8 @@
                     errorMessage = data.error;
                 } else if (data.code === 'SCAN_UNAVAILABLE') {
                     errorMessage = 'Malware scanning is temporarily unavailable. Please try again shortly.';
-                } else if (ghostErrorMessage(data.code)) {
-                    errorMessage = ghostErrorMessage(data.code);
+                } else if (knownErrorMessage(data.code)) {
+                    errorMessage = knownErrorMessage(data.code);
                 } else if (data.error && data.error.includes('Failed to fetch')) {
                     // Detect file change errors (ERR_UPLOAD_FILE_CHANGED)
                     errorMessage = 'The file changed while uploading. Please ensure the file isn\'t being modified and try again.';
@@ -1594,7 +1600,8 @@
                     errorMessage = `Upload failed at ${data.stage}: ${data.error}`;
                 }
 
-                showToast(errorMessage, 'error', 4000);
+                // Explanations get long enough on screen to be read.
+                showToast(errorMessage, 'error', knownErrorMessage(data.code) ? 7000 : 4000);
                 resetProgress();
             });
 
