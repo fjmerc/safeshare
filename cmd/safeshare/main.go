@@ -152,8 +152,15 @@ func run() error {
 		// Database has settings - use them instead of env vars
 		cfg.SetQuotaLimitGB(dbSettings.QuotaLimitGB)
 		cfg.SetMaxFileSize(dbSettings.MaxFileSizeBytes)
-		cfg.SetDefaultExpirationHours(dbSettings.DefaultExpirationHours)
-		cfg.SetMaxExpirationHours(dbSettings.MaxExpirationHours)
+		// Apply both together: one at a time, a saved default above the
+		// environment's max would be refused and silently dropped.
+		if err := cfg.SetExpirationHours(dbSettings.DefaultExpirationHours, dbSettings.MaxExpirationHours); err != nil {
+			slog.Error("failed to apply saved expiration settings; keeping environment values",
+				"error", err,
+				"default_expiration_hours", dbSettings.DefaultExpirationHours,
+				"max_expiration_hours", dbSettings.MaxExpirationHours,
+			)
+		}
 		cfg.SetRateLimitUpload(dbSettings.RateLimitUpload)
 		cfg.SetRateLimitDownload(dbSettings.RateLimitDownload)
 		cfg.SetBlockedExtensions(dbSettings.BlockedExtensions)

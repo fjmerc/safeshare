@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/fjmerc/safeshare/internal/config"
 )
@@ -123,8 +124,20 @@ func AdminConfigAssistantHandler(cfg *config.Config) http.HandlerFunc {
 		// Calculate recommendations based on user environment
 		recommendations := calculateRecommendations(req)
 
+		// Never drop extensions the admin already blocks: applying the
+		// recommendations replaces the whole list.
+		recommendations.BlockedExtensions = mergeBlockedExtensions(currentConfig.BlockedExtensions, recommendations.BlockedExtensions)
+
+		// Anonymous (Ghost) mode relies on short retention; don't recommend
+		// loosening the expirations the operator chose.
+		ghostCapped := cfg.IsAnonymousMode() && capExpirationsForAnonymousMode(&recommendations, currentConfig)
+
 		// Generate analysis
 		analysis := generateAnalysis(req, currentConfig, recommendations)
+		if cfg.IsAnonymousMode() {
+			analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
+				anonymousModeExpirationNote(currentConfig, ghostCapped))
+		}
 
 		// Build response
 		response := ConfigAssistantResponse{
@@ -173,6 +186,59 @@ func calculateRecommendations(req ConfigAssistantRequest) ConfigRecommendations 
 	rec.RequireAuthForUpload, rec.HTTPSEnabled, rec.PublicURL = calculateSecuritySettings(req)
 
 	return rec
+}
+
+// mergeBlockedExtensions returns the current blocked extensions followed by any
+// recommended ones that aren't already blocked (case-insensitive, dot optional).
+func mergeBlockedExtensions(current, recommended []string) []string {
+	merged := make([]string, 0, len(current)+len(recommended))
+	seen := make(map[string]bool, len(current)+len(recommended))
+	for _, list := range [][]string{current, recommended} {
+		for _, ext := range list {
+			key := strings.ToLower(strings.TrimSpace(ext))
+			if key == "" {
+				continue
+			}
+			if !strings.HasPrefix(key, ".") {
+				key = "." + key
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, key)
+		}
+	}
+	return merged
+}
+
+// capExpirationsForAnonymousMode keeps the recommended expirations at or below
+// the current ones. It reports whether it lowered either value. The result
+// still satisfies default <= max because both inputs do.
+func capExpirationsForAnonymousMode(rec *ConfigRecommendations, current ConfigRecommendations) bool {
+	if current.DefaultExpirationHours <= 0 || current.MaxExpirationHours <= 0 {
+		return false
+	}
+	capped := false
+	if rec.DefaultExpirationHours > current.DefaultExpirationHours {
+		rec.DefaultExpirationHours = current.DefaultExpirationHours
+		capped = true
+	}
+	if rec.MaxExpirationHours > current.MaxExpirationHours {
+		rec.MaxExpirationHours = current.MaxExpirationHours
+		capped = true
+	}
+	return capped
+}
+
+// anonymousModeExpirationNote explains how anonymous mode shaped the
+// expiration recommendations.
+func anonymousModeExpirationNote(current ConfigRecommendations, capped bool) string {
+	if capped {
+		return fmt.Sprintf("⚠️ Anonymous (Ghost) mode is on: expiration recommendations were kept at your current limits (default %dh, max %dh) instead of being raised. Short retention is part of what protects uploaders; raise them only if you mean to.",
+			current.DefaultExpirationHours, current.MaxExpirationHours)
+	}
+	return "Anonymous (Ghost) mode is on: these expiration recommendations don't raise your current limits."
 }
 
 // calculateMaxFileSize determines the maximum file size based on typical usage patterns
@@ -508,7 +574,7 @@ func generateImpactDescriptions(req ConfigAssistantRequest, current, recommended
 	}
 
 	if current.MaxExpirationHours != recommended.MaxExpirationHours {
-		analysis.Impacts["max_expiration_hours"] = fmt.Sprintf("Extended for %s use case", req.DeploymentType)
+		analysis.Impacts["max_expiration_hours"] = fmt.Sprintf("Adjusted for %s use case", req.DeploymentType)
 	}
 
 	// Rate limit impacts
@@ -647,7 +713,7 @@ func generateCDNRecommendations(req ConfigAssistantRequest, recommended ConfigRe
 func generateResourceRecommendations(req ConfigAssistantRequest, analysis *ConfigAnalysis) {
 	if req.EncryptionEnabled {
 		analysis.AdditionalRecommendations = append(analysis.AdditionalRecommendations,
-			"Encryption enabled: Timeouts increased by 20%% to account for AES-256-GCM encryption/decryption overhead.",
+			"Encryption enabled: Timeouts increased by 20% to account for AES-256-GCM encryption/decryption overhead.",
 		)
 	}
 
