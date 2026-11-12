@@ -35,6 +35,10 @@ See `docs/VERSION_STRATEGY.md` for full explanation.
 
 ## [Unreleased]
 
+### Fixed
+
+- After a large (chunked) upload finished, the upload page and `safeshare-cli` showed the file expiring 24 hours later, whatever you had chosen, including "never". The file itself always expired at the right time; only the time shown was wrong. For visitors who aren't logged in, the "Recent uploads on this device" list also dropped large uploads after 24 hours. `GET /api/upload/status` now reports the file's own expiry once the upload has completed.
+
 ## [1.25.0] - 2026-11-11
 
 ### Changed

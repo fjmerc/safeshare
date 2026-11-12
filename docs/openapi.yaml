@@ -3836,6 +3836,12 @@ components:
         expires_at:
           type: string
           format: date-time
+          description: >
+            While the upload is unfinished, when its chunks are deleted if no
+            more arrive (PARTIAL_UPLOAD_EXPIRY_HOURS after the last activity).
+            Once status is completed, when the file itself expires (about 100
+            years out for "never expire"; the bundle's expiry for a bundle member),
+            read from the stored file or bundle.
 
     # ==================== File Info Schemas ====================
     FileInfoResponse:

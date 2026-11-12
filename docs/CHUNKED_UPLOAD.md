@@ -210,6 +210,8 @@ Check upload progress.
 }
 ```
 
+`expires_at` depends on the state. While the upload is unfinished, it is when the server deletes the upload's pieces if no more arrive (`PARTIAL_UPLOAD_EXPIRY_HOURS` after the last activity). Once `status` is `completed`, it is when the file itself expires: the requested lifetime counted from when the upload started, about 100 years out for "never expire", or the bundle's expiry for a bundle member, read from the stored file or bundle where possible, so a later change in the dashboard shows here too. Earlier releases reported the cleanup time for completed uploads too.
+
 `status` is one of `uploading`, `processing`, `completed`, `failed`. When `status` is `failed`, `retryable` indicates whether POSTing `/api/upload/complete/:upload_id` again will retry assembly (see below), and `attempts` is how many assembly attempts have been made so far (capped at `ASSEMBLY_MAX_ATTEMPTS`).
 
 ## Assembly State Machine (ADR-016)

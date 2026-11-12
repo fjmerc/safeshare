@@ -835,13 +835,7 @@ func respondUploadComplete(w http.ResponseWriter, r *http.Request, cfg *config.C
 	}
 	downloadURL := buildShareURL(r, cfg, *partialUpload.ClaimCode)
 
-	var expiresAt time.Time
-	if partialUpload.ExpiresInHours == 0 {
-		expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
-	} else {
-		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
-	}
-	expiresAt = storeExpiry(expiresAt, cfg)
+	expiresAt := chunkedFileExpiry(partialUpload, nil, cfg) // bundle members returned above
 
 	response := models.UploadCompleteResponse{
 		ClaimCode:          *partialUpload.ClaimCode,
@@ -1203,6 +1197,22 @@ func UploadCompleteHandler(repos *repository.Repositories, cfg *config.Config) h
 	}
 }
 
+// chunkedFileExpiry returns the expiry a chunked upload's file is created
+// with: its bundle's expiry for a bundle member (pass the bundle), otherwise
+// its requested lifetime from when the upload started, or about 100 years
+// for "never expire". The assembly worker stores this value; the completion
+// and status responses report it, so they must all use this.
+func chunkedFileExpiry(partialUpload *models.PartialUpload, bundle *models.Bundle, cfg *config.Config) time.Time {
+	if bundle != nil {
+		return bundle.ExpiresAt
+	}
+	hours := partialUpload.ExpiresInHours
+	if hours == 0 {
+		hours = 100 * 365 * 24 // never expire
+	}
+	return storeExpiry(partialUpload.CreatedAt.Add(time.Duration(hours)*time.Hour), cfg)
+}
+
 // UploadStatusHandler handles GET /api/upload/status/:upload_id
 func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1241,8 +1251,34 @@ func UploadStatusHandler(repos *repository.Repositories, cfg *config.Config) htt
 			return
 		}
 
-		// Calculate expiration time
+		// expires_at: while the upload is unfinished, when its pieces are
+		// cleaned up if it goes quiet; once it has completed, when the file
+		// itself expires, which is what clients show the uploader.
 		expiresAt := partialUpload.LastActivity.Add(time.Duration(cfg.PartialUploadExpiryHours) * time.Hour)
+		// Once completed, report the file's expiry: the stored value, which
+		// may have been edited since, or else the value it was created with.
+		if partialUpload.Status == "completed" {
+			switch {
+			case partialUpload.BundleID != nil:
+				// A bundle member expires with its bundle.
+				b, err := repos.Bundles.GetByID(ctx, *partialUpload.BundleID)
+				if err != nil || b == nil {
+					slog.Warn("bundle not available for upload status", "upload_id", uploadID, "error", err)
+				} else {
+					expiresAt = b.ExpiresAt
+				}
+			case partialUpload.ClaimCode != nil:
+				// A miss is expected if the file has expired (PostgreSQL's
+				// lookup skips those) or its claim code was regenerated.
+				expiresAt = chunkedFileExpiry(partialUpload, nil, cfg)
+				f, err := repos.Files.GetByClaimCode(ctx, *partialUpload.ClaimCode)
+				if err != nil {
+					slog.Warn("file not available for upload status", "upload_id", uploadID, "error", err)
+				} else if f != nil {
+					expiresAt = f.ExpiresAt
+				}
+			}
+		}
 
 		// Get missing chunks (if not completed)
 		var missingChunks []int

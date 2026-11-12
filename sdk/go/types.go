@@ -136,7 +136,8 @@ type UploadStatus struct {
 	TotalChunks int `json:"total_chunks"`
 	// ChunkSize is the size of each chunk.
 	ChunkSize int64 `json:"chunk_size"`
-	// ExpiresAt is when this session expires.
+	// ExpiresAt is when this upload session is cleaned up if it goes quiet;
+	// once Status is "completed", when the uploaded file expires.
 	ExpiresAt time.Time `json:"expires_at"`
 	// Complete indicates if the upload is complete.
 	Complete bool `json:"complete"`

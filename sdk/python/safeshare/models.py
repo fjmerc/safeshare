@@ -151,6 +151,8 @@ class UploadStatus(BaseModel):
     # made so far.
     retryable: bool = False
     attempts: int = 0
+    # Until completed: when the unfinished upload is cleaned up if it goes
+    # quiet. Once status is "completed": when the uploaded file expires.
     expires_at: datetime
 
 
