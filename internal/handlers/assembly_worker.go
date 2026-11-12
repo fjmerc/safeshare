@@ -921,20 +921,11 @@ func (w *assemblyWorker) run() {
 		return
 	}
 
-	// Calculate expiration time
-	var expiresAt time.Time
-	if partialUpload.ExpiresInHours == 0 {
-		// Never expire - set to 100 years in the future
-		expiresAt = partialUpload.CreatedAt.Add(time.Duration(100*365*24) * time.Hour)
-	} else {
-		expiresAt = partialUpload.CreatedAt.Add(time.Duration(partialUpload.ExpiresInHours) * time.Hour)
-	}
-	expiresAt = storeExpiry(expiresAt, cfg)
+	expiresAt := chunkedFileExpiry(partialUpload, bundle, cfg)
 
 	// Always set maxDownloads (0 = unlimited, not "unset")
 	maxDownloads := &partialUpload.MaxDownloads
 	if bundle != nil {
-		expiresAt = bundle.ExpiresAt
 		maxDownloads = bundle.MaxDownloads
 	}
 
